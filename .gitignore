@@ -1,0 +1,35 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+*.tsbuildinfo
+target/
+src-tauri/.tauri/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+*.pem
+*.key
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Logs and local caches
+*.log
+.cache/
+tmp/
+temp/
+
+# Keep source documentation, including .ai/, tracked.
