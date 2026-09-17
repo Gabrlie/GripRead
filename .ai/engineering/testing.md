@@ -13,7 +13,7 @@ The checker validates maintained root/.ai Markdown, required sections and status
 
 ## Application checks to establish
 
-During M0, create executable commands for strict TypeScript checks, frontend lint/build, Rust formatting/static checks, and focused unit/integration tests. Add dependency-direction checks once source modules exist. Record actual commands in package/build configuration and reference them from contributor guidance; do not claim these checks already exist.
+The M0 foundation exposes executable commands for strict TypeScript checks, frontend build, Rust formatting/static checks, generated-binding freshness, dependency-direction checks, documentation checks, focused unit tests, and native startup smoke. `pnpm check` runs the offline repository checks; `pnpm tauri build --debug` verifies the macOS native build and `pnpm test:native` starts the real host, while the WebdriverIO embedded suite remains a separate follow-up until its test-only Tauri plugin and runner are added.
 
 Use fixtures and observable outcomes for parsing, state, and service behavior. Exercise IPC changes through their real consumers. UI work also needs visual inspection, keyboard/touch checks, and reduced-motion behavior. Native/platform claims require evidence from the corresponding target, not an inference from a browser build or a different operating system.
 

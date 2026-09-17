@@ -1,0 +1,51 @@
+:root {
+  color: #292d29;
+  background: #f7f4ed;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.smoke-shell { max-width: 1180px; margin: 0 auto; padding: 36px; }
+.smoke-header, .section-title, .import-controls, .reader-controls { display: flex; align-items: center; gap: 16px; }
+.smoke-header { justify-content: space-between; margin-bottom: 28px; }
+.smoke-header h1, h2, p { margin: 0; }
+h1 { font-family: Georgia, serif; font-size: 34px; letter-spacing: -0.04em; }
+h2 { font-size: 17px; }
+.eyebrow { color: #58705c; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; margin-bottom: 6px; }
+.message { max-width: 54%; color: #58705c; font-size: 13px; text-align: right; }
+.import-panel, .book-list, .reader-panel { border: 1px solid #d9d8cf; border-radius: 18px; background: rgba(255, 255, 255, 0.5); padding: 20px; }
+.import-panel { margin-bottom: 20px; }
+.import-panel label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 8px; }
+.import-controls input { flex: 1; min-width: 0; border: 1px solid #c7c9c0; border-radius: 10px; padding: 10px 12px; background: #fffdf8; }
+button { border: 0; border-radius: 10px; padding: 10px 14px; color: #f7f4ed; background: #58705c; }
+button.secondary { color: #58705c; background: #e4e9df; }
+.progress, .muted { color: #70776e; font-size: 12px; }
+.progress { margin-top: 10px; }
+.smoke-grid { display: grid; grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr); gap: 20px; }
+.section-title { justify-content: space-between; margin-bottom: 16px; }
+.section-title button { padding: 7px 10px; font-size: 12px; }
+.book-list ul { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.book { display: flex; align-items: center; justify-content: space-between; width: 100%; color: #292d29; background: transparent; text-align: left; }
+.book.selected { background: #dbe5d8; }
+.book small { color: #70776e; font-size: 10px; }
+.reader-window { min-height: 420px; max-height: 60vh; overflow: auto; margin: 0; border-radius: 12px; padding: 20px; background: #fffdf8; font: 18px/1.8 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-controls { justify-content: flex-end; margin-top: 14px; }
+
+@media (max-width: 760px) {
+  .smoke-shell { padding: 20px; }
+  .smoke-header { display: block; }
+  .message { max-width: none; margin-top: 12px; text-align: left; }
+  .smoke-grid { grid-template-columns: 1fr; }
+  .import-controls { align-items: stretch; flex-wrap: wrap; }
+  .import-controls input { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+}

@@ -1,0 +1,33 @@
+[package]
+name = "gripread"
+version = "0.1.0"
+description = "A local-first novel reader"
+authors = ["GripRead contributors"]
+edition = "2021"
+rust-version = "1.78"
+default-run = "gripread"
+
+[lib]
+name = "gripread_lib"
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[[bin]]
+name = "gripread"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate-types"
+path = "src/bin/generate_types.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+tauri = { version = "2.11.5", features = [] }
+ts-rs = "12.0.1"
+thiserror = "2.0.20"
+uuid = { version = "1.24.1", features = ["v4", "serde"] }

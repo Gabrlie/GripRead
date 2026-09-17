@@ -1,12 +1,16 @@
 # Dependencies and build output
 node_modules/
+/.pnpm-store/
 dist/
 coverage/
 .vite/
 .turbo/
 *.tsbuildinfo
 target/
+src-tauri/target/
 src-tauri/.tauri/
+src-tauri/gen/
+src-tauri/bindings/
 
 # Local environment and credentials
 .env
@@ -31,5 +35,10 @@ src-tauri/.tauri/
 .cache/
 tmp/
 temp/
+
+# Local database files
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Keep source documentation, including .ai/, tracked.

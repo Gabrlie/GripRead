@@ -23,6 +23,7 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 ## Decision records
 
 - [Documentation ownership](notes/implemented/2026-09-17-documentation-ownership.md) explains this structure.
+- [M0 IPC bindings and text locator](notes/implemented/2026-09-17-m0-ipc-and-locator.md) records the Rust source, generated TypeScript, and Unicode position contract.
 - [Reading-first extension boundaries](notes/proposed/2026-09-17-reading-first-extensions.md) records the approved direction for deferred integrations.
 
 Add decision links here only when they guide current work. Source modules should own their local README and any additional instructions when the corresponding code exists.
