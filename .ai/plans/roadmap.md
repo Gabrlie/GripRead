@@ -1,69 +1,35 @@
-# GripRead 实施路线图
+# Implementation roadmap
 
-本路线图把已确认范围拆成 M0–M3，作为分类文档的执行顺序。产品约束见[产品需求](../product/requirements.md)，完整确认基线见[初始设计快照](2026-09-16-initial-design.md)，架构边界见[架构总览](../architecture/overview.md)。当前没有应用代码，也没有已通过的测试；每阶段完成后按[工程测试与验收](../engineering/testing.md)记录证据。
+Status: planned
 
-## M0：三端基础验证
+## Stage dependencies
 
-目标是确认技术路线在首发平台上可落地，不提前承诺平台天然兼容。建立 Tauri 2、React、TypeScript、Vite、Tailwind 和 shadcn/ui 的三端工程骨架，验证 Android、Windows 和 macOS 的文件能力、SQLite、基础定位、仿真翻页，以及书源 JavaScript 的同步 HTTP 宿主桥。
+Stages describe technical dependencies and completion criteria. They do not authorize unassigned work. The [current status](../status.md) records active scope; use the [task template](task-template.md) for a bounded implementation task.
 
-本阶段的书源宿主桥通过 `rquickjs` 嵌入 QuickJS-NG，在独立工作线程验证常用同步 HTTP 调用语义；它服务书源规则执行，不是 WebDAV 数据同步。SQLite 只需证明本地数据与定位所需的最小读写闭环，持久同步队列留到 M3。
+## M0: Foundation
 
-M0 完成条件：
+Establish the Tauri/React application, typed service interfaces, local file and SQLite access, minimal content-location and pagination experiments, Motion integration, and executable engineering checks. Verify the page-curl adapter against rendered pages and exercise the basic reading shell on target platforms. Use [architecture](../architecture.md), [Reader](../subsystems/reader.md), [motion design](../design/motion.md), and [verification](../engineering/testing.md).
 
-- 三端工程可启动并能执行对应的文件和 SQLite 最小验证。
-- `ReaderLocator` 在重新排版后仍能恢复章节/资源、文本偏移和上下文；不依赖页码。
-- 仿真翻页可以接收已分页内容，动画与内容解析边界清楚。
-- 三端实际验证 `rquickjs` 嵌入 QuickJS-NG、脚本超时和有限 HTTP 宿主桥，并记录不兼容项。
+Completion requires actual target-platform evidence for the foundational operations and a runnable local development/check workflow. Neither the source script engine nor AI/vector dependencies belong to M0.
 
-## M1：本地阅读闭环
+## M1: Local reading
 
-目标是交付无需账号和网络的核心阅读体验。完成本地 TXT 与无 DRM 流式 EPUB 导入、`Book`/`BookAsset` 分离、书架、继续阅读、目录、搜索、书签、阅读状态和存储设置。
+Deliver [Library](../subsystems/library.md) and local [Reader](../subsystems/reader.md) behavior with the corresponding [screens](../design/interaction.md) and motion. Complete import, shelf management, contents, bookmarks, search, offline reading, typography, reading modes, and settings.
 
-阅读器先支持分页、仿真、平移、无动画和滚动，手机单页，桌面居中单页并可双页；正文排版依赖 WebView 实际字体和视口，Rust 负责解析、规范化和持久化，双方共享 `ReaderLocator` 语义。实现应能处理百万字 TXT 和含图片 EPUB，不把整本内容一次性加载到 DOM；分页无漏字、重字，排版改变后保留正文位置。
+The local milestone is complete when a book can be imported, read, closed, reopened, and repositioned reliably, including large text, illustrations, reflow, selection, and failures. Use the subsystem acceptance cases to demonstrate the complete user journey rather than treating a rendered screen as completion.
 
-M1 完成条件：
+## M2: Online content
 
-- 三端可离线导入、打开和继续阅读 TXT/EPUB。
-- 书架网格/列表、分组、在读/未读/已读、本机可用性和删除边界可用。
-- 目录、书签、搜索、字号/字体/行距/边距/主题、方向和单双页设置生效。
-- 触控和桌面键盘翻页、文本选择暂停翻页、三端长文与图片场景通过验收。
+Begin [Legado compatibility](../subsystems/sources.md) only after M1's basic local reading journey is complete. Study ColorTxt's implementation at a recorded revision, establish representative compatibility fixtures, and choose the runtime/host bridge from measured results. Deliver the source-to-reader chain and honest capability reporting.
 
-## M2：书源与独立 RSS
+Implement [RSS](../subsystems/rss.md) as an independent stream of work in this stage. It does not depend on the novel interpreter. Completion requires end-to-end source fixtures and feed import, refresh, article reading, and persisted read/favorite state on the target platforms.
 
-目标是加入网络小说和 RSS，同时保持两套内容模型与规则边界独立。
+## M3: Cross-device reading
 
-网络小说实现书源文件/链接/粘贴 JSON 导入，保存原始配置，提供已导入、未验证、验证通过和存在不支持能力状态。`SourceAdapter` 覆盖搜索、详情、目录和正文，结果按源分组逐步返回；支持常用 CSS/Jsoup、XPath、JSONPath、正则、变量、分页、纯 JavaScript 和有限网络缓存语义。Java 类、Android 桥和复杂 WebView 登录明确报告不支持。
+Implement [WebDAV synchronization](../subsystems/sync.md), the cloud book folder, durable retry, causal conflict handling, and backup/restore over the established domain records. Validate real cross-device continuation and failure recovery, then verify the initial platform installers.
 
-换源保留 `Book` 持久身份，根据新旧目录与文本上下文映射章节；匹配不准时显示最接近候选并等待用户确认。固定书源 fixture 必须完成搜索到正文链路，并含有可验证的 `unsupported` 场景。
+Completion requires evidence for the sync acceptance cases and initial release scope. File availability, record replication, and backup restoration must each work independently.
 
-RSS 独立支持 RSS/Atom、OPML 导入导出、订阅分组、刷新、去重、未读、收藏、正文和文章图片本机缓存。正文优先使用 feed 内容，全文提取按需进行；失败时展示摘要原文。手机逐层进入，桌面订阅/文章/正文三栏。
+## Later: AI assistance
 
-M2 完成条件：
-
-- 固定书源 fixture 在 Android、Windows 和 macOS 完成搜索到正文及兼容报告。
-- 换源和章节定位不静默跳转，无法确认时把选择交给用户。
-- RSS/Atom/OPML 导入导出、去重、未读、收藏、全文失败和图片缓存场景通过验收。
-- RSS 不依赖 Legado `rssSource` 网页规则，Legado 订阅规则仍保持后续范围。
-
-## M3：WebDAV、冲突备份与交付
-
-目标是完成可选 WebDAV、自洽的离线同步、冲突和备份，并产出三端安装包。
-
-加入 `/GripRead/Books`、`/GripRead/Sync/v1` 和 `/GripRead/Backups` 默认目录，支持指定已有书库文件夹。持久同步队列、每设备单写状态文件、实体版本、删除标记、进度因果版本与设备来源、重试和状态事件均在本阶段完成。
-
-同步自动处理书架、分组、进度、书签、书源、RSS 订阅、阅读状态和通用偏好；不上传正文缓存、RSS 内容缓存、凭据、书源登录态和本地路径。手动 TXT/EPUB 书库文件上传和下载通过云端书库页签提供，书架删除不删除云端文件。
-
-冲突场景保留并发同字段双值；进度冲突展示设备、章节和片段供用户选择，不按最大进度或设备墙钟覆盖。自动备份每日变更保留 7 份，手动备份独立；恢复先预览和创建本地恢复点，再生成新的同步变更。
-
-M3 完成条件：
-
-- 离线分叉、队列恢复、重试、删除、远端新进度提示和手动检查通过验收。
-- 同步故障能显示原因并重试，且不阻止本地阅读、不重复创建实体。
-- 书库文件上传/下载、本地关联、缓存隔离、自动/手动备份和预览恢复通过验收。
-- Android、Windows 和 macOS 安装包完成目标环境实测，记录平台差异和未支持项。
-
-## 阶段依赖与交付纪律
-
-M0 的平台和运行时验证是 M1–M3 的前置；M1 的统一阅读模型和 `ReaderLocator` 是书源换源与同步进度的基础；M2 先固定书源/RSS 数据边界，M3 再把已确认的结构接入 WebDAV。任何阶段不以“能启动”代替对应验收矩阵，测试证据和未支持项都要随阶段记录。
-
-新增功能不通过本路线图自动扩大首发范围。漫画、听书、iOS/Linux、Legado 订阅规则以及账号能力继续留在后续决策中。
+After basic reading and data behavior are stable, plan the first [AIGC](../subsystems/aigc.md) feature as a separate task. Select the provider, embedding/index strategy, and generation interface then. Progress-bounded character events and recaps are the initial candidates; they are not part of M0 or a release dependency for basic reading.

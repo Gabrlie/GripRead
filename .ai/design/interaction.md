@@ -1,98 +1,48 @@
-# GripRead 交互规范
+# Interaction and visual design
 
-本文档定义首发三端的导航、布局和核心操作。产品范围见
-[产品需求](../product/requirements.md)，阅读定位和数据边界由
-[架构总览](../architecture/overview.md)及[同步设计](../architecture/sync.md)约束。
+Status: planned
 
-## 全局视觉与导航
+## Visual language
 
-界面使用暖白 `#F7F4ED`、墨色 `#292D29` 和绿色 `#58705C`，同时提供深色主题。UI 默认使用系统无衬线字体；阅读正文使用宋体风格字体，允许用户选择自定义字体。颜色和字体在阅读器外保持一致，正文排版参数属于阅读设置。
+Use a quiet paper-like palette: background `#F7F4ED`, body text `#292D29`, and restrained green `#58705C`, with a corresponding dark theme. Interface typography uses system sans-serif; reading supports a Song-style serif and imported fonts. Use spacing and fine separators to establish hierarchy.
 
-手机使用底部导航：
+Default novel typography is 20 px text with 1.8 line height, 24 px horizontal phone padding, and an approximately 720 px maximum text width per desktop page. Typography controls include size, line height, margins, font, and theme. Motion parameters belong exclusively to [motion design](motion.md).
 
-- 书架：本地书、云端书库入口、继续阅读和阅读状态。
-- 找书：书源搜索、详情、目录和换源。
-- RSS：订阅分组、文章列表和正文。
-- 设置：阅读、书源、同步备份和存储。
+## Navigation and screens
 
-桌面使用同名侧栏。打开正文后隐藏底部导航或侧栏，让阅读区域成为主要内容；退出正文后恢复上一个导航位置。
+Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. Desktop RSS retains its three-column workspace.
 
-手机适合使用 Drawer；桌面使用 Dialog 或侧面板。面板关闭后应回到触发面板前的上下文，当前阅读内容不因面板开关重置。
+| Screen | Phone | Desktop |
+| --- | --- | --- |
+| Library | Continue-reading card, cover grid/list, long-press management | Recent reading, grid/list, multi-select, file drop |
+| Find Books | Search, source scope, progressive grouped results, detail navigation | Results and selected book details side by side |
+| RSS | Groups, subscriptions, articles, and article view through successive screens | Subscription, article list, and content columns; collapsible side panels |
+| Settings | Reading, Sources, Sync and Backup, Storage groups | Category navigation beside settings |
 
-## 书架
+Use shadcn/ui controls and accessible primitives. Phone actions normally use a Drawer; desktop uses a Dialog or side panel. Closing a panel restores focus and reading context rather than reopening the book.
 
-书架顶部固定“继续阅读”，显示最近阅读的书和进度，并可直接回到定位。正文缓存、本机文件和云端书库的可用性在书卡上明确区分。
+## Library and discovery
 
-书架支持网格和列表视图。每张书卡至少提供标题、阅读进度、更新状态和本机可用性；列表视图适合批量管理。分组筛选可切换全部、在读、未读和已读，也可进入用户建立的分组。
+Show a single continue-reading entry before the shelf. Support custom groups and unread/reading/finished filters. Book items expose title, progress, updates, and local availability. Cloud Library appears when configured and represents the selected WebDAV folder; [Library](../subsystems/library.md) owns availability actions and [Sync](../subsystems/sync.md) owns transfer semantics.
 
-桌面支持多选、拖入本地 TXT/EPUB 和批量管理；手机通过长按进入选择与管理模式。管理操作包含分组、标记阅读状态和删除书架记录。删除提示说明它只删除书架记录，不删除云端文件；清除正文缓存只清理当前设备。
+Find Books retains successful results when one source fails. Book details show source, title, author, cover, introduction, latest chapter, and a contents entry. Offer add-to-shelf, read, update check, chapter cache, and source switching according to available capabilities. Unsupported operations explain their cause.
 
-当书架记录存在但本机没有文件或章节缓存时，书卡提供“下载云端文件”或“关联本地文件”。云端书库启用后，书架显示独立的云端书库页签，不把云端文件误认为本地可读内容。
+Empty Library offers file import and book discovery; empty RSS offers a feed URL or OPML import. Do not require cloud setup before these actions.
 
-## 找书与网络小说
+## Reading controls
 
-找书页提供搜索输入和书源范围。输入提交后，结果按书源分组并逐步返回；单个源失败时保留其他源的结果，同时显示该源的错误原因。空结果、搜索中和部分失败状态都应可辨认。
+Phone novels default to one page. Desktop defaults to a centered single page and offers double-page reading. Tap the center to reveal controls: Contents, Progress, Appearance, and Bookmarks; source switching and downloads live under More. Tap left/right areas or swipe to turn pages; desktop also supports arrow keys and Space. Suppress those shortcuts inside text inputs and while selecting text.
 
-手机按“搜索结果 → 书籍详情 → 目录/阅读”逐层进入。桌面将搜索结果列表与当前书籍详情并排展示，选择列表项时更新右侧详情，不离开结果上下文。
+A contents selection navigates to that chapter. Reader layout changes follow the [locator contract](../subsystems/reader.md). Loading and sync indicators remain outside the text; remote progress produces a user-selectable action instead of an automatic jump.
 
-详情页展示来源、标题、作者、简介、封面、最新章节和目录入口。用户可以加入书架、检查更新、缓存章节、开始阅读或切换来源。来源不支持某项能力时显示兼容性报告中的原因，并将可用操作与不可用操作分开。
+RSS articles scroll continuously and show title, source, date, original link, and content. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
 
-换源时保留 `Book` 的持久身份，再根据新旧目录与文本上下文映射章节。无法确定对应章节时，显示最接近章节和匹配提示，由用户确认后继续，不静默跳到可能错误的位置。
+## States and accessibility
 
-## RSS
+Design every screen together with its loading, empty, partial-failure, offline, and success states. Errors offer a relevant retry or recovery action while retaining usable content. Maintain visible keyboard focus, touch-accessible controls, understandable labels, and consistent back/dismiss behavior.
 
-RSS 使用独立的阅读路径，不复用网络小说书源规则。手机按“订阅分组 → 订阅 → 文章列表 → 正文”逐层进入；桌面使用订阅、文章列表和正文三栏。三栏中选择订阅或文章时，只更新后续栏，保持当前筛选和阅读位置。
+Each page specification includes the [motion contract](motion.md) alongside layout and states. UI components consume explicit data and event interfaces; they do not invent synchronization, storage, source, or AI behavior.
 
-支持标准 RSS、Atom 和 OPML 导入导出。导入时显示订阅名称、来源和分组结果；重复订阅合并而不产生重复条目。订阅刷新时，列表可先显示本地文章，再显示远端新增内容。
+## Acceptance
 
-文章列表支持未读筛选和收藏筛选。正文显示标题、来源、日期、原文链接和 feed 提供的正文；图片优先使用本机缓存。按需全文提取失败时保留摘要原文，并在文章中明确提示提取失败。标记已读在本地先生效，再由同步队列提交。
-
-## 阅读器
-
-### 进入与退出
-
-打开 TXT、EPUB 或网络章节时先显示可用的本地内容；若需要下载，在正文外提示资源状态，不阻塞已缓存内容。正文页隐藏全局导航，点击返回回到来源上下文并保留书架或 RSS 列表的滚动位置。
-
-### 翻页与滚动
-
-小说默认分页，可在外观设置中选择仿真、平移或无动画模式，也可切换到滚动模式。手机默认单页；桌面默认居中单页，并允许切换双页。分页内容由阅读核心提供，翻页动画只接收已分页内容。
-
-支持以下手势和键盘操作：
-
-- 手机滑动或左右点击翻页。
-- 桌面左右点击、滑动、键盘方向键和空格翻页。
-- RSS 正文使用滚动，不套用小说分页模式。
-- 选中文本后暂停翻页，避免选择动作触发换页。
-
-中部点击呼出工具栏，再次操作正文可收起。工具栏包含目录、进度、外观和书签；换源、下载等放在“更多”。目录面板打开后可以选择章节，关闭后回到所选章节的位置。
-
-### 排版与定位
-
-默认字号为 20 px、行距 1.8、手机边距 24 px，桌面单页宽约 720 px。字号、行距、边距、字体、主题、方向和单双页均通过外观设置调整。
-
-阅读位置记录章节资源、文本偏移和上下文。改变字号、方向、单双页或设备后重新分页，仍定位到同一段文本，不使用旧页码。跨设备发现远端新进度时，在工具栏或进入书时提示设备、章节和片段，用户选择后才跳转，不强行改变当前阅读位置。
-
-### 状态反馈
-
-阅读页底部或工具栏可显示本机可用性、缓存状态和同步状态，但状态提示不遮挡正文。同步正常时使用轻量指示；同步异常显示原因和重试入口。离线时先进入本地正文，并仅在需要网络内容时提示缺少资源。
-
-## 设置
-
-设置侧栏或页面分为四组：
-
-- 阅读：字号、字体、行距、边距、主题、分页模式、方向和单双页。
-- 书源：导入、验证、兼容性报告和来源管理。
-- 同步备份：WebDAV 连接、同步范围、手动同步、备份与恢复。
-- 存储：本地书库、正文缓存、RSS 图片缓存及清理入口。
-
-字号、字体文件和窗口尺寸按设备保存；通用偏好才进入同步。恢复备份前先预览内容并创建本地恢复点，再开始新的同步变更。
-
-## 异常、空状态与可达性
-
-搜索、刷新、下载和同步都要能表达进行中、成功、部分失败、完全失败和离线状态。错误消息给出可理解的原因和可执行的重试入口；单个来源或订阅失败不应清空其他已加载内容。
-
-空书架应引导导入文件或进入找书；空 RSS 应引导导入 OPML 或添加订阅；无缓存的云端书库记录应引导下载或关联文件。所有核心阅读操作应同时支持触控和桌面键盘，焦点顺序与可见状态保持一致。
-
-## 与验收的对应关系
-
-交互验收覆盖三端触控、键盘、单双页、字体、仿真和滚动性能；RSS、书源、离线同步以及恢复场景见[工程测试与验收](../engineering/testing.md)。
+Verify phone and desktop layouts, keyboard focus, touch controls, modal focus restoration, empty/error states, and preserved reading/list context. Evaluate motion and reduced-motion behavior using the cases owned by the motion specification.

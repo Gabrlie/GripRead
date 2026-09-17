@@ -1,95 +1,27 @@
-# GripRead 产品需求
+# Product requirements
 
-本文档是 GripRead 分类产品需求的维护入口。完整的已确认基线由
-[初始设计快照](../plans/2026-09-16-initial-design.md) 保存；本文件只记录产品范围、能力和验收边界。交互细节见
-[交互规范](../design/interaction.md)，技术边界见
-[架构总览](../architecture/overview.md)。
+Status: planned
 
-## 产品定位与首发范围
+## Goal
 
-GripRead 是一个离线优先的本地阅读器，首发支持 Android、Windows 和 macOS。用户不需要账号即可在本机阅读和管理内容；WebDAV 是可选的同步与书库存取能力，关闭 WebDAV 时产品仍须完整可用。
+GripRead is a lightweight reader for people who read novels on both a phone and a desktop. Its primary outcome is immediate local reading and a reliable return to the same passage across devices. The default product language is Chinese; maintained engineering documentation is English.
 
-首发内容分为三类：
+## Release scope
 
-- 本地书籍：TXT 和无 DRM 的流式 EPUB，支持目录、书签、搜索和离线阅读。
-- 网络小说：导入阅读书源后，按书源搜索、查看书架、检查更新、换源和缓存章节。兼容常用文本书源，并提供有限 JavaScript 支持。
-- RSS 阅读器：独立支持标准 RSS、Atom 和 OPML 导入导出，提供分组、未读、收藏和文章阅读。它不实现 Legado 的 `rssSource` 网页规则。
+The initial platform targets are Android, Windows, and macOS. Local reading requires neither an account nor a cloud connection. Optional WebDAV adds personal cloud storage without an application account service.
 
-Legado 订阅规则、漫画、听书、iOS 和 Linux 不在首发范围内，后续是否支持需另行确认。
+| Capability | User outcome | Specification |
+| --- | --- | --- |
+| Local novels | Import and read TXT and DRM-free reflowable EPUB offline | [Reader](../subsystems/reader.md), [Library](../subsystems/library.md) |
+| Online novels | Use Legado text sources to find, follow, cache, and read books | [Sources](../subsystems/sources.md) |
+| Independent RSS reader | Read RSS/Atom feeds, exchange OPML subscriptions, and manage unread/favorite articles | [RSS](../subsystems/rss.md) |
+| Cross-device reading | Share shelf records and reading state, browse a cloud book folder, and recover backups | [Sync](../subsystems/sync.md) |
+| Later AI assistance | Review character events and plot summaries bounded by reading progress | [AIGC](../subsystems/aigc.md) |
 
-## 产品原则
+## Priorities and boundaries
 
-### 离线优先
+Local reading is completed before source compatibility implementation begins. AI assistance follows stable reading and data capabilities and is not a prerequisite for the initial reading experience. The [roadmap](../plans/roadmap.md) owns stage dependencies; it is not a schedule or permission to advance stages.
 
-本地内容、阅读位置、书架和已缓存数据应优先显示。网络不可用或同步失败不应阻止用户继续阅读。所有本地写入先落 SQLite，再进入持久同步队列；细则见 [同步与备份](../architecture/sync.md)。
+Novel sources and standard RSS are separate features. Legado `rssSource` webpage rules, comics, audio books, text-to-speech, account services, iOS, and Linux are outside the initial scope.
 
-### 内容与位置分离
-
-书籍身份、书籍文件或章节资源、阅读位置分别管理。本地文件可替换或关联，位置使用章节资源、文本偏移和上下文恢复，而不依赖某次分页后的页码。
-
-### 兼容性可见且可解释
-
-书源导入、未验证、验证通过和不支持要明确区分。无法完整兼容的规则应说明原因，并保留原始 JSON、链接或粘贴内容。兼容边界见 [书源兼容性](../architecture/source-compatibility.md)。
-
-### 跨端可恢复
-
-同一内容在不同设备上应定位到同一段文本。字号、字体、窗口尺寸等设备偏好按设备保存；同步只处理已确定的通用偏好和阅读状态，不强行把设备布局覆盖到另一设备。
-
-## 主要能力
-
-### 书架与本地文件
-
-书架提供“继续阅读”入口，并支持网格或列表视图。用户可分组，按在读、未读、已读查看；书卡显示更新状态、阅读进度和本机可用性。桌面支持多选和拖入，手机支持长按管理。
-
-当书架只有记录而本机没有对应文件时，应允许用户下载云端书库文件或关联本地文件。书架删除会同步删除记录，但不删除云端文件；清除正文缓存只影响本机。
-
-### 小说阅读
-
-阅读器统一承载 TXT、EPUB 和网络章节。默认采用分页，提供仿真、平移和无动画模式，也可切换滚动阅读。手机使用单页；桌面使用居中单页，并可切换双页。中部呼出工具栏，包含目录、进度、外观和书签；换源、下载等操作位于“更多”。
-
-默认阅读参数为字号 20 px、行距 1.8、手机边距 24 px，桌面单页宽约 720 px。支持滑动、左右点击、键盘方向键和空格翻页；选中文本时暂停翻页。改变字号、方向、单双页或设备后，重新分页仍须保持阅读位置。
-
-定位保存章节资源、文本偏移和上下文。定位不能按页码保存，以便重新排版后恢复同一段。
-
-### 网络小说与书源
-
-书源搜索按源分组并逐步返回结果；桌面将结果列表与详情并排展示。用户可把书加入书架、检查更新、缓存章节和换源。换源时保留 `Book` 的持久身份，再根据新旧目录与文本上下文映射章节；匹配不准时提示最接近章节并交给用户确认。
-
-书源适配搜索、详情、目录和正文，并输出兼容性报告。支持常见 CSS/Jsoup、XPath、JSONPath、正则、变量、分页、纯 JavaScript 和有限网络缓存语义；Java 类、Android 桥接和复杂 WebView 登录不保证支持。脚本不能获得 UI IPC 或任意文件访问，且受执行、内存和网络超时限制。
-
-### RSS
-
-RSS 与网络小说书源独立。RSS 支持 RSS/Atom 订阅、OPML 导入导出、分组、未读、收藏和文章阅读。手机按层级进入；桌面使用订阅、文章列表和正文三栏。文章正文优先使用 feed 正文；可按需全文提取，失败时展示摘要原文。标题、来源、日期和原文链接保留，文章图片缓存本机。
-
-### WebDAV、同步与备份
-
-WebDAV 自动同步：书架、分组、阅读进度、书签、书源、RSS 订阅、阅读状态和通用偏好。字号、字体文件、窗口尺寸等设备偏好留在设备上；凭据、书源登录态、本地路径不上传。正文缓存与 RSS 内容缓存不参与同步，也不进入备份。
-
-手动书库操作允许把 TXT/EPUB 上传到云端书库指定文件夹；启用后书架显示云端书库页签。默认路径为 `/GripRead/Books`、`/GripRead/Sync/v1` 和 `/GripRead/Backups`，也可指定已有书库文件夹。
-
-进度变化合并后延迟约 3 秒提交，连续变化最多延迟 10 秒；切后台或退出时尽力提交，未完成项下次恢复。启动、回到前台、打开书时检查远端；阅读中每 15 秒检查当前书，也可手动检查。发现远端新进度时先提示，不强制跳转当前阅读位置。
-
-同步模型使用每设备单写状态文件、独立进度、实体版本和删除标记，并按因果顺序合并。同字段并发需保留双值；进度冲突展示设备、章节和片段，由用户选择，不按最大进度或设备墙钟覆盖。同步状态正常时保持轻量，异常时说明原因并提供重试，故障不影响阅读。
-
-备份支持手动备份和变更时每日自动备份；自动备份保留 7 份，手动备份独立保存。恢复前提供预览和本地恢复点，然后再产生新的同步变更。
-
-## 视觉与导航要求
-
-基础色为暖白 `#F7F4ED`、墨色 `#292D29` 和绿色 `#58705C`，提供深色主题。界面使用系统无衬线字体，正文使用宋体风格字体或用户自定义字体。
-
-手机底部导航为“书架 / 找书 / RSS / 设置”；桌面使用同名侧栏。进入正文后隐藏导航。设置分为阅读、书源、同步备份和存储。
-
-可交互布局与状态细节以 [交互规范](../design/interaction.md) 为准。
-
-## 首发验收边界
-
-验收应覆盖以下可观察结果，详细矩阵见 [工程测试与验收](../engineering/testing.md)：
-
-- 无云或断网时能打开本地内容并继续阅读。
-- 百万字 TXT 和含图片 EPUB 能稳定阅读；分页无漏字、重字，重新排版后位置可恢复。
-- 固定书源 fixture 能完成搜索到正文链路，并对明确不支持的能力给出可读状态。
-- RSS/Atom/OPML 导入、去重、未读和收藏正确；全文提取失败时保留摘要原文。
-- 三端触控、键盘、单双页、字体、仿真模式和性能达到对应交互要求。
-- 离线分叉、重试、删除、恢复不会造成重复或丢失；手动书库上传下载与本地缓存边界清晰。
-
-当前仓库没有应用代码，也没有已通过的测试；实现和验证按 [路线图](../plans/roadmap.md) 分阶段完成。
+Books and reading state remain usable during network and optional-service failures. Display compatibility limits and incomplete operations honestly. The [interaction specification](../design/interaction.md) owns presentation, while each subsystem owns observable behavior and acceptance scenarios.

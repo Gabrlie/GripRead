@@ -1,64 +1,30 @@
-# 工程测试与验收
+# Verification
 
-本文档是未来实现的验证矩阵，不代表当前已有实现。当前仓库没有应用代码，也没有已通过的测试；本轮文档工作只检查分类文件之间的链接和约束一致性，不为文档内容编写实现复述测试。
+## Available checks
 
-产品验收边界见[产品需求](../product/requirements.md)，交互场景见[交互规范](../design/interaction.md)，模块和平台边界见[架构总览](../architecture/overview.md)，同步行为见[同步设计](../architecture/sync.md)，书源 fixture 规则见[书源兼容性](../architecture/source-compatibility.md)。
+The documentation tool uses Node.js 22 or newer without package installation:
 
-## 验证原则
+```sh
+node scripts/check-docs.mjs
+node --test scripts/check-docs.test.mjs
+```
 
-测试以用户可观察结果和跨模块边界为主：离线时先显示本地内容，定位以章节/资源、文本偏移和上下文为准，缓存与同步/备份边界清楚，失败状态可解释。测试数据应覆盖长文本、图片、重复内容、离线分叉和不完整网络响应；不把页码、最大进度或设备墙钟当作跨端正确性的依据。
+The checker validates maintained root/.ai Markdown, required sections and statuses, local file and heading links, and bounded entry-document word counts. Its tests use temporary fixtures to prove invalid documentation is rejected. It does not fetch external URLs or prove semantic consistency; review those explicitly.
 
-三端目标必须实测 Android、Windows 和 macOS。QuickJS-NG 通过 `rquickjs` 的集成、SQLite、文件、网络、WebView 字体/视口和 StPageFlip 均不可只凭桌面构建或运行时名称推断兼容。
+## Application checks to establish
 
-## 阶段矩阵
+During M0, create executable commands for strict TypeScript checks, frontend lint/build, Rust formatting/static checks, and focused unit/integration tests. Add dependency-direction checks once source modules exist. Record actual commands in package/build configuration and reference them from contributor guidance; do not claim these checks already exist.
 
-| 阶段 | 重点 | 必须观察的结果 | 状态 |
-| --- | --- | --- | --- |
-| M0 | 三端工程、文件/SQLite、定位、仿真和书源 JS 同步 HTTP 宿主桥 | 三端可启动；文件和 SQLite 可读写；定位跨重新排版恢复；仿真可运行；书源脚本的同步 HTTP 语义在目标平台得到实际验证，且与 WebDAV 同步区分 | 待实现 |
-| M1 | 本地阅读闭环 | TXT/EPUB 导入、书架、目录、书签、搜索、离线打开、分页/滚动、主题和设置可用 | 待实现 |
-| M2 | 网络小说和独立 RSS | 固定书源 fixture 从搜索到正文；不支持能力明确报告；RSS/Atom/OPML 导入导出、去重、未读、收藏、正文和图片缓存可用 | 待实现 |
-| M3 | WebDAV、冲突、备份和三端安装包 | 队列恢复、因果合并、冲突选择、删除、备份恢复、书库文件上传/下载和缓存隔离可用；三端安装包可验证 | 待实现 |
+Use fixtures and observable outcomes for parsing, state, and service behavior. Exercise IPC changes through their real consumers. UI work also needs visual inspection, keyboard/touch checks, and reduced-motion behavior. Native/platform claims require evidence from the corresponding target, not an inference from a browser build or a different operating system.
 
-持久同步队列属于 M3 的验证范围；M0 只验证书源 JavaScript 的同步 HTTP 宿主桥，不把两者混为同一能力。
+## Selecting scope
 
-## 本地阅读测试
+Choose checks by the changed behavior and risk. Local mechanical edits do not require new tests that repeat the implementation. Fixes to substantive bugs should exercise the failure and corrected behavior. Once relevant checks pass, repeat or broaden them only after new changes, failures, or unresolved concerns.
 
-- 使用百万字 TXT，验证分章、搜索、跨章节翻页和长时间阅读不漏字、不重字、不因整本加载到 DOM 而失去可用性。
-- 使用含图片 EPUB，验证目录、正文、图片加载、离线缓存和 HTML 清理；不要求把整本内容一次性加载到 DOM。
-- 在分页、仿真、平移、无动画和滚动模式之间切换，改变字号、字体、行距、边距、方向和单双页，确认仍定位到同一正文片段。
-- 验证手机单页、桌面居中单页和双页，触控滑动、左右点击、键盘方向键和空格均按预期工作；选中文本时不意外翻页。
-- 关闭网络后打开本地 TXT/EPUB、继续阅读和回看；正文缓存清理只影响当前设备，不删除书架记录或云端文件。
+Subsystem documents own their [acceptance cases](../README.md); avoid copying their catalogs here. Plans identify the cases relevant to a task. Keep deterministic fixtures for format parsing and protocol behavior, and separate optional live-service smoke tests from offline acceptance.
 
-## 书架与资产测试
+## Reporting evidence
 
-验证网格/列表、继续阅读、分组、在读/未读/已读、更新状态和本机可用性。桌面多选和拖入、手机长按管理应产生相同的书架语义。删除书架记录后，云端书库文件仍存在；新设备只有书架记录时，下载云端文件或关联本地文件后才能在本机显示可读状态。
+State the command, environment/platform, outcome, and material limitations. Distinguish passed, failed, blocked, and not run; missing credentials or an unavailable target is not a pass. Record evidence with the active task or change description, not as growing historical inventories in permanent specifications.
 
-导入相同内容两次，确认本地哈希去重；替换或关联文件时，`Book` 身份、阅读状态和位置不会因本地路径变化而丢失。
-
-## 书源测试
-
-固定 fixture 至少覆盖搜索、详情、目录、正文和章节更新。测试结果应按源分组逐步返回，单源失败不清空其他结果。换源时保留 `Book` 身份，根据新旧目录和文本上下文产生章节候选；不确定时展示最接近章节并等待用户选择，不静默跳转。
-
-导入文件、链接和粘贴 JSON 后，确认原始配置可再次查看和验证；状态必须区分已导入、未验证、验证通过和存在不支持能力。fixture 中放入 Java 类、Android 桥或复杂 WebView 登录依赖，确认报告为明确 `unsupported`，而不是假成功。
-
-在 Android、Windows 和 macOS 运行书源 JS，验证 `rquickjs` 嵌入 QuickJS-NG、独立工作线程、有限宿主桥、脚本执行/内存/网络超时，以及脚本没有 UI IPC 和任意文件访问。脚本桥的同步 HTTP 调用语义要与 WebDAV 数据同步测试分开记录。
-
-## RSS 测试
-
-使用 RSS 和 Atom fixture 验证订阅导入、刷新、分组、标题、来源、日期、原文链接、文章去重、未读和收藏。使用 OPML fixture 验证分组保留和导出后可再次导入。正文优先来自 feed；按需全文提取成功时替换正文，失败时保留摘要原文并给出失败状态。
-
-验证手机逐层进入和桌面订阅/文章/正文三栏；文章图片缓存可离线读取但不进入自动同步和备份。RSS 数据不应调用网络小说书源规则。
-
-## 同步与备份测试
-
-配置 WebDAV 与未配置 WebDAV 两组环境。未配置或断网时，本地阅读和本地书架操作不受阻；配置后验证启动、前台、打开书、每 15 秒当前书检查和手动检查。进度变化合并延迟约 3 秒，连续变化最多约 10 秒，切后台/退出尽力提交，未完成队列下次恢复。
-
-构造两台设备离线分叉，验证实体版本、删除标记、每设备单写状态文件和因果顺序。进度记录必须带因果版本和设备来源；并发进度显示设备、章节和片段供用户选择，不取最大进度，也不按设备墙钟覆盖。并发同字段修改保留双值，设备与修改时间只用于展示，不用于决定先后。
-
-验证书架删除同步但不删除 `/GripRead/Books` 云端文件；正文缓存与 RSS 内容缓存不上传、不备份；凭据、书源登录态和本地路径不上传。验证手动 TXT/EPUB 书库文件上传和下载、云端书库页签及本地关联行为。
-
-分别测试自动每日备份 7 份、手动备份独立保存、恢复预览、本地恢复点和恢复后新同步变更。模拟网络错误、凭据错误、远端冲突和格式错误，确认错误原因可见、可重试、不会重复创建实体，且故障不影响阅读。
-
-## 文档与链接检查
-
-在文档变更后，检查索引列出的文档和本次新增、修改文档均存在，且所有相对链接可从所在目录解析；检查首发范围、M0/M3 边界、书源 JS 宿主桥与 WebDAV、缓存与备份范围、进度冲突规则在各文件表述一致。完整设计快照由路线图所链接的基线文件另行保存。
+For doc changes, inspect the diff for lost requirements, stale references, duplicate facts, and accidental promotion of planned behavior to implemented status. Test any change to the checker with both valid and invalid fixtures, including its command-line failure status. Avoid network calls or application scaffolding solely to validate documentation.

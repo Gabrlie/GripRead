@@ -1,22 +1,18 @@
 # GripRead
 
-GripRead 是一个定位轻量化的小说阅读器，目标是让移动端与 PC 端保持连贯的阅读体验。首发平台为 Android、Windows 和 macOS，使用 Tauri 2、React、TypeScript、Vite、Tailwind CSS 与 shadcn/ui 规划实现；本地阅读优先，并通过可选的 WebDAV 提供书架、进度和备份能力。
+GripRead is a lightweight, local-first novel and RSS reader designed for continuous reading across Android, Windows, and macOS. Local files work without an account; optional WebDAV adds a cloud book folder, reading-state synchronization, and backup recovery.
 
-当前仓库处于文档与仓库规范初始化阶段，尚无可运行应用、依赖安装结果或可执行开发命令。README 不把规划中的命令或测试写成已经验证的事实。
+The planned stack is Tauri 2, React, TypeScript, Vite, Tailwind CSS, shadcn/ui, and Motion for React. Start with the [product scope](.ai/product/requirements.md), [architecture](.ai/architecture.md), and [roadmap](.ai/plans/roadmap.md). The [current status](.ai/status.md) distinguishes implemented work from planned capabilities.
 
-## 设计基线
+## Development
 
-- 支持 TXT、无 DRM 的流式 EPUB 和常用文本书源；书源脚本只提供受限 JavaScript 能力。
-- 提供独立的 RSS/Atom 与 OPML 阅读器，不把 RSS 规则混入小说书源引擎。
-- 纯本地即可使用；WebDAV 是可选能力，不依赖账号或自建服务。
-- 小说阅读以分页为主，RSS 文章以连续滚动为主；三端使用章节、文本偏移和上下文片段定位，不用设备页码同步。
-- 暖白纸感界面适配手机四栏导航和 PC 侧栏，详情见 [设计文档](.ai/design/interaction.md)。
+Read [AGENTS.md](AGENTS.md) and the [.ai documentation map](.ai/README.md). Application setup and build commands will be established with the foundation stage; do not infer runnable features from specifications.
 
-## 文档入口
+Documentation checks require Node.js 22 or newer and no third-party packages:
 
-- [协作规范](AGENTS.md)：代理分工、变更、验证与提交约定。
-- [`.ai/` 文档索引](.ai/README.md)：按产品、设计、架构、工程和计划分类的设计资料。
-- [当前状态](.ai/status.md)：只记录已落地或已经验证的事实。
-- [初始设计快照](.ai/plans/2026-09-16-initial-design.md)：上一轮确认的完整设计原文，作为历史基线保存。
+```sh
+node scripts/check-docs.mjs
+node --test scripts/check-docs.test.mjs
+```
 
-后续应用实现应先对照初始设计快照和分类文档；发生设计变更时，更新对应分类文档，并在状态文件中记录实际变更。
+See the [workflow](.ai/engineering/workflow.md) for change ownership and commits, and [verification](.ai/engineering/testing.md) for test scope.

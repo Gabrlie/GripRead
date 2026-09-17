@@ -1,25 +1,18 @@
-# GripRead 协作规范
+# GripRead agent instructions
 
-本文件是仓库根目录的简要入口；产品、设计、架构、工程和路线图细则集中在 [`.ai/`](.ai/README.md)。用户最新指令优先于既有约定，已有改动必须保留并在重叠时先检查再处理。
+## Start here
 
-## 分工
+Read [current status](.ai/status.md) and the [workflow](.ai/engineering/workflow.md), then use the [documentation map](.ai/README.md) to find the task's specifications. Read [architecture](.ai/architecture.md) before changing module dependencies or shared interfaces. Follow [.ai/AGENTS.md](.ai/AGENTS.md) when editing documentation.
 
-- 主代理负责产品设计、技术规划、代码审查、最终整合和提交。
-- 编码与文档落地默认委派 `gpt-5.6-luna`、`max` 推理强度的子代理；独立任务可以并行，但不要让多个代理同时编辑同一文件。若指定模型或推理强度不可用，必须回报主代理，不得静默更换模型或参数。
-- 子代理完成后交回主代理审查，不得未经审查自行提交代码。
+## Working rules
 
-## 变更与验证
+- Follow the latest explicit user direction. A roadmap describes dependencies, not authorization to start additional stages; finish the assigned scope and report its outcome.
+- Inspect existing code and worktree changes before editing. Preserve unrelated work. Agree on shared interfaces and non-overlapping file ownership before parallel implementation; review the combined result before committing.
+- Keep business rules out of page components. Respect the documented module dependencies; update all affected consumers when changing an interface.
+- Keep one authoritative definition for each behavior or type. Update its owning documentation with the implementation; record durable decisions using the [documentation standard](.ai/AGENTS.md).
+- Run checks appropriate to the change and report actual results, including checks not run. Do not silence failures by weakening assertions, disabling rules globally, or hiding errors. See [verification](.ai/engineering/testing.md).
+- Write maintained documentation in English. Keep machine paths, session transcripts, tool assignments, credentials, and generated build output out of project specifications.
 
-- 先读取相关文档和现有实现，再做小范围、可审查的修改；不要默认使用破坏性 Git 操作。
-- 测试规模与改动风险匹配，不编写只复述实现的测试；交付前检查变更、链接和格式，对应用代码运行相称验证，未运行的检查必须如实记录。
-- 文档以中文为主，设计决策进入 `.ai/` 对应分类；状态只记录实际完成或验证过的事项。
+## Git
 
-## Git 约定
-
-- 初始化默认分支为 `main`；功能分支默认使用 `codex/` 前缀。
-- 提交信息使用 Conventional Commits：`<type>[optional scope][!]: <description>`。常用类型为 `feat`、`fix`、`docs`、`refactor`、`test`、`chore`、`build`、`ci`、`perf`、`revert`；破坏性变更在 type 或可选 scope 后加 `!`，或在提交尾注使用 `BREAKING CHANGE:`。示例：`feat(reader)!: change reader locator format`。
-- 不强加用户未要求的审批流程、提交钩子、联网 CI 或自动发布。
-
-## 工作入口
-
-开始任务先读取 [当前状态](.ai/status.md) 和 [工程流程](.ai/engineering/workflow.md)，再按任务读取 [产品](.ai/product/requirements.md)、[设计](.ai/design/interaction.md)、[架构](.ai/architecture/overview.md)、[内容源兼容](.ai/architecture/source-compatibility.md) 或 [测试策略](.ai/engineering/testing.md) 等分类文档。
+Use `main` as the default branch and `codex/` for new feature branches. Preserve existing changes and avoid destructive history operations. Use Conventional Commits as defined in the [workflow](.ai/engineering/workflow.md). Commit only reviewed changes within the assigned scope.

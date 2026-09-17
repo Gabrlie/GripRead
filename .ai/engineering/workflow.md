@@ -1,25 +1,29 @@
-# 工程协作与提交流程
+# Development workflow
 
-## 代理分工
+## Scope and task ownership
 
-主代理负责设计、规划、代码审查、最终整合和提交。编码或文档落地默认委派 `gpt-5.6-luna`，使用 `max` 推理强度；独立子任务有助于提高效率时可以并行分派，但必须避免多个代理同时改同一个文件。若指定模型或推理强度不可用，子代理必须回报主代理，不得静默更换模型或参数。子代理只交付工作树变更和验证结果，未经主代理审查不得提交代码。
+Start from [current status](../status.md) and the assigned scope. Read only the relevant specifications after the entry documents. A [roadmap](../plans/roadmap.md) stage establishes dependencies, not an instruction to begin all its work. Complete the assigned task and report the result without silently extending it.
 
-用户最新指令优先。开始修改前读取相关 `.ai/` 文档和已有工作树，保留用户现有改动；无法安全区分目标范围时先交回主代理处理，不使用破坏性 Git 操作掩盖问题。
+For cross-module work, use the [task template](../plans/task-template.md) to state outcomes, exclusions, allowed files/modules, interface changes, acceptance conditions, and verification. Establish shared types before parallel work. Assign non-overlapping write ownership and a clear integration point; if overlap becomes necessary, coordinate before editing. Do not alter unrelated work or conceal integration conflicts with destructive Git operations.
 
-## 分支与提交
+## Implementation discipline
 
-初始化默认分支为 `main`，功能分支默认使用 `codex/` 前缀。提交标题遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/zh-hans/v1.0.0)：
+Keep the dependency direction in [architecture](../architecture.md). Views consume services; domain behavior does not depend on page components. Reuse the existing owner of a behavior before adding another parser, cache, state store, or helper. Extract shared code only when its responsibility and consumers are concrete.
 
-```text
-<type>[optional scope][!]: <description>
-```
+Use strict TypeScript checking, explicit external input validation, and narrow types. An unavoidable `any`, unsafe operation, or lint suppression needs a local explanation. Keep Rust errors explicit and preserve meaningful context across IPC. Do not use broad catches, silent fallbacks, or placeholder success to disguise failures.
 
-`scope` 可选，`description` 可以使用中文；类型使用英文，常见类型包括 `feat`、`fix`、`docs`、`refactor`、`test`、`chore`、`build`、`ci`、`perf` 和 `revert`。破坏性变更在 type 或可选 scope 后加 `!`，或在提交尾注使用 `BREAKING CHANGE:`。示例：`feat(reader)!: change reader locator format`。
+Async work needs operation ownership, cancellation, timeouts, terminal results, and cleanup. Abort and await owned work where completion matters; detach listeners and ignore stale results when views or requests are replaced. Test the relevant failure behavior through its consumer.
 
-提交前由主代理审查差异、文档链接、格式和验证记录，再决定是否整合。当前阶段不预设提交钩子、联网 CI 或自动发布流程。
+Change shared interfaces together with all consumers. Use monotonic database schema versions and explicit migration/compatibility behavior for persisted or wire data; never silently discard user records to make a new format work. Document the decision before implementing a new persisted format.
 
-## 修改与验证
+## Documentation and review
 
-文档细则按 [`.ai/README.md`](../README.md) 分类维护，设计变化应同步更新对应文档和 [状态记录](../status.md)。验证范围按改动风险决定：文档改动检查文件路径、相对链接和格式；应用代码改动运行与涉及模块相称的检查。没有运行的命令、测试或构建必须明确标记为未运行，不用计划中的结果代替实际结果。
+Update the owning specification with behavioral changes, and use the [documentation standard](../AGENTS.md) for consequential decisions. Keep source declarations authoritative and explain non-obvious behavior close to its implementation. Do not copy declarations into multiple reference pages.
 
-提交描述应说明用户可感知的结果和必要的验证证据。除非任务明确要求，不扩大到发布、部署、外部消息或账号服务配置。
+Review the integrated diff for lost requirements, interface mismatches, duplicate behavior, inappropriate dependencies, and error handling. Run [relevant checks](testing.md), fix failures without weakening their meaning, and record unrun checks as unrun. A successful isolated module test does not replace verification of its changed integration path.
+
+## Git and handoff
+
+Use Conventional Commits: `<type>[optional scope][!]: <description>`. Types include `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, and `revert`. A scope is optional; the description can be English or Chinese. Put `!` after the type or scope, or use a `BREAKING CHANGE:` footer for a breaking change. See the [specification](https://www.conventionalcommits.org/en/v1.0.0/).
+
+Keep commits cohesive and limited to reviewed task changes. Report what changed, why, verification performed, and material remaining limitations. Update [status](../status.md) only with current work and the next useful entry point; commit history retains completed change history.

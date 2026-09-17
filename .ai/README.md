@@ -1,20 +1,28 @@
-# GripRead `.ai` 文档
+# Documentation map
 
-这里保存产品设计、交互约束、技术架构、工程协作和实施计划。根目录 [README](../README.md) 只保留项目入口，根目录 [AGENTS.md](../AGENTS.md) 只保留协作摘要；本目录文档承载可持续维护的细则。
+Start at [status](status.md) for the active scope, then read [workflow](engineering/workflow.md). This map assigns each maintained subject to one owner; planned specifications are not claims of shipped behavior.
 
-## 文档索引
+| Subject | Authoritative document |
+| --- | --- |
+| Documentation placement and lifecycle | [Documentation standard](AGENTS.md) |
+| Product goals and release boundaries | [Requirements](product/requirements.md) |
+| Composition and dependency direction | [Architecture](architecture.md) |
+| Screens, navigation, and visual defaults | [Interaction](design/interaction.md) |
+| Transitions and reduced-motion behavior | [Motion](design/motion.md) |
+| Parsing, pagination, and text positions | [Reader](subsystems/reader.md) |
+| Book identity, assets, and shelf operations | [Library](subsystems/library.md) |
+| Legado compatibility and ColorTxt reference | [Sources](subsystems/sources.md) |
+| Standard feeds and article state | [RSS](subsystems/rss.md) |
+| WebDAV, conflicts, and backup | [Sync](subsystems/sync.md) |
+| Progress-bounded retrieval and generation | [AIGC](subsystems/aigc.md) |
+| Change ownership and commits | [Workflow](engineering/workflow.md) |
+| Checks and evidence | [Verification](engineering/testing.md) |
+| Stage dependencies | [Roadmap](plans/roadmap.md) |
+| Bounded implementation work | [Task template](plans/task-template.md) |
 
-- [产品需求](product/requirements.md)：首发范围、核心场景、功能边界和验收目标。
-- [交互与视觉](design/interaction.md)：暖白纸感、导航、书架、小说阅读和 RSS 阅读交互。
-- [系统架构](architecture/overview.md)：Tauri、前端、Rust、SQLite、文件和内容引擎的边界。
-- [同步与数据](architecture/sync.md)：WebDAV、离线队列、定位、冲突和备份约束。
-- [内容源兼容](architecture/source-compatibility.md)：阅读文本书源、QuickJS-NG/rquickjs 和兼容边界。
-- [工程流程](engineering/workflow.md)：代理分工、分支、提交、变更和交付记录要求。
-- [验证策略](engineering/testing.md)：基础验证、跨端验证和与改动规模匹配的测试要求。
-- [路线图](plans/roadmap.md)：从基础验证到本地阅读、网络内容和 WebDAV 跨端闭环的里程碑。
-- [初始设计快照](plans/2026-09-16-initial-design.md)：上一轮确认的完整 `proposed_plan` 原文，保留为历史基线。
-- [当前状态](status.md)：当前仓库已经实际完成的文档和验证记录。
+## Decision records
 
-## 使用约定
+- [Documentation ownership](notes/implemented/2026-09-17-documentation-ownership.md) explains this structure.
+- [Reading-first extension boundaries](notes/proposed/2026-09-17-reading-first-extensions.md) records the approved direction for deferred integrations.
 
-分类文档是后续维护的入口，快照用于追溯 2026-09-16 的已确认设计。新增或修改决策时，先更新相应分类文档，再在 [状态记录](status.md) 中记下已经完成的工作；不要把未验证的实现、命令或测试结果写成事实。文档之间使用相对链接，链接目标不存在时应在交付前补齐或修正。
+Add decision links here only when they guide current work. Source modules should own their local README and any additional instructions when the corresponding code exists.
