@@ -1,9 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { AppServices } from "./contracts";
+export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
+import { listen } from "@tauri-apps/api/event";
 
 import type {
   AppError,
-  Book,
+  LibraryBook,
+  ReaderPreferences,
+  ReadContentRequest,
+  StartImportRequest,
+  ImportOperationRequest,
+  BookRequest,
+  ResolveLocatorRequest,
+  SaveLocatorRequest,
+  SaveSettingsRequest,
   CancelResult,
   ContentWindow,
   ErrorCode,
@@ -11,21 +22,6 @@ import type {
   ImportTask,
   ReaderLocator,
 } from "../types/generated";
-
-export interface ReaderService {
-  startImport(path: string): Promise<ImportTask>;
-  getImportStatus(operationId: string): Promise<ImportStatus>;
-  cancelImport(operationId: string): Promise<CancelResult>;
-  listBooks(): Promise<Book[]>;
-  readContentWindow(
-    bookId: string,
-    locator: ReaderLocator | null,
-    maxUnits: number,
-  ): Promise<ContentWindow>;
-  saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
-  getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
-  onImportProgress(listener: (status: ImportStatus) => void): Promise<UnlistenFn>;
-}
 
 const ERROR_CODES = new Set<ErrorCode>([
   "invalid_path",
@@ -84,36 +80,59 @@ function normalizeError(value: unknown): AppError {
   return { code: "io", message };
 }
 
-function invokeCommand<T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
+function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, args).catch((error: unknown) => {
     throw new ReaderServiceError(normalizeError(error));
   });
 }
 
-export const tauriReaderService: ReaderService = {
-  startImport: (path) => invokeCommand<ImportTask>("start_import", { path }),
-  getImportStatus: (operationId) =>
-    invokeCommand<ImportStatus>("get_import_status", { operationId }),
-  cancelImport: (operationId) =>
-    invokeCommand<CancelResult>("cancel_import", { operationId }),
-  listBooks: () => invokeCommand<Book[]>("list_books"),
-  readContentWindow: (bookId, locator, maxUnits) =>
-    invokeCommand<ContentWindow>("read_content_window", {
-      bookId,
-      locator,
-      maxUnits,
-    }),
-  saveReaderLocator: (locator) =>
-    invokeCommand<ReaderLocator>("save_reader_locator", { locator }),
-  getSavedReaderLocator: (bookId) =>
-    invokeCommand<ReaderLocator | null>("get_saved_reader_locator", { bookId }),
-  onImportProgress: (listener) =>
-    listen<ImportStatus>("import-progress", (event) => listener(event.payload)).catch(
-      (error: unknown) => {
-        throw new ReaderServiceError(normalizeError(error));
-      },
-    ),
+export const tauriServices: AppServices = {
+  library: {
+    pickAndImportTxt: async () => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "UTF-8 TXT", extensions: ["txt"] }],
+      });
+      if (selected === null) return null;
+      if (typeof selected !== "string") throw new Error("Expected one TXT file");
+      return tauriServices.library.startImport(selected);
+    },
+    startImport: (path) =>
+      invokeCommand<ImportTask>("start_import", { request: { path } satisfies StartImportRequest }),
+    getImportStatus: (operationId) =>
+      invokeCommand<ImportStatus>("get_import_status", {
+        request: { operationId } satisfies ImportOperationRequest,
+      }),
+    cancelImport: (operationId) =>
+      invokeCommand<CancelResult>("cancel_import", {
+        request: { operationId } satisfies ImportOperationRequest,
+      }),
+    listBooks: () => invokeCommand<LibraryBook[]>("list_books"),
+    onImportProgress: (listener) =>
+      listen<ImportStatus>("import-progress", (event) => listener(event.payload)),
+  },
+  reader: {
+    readContentWindow: (request: ReadContentRequest) =>
+      invokeCommand<ContentWindow>("read_content_window", { request }),
+    resolveLocator: (bookId, progress) =>
+      invokeCommand<ReaderLocator>("resolve_reader_locator", {
+        request: { bookId, progress } satisfies ResolveLocatorRequest,
+      }),
+    saveReaderLocator: (locator) =>
+      invokeCommand<ReaderLocator>("save_reader_locator", {
+        request: { locator } satisfies SaveLocatorRequest,
+      }),
+    getSavedReaderLocator: (bookId) =>
+      invokeCommand<ReaderLocator | null>("get_saved_reader_locator", {
+        request: { bookId } satisfies BookRequest,
+      }),
+  },
+  settings: {
+    getSettings: () => invokeCommand<ReaderPreferences>("get_settings"),
+    saveSettings: (settings) =>
+      invokeCommand<ReaderPreferences>("save_settings", {
+        request: { settings } satisfies SaveSettingsRequest,
+      }),
+  },
 };

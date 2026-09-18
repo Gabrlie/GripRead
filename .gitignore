@@ -42,3 +42,7 @@ temp/
 *.sqlite3-wal
 
 # Keep source documentation, including .ai/, tracked.
+
+# Isolated native acceptance output
+.native-target/
+.native-artifacts/

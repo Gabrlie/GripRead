@@ -1,236 +1,150 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import React, { Component, type ReactNode, useEffect, useState } from "react";
+import { MotionConfig, AnimatePresence, motion } from "motion/react";
+import { AppProvider, useApp } from "./context/AppContext";
+import { tauriServices } from "./services/ipc";
+import type { AppServices } from "./services/contracts";
+import { listenForClose } from "./services/lifecycle";
+import {
+  AppRuntime,
+  RuntimeContext,
+  useRuntime,
+  useSettings,
+  useLibrary,
+} from "./application/runtime";
+import { applyTheme } from "./application/theme";
+import { Navbar } from "./components/Layout/Navbar";
+import { BookshelfView } from "./components/Bookshelf/BookshelfView";
+import { DiscoverView } from "./components/Discover/DiscoverView";
+import { SubscriptionView } from "./components/Subscription/SubscriptionView";
+import { SettingsView } from "./components/Settings/SettingsView";
+import { ReaderView } from "./components/Reader/ReaderView";
+import { ImportModal } from "./components/Bookshelf/ImportModal";
 
-import type { Book, ImportStatus } from "./types/generated";
-import { tauriReaderService, type ReaderService } from "./services/ipc";
-import { ReaderSession } from "./reader/session";
-
-const WINDOW_UNITS = 3200;
-
-const isTerminalImportPhase = (phase: ImportStatus["phase"]) =>
-  phase === "completed" || phase === "failed" || phase === "cancelled";
-
-interface AppProps {
-  service?: ReaderService;
+interface ErrorBoundaryProps {
+  children: ReactNode;
 }
 
-export function App({ service = tauriReaderService }: AppProps) {
-  const [path, setPath] = useState("");
-  const [books, setBooks] = useState<Book[]>([]);
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
-  const [message, setMessage] = useState("Connect to the Tauri host to begin.");
-  const [windowText, setWindowText] = useState("");
-  const [windowInfo, setWindowInfo] = useState("No book opened");
-  const sessionRef = useRef<ReaderSession | null>(null);
-  const activeImportIdRef = useRef<string | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
 
-  const stopImportPolling = useCallback(() => {
-    if (pollTimerRef.current !== null) {
-      window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Uncaught error in component tree:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-surface text-on-surface text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl font-bold">
+            !
+          </div>
+          <h2 className="text-lg font-semibold">页面加载遇到问题</h2>
+          <p className="text-xs text-secondary max-w-sm">
+            {this.state.error?.message || "组件渲染异常，请点击重试"}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false })}
+            className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-medium cursor-pointer"
+          >
+            重试
+          </button>
+        </div>
+      );
     }
-  }, []);
+    return this.props.children;
+  }
+}
 
-  const refreshBooks = useCallback(async () => {
-    try {
-      setBooks(await service.listBooks());
-    } catch (error) {
-      setMessage(String(error));
-    }
-  }, [service]);
-
+function MainContent() {
+  const { activeTab, activeBook } = useApp();
+  const runtime = useRuntime();
+  const { state: library } = useLibrary();
+  const { state: settings } = useSettings();
+  const [closeError, setCloseError] = useState<string | null>(null);
+  useEffect(() => runtime.library.connect(), [runtime]);
   useEffect(() => {
-    void refreshBooks();
-    let unlisten: (() => void) | undefined;
+    void runtime.settings.load();
+  }, [runtime]);
+  useEffect(() => (settings.value ? applyTheme(settings.value) : undefined), [settings.value]);
+  useEffect(() => {
     let disposed = false;
-    void service.onImportProgress((status) => {
-      if (
-        !activeImportIdRef.current ||
-        status.operationId === activeImportIdRef.current
-      ) {
-        setImportStatus(status);
-      }
-    }).then((cleanup) => {
-      if (disposed) {
-        cleanup();
-      } else {
-        unlisten = cleanup;
-      }
-    });
+    let cleanup: (() => void) | undefined;
+    void listenForClose(runtime.flush, (error) => setCloseError(String(error)))
+      .then((fn) => {
+        if (disposed) fn();
+        else cleanup = fn;
+      })
+      .catch((error) => setCloseError(String(error)));
     return () => {
       disposed = true;
-      unlisten?.();
-      stopImportPolling();
+      cleanup?.();
     };
-  }, [refreshBooks, service, stopImportPolling]);
-
-  useEffect(() => {
-    if (!importStatus || !isTerminalImportPhase(importStatus.phase)) {
-      return;
-    }
-    if (importStatus.phase === "completed" && importStatus.result) {
-      setMessage(importStatus.result.duplicate ? "Existing asset reused." : "TXT imported.");
-      void refreshBooks();
-    } else if (importStatus.error) {
-      setMessage(`${importStatus.error.code}: ${importStatus.error.message}`);
-    }
-  }, [importStatus, refreshBooks]);
-
-  const importBook = async () => {
-    if (!path.trim()) {
-      setMessage("Enter a local TXT path first.");
-      return;
-    }
-    try {
-      stopImportPolling();
-      const task = await service.startImport(path.trim());
-      activeImportIdRef.current = task.operationId;
-      setMessage(`Import started: ${task.operationId}`);
-      const timer = window.setInterval(() => {
-        void service
-          .getImportStatus(task.operationId)
-          .then((status) => {
-            if (activeImportIdRef.current !== task.operationId) return;
-            setImportStatus(status);
-            if (isTerminalImportPhase(status.phase)) stopImportPolling();
-          })
-          .catch((error) => {
-            if (activeImportIdRef.current !== task.operationId) return;
-            stopImportPolling();
-            setMessage(String(error));
-          });
-      }, 200);
-      pollTimerRef.current = timer;
-      window.setTimeout(() => {
-        if (pollTimerRef.current === timer) stopImportPolling();
-      }, 60_000);
-    } catch (error) {
-      setMessage(String(error));
-    }
-  };
-
-  const openBook = async (book: Book) => {
-    try {
-      sessionRef.current?.dispose();
-      const session = new ReaderSession(service);
-      sessionRef.current = session;
-      const content = await session.open(book.id, WINDOW_UNITS);
-      setSelectedBook(book);
-      setWindowText(content.text);
-      setWindowInfo(`${content.startOffset}–${content.endOffset} / ${content.totalLength}`);
-      setMessage("Reader window loaded through typed IPC.");
-    } catch (error) {
-      setMessage(String(error));
-    }
-  };
-
-  const turn = async (direction: "next" | "previous") => {
-    const session = sessionRef.current;
-    if (!session) return;
-    try {
-      const content = await session.turn(direction, WINDOW_UNITS);
-      if (!content) return;
-      setWindowText(content.text);
-      setWindowInfo(`${content.startOffset}–${content.endOffset} / ${content.totalLength}`);
-    } catch (error) {
-      setMessage(String(error));
-    }
-  };
-
-  const savePosition = async () => {
-    try {
-      await sessionRef.current?.save();
-      setMessage("Reader position saved.");
-    } catch (error) {
-      setMessage(String(error));
-    }
-  };
-
+  }, [runtime]);
   return (
-    <main className="smoke-shell">
-      <motion.header
-        className="smoke-header"
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-      >
-        <div>
-          <p className="eyebrow">M0 LOGIC SMOKE HOST</p>
-          <h1>GripRead</h1>
+    <div
+      data-testid={!library.loading && !library.error && settings.value ? "app-ready" : undefined}
+      className="min-h-screen flex flex-col bg-surface text-on-surface min-w-0"
+    >
+      <Navbar />
+      {closeError && (
+        <div role="alert" className="fixed top-0 z-[100] bg-error-container text-error p-3 w-full">
+          退出前保存失败：{closeError}
+          <button className="ml-3 underline" onClick={() => setCloseError(null)}>
+            返回重试
+          </button>
         </div>
-        <p className="message" role="status">{message}</p>
-      </motion.header>
-
-      <section className="import-panel" aria-label="TXT import">
-        <label htmlFor="txt-path">Local UTF-8 TXT path</label>
-        <div className="import-controls">
-          <input
-            id="txt-path"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            placeholder="/path/to/book.txt"
-          />
-          <button type="button" onClick={() => void importBook()}>Import</button>
-          {importStatus && !isTerminalImportPhase(importStatus.phase) && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => void service.cancelImport(importStatus.operationId)}
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-        {importStatus && (
-          <p className="progress">
-            {importStatus.phase} · {importStatus.bytesRead}/{importStatus.totalBytes} bytes
-          </p>
-        )}
-      </section>
-
-      <div className="smoke-grid">
-        <section className="book-list" aria-label="Imported books">
-          <div className="section-title">
-            <h2>Local books</h2>
-            <button type="button" className="secondary" onClick={() => void refreshBooks()}>Refresh</button>
-          </div>
-          {books.length === 0 ? (
-            <p className="muted">No imported books yet.</p>
-          ) : (
-            <ul>
-              {books.map((book) => (
-                <li key={book.id}>
-                  <button
-                    type="button"
-                    className={selectedBook?.id === book.id ? "book selected" : "book"}
-                    onClick={() => void openBook(book)}
-                  >
-                    <span>{book.title}</span>
-                    <small>{book.contentVersion.slice(0, 12)}</small>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="reader-panel" aria-label="Reader content window">
-          <div className="section-title">
-            <div>
-              <h2>{selectedBook?.title ?? "Reader window"}</h2>
-              <p className="progress">{windowInfo}</p>
-            </div>
-            <button type="button" className="secondary" onClick={() => void savePosition()}>Save position</button>
-          </div>
-          <pre className="reader-window">{windowText || "Open an imported book to inspect a content window."}</pre>
-          <div className="reader-controls">
-            <button type="button" className="secondary" onClick={() => void turn("previous")}>Previous</button>
-            <button type="button" onClick={() => void turn("next")}>Next</button>
-          </div>
-        </section>
+      )}
+      <div className={`flex-1 flex flex-col ${activeBook ? "" : "md:pl-64"} min-w-0`}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={activeBook ? `reader-${activeBook.book.id}` : activeTab}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex-1 flex flex-col min-w-0"
+          >
+            {activeBook ? (
+              <ReaderView />
+            ) : activeTab === "bookshelf" ? (
+              <BookshelfView />
+            ) : activeTab === "discover" ? (
+              <DiscoverView />
+            ) : activeTab === "subscription" ? (
+              <SubscriptionView />
+            ) : (
+              <SettingsView />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
-    </main>
+      <ImportModal />
+    </div>
+  );
+}
+export function App({ services = tauriServices }: { services?: AppServices }) {
+  const [runtime] = useState(() => new AppRuntime(services));
+  return (
+    <ErrorBoundary>
+      <MotionConfig reducedMotion="user" transition={{ duration: 0.2, ease: "easeOut" }}>
+        <RuntimeContext.Provider value={runtime}>
+          <AppProvider>
+            <MainContent />
+          </AppProvider>
+        </RuntimeContext.Provider>
+      </MotionConfig>
+    </ErrorBoundary>
   );
 }

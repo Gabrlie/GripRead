@@ -112,3 +112,138 @@ pub struct ContentWindow {
     pub has_after: bool,
     pub locator: ReaderLocator,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadContentRequest {
+    pub book_id: String,
+    pub locator: Option<ReaderLocator>,
+    pub max_units: u64,
+    pub direction: WindowDirection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveLocatorRequest {
+    pub book_id: String,
+    pub progress: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookRequest {
+    pub book_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartImportRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOperationRequest {
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLocatorRequest {
+    pub locator: ReaderLocator,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryBook {
+    pub book: Book,
+    pub asset: BookAsset,
+    pub locator: Option<ReaderLocator>,
+    pub total_length: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    System,
+    Light,
+    Dark,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaperTone {
+    WarmTea,
+    BoneWhite,
+    XuanPaper,
+    JadeGreen,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderFont {
+    Serif,
+    Sans,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PageTurnEffect {
+    Instant,
+    Curl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderPreferences {
+    pub theme: ThemeMode,
+    pub paper_tone: PaperTone,
+    pub oled_black: bool,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub font_family: ReaderFont,
+    pub page_turn_effect: PageTurnEffect,
+}
+
+impl Default for ReaderPreferences {
+    fn default() -> Self {
+        Self {
+            theme: ThemeMode::System,
+            paper_tone: PaperTone::WarmTea,
+            oled_black: false,
+            font_size: 20.0,
+            line_height: 1.8,
+            font_family: ReaderFont::Serif,
+            page_turn_effect: PageTurnEffect::Curl,
+        }
+    }
+}
+
+impl ReaderPreferences {
+    /// Validate values crossing the IPC boundary and values restored from the
+    /// persistent preferences record. Enum fields are validated by serde;
+    /// these bounds keep typography values finite and usable by the WebView.
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !self.font_size.is_finite() || !(8.0..=96.0).contains(&self.font_size) {
+            return Err(AppError::invalid_argument(
+                "font_size must be a finite value between 8 and 96",
+            ));
+        }
+        if !self.line_height.is_finite() || !(1.0..=3.5).contains(&self.line_height) {
+            return Err(AppError::invalid_argument(
+                "line_height must be a finite value between 1 and 3.5",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSettingsRequest {
+    pub settings: ReaderPreferences,
+}

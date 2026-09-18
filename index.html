@@ -1,13 +1,15 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-Hans" class="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <title>GripRead M0 smoke host</title>
+    <title>GripRead · 手不释卷</title>
   </head>
-  <body>
-    <div id="root"></div>
+  <body
+    class="bg-surface text-on-surface min-h-screen flex flex-col font-body-md selection:bg-primary-fixed selection:text-on-primary-fixed"
+  >
+    <div id="root" class="min-h-screen flex flex-col"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

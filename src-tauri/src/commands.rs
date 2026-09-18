@@ -8,13 +8,18 @@ use uuid::Uuid;
 
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
-    Book, CancelResult, ContentWindow, ImportPhase, ImportResult, ImportStatus, ImportTask,
-    ReaderLocator,
+    BookRequest, CancelResult, ContentWindow, ImportOperationRequest, ImportPhase, ImportResult,
+    ImportStatus, ImportTask, LibraryBook, ReadContentRequest, ReaderLocator, ReaderPreferences,
+    ResolveLocatorRequest, SaveLocatorRequest, SaveSettingsRequest, StartImportRequest,
 };
-use crate::storage::Storage;
+use crate::storage::{
+    read_content_window_from_context, resolve_locator_from_context, validate_content_locator,
+    validate_import_target, verify_content_context, Storage,
+};
 
 pub struct AppState {
     pub storage: Arc<Mutex<Storage>>,
+    pub data_root: PathBuf,
     imports: Arc<Mutex<HashMap<String, ImportOperation>>>,
 }
 
@@ -25,19 +30,25 @@ struct ImportOperation {
 
 impl AppState {
     pub fn new(data_dir: PathBuf) -> Result<Self, AppError> {
+        let storage = Storage::open(&data_dir)?;
+        let data_root = storage.root_path().to_path_buf();
         Ok(Self {
-            storage: Arc::new(Mutex::new(Storage::open(&data_dir)?)),
+            storage: Arc::new(Mutex::new(storage)),
+            data_root,
             imports: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }
 
 #[tauri::command]
-pub fn start_import(
-    path: String,
+pub async fn start_import(
+    request: StartImportRequest,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ImportTask, AppError> {
+    if request.path.trim().is_empty() {
+        return Err(AppError::invalid_argument("import path cannot be empty"));
+    }
     let operation_id = Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let initial_status = ImportStatus {
@@ -56,172 +67,319 @@ pub fn start_import(
             operation_id.clone(),
             ImportOperation {
                 cancel: Arc::clone(&cancel),
-                status: initial_status.clone(),
+                status: initial_status,
             },
         );
 
+    // Only the immutable data-directory path is copied while holding the
+    // storage mutex. Reading, decoding, hashing, and index construction all
+    // happen in the blocking worker before the short commit lock.
+    let data_root = state.data_root.clone();
     let storage = Arc::clone(&state.storage);
     let worker_operation_id = operation_id.clone();
     let worker_imports = Arc::clone(&imports);
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("gripread-import-{operation_id}"))
-        .spawn(move || {
-            let result = match storage.lock() {
-                Ok(mut storage) => storage.import_txt(
-                    &PathBuf::from(path),
-                    &worker_operation_id,
-                    &cancel,
-                    |phase, bytes_read, total_bytes| {
-                        let status = ImportStatus {
-                            operation_id: worker_operation_id.clone(),
+    let source = PathBuf::from(request.path);
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let blocking_operation_id = worker_operation_id.clone();
+        let blocking_imports = Arc::clone(&worker_imports);
+        let blocking_app = worker_app.clone();
+        let blocking = tauri::async_runtime::spawn_blocking(move || {
+            let prepared = Storage::prepare_import(
+                &data_root,
+                &source,
+                &blocking_operation_id,
+                &cancel,
+                |phase, bytes_read, total_bytes| {
+                    publish_import_status(
+                        &blocking_imports,
+                        &blocking_app,
+                        ImportStatus {
+                            operation_id: blocking_operation_id.clone(),
                             phase,
                             bytes_read,
                             total_bytes,
                             result: None,
                             error: None,
-                        };
-                        publish_import_status(&worker_imports, &app, status);
-                    },
-                ),
-                Err(_) => Err(AppError::new(
-                    ErrorCode::Database,
-                    "storage lock is poisoned",
-                )),
-            };
-
+                        },
+                    );
+                },
+            )?;
+            let result = (|| -> Result<ImportResult, AppError> {
+                let target = {
+                    let guard = storage.lock().map_err(|_| {
+                        AppError::new(ErrorCode::Database, "storage lock is poisoned")
+                    })?;
+                    guard.snapshot_import_target(&prepared.sha256)?
+                };
+                let validated_target = target
+                    .as_ref()
+                    .map(|target| validate_import_target(&data_root, target, &cancel))
+                    .transpose()?;
+                let mut guard = storage
+                    .lock()
+                    .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+                guard.commit_import(prepared, &cancel, |_, _, _| {}, validated_target.as_ref())
+            })();
             match result {
-                Ok(imported) => publish_import_status(
-                    &worker_imports,
-                    &app,
-                    completed_status(&worker_operation_id, imported),
-                ),
-                Err(error) if error.code == ErrorCode::ImportCancelled => publish_import_status(
-                    &worker_imports,
-                    &app,
-                    terminal_status(
-                        &worker_imports,
-                        &worker_operation_id,
-                        ImportPhase::Cancelled,
-                        error,
-                    ),
-                ),
-                Err(error) => publish_import_status(
-                    &worker_imports,
-                    &app,
-                    terminal_status(
-                        &worker_imports,
-                        &worker_operation_id,
-                        ImportPhase::Failed,
-                        error,
-                    ),
-                ),
+                Ok(imported) => Ok(imported),
+                Err(error) => {
+                    // Ordinary worker failures are cleaned immediately. If a
+                    // file or SQLite cleanup step fails, cleanup_import leaves
+                    // the durable journal in place for the next restart.
+                    let cleanup = storage
+                        .lock()
+                        .map_err(|_| {
+                            AppError::new(ErrorCode::Database, "storage lock is poisoned")
+                        })?
+                        .cleanup_import(&blocking_operation_id);
+                    match cleanup {
+                        Ok(()) => Err(error),
+                        Err(cleanup_error) => Err(AppError::new(
+                            error.code.clone(),
+                            format!(
+                                "{}; import cleanup failed: {}",
+                                error.message, cleanup_error.message
+                            ),
+                        )),
+                    }
+                }
             }
         });
-
-    if let Err(error) = spawn_result {
-        if let Ok(mut operations) = imports.lock() {
-            operations.remove(&operation_id);
+        let result = match blocking.await {
+            Ok(result) => result,
+            Err(error) => Err(AppError::new(
+                ErrorCode::Io,
+                format!("import worker stopped unexpectedly: {error}"),
+            )),
+        };
+        match result {
+            Ok(imported) => publish_import_status(
+                &worker_imports,
+                &worker_app,
+                completed_status(&worker_operation_id, imported),
+            ),
+            Err(error) if error.code == ErrorCode::ImportCancelled => publish_import_status(
+                &worker_imports,
+                &worker_app,
+                terminal_status(
+                    &worker_imports,
+                    &worker_operation_id,
+                    ImportPhase::Cancelled,
+                    error,
+                ),
+            ),
+            Err(error) => publish_import_status(
+                &worker_imports,
+                &worker_app,
+                terminal_status(
+                    &worker_imports,
+                    &worker_operation_id,
+                    ImportPhase::Failed,
+                    error,
+                ),
+            ),
         }
-        return Err(AppError::new(
-            ErrorCode::Io,
-            format!("unable to start import: {error}"),
-        ));
-    }
+    });
 
     Ok(ImportTask { operation_id })
 }
 
 #[tauri::command]
-pub fn get_import_status(
-    operation_id: String,
+pub async fn get_import_status(
+    request: ImportOperationRequest,
     state: State<'_, AppState>,
 ) -> Result<ImportStatus, AppError> {
-    state
-        .imports
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?
-        .get(&operation_id)
-        .map(|operation| operation.status.clone())
-        .ok_or_else(|| {
+    let imports = Arc::clone(&state.imports);
+    tauri::async_runtime::spawn_blocking(move || {
+        imports
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?
+            .get(&request.operation_id)
+            .map(|operation| operation.status.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCode::OperationNotFound,
+                    "import operation was not found",
+                )
+            })
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("status worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn cancel_import(
+    request: ImportOperationRequest,
+    state: State<'_, AppState>,
+) -> Result<CancelResult, AppError> {
+    let imports = Arc::clone(&state.imports);
+    tauri::async_runtime::spawn_blocking(move || {
+        let imports = imports
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?;
+        let operation = imports.get(&request.operation_id).ok_or_else(|| {
             AppError::new(
                 ErrorCode::OperationNotFound,
                 "import operation was not found",
             )
+        })?;
+        let terminal = matches!(
+            operation.status.phase,
+            ImportPhase::Completed | ImportPhase::Failed | ImportPhase::Cancelled
+        );
+        if !terminal {
+            operation.cancel.store(true, Ordering::Release);
+        }
+        Ok(CancelResult {
+            requested: !terminal,
         })
-}
-
-#[tauri::command]
-pub fn cancel_import(
-    operation_id: String,
-    state: State<'_, AppState>,
-) -> Result<CancelResult, AppError> {
-    let imports = state
-        .imports
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?;
-    let operation = imports.get(&operation_id).ok_or_else(|| {
-        AppError::new(
-            ErrorCode::OperationNotFound,
-            "import operation was not found",
-        )
-    })?;
-    let terminal = matches!(
-        operation.status.phase,
-        ImportPhase::Completed | ImportPhase::Failed | ImportPhase::Cancelled
-    );
-    if !terminal {
-        operation.cancel.store(true, Ordering::Release);
-    }
-    Ok(CancelResult {
-        requested: !terminal,
     })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("cancel worker stopped: {error}")))?
 }
 
 #[tauri::command]
-pub fn list_books(state: State<'_, AppState>) -> Result<Vec<Book>, AppError> {
-    state
-        .storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .list_books()
+pub async fn list_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        storage.list_library_books()
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("library worker stopped: {error}")))?
 }
 
 #[tauri::command]
-pub fn read_content_window(
-    book_id: String,
-    locator: Option<ReaderLocator>,
-    max_units: u64,
+pub async fn read_content_window(
+    request: ReadContentRequest,
     state: State<'_, AppState>,
 ) -> Result<ContentWindow, AppError> {
-    state
-        .storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .read_content_window(&book_id, locator.as_ref(), max_units)
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.content_read_context(&request.book_id)?
+        };
+        let verified = verify_content_context(&context)?;
+        {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.persist_content_index(&context, &verified)?;
+        }
+        read_content_window_from_context(&request, &context, &verified)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("content worker stopped: {error}")))?
 }
 
 #[tauri::command]
-pub fn save_reader_locator(
-    locator: ReaderLocator,
+pub async fn resolve_reader_locator(
+    request: ResolveLocatorRequest,
     state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
-    state
-        .storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .save_position(&locator)
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        if !request.progress.is_finite() || !(0.0..=1.0).contains(&request.progress) {
+            return Err(AppError::invalid_argument(
+                "reader progress must be a finite number between 0 and 1",
+            ));
+        }
+        let context = {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.content_read_context(&request.book_id)?
+        };
+        let verified = verify_content_context(&context)?;
+        {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.persist_content_index(&context, &verified)?;
+        }
+        resolve_locator_from_context(&request, &context, &verified)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("locator worker stopped: {error}")))?
 }
 
 #[tauri::command]
-pub fn get_saved_reader_locator(
-    book_id: String,
+pub async fn save_reader_locator(
+    request: SaveLocatorRequest,
+    state: State<'_, AppState>,
+) -> Result<ReaderLocator, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.content_read_context(&request.locator.book_id)?
+        };
+        let verified = verify_content_context(&context)?;
+        validate_content_locator(&context, &verified, &request.locator)?;
+        {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            storage.persist_content_index(&context, &verified)?;
+            storage.save_position_record(&request.locator)?;
+        }
+        Ok(request.locator)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("position worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn get_saved_reader_locator(
+    request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<Option<ReaderLocator>, AppError> {
-    state
-        .storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .saved_position(&book_id)
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        storage.saved_position(&request.book_id)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("position worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> Result<ReaderPreferences, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        storage.get_settings()
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("settings worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    request: SaveSettingsRequest,
+    state: State<'_, AppState>,
+) -> Result<ReaderPreferences, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        storage.save_settings(&request.settings)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("settings worker stopped: {error}")))?
 }
 
 fn completed_status(operation_id: &str, result: ImportResult) -> ImportStatus {
@@ -260,15 +418,33 @@ fn terminal_status(
     }
 }
 
+fn is_terminal(phase: &ImportPhase) -> bool {
+    matches!(
+        phase,
+        ImportPhase::Completed | ImportPhase::Failed | ImportPhase::Cancelled
+    )
+}
+
 fn publish_import_status(
     imports: &Mutex<HashMap<String, ImportOperation>>,
     app: &AppHandle,
     status: ImportStatus,
 ) {
-    if let Ok(mut operations) = imports.lock() {
+    let should_emit = if let Ok(mut operations) = imports.lock() {
         if let Some(operation) = operations.get_mut(&status.operation_id) {
-            operation.status = status.clone();
+            if is_terminal(&operation.status.phase) {
+                false
+            } else {
+                operation.status = status.clone();
+                true
+            }
+        } else {
+            false
         }
+    } else {
+        false
+    };
+    if should_emit {
+        let _ = app.emit("import-progress", status);
     }
-    let _ = app.emit("import-progress", status);
 }

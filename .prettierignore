@@ -1,0 +1,9 @@
+node_modules
+dist
+src-tauri
+src/types/generated
+src/types/generated.ts
+pnpm-lock.yaml
+.ai
+README.md
+AGENTS.md

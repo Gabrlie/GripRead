@@ -1,57 +1,142 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+use fs2::FileExt;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AssetAvailability, AssetKind, Book, BookAsset, ContentWindow, ImportPhase, ImportResult,
-    ReaderLocator,
+    LibraryBook, ReadContentRequest, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
+    WindowDirection,
 };
-use crate::txt::{
-    byte_index_for_offset, decode_and_normalize, floor_boundary, utf16_boundaries, utf16_length,
-};
+use crate::txt::decode_and_normalize;
 
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
+const INDEX_SCHEMA_VERSION: u8 = 1;
+const INDEX_STRIDE_UNITS: u64 = 4096;
+const CONTEXT_BYTES: u64 = 512;
 
+/// A storage handle owns an OS lock for the complete lifetime of the handle.
+/// The SQLite connection is accessed by commands through the application's
+/// mutex; no storage method depends on Tauri.
+#[derive(Debug)]
 pub struct Storage {
     root: PathBuf,
     conn: Connection,
+    // The field is intentionally retained for its Drop-based lock lifetime.
+    #[allow(dead_code)]
+    data_lock: File,
+    /// A process-local cache of indexes that have been checked against the
+    /// complete asset bytes. A persisted index is never trusted until this
+    /// cache has been populated for the current file fingerprint.
+    verified_indexes: Mutex<HashMap<String, VerifiedContentIndex>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedImport {
+    operation_id: String,
+    source: PathBuf,
+    stage_relative_path: String,
+    pub(crate) sha256: String,
+    byte_length: u64,
+    index_json: String,
+    source_byte_length: u64,
+}
+
+#[derive(Debug, Clone)]
 struct AssetRecord {
     asset: BookAsset,
     relative_path: String,
 }
 
-struct FinalFileGuard(Option<PathBuf>);
-
-impl FinalFileGuard {
-    fn new() -> Self {
-        Self(None)
-    }
-
-    fn track(&mut self, path: PathBuf) {
-        self.0 = Some(path);
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
+/// A short database/filesystem snapshot used to validate a duplicate import
+/// outside the application's storage mutex. The fingerprint is metadata only;
+/// `validate_import_target` hashes the file while no SQLite lock is held.
+#[derive(Debug, Clone)]
+pub(crate) struct ImportTargetSnapshot {
+    relative_path: String,
+    sha256: String,
+    fingerprint: Option<String>,
 }
 
-impl Drop for FinalFileGuard {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = fs::remove_file(path);
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SparseIndex {
+    schema_version: u8,
+    stride_units: u64,
+    byte_length: u64,
+    utf16_length: u64,
+    entries: Vec<IndexEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct IndexEntry {
+    utf16_offset: u64,
+    byte_offset: u64,
+}
+
+#[derive(Debug, Clone)]
+struct JournalRecord {
+    operation_id: String,
+    book_id: String,
+    asset_id: String,
+    title: String,
+    sha256: String,
+    byte_length: u64,
+    content_version: String,
+    relative_path: String,
+    stage_path: String,
+    index_json: String,
+    source_byte_length: u64,
+    created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+struct PersistedIndex {
+    index: SparseIndex,
+    fingerprint: String,
+}
+
+/// The database portion of a content request. Commands keep the application
+/// mutex only while constructing this snapshot, then verify and read files
+/// without holding it.
+#[derive(Debug, Clone)]
+pub(crate) struct ContentReadContext {
+    root: PathBuf,
+    record: AssetRecord,
+    persisted: Option<PersistedIndex>,
+    verified: Option<VerifiedContentIndex>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VerifiedContentIndex {
+    index: SparseIndex,
+    fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BoundaryMode {
+    Exact,
+    Floor,
+    Ceiling,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Boundary {
+    utf16_offset: u64,
+    byte_offset: u64,
 }
 
 impl Storage {
@@ -60,33 +145,70 @@ impl Storage {
         fs::create_dir_all(root.join("books"))?;
         fs::create_dir_all(root.join("staging"))?;
 
+        let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let lock_path = root.join(".data.lock");
+        let data_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        data_lock.try_lock_exclusive().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                AppError::new(
+                    ErrorCode::Database,
+                    "the GripRead data directory is already in use",
+                )
+            } else {
+                AppError::new(
+                    ErrorCode::Io,
+                    format!("unable to lock data directory: {error}"),
+                )
+            }
+        })?;
+
         let conn = Connection::open(root.join("gripread.sqlite3"))?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-        Self::apply_migrations(&conn)?;
-        Self::cleanup_staging_dir(&root.join("staging"));
 
-        Ok(Self {
-            root: root.to_path_buf(),
+        let mut storage = Self {
+            root,
             conn,
-        })
+            data_lock,
+            verified_indexes: Mutex::new(HashMap::new()),
+        };
+        storage.apply_migrations()?;
+        storage.recover_pending_imports()?;
+        storage.remove_orphan_managed_files()?;
+        storage.cleanup_staging_dir();
+        Ok(storage)
     }
 
-    fn apply_migrations(conn: &Connection) -> Result<(), AppError> {
-        conn.execute_batch(
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
+    fn apply_migrations(&mut self) -> Result<(), AppError> {
+        self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY NOT NULL,
                 applied_at INTEGER NOT NULL
             );",
         )?;
 
-        let current: i64 = conn.query_row(
+        let current: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
             [],
             |row| row.get(0),
         )?;
+        if current > CURRENT_SCHEMA_VERSION {
+            return Err(AppError::new(
+                ErrorCode::Database,
+                format!("unsupported future storage schema version {current}"),
+            ));
+        }
 
         if current < 1 {
-            let tx = conn.unchecked_transaction()?;
+            let tx = self.conn.transaction()?;
             tx.execute_batch(
                 "CREATE TABLE books (
                     id TEXT PRIMARY KEY NOT NULL,
@@ -123,57 +245,69 @@ impl Storage {
             tx.commit()?;
         }
 
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 2 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS import_journal (
+                    operation_id TEXT PRIMARY KEY NOT NULL,
+                    book_id TEXT NOT NULL,
+                    asset_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    byte_length INTEGER NOT NULL,
+                    content_version TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    stage_path TEXT NOT NULL,
+                    index_json TEXT NOT NULL,
+                    source_byte_length INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS import_journal_created_at_idx
+                    ON import_journal(created_at);
+
+                CREATE TABLE IF NOT EXISTS content_indexes (
+                    asset_id TEXT PRIMARY KEY NOT NULL REFERENCES book_assets(id) ON DELETE CASCADE,
+                    schema_version INTEGER NOT NULL,
+                    stride_units INTEGER NOT NULL,
+                    byte_length INTEGER NOT NULL,
+                    utf16_length INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    index_json TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reader_preferences (
+                    id INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
+                    preferences_json TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![2_i64, now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
-    fn cleanup_staging_dir(staging_dir: &Path) {
-        let Ok(entries) = fs::read_dir(staging_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|extension| extension == "part")
-            {
-                let _ = fs::remove_file(path);
-            }
-        }
-    }
-
-    pub fn list_books(&self) -> Result<Vec<Book>, AppError> {
-        let mut statement = self.conn.prepare(
-            "SELECT id, title, author, content_version, created_at, updated_at
-             FROM books ORDER BY updated_at DESC, id ASC",
-        )?;
-        let books = statement
-            .query_map([], book_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(books)
-    }
-
-    pub fn get_book(&self, book_id: &str) -> Result<Book, AppError> {
-        self.conn
-            .query_row(
-                "SELECT id, title, author, content_version, created_at, updated_at
-                 FROM books WHERE id = ?1",
-                params![book_id],
-                book_from_row,
-            )
-            .optional()?
-            .ok_or_else(|| {
-                AppError::new(ErrorCode::NotFound, format!("book {book_id} was not found"))
-            })
-    }
-
-    pub fn import_txt<F>(
-        &mut self,
+    /// Prepare all blocking import work without borrowing the SQLite handle.
+    /// The stage file is owned by the operation ID and remains recoverable if
+    /// the process exits before the journal transaction is registered.
+    pub(crate) fn prepare_import<F>(
+        root: &Path,
         source: &Path,
         operation_id: &str,
         cancel: &AtomicBool,
         mut report: F,
-    ) -> Result<ImportResult, AppError>
+    ) -> Result<PreparedImport, AppError>
     where
         F: FnMut(ImportPhase, u64, u64),
     {
@@ -195,6 +329,7 @@ impl Storage {
         }
 
         let total_bytes = metadata.len();
+        let source_fingerprint = fingerprint_for_metadata(&metadata);
         report(ImportPhase::Reading, 0, total_bytes);
         let mut file = File::open(source)?;
         let mut input = Vec::with_capacity(total_bytes.min(8 * 1024 * 1024) as usize);
@@ -202,10 +337,7 @@ impl Storage {
         let mut bytes_read = 0_u64;
         loop {
             if cancel.load(Ordering::Acquire) {
-                return Err(AppError::new(
-                    ErrorCode::ImportCancelled,
-                    "TXT import was cancelled",
-                ));
+                return Err(import_cancelled());
             }
             let read = file.read(&mut chunk)?;
             if read == 0 {
@@ -216,211 +348,514 @@ impl Storage {
             report(ImportPhase::Reading, bytes_read, total_bytes);
         }
 
-        report(ImportPhase::Normalizing, bytes_read, total_bytes);
-        let normalized = decode_and_normalize(&input)?;
         if cancel.load(Ordering::Acquire) {
+            return Err(import_cancelled());
+        }
+
+        let final_metadata = fs::metadata(source).map_err(|error| {
+            AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                format!("selected TXT changed while reading: {error}"),
+            )
+        })?;
+        if bytes_read != total_bytes
+            || final_metadata.len() != total_bytes
+            || fingerprint_for_metadata(&final_metadata) != source_fingerprint
+        {
             return Err(AppError::new(
-                ErrorCode::ImportCancelled,
-                "TXT import was cancelled",
+                ErrorCode::ContentVersionMismatch,
+                "selected TXT changed while reading",
             ));
         }
 
-        let stage_path = self
-            .root
-            .join("staging")
-            .join(format!("{operation_id}.part"));
-        let result = self.persist_staged(
-            source,
-            &stage_path,
-            normalized.as_bytes(),
-            total_bytes,
-            cancel,
-            &mut report,
-        );
+        report(ImportPhase::Normalizing, bytes_read, total_bytes);
+        let normalized = decode_and_normalize(&input)?;
+        if cancel.load(Ordering::Acquire) {
+            return Err(import_cancelled());
+        }
+
+        let normalized_bytes = normalized.as_bytes();
+        let hash = Sha256::digest(normalized_bytes);
+        let sha256 = format!("{hash:x}");
+        let sparse_index = build_sparse_index(&normalized);
+        if cancel.load(Ordering::Acquire) {
+            return Err(import_cancelled());
+        }
+        let index_json = serde_json::to_string(&sparse_index)?;
+        let stage_relative_path = format!("staging/{operation_id}.part");
+        let stage_path = managed_path(root, &stage_relative_path, "staging")?;
+        let result = (|| -> Result<PreparedImport, AppError> {
+            let mut stage = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&stage_path)?;
+            stage.write_all(normalized_bytes)?;
+            stage.sync_all()?;
+            drop(stage);
+            if cancel.load(Ordering::Acquire) {
+                return Err(import_cancelled());
+            }
+            report(ImportPhase::Persisting, total_bytes, total_bytes);
+            Ok(PreparedImport {
+                operation_id: operation_id.to_string(),
+                source: source.to_path_buf(),
+                stage_relative_path,
+                sha256,
+                byte_length: normalized_bytes.len() as u64,
+                index_json,
+                source_byte_length: total_bytes,
+            })
+        })();
         if result.is_err() {
-            let _ = fs::remove_file(&stage_path);
+            let _ = fs::remove_file(stage_path);
         }
         result
     }
 
-    fn persist_staged<F>(
+    /// Commit a prepared import. The journal row is durable before the final
+    /// rename. Once the rename begins cancellation is intentionally ignored so
+    /// the operation cannot report cancellation while leaving a half-published
+    /// asset in the current process.
+    pub(crate) fn commit_import<F>(
         &mut self,
-        source: &Path,
-        stage_path: &Path,
-        normalized: &[u8],
-        source_byte_length: u64,
+        prepared: PreparedImport,
         cancel: &AtomicBool,
-        report: &mut F,
+        mut report: F,
+        validated_existing: Option<&ImportTargetSnapshot>,
     ) -> Result<ImportResult, AppError>
     where
         F: FnMut(ImportPhase, u64, u64),
     {
-        let mut stage = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(stage_path)?;
-        stage.write_all(normalized)?;
-        stage.sync_all()?;
-        drop(stage);
-
-        if cancel.load(Ordering::Acquire) {
+        let stage_path = managed_path(&self.root, &prepared.stage_relative_path, "staging")?;
+        if !stage_path.is_file() {
             return Err(AppError::new(
-                ErrorCode::ImportCancelled,
-                "TXT import was cancelled",
+                ErrorCode::AssetMissing,
+                "prepared import staging file is missing",
             ));
         }
+        if cancel.load(Ordering::Acquire) {
+            let _ = fs::remove_file(stage_path);
+            return Err(import_cancelled());
+        }
 
-        let hash = Sha256::digest(normalized);
-        let sha256 = format!("{hash:x}");
-        report(
-            ImportPhase::Persisting,
-            source_byte_length,
-            source_byte_length,
-        );
-
-        let root = self.root.clone();
-        let mut final_file_guard = FinalFileGuard::new();
-        let transaction = self.conn.transaction()?;
-        let existing = transaction
+        let existing = self
+            .conn
             .query_row(
                 "SELECT id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
                  FROM book_assets WHERE sha256 = ?1",
-                params![sha256],
+                params![prepared.sha256],
                 asset_from_row,
             )
             .optional()?;
 
-        let result = if let Some(existing) = existing {
-            let final_path = root.join(&existing.relative_path);
-            if final_path.exists() {
-                fs::remove_file(stage_path)?;
-            } else {
-                if let Some(parent) = final_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::rename(stage_path, &final_path)?;
-                final_file_guard.track(final_path.clone());
-            }
-
-            if cancel.load(Ordering::Acquire) {
-                return Err(AppError::new(
-                    ErrorCode::ImportCancelled,
-                    "TXT import was cancelled",
-                ));
-            }
-
-            let book = transaction
-                .query_row(
-                    "SELECT id, title, author, content_version, created_at, updated_at
-                     FROM books WHERE id = ?1",
-                    params![existing.asset.book_id],
-                    book_from_row,
+        let (book_id, asset_id, relative_path, title, duplicate, needs_publish, created_at) =
+            if let Some(existing) = existing {
+                let final_path = managed_path(&self.root, &existing.relative_path, "books")?;
+                let needs_publish = !final_path.is_file();
+                (
+                    existing.asset.book_id.clone(),
+                    existing.asset.id.clone(),
+                    existing.relative_path,
+                    self.get_book(&existing.asset.book_id)?.title,
+                    true,
+                    needs_publish,
+                    existing.asset.created_at,
                 )
-                .map_err(AppError::from)?;
-            let asset = BookAsset {
-                availability: AssetAvailability::Ready,
-                ..existing.asset
+            } else {
+                let book_id = Uuid::new_v4().to_string();
+                let asset_id = Uuid::new_v4().to_string();
+                (
+                    book_id.clone(),
+                    asset_id.clone(),
+                    format!("books/{book_id}/{asset_id}.txt"),
+                    title_from_path(&prepared.source),
+                    false,
+                    true,
+                    now_millis(),
+                )
             };
-            ImportResult {
-                book,
-                asset,
-                duplicate: true,
-                source_byte_length,
-            }
-        } else {
-            let book_id = Uuid::new_v4().to_string();
-            let asset_id = Uuid::new_v4().to_string();
-            let content_version = sha256.clone();
-            let created_at = now_millis();
-            let title = title_from_path(source);
-            let relative_path = format!("books/{book_id}/{asset_id}.txt");
-            let final_path = root.join(&relative_path);
 
+        let content_version = prepared.sha256.clone();
+        let source_byte_length = prepared.source_byte_length;
+        let journal = JournalRecord {
+            operation_id: prepared.operation_id.clone(),
+            book_id: book_id.clone(),
+            asset_id: asset_id.clone(),
+            title,
+            sha256: prepared.sha256.clone(),
+            byte_length: prepared.byte_length,
+            content_version: content_version.clone(),
+            relative_path: relative_path.clone(),
+            stage_path: prepared.stage_relative_path.clone(),
+            index_json: prepared.index_json.clone(),
+            source_byte_length,
+            created_at,
+        };
+
+        if needs_publish {
+            let tx = self.conn.transaction()?;
+            insert_journal(&tx, &journal)?;
+            tx.commit()?;
+            maybe_inject_failure(&self.root, cancel, FailurePoint::AfterJournal)?;
+            if cancel.load(Ordering::Acquire) {
+                return Err(import_cancelled());
+            }
+
+            let final_path = managed_path(&self.root, &relative_path, "books")?;
             if let Some(parent) = final_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::rename(stage_path, &final_path)?;
-            final_file_guard.track(final_path.clone());
-
-            if cancel.load(Ordering::Acquire) {
-                let _ = fs::remove_file(&final_path);
-                return Err(AppError::new(
-                    ErrorCode::ImportCancelled,
-                    "TXT import was cancelled",
-                ));
+            if final_path.exists() {
+                fs::remove_file(&final_path)?;
             }
+            fs::rename(&stage_path, &final_path)?;
+            sync_parent(&final_path)?;
+            maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
 
-            let book = Book {
-                id: book_id.clone(),
-                title,
-                author: None,
-                content_version: content_version.clone(),
-                created_at,
-                updated_at: created_at,
-            };
-            transaction.execute(
-                "INSERT INTO books(id, title, author, content_version, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    book.id,
-                    book.title,
-                    book.author,
-                    book.content_version,
-                    book.created_at,
-                    book.updated_at
-                ],
+            let tx = self.conn.transaction()?;
+            if !duplicate {
+                tx.execute(
+                    "INSERT INTO books(id, title, author, content_version, created_at, updated_at)
+                     VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                    params![
+                        journal.book_id,
+                        journal.title,
+                        journal.content_version,
+                        journal.created_at,
+                        journal.created_at
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO book_assets(
+                        id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
+                     ) VALUES (?1, ?2, 'txt', ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        journal.asset_id,
+                        journal.book_id,
+                        journal.sha256,
+                        journal.byte_length as i64,
+                        journal.content_version,
+                        journal.relative_path,
+                        journal.created_at
+                    ],
+                )?;
+            }
+            let fingerprint = file_fingerprint(&final_path)?.1;
+            insert_content_index(
+                &tx,
+                &journal.asset_id,
+                &parse_index(&journal.index_json)?,
+                &fingerprint,
             )?;
+            maybe_inject_failure(&self.root, cancel, FailurePoint::BeforeFinalCommit)?;
+            // Keep the journal until the same transaction that publishes the
+            // book, asset, and index commits. If the final commit fails, the
+            // journal still names the newly renamed file so the in-process
+            // cleanup and next-start recovery can remove it immediately.
+            tx.execute(
+                "DELETE FROM import_journal WHERE operation_id = ?1",
+                params![journal.operation_id],
+            )?;
+            tx.commit()?;
 
+            report(
+                ImportPhase::Completed,
+                source_byte_length,
+                source_byte_length,
+            );
             let asset = BookAsset {
                 id: asset_id,
                 book_id: book_id.clone(),
                 kind: AssetKind::Txt,
-                sha256,
-                byte_length: normalized.len() as u64,
+                sha256: prepared.sha256,
+                byte_length: prepared.byte_length,
                 content_version,
                 availability: AssetAvailability::Ready,
                 created_at,
             };
-            transaction.execute(
-                "INSERT INTO book_assets(
-                    id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    asset.id,
-                    asset.book_id,
-                    "txt",
-                    asset.sha256,
-                    asset.byte_length as i64,
-                    asset.content_version,
-                    relative_path,
-                    asset.created_at
-                ],
-            )?;
-
-            ImportResult {
+            let book = self.get_book(&book_id)?;
+            Ok(ImportResult {
                 book,
                 asset,
-                duplicate: false,
+                duplicate,
                 source_byte_length,
+            })
+        } else {
+            // A duplicate whose managed path is already present has no file
+            // publication to recover. The command path validates the existing
+            // bytes before taking the storage mutex; the direct storage helper
+            // keeps its synchronous hash fallback for callers without that
+            // preflight snapshot.
+            let final_path = managed_path(&self.root, &relative_path, "books")?;
+            let (_, current_fingerprint) = file_fingerprint(&final_path)?;
+            let preflight_matches = validated_existing.is_some_and(|snapshot| {
+                snapshot.relative_path == relative_path
+                    && snapshot.sha256 == prepared.sha256
+                    && snapshot.fingerprint.as_deref() == Some(current_fingerprint.as_str())
+            });
+            if !preflight_matches {
+                if validated_existing.is_some() {
+                    return Err(content_changed_error(
+                        &asset_id,
+                        "while validating a duplicate import",
+                    ));
+                }
+                let actual_hash = hash_file(&final_path)?;
+                if actual_hash != prepared.sha256 {
+                    return Err(AppError::new(
+                        ErrorCode::ContentVersionMismatch,
+                        format!("managed asset {asset_id} changed since import"),
+                    ));
+                }
             }
-        };
-
-        if cancel.load(Ordering::Acquire) {
-            return Err(AppError::new(
-                ErrorCode::ImportCancelled,
-                "TXT import was cancelled",
-            ));
+            fs::remove_file(stage_path)?;
+            if cancel.load(Ordering::Acquire) {
+                return Err(import_cancelled());
+            }
+            let fingerprint = file_fingerprint(&final_path)?.1;
+            let tx = self.conn.transaction()?;
+            insert_content_index(
+                &tx,
+                &asset_id,
+                &parse_index(&prepared.index_json)?,
+                &fingerprint,
+            )?;
+            maybe_inject_failure(&self.root, cancel, FailurePoint::BeforeFinalCommit)?;
+            tx.commit()?;
+            let existing = self
+                .conn
+                .query_row(
+                    "SELECT id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
+                     FROM book_assets WHERE id = ?1",
+                    params![asset_id],
+                    asset_from_row,
+                )?;
+            report(
+                ImportPhase::Completed,
+                source_byte_length,
+                source_byte_length,
+            );
+            Ok(ImportResult {
+                book: self.get_book(&existing.asset.book_id)?,
+                asset: BookAsset {
+                    availability: AssetAvailability::Ready,
+                    ..existing.asset
+                },
+                duplicate: true,
+                source_byte_length,
+            })
         }
+    }
 
-        transaction.commit()?;
-        final_file_guard.disarm();
+    /// Compatibility helper for storage-level callers. IPC commands use the
+    /// two-phase methods above so normalization and indexing do not hold the
+    /// application storage mutex.
+    pub fn import_txt<F>(
+        &mut self,
+        source: &Path,
+        operation_id: &str,
+        cancel: &AtomicBool,
+        report: F,
+    ) -> Result<ImportResult, AppError>
+    where
+        F: FnMut(ImportPhase, u64, u64),
+    {
+        let prepared = Self::prepare_import(&self.root, source, operation_id, cancel, report)?;
+        let result = self.commit_import(prepared, cancel, |_, _, _| {}, None);
+        if result.is_err() && !self.journal_exists(operation_id)? {
+            let stage = self
+                .root
+                .join("staging")
+                .join(format!("{operation_id}.part"));
+            let _ = fs::remove_file(stage);
+        }
+        result
+    }
 
-        report(
-            ImportPhase::Completed,
-            source_byte_length,
-            source_byte_length,
-        );
-        Ok(result)
+    /// Remove the exact files and journal row owned by a failed in-process
+    /// operation. This is intentionally separate from startup recovery: a
+    /// killed process never reaches this method, so its durable journal is
+    /// available for the next open to reconcile.
+    pub(crate) fn cleanup_import(&mut self, operation_id: &str) -> Result<(), AppError> {
+        let journal = self
+            .conn
+            .query_row(
+                "SELECT operation_id, book_id, asset_id, title, sha256, byte_length,
+                        content_version, relative_path, stage_path, index_json,
+                        source_byte_length, created_at
+                 FROM import_journal WHERE operation_id = ?1",
+                params![operation_id],
+                journal_from_row,
+            )
+            .optional()?;
+        if let Some(journal) = journal {
+            let stage = managed_path(&self.root, &journal.stage_path, "staging")?;
+            let final_path = managed_path(&self.root, &journal.relative_path, "books")?;
+            let committed: Option<(String, String)> = self
+                .conn
+                .query_row(
+                    "SELECT relative_path, sha256 FROM book_assets WHERE id = ?1",
+                    params![journal.asset_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            remove_owned_file(&stage)?;
+            // A duplicate operation can have a journal while its asset row is
+            // already committed. Its final path belongs to that asset and
+            // must survive an ordinary query/commit failure.
+            if committed.as_ref().map_or(true, |(path, hash)| {
+                path != &journal.relative_path || hash != &journal.sha256
+            }) {
+                let references: i64 = self.conn.query_row(
+                    "SELECT COUNT(*) FROM book_assets WHERE relative_path = ?1",
+                    params![journal.relative_path],
+                    |row| row.get(0),
+                )?;
+                if references == 0 {
+                    remove_owned_file(&final_path)?;
+                }
+            }
+            self.conn.execute(
+                "DELETE FROM import_journal WHERE operation_id = ?1",
+                params![operation_id],
+            )?;
+        } else {
+            let stage = self
+                .root
+                .join("staging")
+                .join(format!("{operation_id}.part"));
+            remove_owned_file(&stage)?;
+        }
+        Ok(())
+    }
+
+    /// Snapshot the managed target for a duplicate import. Only the database
+    /// lookup and one metadata fingerprint happen while the caller holds the
+    /// application mutex; byte hashing is performed by
+    /// `validate_import_target` after the mutex is released.
+    pub(crate) fn snapshot_import_target(
+        &self,
+        sha256: &str,
+    ) -> Result<Option<ImportTargetSnapshot>, AppError> {
+        let relative_path: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT relative_path FROM book_assets WHERE sha256 = ?1",
+                params![sha256],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(relative_path) = relative_path else {
+            return Ok(None);
+        };
+        let path = managed_path(&self.root, &relative_path, "books")?;
+        let fingerprint = match file_fingerprint(&path) {
+            Ok((_, fingerprint)) => Some(fingerprint),
+            Err(error) if error.code == ErrorCode::AssetMissing => None,
+            Err(error) => return Err(error),
+        };
+        Ok(Some(ImportTargetSnapshot {
+            relative_path,
+            sha256: sha256.to_string(),
+            fingerprint,
+        }))
+    }
+
+    pub fn list_books(&self) -> Result<Vec<Book>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, title, author, content_version, created_at, updated_at
+             FROM books ORDER BY updated_at DESC, id ASC",
+        )?;
+        let books = statement
+            .query_map([], book_from_row)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::from)?;
+        Ok(books)
+    }
+
+    pub fn list_library_books(&self) -> Result<Vec<LibraryBook>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
+                    a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
+                    a.relative_path, a.created_at
+             FROM books b JOIN book_assets a ON a.book_id = b.id
+             ORDER BY b.updated_at DESC, b.id ASC, a.created_at ASC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                let book = Book {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    author: row.get(2)?,
+                    content_version: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                };
+                let record = asset_from_columns(row, 6)?;
+                Ok((book, record))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(book, mut record)| {
+                let path = managed_path(&self.root, &record.relative_path, "books")?;
+                record.asset.availability = if is_regular_file(&path) {
+                    AssetAvailability::Ready
+                } else {
+                    AssetAvailability::Missing
+                };
+                let locator = self.saved_position(&book.id)?;
+                let total_length = if record.asset.availability == AssetAvailability::Ready {
+                    self.trusted_content_length(&record)?
+                } else {
+                    None
+                };
+                Ok(LibraryBook {
+                    book,
+                    asset: record.asset,
+                    locator,
+                    total_length,
+                })
+            })
+            .collect()
+    }
+
+    /// Return a cached length only when its persisted index still matches the
+    /// managed file metadata. The complete hash and UTF-8/index rebuild stay
+    /// on the content-read path, outside the application mutex.
+    fn trusted_content_length(&self, record: &AssetRecord) -> Result<Option<u64>, AppError> {
+        let Some(persisted) = self.persisted_index(&record.asset.id)? else {
+            return Ok(None);
+        };
+        if persisted.index.byte_length != record.asset.byte_length || !valid_index(&persisted.index)
+        {
+            return Ok(None);
+        }
+        let path = managed_path(&self.root, &record.relative_path, "books")?;
+        let fingerprint = match file_fingerprint(&path) {
+            Ok((metadata, fingerprint)) if metadata.len() == record.asset.byte_length => {
+                fingerprint
+            }
+            Ok(_) | Err(_) => return Ok(None),
+        };
+        if persisted.fingerprint != fingerprint {
+            return Ok(None);
+        }
+        Ok(Some(persisted.index.utf16_length))
+    }
+
+    pub fn get_book(&self, book_id: &str) -> Result<Book, AppError> {
+        self.conn
+            .query_row(
+                "SELECT id, title, author, content_version, created_at, updated_at
+                 FROM books WHERE id = ?1",
+                params![book_id],
+                book_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                AppError::new(ErrorCode::NotFound, format!("book {book_id} was not found"))
+            })
     }
 
     pub fn read_content_window(
@@ -429,69 +864,82 @@ impl Storage {
         locator: Option<&ReaderLocator>,
         max_units: u64,
     ) -> Result<ContentWindow, AppError> {
-        if max_units == 0 || max_units > MAX_WINDOW_UNITS {
+        self.read_content_window_request(&ReadContentRequest {
+            book_id: book_id.to_string(),
+            locator: locator.cloned(),
+            max_units,
+            direction: WindowDirection::Forward,
+        })
+    }
+
+    pub fn read_content_window_request(
+        &self,
+        request: &ReadContentRequest,
+    ) -> Result<ContentWindow, AppError> {
+        if request.book_id.trim().is_empty() {
+            return Err(AppError::invalid_argument("book_id cannot be empty"));
+        }
+        if request.max_units == 0 || request.max_units > MAX_WINDOW_UNITS {
             return Err(AppError::invalid_argument(format!(
                 "content window must contain between 1 and {MAX_WINDOW_UNITS} UTF-16 units"
             )));
         }
-        let record = self.asset_for_book(book_id)?;
-        let text = self.read_asset_text(&record)?;
-        let boundaries = utf16_boundaries(&text);
-        let total_length = utf16_length(&text);
-        let start_offset = locator.map_or(0, |position| {
-            if position.book_id != book_id {
-                return u64::MAX;
-            }
-            position.offset
-        });
 
-        if let Some(position) = locator {
-            self.validate_locator(&record, position, &boundaries)?;
-        }
-        if start_offset == u64::MAX {
-            return Err(AppError::new(
-                ErrorCode::InvalidLocator,
-                "locator belongs to another book",
+        let context = self.content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        self.persist_content_index(&context, &verified)?;
+        read_content_window_from_context(request, &context, &verified)
+    }
+
+    pub fn resolve_reader_locator(
+        &self,
+        request: &ResolveLocatorRequest,
+    ) -> Result<ReaderLocator, AppError> {
+        if !request.progress.is_finite() || !(0.0..=1.0).contains(&request.progress) {
+            return Err(AppError::invalid_argument(
+                "reader progress must be a finite number between 0 and 1",
             ));
         }
-        let start_byte = byte_index_for_offset(&boundaries, start_offset)?;
-        let target_end = start_offset.saturating_add(max_units);
-        let (mut end_offset, mut end_byte) =
-            floor_boundary(&boundaries, target_end.min(total_length));
-        if end_offset == start_offset && start_offset < total_length {
-            let next = boundaries
-                .iter()
-                .find(|(offset, _)| *offset > start_offset)
-                .copied()
-                .ok_or_else(|| {
-                    AppError::new(ErrorCode::InvalidLocator, "unable to advance locator")
-                })?;
-            end_offset = next.0;
-            end_byte = next.1;
-        }
-
-        let page_text = text[start_byte..end_byte].to_string();
-        let page_locator = self.locator_for(&record, &text, &boundaries, start_offset)?;
-        Ok(ContentWindow {
-            book_id: book_id.to_string(),
-            resource_id: record.asset.id,
-            content_version: record.asset.content_version,
-            text: page_text,
-            start_offset,
-            end_offset,
-            total_length,
-            has_before: start_offset > 0,
-            has_after: end_offset < total_length,
-            locator: page_locator,
-        })
+        let context = self.content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        self.persist_content_index(&context, &verified)?;
+        let target = (verified.index.utf16_length as f64 * request.progress).floor() as u64;
+        let boundary = boundary_for_offset(
+            &context.root,
+            &context.record.relative_path,
+            &verified.index,
+            target,
+            BoundaryMode::Floor,
+            &verified.fingerprint,
+        )?;
+        locator_for(
+            &context.root,
+            &context.record,
+            &verified.index,
+            boundary.utf16_offset,
+            boundary.byte_offset,
+            &verified.fingerprint,
+        )
     }
 
     pub fn save_position(&self, locator: &ReaderLocator) -> Result<ReaderLocator, AppError> {
-        let record = self.asset_for_book(&locator.book_id)?;
-        let text = self.read_asset_text(&record)?;
-        let boundaries = utf16_boundaries(&text);
-        self.validate_locator(&record, locator, &boundaries)?;
+        let context = self.content_read_context(&locator.book_id)?;
+        let verified = verify_content_context(&context)?;
+        self.persist_content_index(&context, &verified)?;
+        validate_locator(
+            &context.root,
+            &context.record,
+            &verified.index,
+            locator,
+            &verified.fingerprint,
+        )?;
+        self.save_position_record(locator)?;
+        Ok(locator.clone())
+    }
+
+    pub(crate) fn save_position_record(&self, locator: &ReaderLocator) -> Result<(), AppError> {
         let serialized = serde_json::to_string(locator)?;
+        maybe_inject_save_failure(&self.root)?;
         self.conn.execute(
             "INSERT INTO reading_positions(book_id, locator_json, updated_at)
              VALUES (?1, ?2, ?3)
@@ -499,7 +947,7 @@ impl Storage {
                  updated_at = excluded.updated_at",
             params![locator.book_id, serialized, now_millis()],
         )?;
-        Ok(locator.clone())
+        Ok(())
     }
 
     pub fn saved_position(&self, book_id: &str) -> Result<Option<ReaderLocator>, AppError> {
@@ -515,12 +963,53 @@ impl Storage {
             .map(|value| {
                 serde_json::from_str(&value).map_err(|error| {
                     AppError::new(
-                        ErrorCode::InvalidLocator,
+                        ErrorCode::Database,
                         format!("saved locator is invalid: {error}"),
                     )
                 })
             })
             .transpose()
+    }
+
+    pub fn get_settings(&self) -> Result<ReaderPreferences, AppError> {
+        let serialized = self
+            .conn
+            .query_row(
+                "SELECT preferences_json FROM reader_preferences WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match serialized {
+            None => Ok(ReaderPreferences::default()),
+            Some(value) => {
+                let preferences: ReaderPreferences =
+                    serde_json::from_str(&value).map_err(|error| {
+                        AppError::new(
+                            ErrorCode::Database,
+                            format!("saved reader preferences are invalid: {error}"),
+                        )
+                    })?;
+                preferences.validate()?;
+                Ok(preferences)
+            }
+        }
+    }
+
+    pub fn save_settings(
+        &self,
+        preferences: &ReaderPreferences,
+    ) -> Result<ReaderPreferences, AppError> {
+        preferences.validate()?;
+        let serialized = serde_json::to_string(preferences)?;
+        self.conn.execute(
+            "INSERT INTO reader_preferences(id, preferences_json, updated_at)
+             VALUES (1, ?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET preferences_json = excluded.preferences_json,
+                 updated_at = excluded.updated_at",
+            params![serialized, now_millis()],
+        )?;
+        Ok(preferences.clone())
     }
 
     fn asset_for_book(&self, book_id: &str) -> Result<AssetRecord, AppError> {
@@ -535,76 +1024,1134 @@ impl Storage {
             .ok_or_else(|| AppError::new(ErrorCode::NotFound, format!("book {book_id} has no asset")))
     }
 
-    fn read_asset_text(&self, record: &AssetRecord) -> Result<String, AppError> {
-        let path = self.root.join(&record.relative_path);
-        if !path.is_file() {
-            return Err(AppError::new(
-                ErrorCode::AssetMissing,
-                format!("local asset {} is missing", record.asset.id),
-            ));
+    /// Read the database metadata needed for a content request. This method
+    /// deliberately does no filesystem work so callers can release the
+    /// application storage mutex before hashing or indexing an asset.
+    pub(crate) fn content_read_context(
+        &self,
+        book_id: &str,
+    ) -> Result<ContentReadContext, AppError> {
+        if book_id.trim().is_empty() {
+            return Err(AppError::invalid_argument("book_id cannot be empty"));
         }
-        fs::read_to_string(path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidData {
-                AppError::new(
-                    ErrorCode::UnsupportedEncoding,
-                    "managed TXT asset is not UTF-8",
-                )
-            } else {
-                AppError::new(ErrorCode::Io, error.to_string())
-            }
+        let record = self.asset_for_book(book_id)?;
+        self.content_read_context_for_record(record)
+    }
+
+    fn content_read_context_for_record(
+        &self,
+        record: AssetRecord,
+    ) -> Result<ContentReadContext, AppError> {
+        let persisted = self.persisted_index(&record.asset.id)?;
+        let verified = self
+            .verified_indexes
+            .lock()
+            .map_err(|_| {
+                AppError::new(ErrorCode::Database, "content verification lock is poisoned")
+            })?
+            .get(&record.asset.id)
+            .cloned();
+        Ok(ContentReadContext {
+            root: self.root.clone(),
+            record,
+            persisted,
+            verified,
         })
     }
 
-    fn validate_locator(
+    fn persisted_index(&self, asset_id: &str) -> Result<Option<PersistedIndex>, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT schema_version, stride_units, byte_length, utf16_length, fingerprint, index_json
+                 FROM content_indexes WHERE asset_id = ?1",
+                params![asset_id],
+                |row| {
+                    let schema_version: i64 = row.get(0)?;
+                    let stride_units: i64 = row.get(1)?;
+                    let byte_length: i64 = row.get(2)?;
+                    let utf16_length: i64 = row.get(3)?;
+                    let fingerprint: String = row.get(4)?;
+                    let index_json: String = row.get(5)?;
+                    Ok((
+                        schema_version,
+                        stride_units,
+                        byte_length,
+                        utf16_length,
+                        fingerprint,
+                        index_json,
+                    ))
+                },
+            )
+            .optional()?
+            .and_then(|(
+                schema_version,
+                stride_units,
+                byte_length,
+                utf16_length,
+                fingerprint,
+                serialized,
+            )| {
+                let index = serde_json::from_str::<SparseIndex>(&serialized).ok()?;
+                if schema_version != i64::from(INDEX_SCHEMA_VERSION)
+                    || stride_units != i64::try_from(index.stride_units).ok()?
+                    || index.stride_units != INDEX_STRIDE_UNITS
+                    || byte_length < 0
+                    || utf16_length < 0
+                    || index.byte_length != u64::try_from(byte_length).ok()?
+                    || index.utf16_length != u64::try_from(utf16_length).ok()?
+                {
+                    return None;
+                }
+                Some(PersistedIndex { index, fingerprint })
+            }))
+    }
+
+    /// Persist an index after file verification. The asset identity is
+    /// rechecked because a request may have spent a long time outside the
+    /// database mutex while another in-process operation changed the row.
+    pub(crate) fn persist_content_index(
         &self,
-        record: &AssetRecord,
-        locator: &ReaderLocator,
-        boundaries: &[(u64, usize)],
+        context: &ContentReadContext,
+        verified: &VerifiedContentIndex,
     ) -> Result<(), AppError> {
-        if locator.content_version != record.asset.content_version {
+        let current: Option<(String, String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT sha256, relative_path, byte_length FROM book_assets WHERE id = ?1",
+                params![context.record.asset.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((sha256, relative_path, byte_length)) = current else {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "content asset was removed while it was being read",
+            ));
+        };
+        if sha256 != context.record.asset.sha256
+            || relative_path != context.record.relative_path
+            || byte_length < 0
+            || u64::try_from(byte_length).ok() != Some(verified.index.byte_length)
+        {
             return Err(AppError::new(
                 ErrorCode::ContentVersionMismatch,
                 format!(
-                    "locator targets content version {}, current version is {}",
-                    locator.content_version, record.asset.content_version
+                    "managed asset {} changed while it was being read",
+                    context.record.asset.id
                 ),
             ));
         }
-        if locator.resource_id != record.asset.id {
-            return Err(AppError::new(
-                ErrorCode::InvalidLocator,
-                "locator targets an unknown resource",
-            ));
-        }
-        byte_index_for_offset(boundaries, locator.offset).map(|_| ())
+        insert_content_index(
+            &self.conn,
+            &context.record.asset.id,
+            &verified.index,
+            &verified.fingerprint,
+        )?;
+        self.verified_indexes
+            .lock()
+            .map_err(|_| {
+                AppError::new(ErrorCode::Database, "content verification lock is poisoned")
+            })?
+            .insert(context.record.asset.id.clone(), verified.clone());
+        Ok(())
     }
 
-    fn locator_for(
-        &self,
-        record: &AssetRecord,
-        text: &str,
-        boundaries: &[(u64, usize)],
-        offset: u64,
-    ) -> Result<ReaderLocator, AppError> {
-        let byte_index = byte_index_for_offset(boundaries, offset)?;
-        let before = text[..byte_index]
-            .chars()
-            .rev()
-            .take(32)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        let after = text[byte_index..].chars().take(32).collect();
-        Ok(ReaderLocator {
-            book_id: record.asset.book_id.clone(),
-            content_version: record.asset.content_version.clone(),
-            resource_id: record.asset.id.clone(),
-            offset,
-            context_before: before,
-            context_after: after,
-        })
+    fn journal_exists(&self, operation_id: &str) -> Result<bool, AppError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM import_journal WHERE operation_id = ?1",
+            params![operation_id],
+            |row| row.get(0),
+        )?;
+        Ok(count != 0)
     }
+
+    fn recover_pending_imports(&mut self) -> Result<(), AppError> {
+        let journals = {
+            let mut statement = self.conn.prepare(
+                "SELECT operation_id, book_id, asset_id, title, sha256, byte_length,
+                        content_version, relative_path, stage_path, index_json,
+                        source_byte_length, created_at
+                 FROM import_journal ORDER BY created_at ASC, operation_id ASC",
+            )?;
+            let journals = statement
+                .query_map([], journal_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            journals
+        };
+        for journal in journals {
+            self.recover_journal(&journal)?;
+        }
+        Ok(())
+    }
+
+    fn recover_journal(&mut self, journal: &JournalRecord) -> Result<(), AppError> {
+        let final_path = managed_path(&self.root, &journal.relative_path, "books")?;
+        let stage_path = managed_path(&self.root, &journal.stage_path, "staging")?;
+        let committed: Option<(String, String, String)> = self
+            .conn
+            .query_row(
+                "SELECT book_id, relative_path, sha256 FROM book_assets WHERE id = ?1",
+                params![journal.asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+
+        if let Some((_, committed_path, committed_hash)) = committed {
+            // A duplicate import can journal an already committed asset. Keep
+            // that identity and repair its missing file only when the staged
+            // bytes match the committed hash. Never let an unfinished journal
+            // create a new Book or BookAsset after restart.
+            if committed_path == journal.relative_path && committed_hash == journal.sha256 {
+                let final_valid = final_path.is_file()
+                    && hash_file(&final_path).ok().as_deref() == Some(journal.sha256.as_str());
+                let stage_valid = stage_path.is_file()
+                    && hash_file(&stage_path).ok().as_deref() == Some(journal.sha256.as_str());
+                if !final_valid && stage_valid {
+                    if final_path.exists() {
+                        remove_owned_file(&final_path)?;
+                    }
+                    if let Some(parent) = final_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::rename(&stage_path, &final_path)?;
+                    sync_parent(&final_path)?;
+                }
+                remove_owned_file(&stage_path)?;
+            } else {
+                remove_owned_file(&stage_path)?;
+            }
+            self.conn.execute(
+                "DELETE FROM import_journal WHERE operation_id = ?1",
+                params![journal.operation_id],
+            )?;
+            return Ok(());
+        }
+
+        // No asset row means the operation never committed. The journal owns
+        // these exact managed paths; clean them and discard the journal.
+        remove_owned_file(&stage_path)?;
+        let references: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM book_assets WHERE relative_path = ?1",
+            params![journal.relative_path],
+            |row| row.get(0),
+        )?;
+        if references == 0 {
+            remove_owned_file(&final_path)?;
+        }
+        self.conn.execute(
+            "DELETE FROM import_journal WHERE operation_id = ?1",
+            params![journal.operation_id],
+        )?;
+        Ok(())
+    }
+
+    fn remove_orphan_managed_files(&self) -> Result<(), AppError> {
+        let referenced: HashSet<String> = {
+            let mut statement = self.conn.prepare("SELECT relative_path FROM book_assets")?;
+            let paths = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?;
+            paths
+        };
+        let books_root = self.root.join("books");
+        remove_orphans_recursive(&books_root, &self.root, &referenced)?;
+        Ok(())
+    }
+
+    fn cleanup_staging_dir(&self) {
+        let staging_dir = self.root.join("staging");
+        let Ok(entries) = fs::read_dir(staging_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "part")
+            {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+/// Validate a duplicate import target without borrowing `Storage`. A missing
+/// managed file is returned as an empty fingerprint so the commit path can
+/// republish the staged bytes; an existing file must still match the stored
+/// normalized hash.
+pub(crate) fn validate_import_target(
+    root: &Path,
+    snapshot: &ImportTargetSnapshot,
+    cancel: &AtomicBool,
+) -> Result<ImportTargetSnapshot, AppError> {
+    let path = managed_path(root, &snapshot.relative_path, "books")?;
+    let Some(expected_fingerprint) = snapshot.fingerprint.as_ref() else {
+        return Ok(snapshot.clone());
+    };
+    let actual_hash = match hash_file_with_cancel(&path, Some(cancel)) {
+        Ok(hash) => hash,
+        Err(error) if error.code == ErrorCode::AssetMissing => {
+            return Ok(ImportTargetSnapshot {
+                fingerprint: None,
+                ..snapshot.clone()
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    if actual_hash != snapshot.sha256 {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed duplicate target changed while being validated",
+        ));
+    }
+    let (_, fingerprint) = file_fingerprint(&path)?;
+    if &fingerprint != expected_fingerprint {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed duplicate target changed while being validated",
+        ));
+    }
+    Ok(ImportTargetSnapshot {
+        fingerprint: Some(fingerprint),
+        ..snapshot.clone()
+    })
+}
+
+/// Verify an asset and produce the only index that readers may use. On the
+/// first read in a process this reads the complete file once, hashes those
+/// exact bytes, and builds the sparse index from the same UTF-8 string. A
+/// persisted index with plausible monotonic offsets is therefore still
+/// replaced when any checkpoint is wrong.
+pub(crate) fn verify_content_context(
+    context: &ContentReadContext,
+) -> Result<VerifiedContentIndex, AppError> {
+    let path = managed_path(&context.root, &context.record.relative_path, "books")?;
+    let (metadata, fingerprint) = file_fingerprint(&path)?;
+    if metadata.len() != context.record.asset.byte_length {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            format!(
+                "managed asset {} has an unexpected byte length",
+                context.record.asset.id
+            ),
+        ));
+    }
+
+    if let Some(verified) = context.verified.as_ref() {
+        if verified.fingerprint == fingerprint
+            && verified.index.byte_length == metadata.len()
+            && valid_index(&verified.index)
+        {
+            // A metadata check before and after the cache lookup closes the
+            // window where a same-length replacement is made during a read.
+            let (_, after_fingerprint) = file_fingerprint(&path)?;
+            if after_fingerprint != fingerprint {
+                return Err(content_changed_error(
+                    &context.record.asset.id,
+                    "while being verified",
+                ));
+            }
+            return Ok(verified.clone());
+        }
+    }
+
+    let bytes = read_file_checked(&path, metadata.len(), &fingerprint)?;
+    let actual_hash = sha256_bytes(&bytes);
+    if actual_hash != context.record.asset.sha256 {
+        return Err(content_changed_error(
+            &context.record.asset.id,
+            "since import",
+        ));
+    }
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AppError::new(
+            ErrorCode::UnsupportedEncoding,
+            "managed TXT asset is not UTF-8",
+        )
+    })?;
+    let rebuilt = build_sparse_index(&text);
+    if !valid_index(&rebuilt) {
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "content index builder produced an invalid index",
+        ));
+    }
+
+    // Keep this comparison explicit: it documents that a valid-looking
+    // persisted JSON record is only metadata, while `rebuilt` is authoritative
+    // for byte/UTF-16 boundaries.
+    let _persisted_matches = context.persisted.as_ref().is_some_and(|persisted| {
+        persisted.fingerprint == fingerprint && persisted.index == rebuilt
+    });
+
+    Ok(VerifiedContentIndex {
+        index: rebuilt,
+        fingerprint,
+    })
+}
+
+pub(crate) fn read_content_window_from_context(
+    request: &ReadContentRequest,
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+) -> Result<ContentWindow, AppError> {
+    let index = &verified.index;
+    let fingerprint = &verified.fingerprint;
+    if request.book_id.trim().is_empty() {
+        return Err(AppError::invalid_argument("book_id cannot be empty"));
+    }
+    if request.max_units == 0 || request.max_units > MAX_WINDOW_UNITS {
+        return Err(AppError::invalid_argument(format!(
+            "content window must contain between 1 and {MAX_WINDOW_UNITS} UTF-16 units"
+        )));
+    }
+    if let Some(locator) = request.locator.as_ref() {
+        validate_locator(&context.root, &context.record, index, locator, fingerprint)?;
+    }
+
+    let total_length = index.utf16_length;
+    let anchor = match request.direction {
+        WindowDirection::Forward => request.locator.as_ref().map_or(0, |locator| locator.offset),
+        WindowDirection::Backward => request
+            .locator
+            .as_ref()
+            .map_or(total_length, |locator| locator.offset),
+    };
+    if anchor > total_length {
+        return Err(AppError::new(
+            ErrorCode::InvalidLocator,
+            "locator offset is beyond the content length",
+        ));
+    }
+
+    let (start_offset, end_offset) = match request.direction {
+        WindowDirection::Forward => {
+            let target = anchor.saturating_add(request.max_units).min(total_length);
+            let end = boundary_for_offset(
+                &context.root,
+                &context.record.relative_path,
+                index,
+                target,
+                BoundaryMode::Ceiling,
+                fingerprint,
+            )?;
+            (anchor, end.utf16_offset)
+        }
+        WindowDirection::Backward => {
+            let target = anchor.saturating_sub(request.max_units);
+            let start = boundary_for_offset(
+                &context.root,
+                &context.record.relative_path,
+                index,
+                target,
+                BoundaryMode::Floor,
+                fingerprint,
+            )?;
+            (start.utf16_offset, anchor)
+        }
+    };
+
+    let start_byte = boundary_for_offset(
+        &context.root,
+        &context.record.relative_path,
+        index,
+        start_offset,
+        BoundaryMode::Exact,
+        fingerprint,
+    )?;
+    let end_byte = boundary_for_offset(
+        &context.root,
+        &context.record.relative_path,
+        index,
+        end_offset,
+        BoundaryMode::Exact,
+        fingerprint,
+    )?;
+    let text = read_range(
+        &context.root,
+        &context.record.relative_path,
+        start_byte.byte_offset,
+        end_byte.byte_offset,
+        fingerprint,
+    )?;
+    let locator = locator_for(
+        &context.root,
+        &context.record,
+        index,
+        start_offset,
+        start_byte.byte_offset,
+        fingerprint,
+    )?;
+    Ok(ContentWindow {
+        book_id: request.book_id.clone(),
+        resource_id: context.record.asset.id.clone(),
+        content_version: context.record.asset.content_version.clone(),
+        text,
+        start_offset,
+        end_offset,
+        total_length,
+        has_before: start_offset > 0,
+        has_after: end_offset < total_length,
+        locator,
+    })
+}
+
+pub(crate) fn resolve_locator_from_context(
+    request: &ResolveLocatorRequest,
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+) -> Result<ReaderLocator, AppError> {
+    let target = (verified.index.utf16_length as f64 * request.progress).floor() as u64;
+    let boundary = boundary_for_offset(
+        &context.root,
+        &context.record.relative_path,
+        &verified.index,
+        target,
+        BoundaryMode::Floor,
+        &verified.fingerprint,
+    )?;
+    locator_for(
+        &context.root,
+        &context.record,
+        &verified.index,
+        boundary.utf16_offset,
+        boundary.byte_offset,
+        &verified.fingerprint,
+    )
+}
+
+pub(crate) fn validate_content_locator(
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+    locator: &ReaderLocator,
+) -> Result<(), AppError> {
+    validate_locator(
+        &context.root,
+        &context.record,
+        &verified.index,
+        locator,
+        &verified.fingerprint,
+    )
+}
+
+fn build_sparse_index(text: &str) -> SparseIndex {
+    let mut entries = vec![IndexEntry {
+        utf16_offset: 0,
+        byte_offset: 0,
+    }];
+    let mut utf16_offset = 0_u64;
+    let mut next_checkpoint = INDEX_STRIDE_UNITS;
+    for (byte_offset, character) in text.char_indices() {
+        utf16_offset += character.len_utf16() as u64;
+        let next_byte = byte_offset + character.len_utf8();
+        if utf16_offset >= next_checkpoint {
+            entries.push(IndexEntry {
+                utf16_offset,
+                byte_offset: next_byte as u64,
+            });
+            next_checkpoint = ((utf16_offset / INDEX_STRIDE_UNITS) + 1) * INDEX_STRIDE_UNITS;
+        }
+    }
+    let byte_length = text.len() as u64;
+    let utf16_length = utf16_offset;
+    if entries
+        .last()
+        .map_or(true, |entry| entry.utf16_offset != utf16_length)
+    {
+        entries.push(IndexEntry {
+            utf16_offset: utf16_length,
+            byte_offset: byte_length,
+        });
+    }
+    SparseIndex {
+        schema_version: INDEX_SCHEMA_VERSION,
+        stride_units: INDEX_STRIDE_UNITS,
+        byte_length,
+        utf16_length,
+        entries,
+    }
+}
+
+fn valid_index(index: &SparseIndex) -> bool {
+    if index.schema_version != INDEX_SCHEMA_VERSION
+        || index.stride_units != INDEX_STRIDE_UNITS
+        || index.entries.is_empty()
+        || index.entries[0].utf16_offset != 0
+        || index.entries[0].byte_offset != 0
+    {
+        return false;
+    }
+    let mut previous = index.entries[0];
+    for entry in index.entries.iter().skip(1) {
+        if entry.utf16_offset <= previous.utf16_offset
+            || entry.byte_offset <= previous.byte_offset
+            || entry.utf16_offset > index.utf16_length
+            || entry.byte_offset > index.byte_length
+        {
+            return false;
+        }
+        previous = *entry;
+    }
+    previous.utf16_offset == index.utf16_length && previous.byte_offset == index.byte_length
+}
+
+fn parse_index(serialized: &str) -> Result<SparseIndex, AppError> {
+    let index: SparseIndex = serde_json::from_str(serialized).map_err(|error| {
+        AppError::new(
+            ErrorCode::Database,
+            format!("content index is invalid: {error}"),
+        )
+    })?;
+    if !valid_index(&index) {
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "content index failed validation",
+        ));
+    }
+    Ok(index)
+}
+
+fn boundary_for_offset(
+    root: &Path,
+    relative_path: &str,
+    index: &SparseIndex,
+    target: u64,
+    mode: BoundaryMode,
+    fingerprint: &str,
+) -> Result<Boundary, AppError> {
+    if target > index.utf16_length {
+        return Err(AppError::new(
+            ErrorCode::InvalidLocator,
+            format!("offset {target} is beyond the content length"),
+        ));
+    }
+    let checkpoint = index
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.utf16_offset <= target)
+        .copied()
+        .ok_or_else(|| AppError::new(ErrorCode::Database, "content index has no base entry"))?;
+    if checkpoint.utf16_offset == target {
+        return Ok(Boundary {
+            utf16_offset: target,
+            byte_offset: checkpoint.byte_offset,
+        });
+    }
+
+    let path = managed_path(root, relative_path, "books")?;
+    let delta_units = target.saturating_sub(checkpoint.utf16_offset);
+    let wanted_bytes = delta_units.saturating_mul(4).saturating_add(8);
+    let available = index.byte_length.saturating_sub(checkpoint.byte_offset);
+    let mut bytes = read_bytes(
+        &path,
+        checkpoint.byte_offset,
+        wanted_bytes.min(available),
+        Some(fingerprint),
+    )?;
+    loop {
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(text) => text,
+            Err(error) if error.error_len().is_none() => {
+                if bytes.len() as u64 >= available {
+                    return Err(AppError::new(
+                        ErrorCode::UnsupportedEncoding,
+                        "managed TXT asset is not UTF-8",
+                    ));
+                }
+                let more = read_bytes(
+                    &path,
+                    checkpoint.byte_offset + bytes.len() as u64,
+                    (available - bytes.len() as u64).min(8),
+                    Some(fingerprint),
+                )?;
+                if more.is_empty() {
+                    return Err(AppError::new(
+                        ErrorCode::UnsupportedEncoding,
+                        "managed TXT asset is not UTF-8",
+                    ));
+                }
+                bytes.extend_from_slice(&more);
+                continue;
+            }
+            Err(_) => {
+                return Err(AppError::new(
+                    ErrorCode::UnsupportedEncoding,
+                    "managed TXT asset is not UTF-8",
+                ));
+            }
+        };
+
+        let mut offset = checkpoint.utf16_offset;
+        let mut byte = checkpoint.byte_offset;
+        for character in text.chars() {
+            let next_offset = offset + character.len_utf16() as u64;
+            let next_byte = byte + character.len_utf8() as u64;
+            if target == next_offset {
+                return Ok(Boundary {
+                    utf16_offset: target,
+                    byte_offset: next_byte,
+                });
+            }
+            if target < next_offset {
+                return match mode {
+                    BoundaryMode::Exact => Err(AppError::new(
+                        ErrorCode::InvalidLocator,
+                        format!("offset {target} is not a UTF-16 scalar boundary"),
+                    )),
+                    BoundaryMode::Floor => Ok(Boundary {
+                        utf16_offset: offset,
+                        byte_offset: byte,
+                    }),
+                    BoundaryMode::Ceiling => Ok(Boundary {
+                        utf16_offset: next_offset,
+                        byte_offset: next_byte,
+                    }),
+                };
+            }
+            offset = next_offset;
+            byte = next_byte;
+        }
+        if offset >= target {
+            return Ok(Boundary {
+                utf16_offset: offset,
+                byte_offset: byte,
+            });
+        }
+        if bytes.len() as u64 >= available {
+            return Err(AppError::new(
+                ErrorCode::Database,
+                "content index does not cover the requested offset",
+            ));
+        }
+        let more = read_bytes(
+            &path,
+            checkpoint.byte_offset + bytes.len() as u64,
+            (available - bytes.len() as u64).min(16 * 1024),
+            Some(fingerprint),
+        )?;
+        if more.is_empty() {
+            return Err(AppError::new(
+                ErrorCode::Database,
+                "content index does not cover the requested offset",
+            ));
+        }
+        bytes.extend_from_slice(&more);
+    }
+}
+
+fn locator_for(
+    root: &Path,
+    record: &AssetRecord,
+    index: &SparseIndex,
+    offset: u64,
+    byte_offset: u64,
+    fingerprint: &str,
+) -> Result<ReaderLocator, AppError> {
+    let path = managed_path(root, &record.relative_path, "books")?;
+    let before_start = byte_offset.saturating_sub(CONTEXT_BYTES);
+    let mut before_bytes = read_bytes(
+        &path,
+        before_start,
+        byte_offset - before_start,
+        Some(fingerprint),
+    )?;
+    while std::str::from_utf8(&before_bytes).is_err() && !before_bytes.is_empty() {
+        before_bytes.remove(0);
+    }
+    let before_text = std::str::from_utf8(&before_bytes).unwrap_or_default();
+    let context_before: String = before_text
+        .chars()
+        .rev()
+        .take(32)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+
+    let available_after = index.byte_length.saturating_sub(byte_offset);
+    let mut after_bytes = read_bytes(
+        &path,
+        byte_offset,
+        available_after.min(CONTEXT_BYTES),
+        Some(fingerprint),
+    )?;
+    while std::str::from_utf8(&after_bytes).is_err() && !after_bytes.is_empty() {
+        after_bytes.pop();
+    }
+    let after_text = std::str::from_utf8(&after_bytes).unwrap_or_default();
+    let context_after: String = after_text.chars().take(32).collect();
+
+    Ok(ReaderLocator {
+        book_id: record.asset.book_id.clone(),
+        content_version: record.asset.content_version.clone(),
+        resource_id: record.asset.id.clone(),
+        offset,
+        context_before,
+        context_after,
+    })
+}
+
+fn validate_locator(
+    root: &Path,
+    record: &AssetRecord,
+    index: &SparseIndex,
+    locator: &ReaderLocator,
+    fingerprint: &str,
+) -> Result<(), AppError> {
+    if locator.book_id != record.asset.book_id {
+        return Err(AppError::new(
+            ErrorCode::InvalidLocator,
+            "locator belongs to another book",
+        ));
+    }
+    if locator.content_version != record.asset.content_version {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            format!(
+                "locator targets content version {}, current version is {}",
+                locator.content_version, record.asset.content_version
+            ),
+        ));
+    }
+    if locator.resource_id != record.asset.id {
+        return Err(AppError::new(
+            ErrorCode::InvalidLocator,
+            "locator targets an unknown resource",
+        ));
+    }
+    boundary_for_offset(
+        root,
+        &record.relative_path,
+        index,
+        locator.offset,
+        BoundaryMode::Exact,
+        fingerprint,
+    )
+    .map(|_| ())
+}
+
+fn read_range(
+    root: &Path,
+    relative_path: &str,
+    start: u64,
+    end: u64,
+    fingerprint: &str,
+) -> Result<String, AppError> {
+    if end < start {
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "invalid content byte range",
+        ));
+    }
+    let path = managed_path(root, relative_path, "books")?;
+    let bytes = read_bytes(&path, start, end - start, Some(fingerprint))?;
+    String::from_utf8(bytes).map_err(|_| {
+        AppError::new(
+            ErrorCode::UnsupportedEncoding,
+            "managed TXT asset is not UTF-8",
+        )
+    })
+}
+
+fn read_bytes(
+    path: &Path,
+    start: u64,
+    length: u64,
+    expected_fingerprint: Option<&str>,
+) -> Result<Vec<u8>, AppError> {
+    let (_, before_fingerprint) = file_fingerprint(path)?;
+    if expected_fingerprint.is_some_and(|expected| expected != before_fingerprint) {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed content changed while reading",
+        ));
+    }
+    let mut file = File::open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::new(ErrorCode::AssetMissing, "managed content file is missing")
+        } else {
+            AppError::new(ErrorCode::Io, error.to_string())
+        }
+    })?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::with_capacity(length.min(64 * 1024 * 1024) as usize);
+    file.take(length).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != length {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed content changed while reading",
+        ));
+    }
+    let (_, after_fingerprint) = file_fingerprint(path)?;
+    if after_fingerprint != before_fingerprint
+        || expected_fingerprint.is_some_and(|expected| expected != after_fingerprint)
+    {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed content changed while reading",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_file_checked(
+    path: &Path,
+    expected_length: u64,
+    expected_fingerprint: &str,
+) -> Result<Vec<u8>, AppError> {
+    let bytes = read_bytes(path, 0, expected_length, Some(expected_fingerprint))?;
+    if bytes.len() as u64 != expected_length {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed content was truncated while reading",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn content_changed_error(asset_id: &str, suffix: &str) -> AppError {
+    AppError::new(
+        ErrorCode::ContentVersionMismatch,
+        format!("managed asset {asset_id} changed {suffix}"),
+    )
+}
+
+fn hash_file(path: &Path) -> Result<String, AppError> {
+    hash_file_with_cancel(path, None)
+}
+
+fn hash_file_with_cancel(path: &Path, cancel: Option<&AtomicBool>) -> Result<String, AppError> {
+    let (metadata_before, fingerprint_before) = file_fingerprint(path)?;
+    let mut file = File::open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::new(ErrorCode::AssetMissing, "managed content file is missing")
+        } else {
+            AppError::new(ErrorCode::Io, error.to_string())
+        }
+    })?;
+    let mut hasher = Sha256::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        if cancel.is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
+            return Err(import_cancelled());
+        }
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
+    }
+    let (metadata_after, fingerprint_after) = file_fingerprint(path)?;
+    if metadata_after.len() != metadata_before.len() || fingerprint_after != fingerprint_before {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "managed content changed while hashing",
+        ));
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn file_fingerprint(path: &Path) -> Result<(Metadata, String), AppError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::new(ErrorCode::AssetMissing, "managed content file is missing")
+        } else {
+            AppError::new(ErrorCode::Io, error.to_string())
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            ErrorCode::AssetMissing,
+            "managed content path is not a file",
+        ));
+    }
+    let fingerprint = fingerprint_for_metadata(&metadata);
+    Ok((metadata, fingerprint))
+}
+
+fn fingerprint_for_metadata(metadata: &Metadata) -> String {
+    #[cfg(unix)]
+    let fingerprint = format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        metadata.len(),
+        metadata.dev(),
+        metadata.ino(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    );
+    #[cfg(not(unix))]
+    let fingerprint = {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| format!("{}:{}", duration.as_secs(), duration.subsec_nanos()))
+            .unwrap_or_default();
+        format!("{}:{modified}", metadata.len())
+    };
+    fingerprint
+}
+
+fn managed_path(root: &Path, relative: &str, top_level: &str) -> Result<PathBuf, AppError> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || !matches!(
+            path.components().next(),
+            Some(Component::Normal(value)) if value == top_level
+        )
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::new(
+            ErrorCode::Database,
+            format!("invalid managed path {relative}"),
+        ));
+    }
+    Ok(root.join(path))
+}
+
+fn remove_owned_file(path: &Path) -> Result<(), AppError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!(
+                "managed cleanup path is not a regular file: {}",
+                path.display()
+            ),
+        ));
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+fn remove_orphans_recursive(
+    directory: &Path,
+    root: &Path,
+    referenced: &HashSet<String>,
+) -> Result<(), AppError> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            remove_orphans_recursive(&path, root, referenced)?;
+            let _ = fs::remove_dir(&path);
+        } else if metadata.is_file() || metadata.file_type().is_symlink() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| {
+                    AppError::new(ErrorCode::Database, "managed path escaped data directory")
+                })?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if path.extension().is_some_and(|extension| extension == "txt")
+                && !referenced.contains(&relative)
+            {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+fn sync_parent(path: &Path) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        #[cfg(unix)]
+        {
+            let directory = File::open(parent)?;
+            directory.sync_all()?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_journal(tx: &rusqlite::Transaction<'_>, journal: &JournalRecord) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO import_journal(
+            operation_id, book_id, asset_id, title, sha256, byte_length, content_version,
+            relative_path, stage_path, index_json, source_byte_length, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            journal.operation_id,
+            journal.book_id,
+            journal.asset_id,
+            journal.title,
+            journal.sha256,
+            journal.byte_length as i64,
+            journal.content_version,
+            journal.relative_path,
+            journal.stage_path,
+            journal.index_json,
+            journal.source_byte_length as i64,
+            journal.created_at
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_content_index(
+    conn: &Connection,
+    asset_id: &str,
+    index: &SparseIndex,
+    fingerprint: &str,
+) -> Result<(), AppError> {
+    if !valid_index(index) {
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "refusing to persist an invalid content index",
+        ));
+    }
+    let serialized = serde_json::to_string(index)?;
+    conn.execute(
+        "INSERT INTO content_indexes(
+            asset_id, schema_version, stride_units, byte_length, utf16_length, fingerprint,
+            index_json, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(asset_id) DO UPDATE SET schema_version = excluded.schema_version,
+            stride_units = excluded.stride_units, byte_length = excluded.byte_length,
+            utf16_length = excluded.utf16_length, fingerprint = excluded.fingerprint,
+            index_json = excluded.index_json, updated_at = excluded.updated_at",
+        params![
+            asset_id,
+            i64::from(index.schema_version),
+            index.stride_units as i64,
+            index.byte_length as i64,
+            index.utf16_length as i64,
+            fingerprint,
+            serialized,
+            now_millis()
+        ],
+    )?;
+    Ok(())
 }
 
 fn book_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
@@ -619,30 +2166,53 @@ fn book_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
 }
 
 fn asset_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetRecord> {
-    let kind: String = row.get(2)?;
+    asset_from_columns(row, 0)
+}
+
+fn asset_from_columns(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<AssetRecord> {
+    let kind: String = row.get(offset + 2)?;
     let kind = match kind.as_str() {
         "txt" => AssetKind::Txt,
         _ => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
-                2,
+                offset + 2,
                 rusqlite::types::Type::Text,
                 format!("unsupported asset kind {kind}").into(),
             ));
         }
     };
-    let byte_length: i64 = row.get(4)?;
+    let byte_length: i64 = row.get(offset + 4)?;
     Ok(AssetRecord {
         asset: BookAsset {
-            id: row.get(0)?,
-            book_id: row.get(1)?,
+            id: row.get(offset)?,
+            book_id: row.get(offset + 1)?,
             kind,
-            sha256: row.get(3)?,
+            sha256: row.get(offset + 3)?,
             byte_length: byte_length.max(0) as u64,
-            content_version: row.get(5)?,
+            content_version: row.get(offset + 5)?,
             availability: AssetAvailability::Missing,
-            created_at: row.get(7)?,
+            created_at: row.get(offset + 7)?,
         },
-        relative_path: row.get(6)?,
+        relative_path: row.get(offset + 6)?,
+    })
+}
+
+fn journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalRecord> {
+    let byte_length: i64 = row.get(5)?;
+    let source_byte_length: i64 = row.get(10)?;
+    Ok(JournalRecord {
+        operation_id: row.get(0)?,
+        book_id: row.get(1)?,
+        asset_id: row.get(2)?,
+        title: row.get(3)?,
+        sha256: row.get(4)?,
+        byte_length: byte_length.max(0) as u64,
+        content_version: row.get(6)?,
+        relative_path: row.get(7)?,
+        stage_path: row.get(8)?,
+        index_json: row.get(9)?,
+        source_byte_length: source_byte_length.max(0) as u64,
+        created_at: row.get(11)?,
     })
 }
 
@@ -660,10 +2230,129 @@ fn now_millis() -> i64 {
         .unwrap_or_default()
 }
 
+fn import_cancelled() -> AppError {
+    AppError::new(ErrorCode::ImportCancelled, "TXT import was cancelled")
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FailurePoint {
+    AfterJournal = 1,
+    AfterRename = 2,
+    BeforeFinalCommit = 3,
+    #[cfg(test)]
+    SavePosition = 4,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FAILURE_POINT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn set_test_failure(point: FailurePoint) {
+    TEST_FAILURE_POINT.with(|value| value.set(point as u8));
+}
+
+fn maybe_inject_failure(
+    root: &Path,
+    cancel: &AtomicBool,
+    point: FailurePoint,
+) -> Result<(), AppError> {
+    let _ = (root, cancel, point);
+    #[cfg(feature = "native-test")]
+    if let Some(fault) = native_fault(root) {
+        match (point, fault.as_str()) {
+            (FailurePoint::AfterRename, "crash-after-rename")
+            | (FailurePoint::AfterRename, "after-rename") => {
+                // This hook exists only in native-test builds and is accepted
+                // only for the explicitly configured isolated test root.
+                std::process::abort();
+            }
+            (FailurePoint::BeforeFinalCommit, "pause-before-commit") => {
+                let marker = root.join(".native-paused");
+                fs::write(&marker, b"pause-before-commit\n").map_err(|error| {
+                    AppError::new(
+                        ErrorCode::Io,
+                        format!("unable to write native pause marker: {error}"),
+                    )
+                })?;
+                while native_fault(root).as_deref() == Some("pause-before-commit") {
+                    if cancel.load(Ordering::Acquire) {
+                        let _ = fs::remove_file(marker);
+                        return Err(import_cancelled());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let _ = fs::remove_file(marker);
+            }
+            (FailurePoint::BeforeFinalCommit, "before-final-commit-error")
+            | (FailurePoint::BeforeFinalCommit, "before-final-commit") => {
+                return Err(AppError::new(
+                    ErrorCode::Database,
+                    "injected final import commit failure",
+                ));
+            }
+            _ => {}
+        }
+    }
+    #[cfg(not(feature = "native-test"))]
+    let _ = (root, cancel);
+    #[cfg(test)]
+    if TEST_FAILURE_POINT.with(|value| value.get()) == point as u8 {
+        TEST_FAILURE_POINT.with(|value| value.set(0));
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!("injected import failure at {point:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn maybe_inject_save_failure(root: &Path) -> Result<(), AppError> {
+    let _ = root;
+    #[cfg(feature = "native-test")]
+    if native_fault(root).as_deref() == Some("save-position-error") {
+        let _ = fs::write(root.join(".native-save-failed"), b"save-position-error\n");
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "injected save-position database failure",
+        ));
+    }
+    #[cfg(test)]
+    if TEST_FAILURE_POINT.with(|value| value.get()) == FailurePoint::SavePosition as u8 {
+        TEST_FAILURE_POINT.with(|value| value.set(0));
+        return Err(AppError::new(
+            ErrorCode::Database,
+            "injected save-position database failure",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "native-test")]
+fn native_fault(root: &Path) -> Option<String> {
+    let configured_root = std::env::var_os("GRIPREAD_TEST_DATA_DIR")?;
+    let configured_root = fs::canonicalize(configured_root).ok()?;
+    let actual_root = fs::canonicalize(root).ok()?;
+    if configured_root != actual_root {
+        return None;
+    }
+    let marker_value = fs::read_to_string(root.join(".native-fault"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if marker_value.is_some() {
+        return marker_value;
+    }
+    std::env::var("GRIPREAD_NATIVE_IMPORT_FAULT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     struct TestRoot(PathBuf);
 
@@ -691,6 +2380,12 @@ mod tests {
         AtomicBool::new(false)
     }
 
+    fn import(storage: &mut Storage, source: &Path, operation: &str) -> ImportResult {
+        storage
+            .import_txt(source, operation, &no_cancel(), |_, _, _| {})
+            .unwrap()
+    }
+
     #[test]
     fn import_normalizes_and_deduplicates_by_normalized_hash() {
         let root = TestRoot::new();
@@ -699,18 +2394,13 @@ mod tests {
         let app_root = root.0.join("data");
         let mut storage = Storage::open(&app_root).unwrap();
 
-        let first = storage
-            .import_txt(&source_one, "one", &no_cancel(), |_, _, _| {})
-            .unwrap();
-        assert!(!first.duplicate);
+        let first = import(&mut storage, &source_one, "one");
         let window = storage
             .read_content_window(&first.book.id, None, 64)
             .unwrap();
         assert_eq!(window.text, "hello\nworld\n!\n");
 
-        let second = storage
-            .import_txt(&source_two, "two", &no_cancel(), |_, _, _| {})
-            .unwrap();
+        let second = import(&mut storage, &source_two, "two");
         assert!(second.duplicate);
         assert_eq!(first.book.id, second.book.id);
         assert_eq!(first.asset.id, second.asset.id);
@@ -735,7 +2425,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_happens_before_persisting() {
+    fn cancellation_before_commit_does_not_publish() {
         let root = TestRoot::new();
         let source = write_source(&root.0, "cancel.txt", b"cancel me");
         let app_root = root.0.join("data");
@@ -746,132 +2436,21 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::ImportCancelled);
         assert!(storage.list_books().unwrap().is_empty());
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .next()
+            .is_none());
     }
 
     #[test]
-    fn million_character_text_and_emoji_positions_are_stable() {
+    fn cancellation_during_persist_does_not_publish() {
         let root = TestRoot::new();
-        let content = "ab😀\n".repeat(250_000);
-        assert_eq!(content.chars().count(), 1_000_000);
-        let source = write_source(&root.0, "large.txt", content.as_bytes());
-        let app_root = root.0.join("data");
-        let mut storage = Storage::open(&app_root).unwrap();
-        let imported = storage
-            .import_txt(&source, "large", &no_cancel(), |_, _, _| {})
-            .unwrap();
-        let first = storage
-            .read_content_window(&imported.book.id, None, 2)
-            .unwrap();
-        assert_eq!(first.text, "ab");
-        assert_eq!(first.end_offset, 2);
-        let next_locator = ReaderLocator {
-            offset: first.end_offset,
-            ..first.locator.clone()
-        };
-        let second = storage
-            .read_content_window(&imported.book.id, Some(&next_locator), 2)
-            .unwrap();
-        assert_eq!(second.text, "😀");
-        assert_eq!(second.start_offset, 2);
-        assert_eq!(second.end_offset, 4);
-        let bad_locator = ReaderLocator {
-            offset: 3,
-            ..second.locator.clone()
-        };
-        let error = storage
-            .read_content_window(&imported.book.id, Some(&bad_locator), 3)
-            .unwrap_err();
-        assert_eq!(error.code, ErrorCode::InvalidLocator);
-        assert_eq!(first.total_length, utf16_length(&content));
-    }
-
-    #[test]
-    fn positions_restore_and_report_version_or_asset_errors() {
-        let root = TestRoot::new();
-        let source = write_source(&root.0, "position.txt", "hello😀world".as_bytes());
-        let app_root = root.0.join("data");
-        let mut storage = Storage::open(&app_root).unwrap();
-        let imported = storage
-            .import_txt(&source, "position", &no_cancel(), |_, _, _| {})
-            .unwrap();
-        let window = storage
-            .read_content_window(&imported.book.id, None, 4)
-            .unwrap();
-        storage.save_position(&window.locator).unwrap();
-        assert_eq!(
-            storage.saved_position(&imported.book.id).unwrap(),
-            Some(window.locator.clone())
-        );
-
-        let stale = ReaderLocator {
-            content_version: "changed".to_string(),
-            ..window.locator.clone()
-        };
-        let error = storage
-            .read_content_window(&imported.book.id, Some(&stale), 4)
-            .unwrap_err();
-        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
-
-        let asset_path = app_root
-            .join("books")
-            .join(&imported.book.id)
-            .join(format!("{}.txt", imported.asset.id));
-        fs::remove_file(asset_path).unwrap();
-        let error = storage
-            .read_content_window(&imported.book.id, None, 4)
-            .unwrap_err();
-        assert_eq!(error.code, ErrorCode::AssetMissing);
-    }
-
-    #[test]
-    fn migrations_are_reused_after_restart() {
-        let root = TestRoot::new();
-        let app_root = root.0.join("data");
-        let storage = Storage::open(&app_root).unwrap();
-        drop(storage);
-        let reopened = Storage::open(&app_root).unwrap();
-        let version: i64 = reopened
-            .conn
-            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(version, 1);
-    }
-
-    #[test]
-    fn saved_position_restores_after_storage_restart() {
-        let root = TestRoot::new();
-        let source = write_source(&root.0, "restart.txt", "first\nsecond\nthird".as_bytes());
-        let app_root = root.0.join("data");
-        let mut storage = Storage::open(&app_root).unwrap();
-        let imported = storage
-            .import_txt(&source, "restart", &no_cancel(), |_, _, _| {})
-            .unwrap();
-        let window = storage
-            .read_content_window(&imported.book.id, None, 6)
-            .unwrap();
-        storage.save_position(&window.locator).unwrap();
-        drop(storage);
-
-        let reopened = Storage::open(&app_root).unwrap();
-        let restored = reopened.saved_position(&imported.book.id).unwrap();
-        assert_eq!(restored, Some(window.locator.clone()));
-        let restored_window = reopened
-            .read_content_window(&imported.book.id, restored.as_ref(), 6)
-            .unwrap();
-        assert_eq!(restored_window.text, window.text);
-    }
-
-    #[test]
-    fn cancellation_during_persist_rolls_back_file_and_database() {
-        let root = TestRoot::new();
-        let source = write_source(&root.0, "persist-cancel.txt", b"cancel before commit");
+        let source = write_source(&root.0, "cancel-persist.txt", b"cancel during persist");
         let app_root = root.0.join("data");
         let mut storage = Storage::open(&app_root).unwrap();
         let cancel = AtomicBool::new(false);
         let error = storage
-            .import_txt(&source, "persist-cancel", &cancel, |phase, _, _| {
+            .import_txt(&source, "cancel-persist", &cancel, |phase, _, _| {
                 if phase == ImportPhase::Persisting {
                     cancel.store(true, Ordering::Release);
                 }
@@ -883,8 +2462,295 @@ mod tests {
             .unwrap()
             .next()
             .is_none());
-        assert!(fs::read_dir(app_root.join("books"))
-            .unwrap()
-            .all(|entry| entry.unwrap().path().read_dir().unwrap().next().is_none()));
+    }
+
+    #[test]
+    fn unicode_windows_concatenate_forward_and_backward_without_surrogate_splits() {
+        let root = TestRoot::new();
+        let content = "甲😀乙\n丙𐐷丁\n".repeat(4096);
+        let source = write_source(&root.0, "unicode.txt", content.as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "unicode");
+
+        let mut locator = None;
+        let mut concatenated = String::new();
+        loop {
+            let window = storage
+                .read_content_window(&imported.book.id, locator.as_ref(), 7)
+                .unwrap();
+            if window.text.is_empty() {
+                break;
+            }
+            concatenated.push_str(&window.text);
+            if !window.has_after {
+                break;
+            }
+            locator = Some(ReaderLocator {
+                offset: window.end_offset,
+                ..window.locator.clone()
+            });
+        }
+        assert_eq!(concatenated, content);
+
+        let initial = storage
+            .read_content_window(&imported.book.id, None, 4)
+            .unwrap();
+        let request = ReadContentRequest {
+            book_id: imported.book.id.clone(),
+            locator: Some(ReaderLocator {
+                offset: 4,
+                ..initial.locator
+            }),
+            max_units: 2,
+            direction: WindowDirection::Backward,
+        };
+        let backward = storage.read_content_window_request(&request).unwrap();
+        assert_eq!(backward.text, "😀乙");
+        assert_eq!(backward.end_offset, 4);
+    }
+
+    #[test]
+    fn same_length_replacement_is_reported_as_content_version_mismatch() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "replace.txt", b"hello world");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "replace");
+        storage
+            .read_content_window(&imported.book.id, None, 5)
+            .unwrap();
+        let asset_path = app_root.join(format!(
+            "books/{}/{}.txt",
+            imported.book.id, imported.asset.id
+        ));
+        fs::write(&asset_path, b"HELLO world").unwrap();
+        let error = storage
+            .read_content_window(&imported.book.id, None, 5)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+    }
+
+    #[test]
+    fn corrupted_sparse_index_is_rebuilt_from_asset_bytes() {
+        let root = TestRoot::new();
+        let source = write_source(
+            &root.0,
+            "corrupt-index.txt",
+            "甲😀乙\n".repeat(2_000).as_bytes(),
+        );
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "corrupt-index");
+        let first = storage
+            .read_content_window(&imported.book.id, None, 20)
+            .unwrap();
+        assert_eq!(first.text, "甲😀乙\n".repeat(4));
+
+        storage
+            .conn
+            .execute(
+                "UPDATE content_indexes
+                 SET index_json = ?1
+                 WHERE asset_id = ?2",
+                params![
+                    serde_json::json!({
+                        "schema_version": INDEX_SCHEMA_VERSION,
+                        "stride_units": INDEX_STRIDE_UNITS,
+                        "byte_length": imported.asset.byte_length,
+                        "utf16_length": 8_000,
+                        "entries": [
+                            {"utf16_offset": 0, "byte_offset": 0},
+                            {"utf16_offset": 8_000, "byte_offset": imported.asset.byte_length}
+                        ]
+                    })
+                    .to_string(),
+                    imported.asset.id
+                ],
+            )
+            .unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE content_indexes SET fingerprint = fingerprint || ':corrupt'
+                 WHERE asset_id = ?1",
+                params![imported.asset.id],
+            )
+            .unwrap();
+        let rebuilt = storage
+            .read_content_window(&imported.book.id, None, 20)
+            .unwrap();
+        assert_eq!(rebuilt.text, first.text);
+        assert_eq!(rebuilt.end_offset, first.end_offset);
+    }
+
+    #[test]
+    fn failed_duplicate_commit_preserves_committed_asset_on_recovery() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "duplicate-recovery.txt", b"duplicate recovery");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "first");
+        let managed = app_root.join(format!(
+            "books/{}/{}.txt",
+            imported.book.id, imported.asset.id
+        ));
+        set_test_failure(FailurePoint::BeforeFinalCommit);
+        let error = storage
+            .import_txt(&source, "duplicate-failure", &no_cancel(), |_, _, _| {})
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Io);
+        assert!(managed.is_file());
+        drop(storage);
+
+        let reopened = Storage::open(&app_root).unwrap();
+        assert_eq!(reopened.list_books().unwrap().len(), 1);
+        assert_eq!(
+            reopened
+                .read_content_window(&imported.book.id, None, 100)
+                .unwrap()
+                .text,
+            "duplicate recovery"
+        );
+        assert!(!app_root.join("staging/duplicate-failure.part").exists());
+    }
+
+    #[test]
+    fn sqlite_commit_failure_is_cleaned_without_creating_a_book() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "database-failure.txt", b"database failure");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        storage
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_content_index
+                 BEFORE INSERT ON content_indexes
+                 BEGIN SELECT RAISE(ABORT, 'injected content index failure'); END;",
+            )
+            .unwrap();
+        let error = storage
+            .import_txt(&source, "database-failure", &no_cancel(), |_, _, _| {})
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Database);
+        assert!(storage.list_books().unwrap().is_empty());
+        assert!(storage.journal_exists("database-failure").unwrap());
+        drop(storage);
+        let reopened = Storage::open(&app_root).unwrap();
+        assert!(reopened.list_books().unwrap().is_empty());
+        assert!(!app_root.join("staging/database-failure.part").exists());
+    }
+
+    #[test]
+    fn interrupted_imports_recover_after_journal_and_rename_boundaries() {
+        for (operation, point) in [
+            ("after-journal", FailurePoint::AfterJournal),
+            ("after-rename", FailurePoint::AfterRename),
+            ("before-commit", FailurePoint::BeforeFinalCommit),
+        ] {
+            let root = TestRoot::new();
+            let source = write_source(&root.0, "recover.txt", b"recover me");
+            let app_root = root.0.join("data");
+            let mut storage = Storage::open(&app_root).unwrap();
+            set_test_failure(point);
+            let error = storage
+                .import_txt(&source, operation, &no_cancel(), |_, _, _| {})
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::Io);
+            drop(storage);
+            let reopened = Storage::open(&app_root).unwrap();
+            assert!(reopened.list_books().unwrap().is_empty());
+            assert!(fs::read_dir(app_root.join("staging"))
+                .unwrap()
+                .next()
+                .is_none());
+            assert!(fs::read_dir(app_root.join("books"))
+                .unwrap()
+                .all(|entry| entry.unwrap().path().read_dir().unwrap().next().is_none()));
+        }
+    }
+
+    #[test]
+    fn migration_preserves_v1_records_and_rejects_future_schema() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        fs::create_dir_all(app_root.join("books/b1")).unwrap();
+        fs::create_dir_all(app_root.join("staging")).unwrap();
+        let bytes = b"legacy\n";
+        let asset_path = app_root.join("books/b1/a1.txt");
+        fs::write(&asset_path, bytes).unwrap();
+        let conn = Connection::open(app_root.join("gripread.sqlite3")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1);
+             CREATE TABLE books(id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, author TEXT, content_version TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE book_assets(id TEXT PRIMARY KEY NOT NULL, book_id TEXT NOT NULL, kind TEXT NOT NULL, sha256 TEXT NOT NULL UNIQUE, byte_length INTEGER NOT NULL, content_version TEXT NOT NULL, relative_path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+             CREATE TABLE reading_positions(book_id TEXT PRIMARY KEY NOT NULL, locator_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             INSERT INTO books VALUES ('b1', 'Legacy', NULL, 'legacy-version', 1, 1);",
+        )
+        .unwrap();
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        conn.execute(
+            "INSERT INTO book_assets VALUES ('a1', 'b1', 'txt', ?1, 7, ?1, 'books/b1/a1.txt', 1)",
+            params![hash],
+        )
+        .unwrap();
+        drop(conn);
+        let storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.list_books().unwrap()[0].id, "b1");
+        assert_eq!(
+            storage.read_content_window("b1", None, 10).unwrap().text,
+            "legacy\n"
+        );
+        drop(storage);
+
+        let future_root = root.0.join("future");
+        fs::create_dir_all(&future_root).unwrap();
+        let conn = Connection::open(future_root.join("gripread.sqlite3")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (99, 1);",
+        )
+        .unwrap();
+        drop(conn);
+        let error = Storage::open(&future_root).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Database);
+        assert!(error.message.contains("future storage schema"));
+    }
+
+    #[test]
+    fn orphan_files_are_removed_and_data_directory_is_exclusive() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let storage = Storage::open(&app_root).unwrap();
+        let orphan = app_root.join("books/orphan/asset.txt");
+        fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+        fs::write(&orphan, b"orphan").unwrap();
+        let second = Storage::open(&app_root).unwrap_err();
+        assert_eq!(second.code, ErrorCode::Database);
+        drop(storage);
+        let storage = Storage::open(&app_root).unwrap();
+        assert!(!orphan.exists());
+        drop(storage);
+    }
+
+    #[test]
+    fn settings_and_library_summaries_persist() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "settings.txt", b"settings");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "settings");
+        let settings = ReaderPreferences {
+            font_size: 28.0,
+            line_height: 2.0,
+            ..ReaderPreferences::default()
+        };
+        storage.save_settings(&settings).unwrap();
+        assert_eq!(storage.get_settings().unwrap(), settings);
+        let summaries = storage.list_library_books().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].book.id, imported.book.id);
+        assert_eq!(summaries[0].total_length, Some(8));
     }
 }

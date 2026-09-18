@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "GripRead",
+  "productName": "手不释卷",
   "version": "0.1.0",
   "identifier": "com.gripread.reader",
   "build": {
@@ -13,20 +13,25 @@
     "windows": [
       {
         "label": "main",
-        "title": "GripRead",
+        "title": "手不释卷 · GripRead",
         "width": 1100,
         "height": 760,
-        "minWidth": 720,
-        "minHeight": 520,
+        "minWidth": 360,
+        "minHeight": 480,
         "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/icon.svg"]
+    "icon": [
+      "icons/icon.svg"
+    ]
   }
 }
