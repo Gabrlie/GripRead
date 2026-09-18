@@ -1,0 +1,24 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm exec vite build --mode native-test"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "native-test",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "wdio:default",
+            "wdio-webdriver:default",
+            "core:window:allow-set-size"
+          ]
+        }
+      ]
+    }
+  }
+}
