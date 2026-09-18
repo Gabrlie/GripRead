@@ -2,7 +2,7 @@
 
 ## Current stage
 
-M0 is in progress. The existing storage and IPC foundation and uncommitted product pages require integration repairs before acceptance. Wider product specifications remain planned.
+M0 is in progress. The storage, IPC, product shell, measured reader, and macOS embedded checks are integrated; final acceptance evidence still has explicit manual and crash-recovery limits. Wider product specifications remain planned.
 
 ## Active task
 
