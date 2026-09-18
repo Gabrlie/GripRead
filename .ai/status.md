@@ -14,4 +14,4 @@ The local Rust, frontend, generated-binding, documentation, boundary, production
 
 ## Next entry point
 
-Review the integrated diff, record the native evidence and picker limitation, then decide whether the M0 milestone can close. Do not start later roadmap stages. Android and Windows native checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
+Review the integrated diff, record the native evidence and the picker/crash-recovery limitations, then decide whether the M0 milestone can close. Do not start later roadmap stages. Android and Windows native checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
