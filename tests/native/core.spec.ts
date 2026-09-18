@@ -1,4 +1,5 @@
 import { browser, expect } from "@wdio/globals";
+import { writeFile } from "node:fs/promises";
 
 import {
   LARGE_WINDOW_UNITS,
@@ -6,6 +7,7 @@ import {
   clickSaveControl,
   expectUtf16Window,
   importFixture,
+  dataPath,
   invoke,
   listBooks,
   normalizedFixture,
@@ -122,6 +124,10 @@ describe("GripRead native M0 acceptance", () => {
     const current = await waitForNextPage(first);
     expect(current.start).toBeGreaterThan(first.start);
     await clickSaveControl();
+    const saved = await invoke("get_saved_reader_locator", {
+      request: { bookId: mixed.book.id },
+    });
+    await writeFile(dataPath(".native-expected-locator.json"), JSON.stringify(saved), "utf8");
     await clickReaderControl("reader-close");
 
     const books = await listBooks();

@@ -40,7 +40,9 @@ export function ImportModal() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>导入本地 TXT</DialogTitle>
-            <DialogDescription>UTF-8 正文会保存到本地。关闭面板后导入继续。</DialogDescription>
+            <DialogDescription>
+              TXT 正文会自动识别编码并保存到本地。关闭面板后导入继续。
+            </DialogDescription>
           </DialogHeader>
           <p role="status">{label}</p>
           {state.job && (

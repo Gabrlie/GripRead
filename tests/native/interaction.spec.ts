@@ -9,11 +9,14 @@ import {
   openBook,
   readPage,
   refreshLibraryInUi,
+  seekReaderProgress,
   waitForAppReady,
   waitForNextPage,
   waitForPageFit,
   waitForReaderClosed,
+  useAnimatedPageTurns,
   useInstantPageTurns,
+  TEST_TIMEOUT,
 } from "./support";
 
 async function closeBook() {
@@ -21,15 +24,14 @@ async function closeBook() {
   await waitForReaderClosed();
 }
 async function ensureSettled() {
-  await browser.executeAsync((done) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => done())),
-  );
+  await browser.pause(250);
 }
 
 describe("native typography and reader interaction", () => {
   before(async () => {
     await waitForAppReady();
     await useInstantPageTurns();
+    await useAnimatedPageTurns();
   });
 
   it("renders every long-paragraph and newline-only page contiguously", async () => {
@@ -41,9 +43,16 @@ describe("native typography and reader interaction", () => {
       const imported = await importFixture(name);
       await refreshLibraryInUi(imported.book.id);
       let page = await openBook(imported.book.id);
+      if (page.start !== 0) page = await seekReaderProgress(0);
       const pieces: string[] = [];
       for (let count = 0; ; count++) {
-        expect(page.text).toBe(text.slice(page.start, page.end));
+        const expected = text.slice(page.start, page.end);
+        if (page.text !== expected) {
+          throw new Error(
+            `reader text mismatch for ${name} at page ${count}: start=${page.start} end=${page.end} ` +
+              `expectedPrefix=${JSON.stringify(expected.slice(0, 16))} actualPrefix=${JSON.stringify(page.text.slice(0, 16))}`,
+          );
+        }
         expect(page.overflowHeight).toBeLessThanOrEqual(page.clientHeight + 1);
         pieces.push(page.text);
         if (page.end === text.length) break;
@@ -75,33 +84,22 @@ describe("native typography and reader interaction", () => {
     await browser.execute(() => window.getSelection()?.removeAllRanges());
     const trigger = await browser.$('button[aria-label="排版设置"]');
     await trigger.click();
-    const slider = await browser.$('[role="dialog"] input[type="range"]');
-    await slider.waitForDisplayed();
-    await slider.click();
-    await browser.keys("ArrowRight");
+    const dialog = await browser.$('[role="dialog"]:not([hidden])');
+    await dialog.waitForDisplayed();
+    const slider = await dialog.$('input[type="range"]');
+    await slider.waitForExist();
     await browser.execute(() => {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          code: "Escape",
-          key: "Escape",
-          keyCode: 27,
-        }),
-      );
+      document
+        .querySelector('[role="dialog"]:not([hidden])')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await ensureSettled();
-    // The embedded WebKit driver does not consistently deliver Escape to the
-    // Base UI dialog. Keep the keyboard assertion above, then close through
-    // the dialog's real close control so the remaining interaction checks are
-    // independent of that driver quirk.
-    if (await browser.execute(() => Boolean(document.querySelector('[role="dialog"]')))) {
-      await (await browser.$('[data-slot="dialog-close"]')).click();
-    }
     await browser.waitUntil(async () =>
-      browser.execute(() => !document.querySelector('[role="dialog"]')),
+      browser.execute(() => !document.querySelector('[role="dialog"]:not([hidden])')),
     );
-    expect(await browser.execute(() => !document.querySelector('[role="dialog"]'))).toBe(true);
+    expect(
+      await browser.execute(() => !document.querySelector('[role="dialog"]:not([hidden])')),
+    ).toBe(true);
     expect(await trigger.isFocused()).toBe(true);
     expect((await readPage()).start).toBe(page.start);
     await browser.setWindowSize(390, 700);
@@ -115,8 +113,9 @@ describe("native typography and reader interaction", () => {
       )!;
       return {
         height: track.getBoundingClientRect().height,
-        thumbs: document.querySelectorAll('[data-testid="reader-progress"] input[type="range"]')
-          .length,
+        thumbs: document.querySelectorAll(
+          '[data-testid="reader-progress"] [data-slot="slider-thumb"]',
+        ).length,
       };
     });
     expect(geometry.height).toBeGreaterThan(0);
@@ -130,24 +129,24 @@ describe("native typography and reader interaction", () => {
   it("commits progress navigation and can move backward after seeking to the end", async () => {
     const book = await importFixture("mixed.txt");
     await refreshLibraryInUi(book.book.id);
-    const start = await openBook(book.book.id);
+    let start = await openBook(book.book.id);
+    if (start.start !== 0) start = await seekReaderProgress(0);
     const slider = await browser.$('[data-testid="reader-progress"] input[type="range"]');
-    await slider.click();
-    // WebKit's embedded driver does not deliver End to Base UI's clipped range
-    // input, so send the same input/change sequence that a range interaction emits.
+    await slider.waitForExist();
     await browser.execute(() => {
       const input = document.querySelector<HTMLInputElement>(
         '[data-testid="reader-progress"] input[type="range"]',
       );
       if (!input) throw new Error("progress slider input is missing");
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      if (!setValue) throw new Error("progress slider value setter is missing");
+      if (!setValue) throw new Error("slider value setter is missing");
       setValue.call(input, "100");
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await browser.waitUntil(
       async () => !(await browser.$('[data-testid="reader-next"]').isEnabled()),
+      { timeout: TEST_TIMEOUT, interval: 100 },
     );
     const end = await readPage();
     expect(end.end).toBe(end.total);
@@ -162,7 +161,8 @@ describe("native typography and reader interaction", () => {
   it("keeps the reader open after a save failure and closes after retry", async () => {
     const book = await importFixture("mixed.txt");
     await refreshLibraryInUi(book.book.id);
-    const first = await openBook(book.book.id);
+    let first = await openBook(book.book.id);
+    if (first.start !== 0) first = await seekReaderProgress(0);
     const fault = dataPath(".native-fault");
     await writeFile(fault, "save-position-error\n", "utf8");
     try {

@@ -1,14 +1,17 @@
 pub mod commands;
 pub mod error;
+pub mod m1_txt;
 pub mod models;
 pub mod storage;
 pub mod txt;
 pub mod typegen;
 
 use commands::{
-    cancel_import, get_import_status, get_saved_reader_locator, get_settings, list_books,
-    read_content_window, resolve_reader_locator, save_reader_locator, save_settings, start_import,
-    AppState,
+    add_bookmark, cancel_import, cancel_search, cancel_txt_decode, delete_bookmark,
+    get_import_status, get_saved_reader_locator, get_settings, get_txt_decode_status,
+    get_txt_encoding, list_bookmarks, list_books, list_toc, read_content_window,
+    reassociate_txt_source, resolve_reader_locator, save_reader_locator, save_settings,
+    search_book, set_txt_encoding, start_import, start_txt_decode, AppState,
 };
 use tauri::{Emitter, Manager};
 
@@ -39,12 +42,24 @@ pub fn run() {
             get_import_status,
             cancel_import,
             list_books,
+            get_txt_encoding,
+            reassociate_txt_source,
+            start_txt_decode,
+            get_txt_decode_status,
+            cancel_txt_decode,
+            set_txt_encoding,
             read_content_window,
             save_reader_locator,
             get_saved_reader_locator,
             resolve_reader_locator,
             get_settings,
             save_settings,
+            list_toc,
+            list_bookmarks,
+            add_bookmark,
+            delete_bookmark,
+            search_book,
+            cancel_search,
             complete_exit
         ])
         .build(tauri::generate_context!())

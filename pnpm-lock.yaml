@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  page-flip@2.0.7: dec55a4b0e184920c1d25b1e55cc1ec9abfe7570e784ba381f2f97b38e45a479
+
 importers:
 
   .:
@@ -31,7 +34,7 @@ importers:
         version: 12.43.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       page-flip:
         specifier: ^2.0.7
-        version: 2.0.7
+        version: 2.0.7(patch_hash=dec55a4b0e184920c1d25b1e55cc1ec9abfe7570e784ba381f2f97b38e45a479)
       react:
         specifier: ^19.1.1
         version: 19.3.0
@@ -62,7 +65,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^5.0.2
-        version: 5.2.0(vite@7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1))
+        version: 5.2.0(supports-color@8.1.1)(vite@7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1))
       '@wdio/cli':
         specifier: ^9.30.1
         version: 9.30.1(@types/node@24.13.5)(expect-webdriverio@5.6.5)
@@ -80,10 +83,10 @@ importers:
         version: 9.30.1
       '@wdio/tauri-plugin':
         specifier: ^1.4.0
-        version: 1.4.0(tsx@4.23.13)
+        version: 1.4.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/tauri-service':
         specifier: ^1.4.0
-        version: 1.4.0(expect-webdriverio@5.6.5)(tsx@4.23.13)(webdriverio@9.30.1)
+        version: 1.4.0(expect-webdriverio@5.6.5)(supports-color@8.1.1)(tsx@4.23.13)(webdriverio@9.30.1)
       '@wdio/types':
         specifier: ^9.30.1
         version: 9.30.1
@@ -113,7 +116,7 @@ importers:
         version: 7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1)
       vitest:
         specifier: ^3.2.4
-        version: 3.2.7(@types/node@24.13.5)(jiti@1.21.7)(jsdom@30.0.1)(tsx@4.23.13)(yaml@2.9.1)
+        version: 3.2.7(@types/node@24.13.5)(jiti@1.21.7)(jsdom@30.0.1)(supports-color@8.1.1)(tsx@4.23.13)(yaml@2.9.1)
       webdriverio:
         specifier: 9.30.1
         version: 9.30.1
@@ -3283,12 +3286,12 @@ snapshots:
 
   '@babel/compat-data@7.29.7': {}
 
-  '@babel/core@7.29.7':
+  '@babel/core@7.29.7(supports-color@8.1.1)':
     dependencies:
       '@babel/code-frame': 7.29.7
       '@babel/generator': 7.29.8
       '@babel/helper-compilation-targets': 7.29.7
-      '@babel/helper-module-transforms': 7.29.7(@babel/core@7.29.7)
+      '@babel/helper-module-transforms': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))
       '@babel/helpers': 7.29.7
       '@babel/parser': 7.29.8
       '@babel/template': 7.29.7
@@ -3328,9 +3331,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/helper-module-transforms@7.29.7(@babel/core@7.29.7)':
+  '@babel/helper-module-transforms@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
-      '@babel/core': 7.29.7
+      '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-module-imports': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
       '@babel/traverse': 7.29.8
@@ -3354,14 +3357,14 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.8
 
-  '@babel/plugin-transform-react-jsx-self@7.29.7(@babel/core@7.29.7)':
+  '@babel/plugin-transform-react-jsx-self@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
-      '@babel/core': 7.29.7
+      '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-plugin-utils': 7.29.7
 
-  '@babel/plugin-transform-react-jsx-source@7.29.7(@babel/core@7.29.7)':
+  '@babel/plugin-transform-react-jsx-source@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
-      '@babel/core': 7.29.7
+      '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-plugin-utils': 7.29.7
 
   '@babel/runtime@7.29.7': {}
@@ -4015,11 +4018,11 @@ snapshots:
       '@types/node': 24.13.5
     optional: true
 
-  '@vitejs/plugin-react@5.2.0(vite@7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1))':
+  '@vitejs/plugin-react@5.2.0(supports-color@8.1.1)(vite@7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1))':
     dependencies:
-      '@babel/core': 7.29.7
-      '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx-source': 7.29.7(@babel/core@7.29.7)
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))
+      '@babel/plugin-transform-react-jsx-source': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))
       '@rolldown/pluginutils': 1.0.0-rc.3
       '@types/babel__core': 7.20.5
       react-refresh: 0.18.0
@@ -4199,11 +4202,11 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@wdio/native-core@1.2.0(tsx@4.23.13)':
+  '@wdio/native-core@1.2.0(supports-color@8.1.1)(tsx@4.23.13)':
     dependencies:
       '@wdio/logger': 9.29.1
       '@wdio/native-types': 2.5.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
       debug: 4.4.3(supports-color@8.1.1)
       get-port: 7.2.0
       tslib: 2.8.1
@@ -4215,7 +4218,7 @@ snapshots:
 
   '@wdio/native-types@2.5.0': {}
 
-  '@wdio/native-utils@2.7.0(tsx@4.23.13)':
+  '@wdio/native-utils@2.7.0(supports-color@8.1.1)(tsx@4.23.13)':
     dependencies:
       '@wdio/logger': 9.29.1
       debug: 4.4.3(supports-color@8.1.1)
@@ -4272,24 +4275,24 @@ snapshots:
       easy-table: 1.2.0
       pretty-ms: 9.3.1
 
-  '@wdio/tauri-plugin@1.4.0(tsx@4.23.13)':
+  '@wdio/tauri-plugin@1.4.0(supports-color@8.1.1)(tsx@4.23.13)':
     dependencies:
       '@tauri-apps/api': 2.11.1
       '@tauri-apps/plugin-log': 2.9.1
       '@wdio/native-spy': 1.3.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
     transitivePeerDependencies:
       - supports-color
       - tsx
 
-  '@wdio/tauri-service@1.4.0(expect-webdriverio@5.6.5)(tsx@4.23.13)(webdriverio@9.30.1)':
+  '@wdio/tauri-service@1.4.0(expect-webdriverio@5.6.5)(supports-color@8.1.1)(tsx@4.23.13)(webdriverio@9.30.1)':
     dependencies:
       '@wdio/globals': 9.29.1(expect-webdriverio@5.6.5)(webdriverio@9.30.1)
       '@wdio/logger': 9.29.1
-      '@wdio/native-core': 1.2.0(tsx@4.23.13)
+      '@wdio/native-core': 1.2.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/native-spy': 1.3.0
       '@wdio/native-types': 2.5.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/spec-reporter': 9.30.1
       '@wdio/types': 9.30.1
       debug: 4.4.3(supports-color@8.1.1)
@@ -5575,7 +5578,7 @@ snapshots:
 
   package-json-from-dist@1.0.1: {}
 
-  page-flip@2.0.7: {}
+  page-flip@2.0.7(patch_hash=dec55a4b0e184920c1d25b1e55cc1ec9abfe7570e784ba381f2f97b38e45a479): {}
 
   pako@1.0.2: {}
 
@@ -6218,7 +6221,7 @@ snapshots:
       spdx-correct: 3.2.0
       spdx-expression-parse: 3.0.0
 
-  vite-node@3.2.4(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1):
+  vite-node@3.2.4(@types/node@24.13.5)(jiti@1.21.7)(supports-color@8.1.1)(tsx@4.23.13)(yaml@2.9.1):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3(supports-color@8.1.1)
@@ -6254,7 +6257,7 @@ snapshots:
       tsx: 4.23.13
       yaml: 2.9.1
 
-  vitest@3.2.7(@types/node@24.13.5)(jiti@1.21.7)(jsdom@30.0.1)(tsx@4.23.13)(yaml@2.9.1):
+  vitest@3.2.7(@types/node@24.13.5)(jiti@1.21.7)(jsdom@30.0.1)(supports-color@8.1.1)(tsx@4.23.13)(yaml@2.9.1):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
@@ -6277,7 +6280,7 @@ snapshots:
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
       vite: 7.3.6(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1)
-      vite-node: 3.2.4(@types/node@24.13.5)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1)
+      vite-node: 3.2.4(@types/node@24.13.5)(jiti@1.21.7)(supports-color@8.1.1)(tsx@4.23.13)(yaml@2.9.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.5

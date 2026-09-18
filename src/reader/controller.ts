@@ -42,6 +42,7 @@ function emptySnapshot(bookId: string | null = null): ReaderSnapshot {
     loading: false,
     error: null,
     saveError: null,
+    positionWarning: null,
   };
 }
 
@@ -70,6 +71,15 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function requiresRelocation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "content_version_mismatch"
+  );
+}
+
 interface SaveFailure {
   readonly locator: ReaderLocator;
   readonly error: unknown;
@@ -89,6 +99,57 @@ class ReaderSaveError extends Error {
 
 function isFiniteInteger(value: number): boolean {
   return Number.isInteger(value) && Number.isFinite(value);
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function isWellFormedUtf16(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (isHighSurrogate(code)) {
+      if (index + 1 >= text.length || !isLowSurrogate(text.charCodeAt(index + 1))) {
+        return false;
+      }
+      index += 1;
+    } else if (isLowSurrogate(code)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Take a UTF-16 prefix without ending between the two units of a scalar. */
+function safePrefix(text: string, maxUnits: number): string {
+  let end = Math.min(text.length, Math.max(0, maxUnits));
+  if (
+    end > 0 &&
+    end < text.length &&
+    isHighSurrogate(text.charCodeAt(end - 1)) &&
+    isLowSurrogate(text.charCodeAt(end))
+  ) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
+/** Take a UTF-16 suffix without starting between the two units of a scalar. */
+function safeSuffix(text: string, maxUnits: number): string {
+  let start = Math.max(0, text.length - Math.max(0, maxUnits));
+  if (
+    start > 0 &&
+    start < text.length &&
+    isHighSurrogate(text.charCodeAt(start - 1)) &&
+    isLowSurrogate(text.charCodeAt(start))
+  ) {
+    start += 1;
+  }
+  return text.slice(start);
 }
 
 /** Error raised when a service or measurer returns a non-contiguous window. */
@@ -179,11 +240,28 @@ export class ReaderController {
       this.assertCurrent(epoch);
       const saved = await this.service.getSavedReaderLocator(bookId);
       this.assertCurrent(epoch);
-      const measured = await this.readAndMeasure(bookId, saved, "forward", epoch);
+      let positionWarning: string | null = null;
+      let measured: MeasuredWindow;
+      if (saved) {
+        try {
+          measured = await this.readAndMeasure(bookId, saved, "forward", epoch);
+        } catch (error) {
+          if (!requiresRelocation(error)) throw error;
+          positionWarning = "上次阅读位置属于旧正文版本，已从开头打开；可使用目录或搜索重新定位。";
+          measured = await this.readAndMeasure(bookId, null, "forward", epoch);
+        }
+      } else {
+        measured = await this.readAndMeasure(bookId, null, "forward", epoch);
+      }
       this.assertCurrent(epoch);
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, saved?.offset ?? null);
+      if (positionWarning) {
+        this.currentPageIndex = 0;
+        this.snapshot = { ...this.snapshot, positionWarning };
+        this.notify();
+      }
       await this.presentCurrent("open", epoch);
       if (previousSaveFailure) {
         throw new ReaderSaveError(
@@ -224,6 +302,7 @@ export class ReaderController {
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, locator.offset);
+      this.snapshot = { ...this.snapshot, positionWarning: null };
       await this.presentCurrent("seek", epoch);
     });
   }
@@ -250,6 +329,7 @@ export class ReaderController {
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, locator.offset);
+      this.snapshot = { ...this.snapshot, positionWarning: null };
       await this.presentCurrent("seek", epoch);
     });
   }
@@ -658,10 +738,11 @@ function boundaryLocator(window: ContentWindow, offset: number): ReaderLocator {
   return {
     ...window.locator,
     offset,
-    contextBefore: before.slice(-CONTEXT_UNITS),
+    contextBefore: safeSuffix(before, CONTEXT_UNITS),
     // No text after a window boundary is available to the frontend. The
     // service resolves the actual suffix from the content store.
-    contextAfter: offset >= window.endOffset ? "" : window.text.slice(local, local + CONTEXT_UNITS),
+    contextAfter:
+      offset >= window.endOffset ? "" : safePrefix(window.text.slice(local), CONTEXT_UNITS),
   };
 }
 
@@ -776,6 +857,12 @@ function validateWindow(window: ContentWindow): void {
   ) {
     throw new ReaderProtocolError("content window locator does not match its resource");
   }
+  if (
+    !isWellFormedUtf16(window.locator.contextBefore) ||
+    !isWellFormedUtf16(window.locator.contextAfter)
+  ) {
+    throw new ReaderProtocolError("content window locator contains an incomplete surrogate pair");
+  }
 }
 
 function validateWindowResponse(
@@ -820,11 +907,12 @@ function validateWindowResponse(
 function pageLocator(window: ContentWindow, offset: number): ReaderLocator {
   const local = offset - window.startOffset;
   const before = `${window.locator.contextBefore}${window.text.slice(0, local)}`;
-  const after = `${window.text.slice(local)}${window.locator.contextAfter}`;
   return {
     ...window.locator,
     offset,
-    contextBefore: before.slice(-CONTEXT_UNITS),
-    contextAfter: after.slice(0, CONTEXT_UNITS),
+    contextBefore: safeSuffix(before, CONTEXT_UNITS),
+    // contextAfter belongs to the window anchor, so appending it here would
+    // repeat text from the start of the window for pages near its end.
+    contextAfter: safePrefix(window.text.slice(local), CONTEXT_UNITS),
   };
 }

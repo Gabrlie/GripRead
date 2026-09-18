@@ -16,18 +16,21 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, ErrorCode};
+use crate::m1_txt::build_toc;
 use crate::models::{
-    AssetAvailability, AssetKind, Book, BookAsset, ContentWindow, ImportPhase, ImportResult,
-    LibraryBook, ReadContentRequest, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
-    WindowDirection,
+    AssetAvailability, AssetKind, Book, BookAsset, Bookmark, BookmarkRequest, ContentWindow,
+    ImportPhase, ImportResult, LibraryBook, ReadContentRequest, ReaderLocator, ReaderPreferences,
+    ResolveLocatorRequest, SearchMatch, SearchRequest, SearchResponse, TocEntry, TxtDecodeState,
+    TxtEncoding, TxtEncodingInfo, WindowDirection,
 };
-use crate::txt::decode_and_normalize;
+use crate::txt::detect_and_decode;
 
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
 const CONTEXT_BYTES: u64 = 512;
+const DUPLICATE_VALIDATION_RETRY: &str = "duplicate import target requires revalidation";
 
 /// A storage handle owns an OS lock for the complete lifetime of the handle.
 /// The SQLite connection is accessed by commands through the application's
@@ -50,10 +53,55 @@ pub(crate) struct PreparedImport {
     operation_id: String,
     source: PathBuf,
     stage_relative_path: String,
+    raw_stage_relative_path: String,
     pub(crate) sha256: String,
+    pub(crate) source_sha256: String,
     byte_length: u64,
     index_json: String,
     source_byte_length: u64,
+    detected_encoding: TxtEncoding,
+    selected_encoding: TxtEncoding,
+    decode_state: TxtDecodeState,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TxtDecodeSnapshot {
+    pub(crate) book_id: String,
+    pub(crate) asset_id: String,
+    pub(crate) relative_path: String,
+    pub(crate) source_relative_path: String,
+    pub(crate) source_sha256: String,
+    pub(crate) content_version: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedTxtDecode {
+    pub(crate) operation_id: String,
+    pub(crate) snapshot: TxtDecodeSnapshot,
+    pub(crate) stage_relative_path: String,
+    pub(crate) backup_relative_path: String,
+    pub(crate) content_version: String,
+    pub(crate) byte_length: u64,
+    pub(crate) index_json: String,
+    pub(crate) source_sha256: String,
+    pub(crate) detected_encoding: TxtEncoding,
+    pub(crate) selected_encoding: TxtEncoding,
+    pub(crate) decode_state: TxtDecodeState,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TxtReassociationSnapshot {
+    pub(crate) asset_id: String,
+    pub(crate) source_relative_path: String,
+    pub(crate) content_version: String,
+    pub(crate) selected_encoding: TxtEncoding,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedTxtReassociation {
+    pub(crate) snapshot: TxtReassociationSnapshot,
+    pub(crate) stage_relative_path: String,
+    pub(crate) source_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -98,8 +146,33 @@ struct JournalRecord {
     content_version: String,
     relative_path: String,
     stage_path: String,
+    raw_stage_path: String,
+    source_relative_path: String,
+    source_sha256: String,
+    detected_encoding: TxtEncoding,
+    selected_encoding: TxtEncoding,
+    decode_state: TxtDecodeState,
     index_json: String,
     source_byte_length: u64,
+    created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+struct TxtDecodeJournal {
+    operation_id: String,
+    book_id: String,
+    asset_id: String,
+    old_content_version: String,
+    relative_path: String,
+    stage_path: String,
+    backup_path: String,
+    new_content_version: String,
+    byte_length: u64,
+    index_json: String,
+    source_sha256: String,
+    detected_encoding: TxtEncoding,
+    selected_encoding: TxtEncoding,
+    decode_state: TxtDecodeState,
     created_at: i64,
 }
 
@@ -139,10 +212,20 @@ struct Boundary {
     byte_offset: u64,
 }
 
+struct SearchParameters<'a> {
+    book_id: &'a str,
+    content_version: &'a str,
+    query: &'a str,
+    case_sensitive: bool,
+    cursor: u64,
+    limit: u32,
+}
+
 impl Storage {
     pub fn open(root: &Path) -> Result<Self, AppError> {
         fs::create_dir_all(root)?;
         fs::create_dir_all(root.join("books"))?;
+        fs::create_dir_all(root.join("sources"))?;
         fs::create_dir_all(root.join("staging"))?;
 
         let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -178,6 +261,7 @@ impl Storage {
         };
         storage.apply_migrations()?;
         storage.recover_pending_imports()?;
+        storage.recover_pending_txt_decodes()?;
         storage.remove_orphan_managed_files()?;
         storage.cleanup_staging_dir();
         Ok(storage)
@@ -295,6 +379,186 @@ impl Storage {
             tx.commit()?;
         }
 
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 3 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE import_journal ADD COLUMN raw_stage_path TEXT NOT NULL DEFAULT '';
+                ALTER TABLE import_journal ADD COLUMN source_relative_path TEXT NOT NULL DEFAULT '';
+                ALTER TABLE import_journal ADD COLUMN source_sha256 TEXT NOT NULL DEFAULT '';
+                ALTER TABLE import_journal ADD COLUMN detected_encoding TEXT NOT NULL DEFAULT 'utf8';
+                ALTER TABLE import_journal ADD COLUMN selected_encoding TEXT NOT NULL DEFAULT 'utf8';
+                ALTER TABLE import_journal ADD COLUMN decode_state TEXT NOT NULL DEFAULT 'clean';
+
+                CREATE TABLE IF NOT EXISTS txt_assets (
+                    asset_id TEXT PRIMARY KEY NOT NULL REFERENCES book_assets(id) ON DELETE CASCADE,
+                    detected_encoding TEXT NOT NULL,
+                    selected_encoding TEXT NOT NULL,
+                    decode_state TEXT NOT NULL,
+                    source_relative_path TEXT,
+                    source_sha256 TEXT,
+                    toc_json TEXT,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS bookmarks (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    content_version TEXT NOT NULL,
+                    offset INTEGER NOT NULL,
+                    locator_json TEXT NOT NULL,
+                    excerpt TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(book_id, content_version, offset)
+                );
+                CREATE INDEX IF NOT EXISTS bookmarks_book_idx ON bookmarks(book_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS toc_cache (
+                    asset_id TEXT PRIMARY KEY NOT NULL REFERENCES book_assets(id) ON DELETE CASCADE,
+                    content_version TEXT NOT NULL,
+                    entries_json TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![3_i64, now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 4 {
+            // `sha256` is the current normalized content version, so a manual
+            // re-decode may legitimately produce a value already used by a
+            // different asset. Keep normalized hashes for diagnostics while
+            // moving import de-duplication to the nullable `dedup_hash` key.
+            // Rebuild the three dependent tables together so their foreign
+            // keys continue to point at the replacement parent table.
+            self.conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+            let migration = (|| -> Result<(), AppError> {
+                let tx = self.conn.transaction()?;
+                tx.execute_batch(
+                    "CREATE TABLE book_assets_rebuild (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                        kind TEXT NOT NULL,
+                        sha256 TEXT NOT NULL,
+                        dedup_hash TEXT,
+                        byte_length INTEGER NOT NULL,
+                        content_version TEXT NOT NULL,
+                        relative_path TEXT NOT NULL UNIQUE,
+                        created_at INTEGER NOT NULL
+                    );
+                    INSERT INTO book_assets_rebuild(
+                        id, book_id, kind, sha256, dedup_hash, byte_length,
+                        content_version, relative_path, created_at
+                    )
+                    SELECT id, book_id, kind, sha256, sha256, byte_length,
+                           content_version, relative_path, created_at
+                    FROM book_assets;
+
+                    CREATE TABLE content_indexes_rebuild (
+                        asset_id TEXT PRIMARY KEY NOT NULL REFERENCES book_assets(id) ON DELETE CASCADE,
+                        schema_version INTEGER NOT NULL,
+                        stride_units INTEGER NOT NULL,
+                        byte_length INTEGER NOT NULL,
+                        utf16_length INTEGER NOT NULL,
+                        fingerprint TEXT NOT NULL,
+                        index_json TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    INSERT INTO content_indexes_rebuild
+                    SELECT asset_id, schema_version, stride_units, byte_length,
+                           utf16_length, fingerprint, index_json, updated_at
+                    FROM content_indexes;
+
+                    CREATE TABLE txt_assets_rebuild (
+                        asset_id TEXT PRIMARY KEY NOT NULL REFERENCES book_assets(id) ON DELETE CASCADE,
+                        detected_encoding TEXT NOT NULL,
+                        selected_encoding TEXT NOT NULL,
+                        decode_state TEXT NOT NULL,
+                        source_relative_path TEXT,
+                        source_sha256 TEXT,
+                        toc_json TEXT,
+                        updated_at INTEGER NOT NULL
+                    );
+                    INSERT INTO txt_assets_rebuild
+                    SELECT asset_id, detected_encoding, selected_encoding,
+                           decode_state, source_relative_path, source_sha256,
+                           toc_json, updated_at
+                    FROM txt_assets;
+
+                    DROP TABLE content_indexes;
+                    DROP TABLE txt_assets;
+                    DROP TABLE book_assets;
+                    ALTER TABLE book_assets_rebuild RENAME TO book_assets;
+                    ALTER TABLE content_indexes_rebuild RENAME TO content_indexes;
+                    ALTER TABLE txt_assets_rebuild RENAME TO txt_assets;
+                    CREATE INDEX book_assets_book_id_idx ON book_assets(book_id);
+                    CREATE UNIQUE INDEX book_assets_dedup_hash_idx
+                        ON book_assets(dedup_hash) WHERE dedup_hash IS NOT NULL;
+                    CREATE INDEX IF NOT EXISTS bookmarks_book_idx
+                        ON bookmarks(book_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS content_indexes_asset_idx
+                        ON content_indexes(asset_id);
+                    CREATE INDEX IF NOT EXISTS txt_assets_asset_idx
+                        ON txt_assets(asset_id);
+                ")?;
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                    params![4_i64, now_millis()],
+                )?;
+                tx.commit()?;
+                Ok(())
+            })();
+            self.conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            migration?;
+        }
+
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 5 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS txt_decode_journal (
+                    operation_id TEXT PRIMARY KEY NOT NULL,
+                    book_id TEXT NOT NULL,
+                    asset_id TEXT NOT NULL,
+                    old_content_version TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    stage_path TEXT NOT NULL,
+                    backup_path TEXT NOT NULL,
+                    new_content_version TEXT NOT NULL,
+                    byte_length INTEGER NOT NULL,
+                    index_json TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    detected_encoding TEXT NOT NULL,
+                    selected_encoding TEXT NOT NULL,
+                    decode_state TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS txt_decode_journal_created_at_idx
+                    ON txt_decode_journal(created_at);",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![5_i64, now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -369,7 +633,8 @@ impl Storage {
         }
 
         report(ImportPhase::Normalizing, bytes_read, total_bytes);
-        let normalized = decode_and_normalize(&input)?;
+        let decoded = detect_and_decode(&input, TxtEncoding::Auto)?;
+        let normalized = decoded.text;
         if cancel.load(Ordering::Acquire) {
             return Err(import_cancelled());
         }
@@ -377,13 +642,17 @@ impl Storage {
         let normalized_bytes = normalized.as_bytes();
         let hash = Sha256::digest(normalized_bytes);
         let sha256 = format!("{hash:x}");
+        let source_hash = Sha256::digest(&input);
+        let source_sha256 = format!("{source_hash:x}");
         let sparse_index = build_sparse_index(&normalized);
         if cancel.load(Ordering::Acquire) {
             return Err(import_cancelled());
         }
         let index_json = serde_json::to_string(&sparse_index)?;
         let stage_relative_path = format!("staging/{operation_id}.part");
+        let raw_stage_relative_path = format!("staging/{operation_id}.raw");
         let stage_path = managed_path(root, &stage_relative_path, "staging")?;
+        let raw_stage_path = managed_path(root, &raw_stage_relative_path, "staging")?;
         let result = (|| -> Result<PreparedImport, AppError> {
             let mut stage = OpenOptions::new()
                 .write(true)
@@ -392,6 +661,13 @@ impl Storage {
             stage.write_all(normalized_bytes)?;
             stage.sync_all()?;
             drop(stage);
+            let mut raw_stage = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&raw_stage_path)?;
+            raw_stage.write_all(&input)?;
+            raw_stage.sync_all()?;
+            drop(raw_stage);
             if cancel.load(Ordering::Acquire) {
                 return Err(import_cancelled());
             }
@@ -400,14 +676,20 @@ impl Storage {
                 operation_id: operation_id.to_string(),
                 source: source.to_path_buf(),
                 stage_relative_path,
+                raw_stage_relative_path,
                 sha256,
+                source_sha256,
                 byte_length: normalized_bytes.len() as u64,
                 index_json,
                 source_byte_length: total_bytes,
+                detected_encoding: decoded.detected,
+                selected_encoding: decoded.selected,
+                decode_state: decoded.state,
             })
         })();
         if result.is_err() {
             let _ = fs::remove_file(stage_path);
+            let _ = fs::remove_file(raw_stage_path);
         }
         result
     }
@@ -427,7 +709,10 @@ impl Storage {
         F: FnMut(ImportPhase, u64, u64),
     {
         let stage_path = managed_path(&self.root, &prepared.stage_relative_path, "staging")?;
+        let raw_stage_path =
+            managed_path(&self.root, &prepared.raw_stage_relative_path, "staging")?;
         if !stage_path.is_file() {
+            let _ = remove_owned_file(&raw_stage_path);
             return Err(AppError::new(
                 ErrorCode::AssetMissing,
                 "prepared import staging file is missing",
@@ -435,18 +720,11 @@ impl Storage {
         }
         if cancel.load(Ordering::Acquire) {
             let _ = fs::remove_file(stage_path);
+            let _ = fs::remove_file(raw_stage_path);
             return Err(import_cancelled());
         }
 
-        let existing = self
-            .conn
-            .query_row(
-                "SELECT id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
-                 FROM book_assets WHERE sha256 = ?1",
-                params![prepared.sha256],
-                asset_from_row,
-            )
-            .optional()?;
+        let existing = self.find_import_target(&prepared.sha256, &prepared.source_sha256)?;
 
         let (book_id, asset_id, relative_path, title, duplicate, needs_publish, created_at) =
             if let Some(existing) = existing {
@@ -477,6 +755,7 @@ impl Storage {
 
         let content_version = prepared.sha256.clone();
         let source_byte_length = prepared.source_byte_length;
+        let source_relative_path = format!("sources/{asset_id}.txt");
         let journal = JournalRecord {
             operation_id: prepared.operation_id.clone(),
             book_id: book_id.clone(),
@@ -487,6 +766,12 @@ impl Storage {
             content_version: content_version.clone(),
             relative_path: relative_path.clone(),
             stage_path: prepared.stage_relative_path.clone(),
+            raw_stage_path: prepared.raw_stage_relative_path.clone(),
+            source_relative_path: source_relative_path.clone(),
+            source_sha256: prepared.source_sha256.clone(),
+            detected_encoding: prepared.detected_encoding.clone(),
+            selected_encoding: prepared.selected_encoding.clone(),
+            decode_state: prepared.decode_state.clone(),
             index_json: prepared.index_json.clone(),
             source_byte_length,
             created_at,
@@ -502,6 +787,8 @@ impl Storage {
             }
 
             let final_path = managed_path(&self.root, &relative_path, "books")?;
+            let raw_stage_path = managed_path(&self.root, &journal.raw_stage_path, "staging")?;
+            let source_path = managed_path(&self.root, &journal.source_relative_path, "sources")?;
             if let Some(parent) = final_path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -510,6 +797,16 @@ impl Storage {
             }
             fs::rename(&stage_path, &final_path)?;
             sync_parent(&final_path)?;
+            if raw_stage_path.is_file() {
+                if source_path.exists() {
+                    remove_owned_file(&source_path)?;
+                }
+                if let Some(parent) = source_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::rename(&raw_stage_path, &source_path)?;
+                sync_parent(&source_path)?;
+            }
             maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
 
             let tx = self.conn.transaction()?;
@@ -527,8 +824,9 @@ impl Storage {
                 )?;
                 tx.execute(
                     "INSERT INTO book_assets(
-                        id, book_id, kind, sha256, byte_length, content_version, relative_path, created_at
-                     ) VALUES (?1, ?2, 'txt', ?3, ?4, ?5, ?6, ?7)",
+                        id, book_id, kind, sha256, dedup_hash, byte_length,
+                        content_version, relative_path, created_at
+                     ) VALUES (?1, ?2, 'txt', ?3, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         journal.asset_id,
                         journal.book_id,
@@ -547,7 +845,28 @@ impl Storage {
                 &parse_index(&journal.index_json)?,
                 &fingerprint,
             )?;
-            maybe_inject_failure(&self.root, cancel, FailurePoint::BeforeFinalCommit)?;
+            tx.execute(
+                "INSERT INTO txt_assets(
+                    asset_id, detected_encoding, selected_encoding, decode_state,
+                    source_relative_path, source_sha256, toc_json, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
+                 ON CONFLICT(asset_id) DO UPDATE SET
+                    detected_encoding = excluded.detected_encoding,
+                    selected_encoding = excluded.selected_encoding,
+                    decode_state = excluded.decode_state,
+                    source_relative_path = excluded.source_relative_path,
+                    source_sha256 = excluded.source_sha256,
+                    updated_at = excluded.updated_at",
+                params![
+                    journal.asset_id,
+                    encoding_name(&journal.detected_encoding),
+                    encoding_name(&journal.selected_encoding),
+                    decode_state_name(&journal.decode_state),
+                    journal.source_relative_path,
+                    journal.source_sha256,
+                    now_millis(),
+                ],
+            )?;
             // Keep the journal until the same transaction that publishes the
             // book, asset, and index commits. If the final commit fails, the
             // journal still names the newly renamed file so the in-process
@@ -583,9 +902,10 @@ impl Storage {
         } else {
             // A duplicate whose managed path is already present has no file
             // publication to recover. The command path validates the existing
-            // bytes before taking the storage mutex; the direct storage helper
-            // keeps its synchronous hash fallback for callers without that
-            // preflight snapshot.
+            // bytes before taking the storage mutex. If another import won the
+            // race after that preflight, its committed content index gives us
+            // a cheap metadata check; a missing or stale index asks the caller
+            // to repeat validation outside the storage mutex.
             let final_path = managed_path(&self.root, &relative_path, "books")?;
             let (_, current_fingerprint) = file_fingerprint(&final_path)?;
             let preflight_matches = validated_existing.is_some_and(|snapshot| {
@@ -593,22 +913,69 @@ impl Storage {
                     && snapshot.sha256 == prepared.sha256
                     && snapshot.fingerprint.as_deref() == Some(current_fingerprint.as_str())
             });
-            if !preflight_matches {
-                if validated_existing.is_some() {
-                    return Err(content_changed_error(
-                        &asset_id,
-                        "while validating a duplicate import",
-                    ));
-                }
-                let actual_hash = hash_file(&final_path)?;
-                if actual_hash != prepared.sha256 {
+            if validated_existing.is_some() && !preflight_matches {
+                return Err(content_changed_error(
+                    &asset_id,
+                    "while validating a duplicate import",
+                ));
+            }
+            if validated_existing.is_none() {
+                let persisted_fingerprint: Option<String> = self
+                    .conn
+                    .query_row(
+                        "SELECT fingerprint FROM content_indexes WHERE asset_id = ?1",
+                        params![asset_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if persisted_fingerprint.as_deref() != Some(current_fingerprint.as_str()) {
                     return Err(AppError::new(
                         ErrorCode::ContentVersionMismatch,
-                        format!("managed asset {asset_id} changed since import"),
+                        DUPLICATE_VALIDATION_RETRY,
                     ));
                 }
             }
             fs::remove_file(stage_path)?;
+            let existing_source: Option<(Option<String>, Option<String>)> = self
+                .conn
+                .query_row(
+                    "SELECT source_relative_path, source_sha256
+                     FROM txt_assets WHERE asset_id = ?1",
+                    params![asset_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let keep_existing_source =
+                existing_source
+                    .as_ref()
+                    .is_some_and(|(relative_path, source_sha256)| {
+                        relative_path
+                            .as_deref()
+                            .and_then(|value| managed_path(&self.root, value, "sources").ok())
+                            .is_some_and(|path| {
+                                path.is_file()
+                                    && source_sha256
+                                        .as_deref()
+                                        .is_some_and(|hash| !hash.is_empty())
+                            })
+                    });
+            let source_path = managed_path(&self.root, &source_relative_path, "sources")?;
+            if keep_existing_source {
+                // A normalized duplicate must keep the original raw source
+                // and selected encoding. Replacing it with another byte
+                // representation would make the stored source hash stale and
+                // silently change the book's future decode choices.
+                remove_owned_file(&raw_stage_path)?;
+            } else if raw_stage_path.is_file() {
+                if source_path.exists() {
+                    remove_owned_file(&source_path)?;
+                }
+                if let Some(parent) = source_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::rename(&raw_stage_path, &source_path)?;
+                sync_parent(&source_path)?;
+            }
             if cancel.load(Ordering::Acquire) {
                 return Err(import_cancelled());
             }
@@ -620,7 +987,37 @@ impl Storage {
                 &parse_index(&prepared.index_json)?,
                 &fingerprint,
             )?;
-            maybe_inject_failure(&self.root, cancel, FailurePoint::BeforeFinalCommit)?;
+            if keep_existing_source {
+                // Preserve the existing selected encoding and source
+                // association for a normalized duplicate.
+                tx.execute(
+                    "UPDATE txt_assets SET updated_at = ?1 WHERE asset_id = ?2",
+                    params![now_millis(), asset_id],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO txt_assets(
+                        asset_id, detected_encoding, selected_encoding, decode_state,
+                        source_relative_path, source_sha256, toc_json, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
+                     ON CONFLICT(asset_id) DO UPDATE SET
+                        detected_encoding = excluded.detected_encoding,
+                        selected_encoding = excluded.selected_encoding,
+                        decode_state = excluded.decode_state,
+                        source_relative_path = excluded.source_relative_path,
+                        source_sha256 = excluded.source_sha256,
+                        updated_at = excluded.updated_at",
+                    params![
+                        asset_id,
+                        encoding_name(&prepared.detected_encoding),
+                        encoding_name(&prepared.selected_encoding),
+                        decode_state_name(&prepared.decode_state),
+                        source_relative_path,
+                        prepared.source_sha256,
+                        now_millis(),
+                    ],
+                )?;
+            }
             tx.commit()?;
             let existing = self
                 .conn
@@ -661,7 +1058,29 @@ impl Storage {
         F: FnMut(ImportPhase, u64, u64),
     {
         let prepared = Self::prepare_import(&self.root, source, operation_id, cancel, report)?;
-        let result = self.commit_import(prepared, cancel, |_, _, _| {}, None);
+        let result = (|| -> Result<ImportResult, AppError> {
+            for attempt in 0..=1 {
+                let target =
+                    self.snapshot_import_target(&prepared.sha256, &prepared.source_sha256)?;
+                let validated_target = target
+                    .as_ref()
+                    .map(|target| validate_import_target(&self.root, target, cancel))
+                    .transpose()?;
+                before_import_commit(&self.root, cancel)?;
+                match self.commit_import(
+                    prepared.clone(),
+                    cancel,
+                    |_, _, _| {},
+                    validated_target.as_ref(),
+                ) {
+                    Err(error) if attempt == 0 && duplicate_validation_retry(&error) => {
+                        continue;
+                    }
+                    result => return result,
+                }
+            }
+            unreachable!("duplicate validation retry loop always returns")
+        })();
         if result.is_err() && !self.journal_exists(operation_id)? {
             let stage = self
                 .root
@@ -682,7 +1101,9 @@ impl Storage {
             .query_row(
                 "SELECT operation_id, book_id, asset_id, title, sha256, byte_length,
                         content_version, relative_path, stage_path, index_json,
-                        source_byte_length, created_at
+                        source_byte_length, created_at, raw_stage_path,
+                        source_relative_path, source_sha256, detected_encoding,
+                        selected_encoding, decode_state
                  FROM import_journal WHERE operation_id = ?1",
                 params![operation_id],
                 journal_from_row,
@@ -690,7 +1111,13 @@ impl Storage {
             .optional()?;
         if let Some(journal) = journal {
             let stage = managed_path(&self.root, &journal.stage_path, "staging")?;
+            let raw_stage = (!journal.raw_stage_path.is_empty())
+                .then(|| managed_path(&self.root, &journal.raw_stage_path, "staging"))
+                .transpose()?;
             let final_path = managed_path(&self.root, &journal.relative_path, "books")?;
+            let source_path = (!journal.source_relative_path.is_empty())
+                .then(|| managed_path(&self.root, &journal.source_relative_path, "sources"))
+                .transpose()?;
             let committed: Option<(String, String)> = self
                 .conn
                 .query_row(
@@ -700,6 +1127,9 @@ impl Storage {
                 )
                 .optional()?;
             remove_owned_file(&stage)?;
+            if let Some(raw_stage) = raw_stage.as_ref() {
+                remove_owned_file(raw_stage)?;
+            }
             // A duplicate operation can have a journal while its asset row is
             // already committed. Its final path belongs to that asset and
             // must survive an ordinary query/commit failure.
@@ -713,6 +1143,9 @@ impl Storage {
                 )?;
                 if references == 0 {
                     remove_owned_file(&final_path)?;
+                    if let Some(source_path) = source_path.as_ref() {
+                        remove_owned_file(source_path)?;
+                    }
                 }
             }
             self.conn.execute(
@@ -724,7 +1157,12 @@ impl Storage {
                 .root
                 .join("staging")
                 .join(format!("{operation_id}.part"));
+            let raw_stage = self
+                .root
+                .join("staging")
+                .join(format!("{operation_id}.raw"));
             remove_owned_file(&stage)?;
+            remove_owned_file(&raw_stage)?;
         }
         Ok(())
     }
@@ -736,12 +1174,22 @@ impl Storage {
     pub(crate) fn snapshot_import_target(
         &self,
         sha256: &str,
+        source_sha256: &str,
     ) -> Result<Option<ImportTargetSnapshot>, AppError> {
         let relative_path: Option<String> = self
             .conn
             .query_row(
-                "SELECT relative_path FROM book_assets WHERE sha256 = ?1",
-                params![sha256],
+                "SELECT a.relative_path
+                 FROM book_assets a
+                 WHERE a.dedup_hash = ?1
+                    OR EXISTS (
+                        SELECT 1 FROM txt_assets t
+                        WHERE t.asset_id = a.id AND t.source_sha256 = ?2
+                    )
+                 ORDER BY CASE WHEN a.dedup_hash = ?1 THEN 0 ELSE 1 END,
+                          a.created_at ASC
+                 LIMIT 1",
+                params![sha256, source_sha256],
                 |row| row.get(0),
             )
             .optional()?;
@@ -759,6 +1207,31 @@ impl Storage {
             sha256: sha256.to_string(),
             fingerprint,
         }))
+    }
+
+    fn find_import_target(
+        &self,
+        sha256: &str,
+        source_sha256: &str,
+    ) -> Result<Option<AssetRecord>, AppError> {
+        self.conn
+            .query_row(
+                "SELECT a.id, a.book_id, a.kind, a.sha256, a.byte_length,
+                        a.content_version, a.relative_path, a.created_at
+                 FROM book_assets a
+                 WHERE a.dedup_hash = ?1
+                    OR EXISTS (
+                        SELECT 1 FROM txt_assets t
+                        WHERE t.asset_id = a.id AND t.source_sha256 = ?2
+                    )
+                 ORDER BY CASE WHEN a.dedup_hash = ?1 THEN 0 ELSE 1 END,
+                          a.created_at ASC
+                 LIMIT 1",
+                params![sha256, source_sha256],
+                asset_from_row,
+            )
+            .optional()
+            .map_err(AppError::from)
     }
 
     pub fn list_books(&self) -> Result<Vec<Book>, AppError> {
@@ -810,11 +1283,13 @@ impl Storage {
                 } else {
                     None
                 };
+                let txt_encoding = self.txt_encoding_for_asset(&record.asset.id)?;
                 Ok(LibraryBook {
                     book,
                     asset: record.asset,
                     locator,
                     total_length,
+                    txt_encoding,
                 })
             })
             .collect()
@@ -856,6 +1331,640 @@ impl Storage {
             .ok_or_else(|| {
                 AppError::new(ErrorCode::NotFound, format!("book {book_id} was not found"))
             })
+    }
+
+    pub fn txt_encoding_for_book(&self, book_id: &str) -> Result<TxtEncodingInfo, AppError> {
+        let asset_id: String = self.conn.query_row(
+            "SELECT id FROM book_assets WHERE book_id = ?1 ORDER BY created_at ASC LIMIT 1",
+            params![book_id],
+            |row| row.get(0),
+        )?;
+        Ok(self
+            .txt_encoding_for_asset(&asset_id)?
+            .unwrap_or(TxtEncodingInfo {
+                detected: TxtEncoding::Utf8,
+                selected: TxtEncoding::Utf8,
+                state: TxtDecodeState::Clean,
+                can_change: false,
+            }))
+    }
+
+    fn txt_encoding_for_asset(&self, asset_id: &str) -> Result<Option<TxtEncodingInfo>, AppError> {
+        let row: Option<(String, String, String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT detected_encoding, selected_encoding, decode_state, source_relative_path
+                 FROM txt_assets WHERE asset_id = ?1",
+                params![asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        Ok(
+            row.map(|(detected, selected, state, source)| TxtEncodingInfo {
+                detected: parse_encoding(detected),
+                selected: parse_encoding(selected),
+                state: parse_decode_state(state),
+                can_change: source
+                    .as_deref()
+                    .and_then(|value| managed_path(&self.root, value, "sources").ok())
+                    .is_some_and(|path| path.is_file()),
+            }),
+        )
+    }
+
+    pub fn list_toc(&mut self, book_id: &str) -> Result<Vec<TocEntry>, AppError> {
+        let context = self.content_read_context(book_id)?;
+        let verified = verify_content_context(&context)?;
+        if let Some(entries) = self.cached_toc(&context)? {
+            return Ok(entries);
+        }
+        let entries = build_toc_from_context(&context, &verified, book_id)?;
+        self.persist_content_index(&context, &verified)?;
+        self.cache_toc(&context, &entries)?;
+        Ok(entries)
+    }
+
+    pub(crate) fn cached_toc(
+        &self,
+        context: &ContentReadContext,
+    ) -> Result<Option<Vec<TocEntry>>, AppError> {
+        let cached: Option<(String, String)> = self
+            .conn
+            .query_row(
+                "SELECT content_version, entries_json FROM toc_cache WHERE asset_id = ?1",
+                params![context.record.asset.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((version, json)) = cached else {
+            return Ok(None);
+        };
+        if version != context.record.asset.content_version {
+            return Ok(None);
+        }
+        let mut entries = serde_json::from_str::<Vec<TocEntry>>(&json).ok();
+        if let Some(entries) = entries.as_mut() {
+            entries.iter_mut().for_each(|entry| {
+                entry.locator.resource_id = context.record.asset.id.clone();
+            });
+        }
+        Ok(entries)
+    }
+
+    pub(crate) fn cache_toc(
+        &self,
+        context: &ContentReadContext,
+        entries: &[TocEntry],
+    ) -> Result<(), AppError> {
+        let serialized = serde_json::to_string(&entries)?;
+        self.conn.execute(
+            "INSERT INTO toc_cache(asset_id, content_version, entries_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(asset_id) DO UPDATE SET content_version = excluded.content_version,
+                entries_json = excluded.entries_json, updated_at = excluded.updated_at",
+            params![
+                context.record.asset.id,
+                context.record.asset.content_version,
+                serialized,
+                now_millis()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_bookmarks(&self, book_id: &str) -> Result<Vec<Bookmark>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, book_id, content_version, locator_json, excerpt, created_at
+             FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC, id ASC",
+        )?;
+        let result = statement
+            .query_map(params![book_id], |row| {
+                let locator_json: String = row.get(3)?;
+                let locator = serde_json::from_str(&locator_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        error.into(),
+                    )
+                })?;
+                Ok(Bookmark {
+                    id: row.get(0)?,
+                    book_id: row.get(1)?,
+                    content_version: row.get(2)?,
+                    locator,
+                    excerpt: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::from);
+        result
+    }
+
+    pub fn add_bookmark(&mut self, request: &BookmarkRequest) -> Result<Bookmark, AppError> {
+        let context = self.content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        self.add_bookmark_from_context(&context, &verified, request)
+    }
+
+    pub(crate) fn add_bookmark_from_context(
+        &self,
+        context: &ContentReadContext,
+        verified: &VerifiedContentIndex,
+        request: &BookmarkRequest,
+    ) -> Result<Bookmark, AppError> {
+        validate_content_locator(context, verified, &request.locator)?;
+        if request.locator.content_version != context.record.asset.content_version {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "bookmark belongs to an older content version",
+            ));
+        }
+        let current_version: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT content_version FROM book_assets WHERE id = ?1",
+                params![context.record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if current_version.as_deref() != Some(context.record.asset.content_version.as_str()) {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "book content changed while creating the bookmark",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let bookmark = Bookmark {
+            id: id.clone(),
+            book_id: request.book_id.clone(),
+            content_version: request.locator.content_version.clone(),
+            locator: request.locator.clone(),
+            excerpt: request.excerpt.clone(),
+            created_at: now_millis(),
+        };
+        self.conn.execute(
+            "INSERT INTO bookmarks(id, book_id, content_version, offset, locator_json, excerpt, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(book_id, content_version, offset) DO NOTHING",
+            params![
+                bookmark.id,
+                bookmark.book_id,
+                bookmark.content_version,
+                bookmark.locator.offset as i64,
+                serde_json::to_string(&bookmark.locator)?,
+                bookmark.excerpt,
+                bookmark.created_at
+            ],
+        )?;
+        self.conn
+            .query_row(
+                "SELECT id, book_id, content_version, locator_json, excerpt, created_at
+                 FROM bookmarks WHERE book_id = ?1 AND content_version = ?2 AND offset = ?3",
+                params![
+                    request.book_id,
+                    request.locator.content_version,
+                    request.locator.offset as i64
+                ],
+                |row| {
+                    let locator: ReaderLocator = serde_json::from_str(&row.get::<_, String>(3)?)
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                3,
+                                rusqlite::types::Type::Text,
+                                error.into(),
+                            )
+                        })?;
+                    Ok(Bookmark {
+                        id: row.get(0)?,
+                        book_id: row.get(1)?,
+                        content_version: row.get(2)?,
+                        locator,
+                        excerpt: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                },
+            )
+            .map_err(AppError::from)
+    }
+
+    pub fn delete_bookmark(&mut self, bookmark_id: &str) -> Result<(), AppError> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM bookmarks WHERE id = ?1", params![bookmark_id])?;
+        if changed == 0 {
+            return Err(AppError::new(ErrorCode::NotFound, "bookmark was not found"));
+        }
+        Ok(())
+    }
+
+    pub fn search_book(&self, request: &SearchRequest) -> Result<SearchResponse, AppError> {
+        let context = self.content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        Self::search_book_from_context(request, &context, &verified)
+    }
+
+    pub(crate) fn search_book_from_context(
+        request: &SearchRequest,
+        context: &ContentReadContext,
+        verified: &VerifiedContentIndex,
+    ) -> Result<SearchResponse, AppError> {
+        Self::search_book_from_context_cancelable(request, context, verified, None)
+    }
+
+    pub(crate) fn search_book_from_context_cancelable(
+        request: &SearchRequest,
+        context: &ContentReadContext,
+        verified: &VerifiedContentIndex,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<SearchResponse, AppError> {
+        let limit = request.limit.clamp(1, 100);
+        let (matches, next_cursor, has_more) = search_text_stream(
+            context,
+            verified,
+            SearchParameters {
+                book_id: &request.book_id,
+                content_version: &context.record.asset.content_version,
+                query: &request.query,
+                case_sensitive: request.case_sensitive,
+                cursor: request.cursor.unwrap_or(0),
+                limit,
+            },
+            cancel,
+        )?;
+        Ok(SearchResponse {
+            content_version: context.record.asset.content_version.clone(),
+            matches,
+            next_cursor,
+            has_more,
+        })
+    }
+
+    pub(crate) fn snapshot_txt_decode(&self, book_id: &str) -> Result<TxtDecodeSnapshot, AppError> {
+        let context = self.content_read_context(book_id)?;
+        let source_relative_path: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT source_relative_path FROM txt_assets WHERE asset_id = ?1",
+                params![context.record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(source_relative_path) = source_relative_path else {
+            return Err(AppError::new(
+                ErrorCode::UnsupportedEncoding,
+                "this book has no retained source bytes",
+            ));
+        };
+        let source_sha256: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT source_sha256 FROM txt_assets WHERE asset_id = ?1",
+                params![context.record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(TxtDecodeSnapshot {
+            book_id: context.record.asset.book_id,
+            asset_id: context.record.asset.id,
+            relative_path: context.record.relative_path,
+            source_relative_path,
+            source_sha256: source_sha256.unwrap_or_default(),
+            content_version: context.record.asset.content_version,
+        })
+    }
+
+    pub(crate) fn snapshot_txt_reassociation(
+        &self,
+        book_id: &str,
+    ) -> Result<TxtReassociationSnapshot, AppError> {
+        let context = self.content_read_context(book_id)?;
+        let selected_encoding: String = self
+            .conn
+            .query_row(
+                "SELECT selected_encoding FROM txt_assets WHERE asset_id = ?1",
+                params![context.record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| "utf8".to_string());
+        let source_relative_path = format!("sources/{}.txt", context.record.asset.id);
+        Ok(TxtReassociationSnapshot {
+            asset_id: context.record.asset.id,
+            source_relative_path,
+            content_version: context.record.asset.content_version,
+            selected_encoding: parse_encoding(selected_encoding),
+        })
+    }
+
+    pub(crate) fn prepare_txt_reassociation(
+        root: &Path,
+        snapshot: &TxtReassociationSnapshot,
+        source: &Path,
+        operation_id: &str,
+    ) -> Result<PreparedTxtReassociation, AppError> {
+        let cancel = AtomicBool::new(false);
+        let (bytes, _) = read_cancelable_file(source, &cancel, |_, _| {})?;
+        let decoded = detect_and_decode(&bytes, snapshot.selected_encoding.clone())?;
+        let content_version = sha256_bytes(decoded.text.as_bytes());
+        if content_version != snapshot.content_version {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "selected source does not reproduce the current normalized text",
+            ));
+        }
+        let source_sha256 = sha256_bytes(&bytes);
+        let stage_relative_path = format!("staging/reassociate-{operation_id}.raw");
+        let stage_path = managed_path(root, &stage_relative_path, "staging")?;
+        let result = (|| -> Result<PreparedTxtReassociation, AppError> {
+            let mut stage = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&stage_path)?;
+            stage.write_all(&bytes)?;
+            stage.sync_all()?;
+            Ok(PreparedTxtReassociation {
+                snapshot: snapshot.clone(),
+                stage_relative_path,
+                source_sha256,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(stage_path);
+        }
+        result
+    }
+
+    pub(crate) fn commit_txt_reassociation(
+        &mut self,
+        prepared: PreparedTxtReassociation,
+    ) -> Result<TxtEncodingInfo, AppError> {
+        let stage_path = managed_path(&self.root, &prepared.stage_relative_path, "staging")?;
+        let source_path = managed_path(
+            &self.root,
+            &prepared.snapshot.source_relative_path,
+            "sources",
+        )?;
+        if !stage_path.is_file() {
+            return Err(AppError::new(
+                ErrorCode::AssetMissing,
+                "prepared TXT source staging file is missing",
+            ));
+        }
+        if source_path.exists() {
+            remove_owned_file(&stage_path)?;
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "the book already has a retained TXT source",
+            ));
+        }
+        if let Some(parent) = source_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&stage_path, &source_path)?;
+        let transaction = (|| -> Result<(), AppError> {
+            self.conn.execute(
+                "INSERT INTO txt_assets(
+                    asset_id, detected_encoding, selected_encoding, decode_state,
+                    source_relative_path, source_sha256, toc_json, updated_at
+                 ) VALUES (?1, ?2, ?2, 'clean', ?3, ?4, NULL, ?5)
+                 ON CONFLICT(asset_id) DO UPDATE SET
+                    source_relative_path = excluded.source_relative_path,
+                    source_sha256 = excluded.source_sha256,
+                    updated_at = excluded.updated_at",
+                params![
+                    prepared.snapshot.asset_id,
+                    encoding_name(&prepared.snapshot.selected_encoding),
+                    prepared.snapshot.source_relative_path,
+                    prepared.source_sha256,
+                    now_millis(),
+                ],
+            )?;
+            Ok(())
+        })();
+        if let Err(error) = transaction {
+            remove_owned_file(&source_path)?;
+            return Err(error);
+        }
+        Ok(TxtEncodingInfo {
+            detected: prepared.snapshot.selected_encoding.clone(),
+            selected: prepared.snapshot.selected_encoding,
+            state: TxtDecodeState::Clean,
+            can_change: true,
+        })
+    }
+
+    pub(crate) fn prepare_txt_decode(
+        root: &Path,
+        snapshot: &TxtDecodeSnapshot,
+        requested: TxtEncoding,
+        operation_id: &str,
+        cancel: &AtomicBool,
+        mut report: impl FnMut(ImportPhase, u64, u64),
+    ) -> Result<PreparedTxtDecode, AppError> {
+        let source_path = managed_path(root, &snapshot.source_relative_path, "sources")?;
+        let (bytes, total_bytes) = read_cancelable_file(&source_path, cancel, |read, total| {
+            report(ImportPhase::Reading, read, total)
+        })?;
+        let source_sha256 = sha256_bytes(&bytes);
+        if !snapshot.source_sha256.is_empty() && source_sha256 != snapshot.source_sha256 {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "retained TXT source bytes changed",
+            ));
+        }
+        report(ImportPhase::Normalizing, total_bytes, total_bytes);
+        let decoded = detect_and_decode(&bytes, requested)?;
+        if cancel.load(Ordering::Acquire) {
+            return Err(import_cancelled());
+        }
+        let normalized_bytes = decoded.text.as_bytes();
+        let content_version = sha256_bytes(normalized_bytes);
+        let index_json = serde_json::to_string(&build_sparse_index(&decoded.text))?;
+        let stage_relative_path = format!("staging/redecode-{operation_id}.part");
+        let backup_relative_path = format!("staging/redecode-{operation_id}.old");
+        let stage_path = managed_path(root, &stage_relative_path, "staging")?;
+        let result = (|| -> Result<PreparedTxtDecode, AppError> {
+            let mut stage = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&stage_path)?;
+            stage.write_all(normalized_bytes)?;
+            stage.sync_all()?;
+            report(ImportPhase::Persisting, total_bytes, total_bytes);
+            Ok(PreparedTxtDecode {
+                operation_id: operation_id.to_string(),
+                snapshot: snapshot.clone(),
+                stage_relative_path,
+                backup_relative_path,
+                content_version,
+                byte_length: normalized_bytes.len() as u64,
+                index_json,
+                source_sha256,
+                detected_encoding: decoded.detected,
+                selected_encoding: decoded.selected,
+                decode_state: decoded.state,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(stage_path);
+        }
+        result
+    }
+
+    pub(crate) fn commit_txt_decode(
+        &mut self,
+        prepared: PreparedTxtDecode,
+        cancel: &AtomicBool,
+    ) -> Result<TxtEncodingInfo, AppError> {
+        let stage_path = managed_path(&self.root, &prepared.stage_relative_path, "staging")?;
+        let backup_path = managed_path(&self.root, &prepared.backup_relative_path, "staging")?;
+        let final_path = managed_path(&self.root, &prepared.snapshot.relative_path, "books")?;
+        if !stage_path.is_file() {
+            return Err(AppError::new(
+                ErrorCode::AssetMissing,
+                "prepared TXT decode staging file is missing",
+            ));
+        }
+        if cancel.load(Ordering::Acquire) {
+            remove_owned_file(&stage_path)?;
+            return Err(import_cancelled());
+        }
+        let journal = TxtDecodeJournal {
+            operation_id: prepared.operation_id.clone(),
+            book_id: prepared.snapshot.book_id.clone(),
+            asset_id: prepared.snapshot.asset_id.clone(),
+            old_content_version: prepared.snapshot.content_version.clone(),
+            relative_path: prepared.snapshot.relative_path.clone(),
+            stage_path: prepared.stage_relative_path.clone(),
+            backup_path: prepared.backup_relative_path.clone(),
+            new_content_version: prepared.content_version.clone(),
+            byte_length: prepared.byte_length,
+            index_json: prepared.index_json.clone(),
+            source_sha256: prepared.source_sha256.clone(),
+            detected_encoding: prepared.detected_encoding.clone(),
+            selected_encoding: prepared.selected_encoding.clone(),
+            decode_state: prepared.decode_state.clone(),
+            created_at: now_millis(),
+        };
+        let tx = self.conn.transaction()?;
+        insert_txt_decode_journal(&tx, &journal)?;
+        tx.commit()?;
+        // Once the journal is durable, finish publication even if cancellation
+        // arrives. Recovery can then distinguish old and new content safely.
+        if final_path.exists() {
+            remove_owned_file(&backup_path)?;
+            fs::rename(&final_path, &backup_path)?;
+            sync_parent(&backup_path)?;
+        }
+        fs::rename(&stage_path, &final_path)?;
+        sync_parent(&final_path)?;
+        maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
+        let fingerprint = file_fingerprint(&final_path)?.1;
+        let transaction = (|| -> Result<(), AppError> {
+            let tx = self.conn.transaction()?;
+            let current: String = tx.query_row(
+                "SELECT content_version FROM book_assets WHERE id = ?1",
+                params![prepared.snapshot.asset_id],
+                |row| row.get(0),
+            )?;
+            if current != prepared.snapshot.content_version {
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "book content changed while decoding",
+                ));
+            }
+            tx.execute(
+                "UPDATE books SET content_version = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    prepared.content_version,
+                    now_millis(),
+                    prepared.snapshot.book_id
+                ],
+            )?;
+            tx.execute(
+                "UPDATE book_assets SET sha256 = ?1, dedup_hash = NULL, byte_length = ?2,
+                    content_version = ?3 WHERE id = ?4",
+                params![
+                    prepared.content_version,
+                    prepared.byte_length as i64,
+                    prepared.content_version,
+                    prepared.snapshot.asset_id
+                ],
+            )?;
+            insert_content_index(
+                &tx,
+                &prepared.snapshot.asset_id,
+                &parse_index(&prepared.index_json)?,
+                &fingerprint,
+            )?;
+            tx.execute(
+                "UPDATE txt_assets SET detected_encoding = ?1, selected_encoding = ?2,
+                    decode_state = ?3, source_sha256 = ?4, toc_json = NULL, updated_at = ?5
+                 WHERE asset_id = ?6",
+                params![
+                    encoding_name(&prepared.detected_encoding),
+                    encoding_name(&prepared.selected_encoding),
+                    decode_state_name(&prepared.decode_state),
+                    prepared.source_sha256,
+                    now_millis(),
+                    prepared.snapshot.asset_id
+                ],
+            )?;
+            tx.execute(
+                "DELETE FROM toc_cache WHERE asset_id = ?1",
+                params![prepared.snapshot.asset_id],
+            )?;
+            tx.execute(
+                "DELETE FROM txt_decode_journal WHERE operation_id = ?1",
+                params![prepared.operation_id],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = transaction {
+            if let Err(recovery_error) = self.recover_txt_decode(&journal) {
+                return Err(AppError::new(
+                    error.code,
+                    format!(
+                        "{}; TXT decode recovery failed: {}",
+                        error.message, recovery_error.message
+                    ),
+                ));
+            }
+            return Err(error);
+        }
+        let _ = remove_owned_file(&backup_path);
+        self.verified_indexes
+            .lock()
+            .map_err(|_| {
+                AppError::new(ErrorCode::Database, "content verification lock is poisoned")
+            })?
+            .remove(&prepared.snapshot.asset_id);
+        Ok(TxtEncodingInfo {
+            detected: prepared.detected_encoding,
+            selected: prepared.selected_encoding,
+            state: prepared.decode_state,
+            can_change: true,
+        })
+    }
+
+    pub fn set_txt_encoding(
+        &mut self,
+        book_id: &str,
+        requested: TxtEncoding,
+    ) -> Result<TxtEncodingInfo, AppError> {
+        let operation_id = Uuid::new_v4().to_string();
+        let snapshot = self.snapshot_txt_decode(book_id)?;
+        let prepared = Self::prepare_txt_decode(
+            &self.root,
+            &snapshot,
+            requested,
+            &operation_id,
+            &AtomicBool::new(false),
+            |_, _, _| {},
+        )?;
+        self.commit_txt_decode(prepared, &AtomicBool::new(false))
     }
 
     pub fn read_content_window(
@@ -1166,12 +2275,79 @@ impl Storage {
         Ok(count != 0)
     }
 
+    fn recover_pending_txt_decodes(&mut self) -> Result<(), AppError> {
+        let journals = {
+            let mut statement = self.conn.prepare(
+                "SELECT operation_id, book_id, asset_id, old_content_version,
+                        relative_path, stage_path, backup_path, new_content_version,
+                        byte_length, index_json, source_sha256, detected_encoding,
+                        selected_encoding, decode_state, created_at
+                 FROM txt_decode_journal ORDER BY created_at ASC, operation_id ASC",
+            )?;
+            let rows = statement
+                .query_map([], txt_decode_journal_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for journal in journals {
+            self.recover_txt_decode(&journal)?;
+        }
+        Ok(())
+    }
+
+    fn recover_txt_decode(&mut self, journal: &TxtDecodeJournal) -> Result<(), AppError> {
+        let final_path = managed_path(&self.root, &journal.relative_path, "books")?;
+        let stage_path = managed_path(&self.root, &journal.stage_path, "staging")?;
+        let backup_path = managed_path(&self.root, &journal.backup_path, "staging")?;
+        let current_version: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT content_version FROM book_assets WHERE id = ?1",
+                params![journal.asset_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let final_is_new = final_path.is_file()
+            && hash_file(&final_path).ok().as_deref() == Some(journal.new_content_version.as_str());
+        if current_version.as_deref() == Some(journal.new_content_version.as_str()) && final_is_new
+        {
+            remove_owned_file(&stage_path)?;
+            remove_owned_file(&backup_path)?;
+        } else {
+            // The database still names the old version, or the new file was
+            // not fully published. Restore the old backup before removing the
+            // journal so readers never observe a mismatched pair.
+            if backup_path.is_file() {
+                if final_path.exists() {
+                    remove_owned_file(&final_path)?;
+                }
+                if let Some(parent) = final_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::rename(&backup_path, &final_path)?;
+                sync_parent(&final_path)?;
+            } else if current_version.as_deref() != Some(journal.new_content_version.as_str())
+                && final_is_new
+            {
+                remove_owned_file(&final_path)?;
+            }
+            remove_owned_file(&stage_path)?;
+        }
+        self.conn.execute(
+            "DELETE FROM txt_decode_journal WHERE operation_id = ?1",
+            params![journal.operation_id],
+        )?;
+        Ok(())
+    }
+
     fn recover_pending_imports(&mut self) -> Result<(), AppError> {
         let journals = {
             let mut statement = self.conn.prepare(
                 "SELECT operation_id, book_id, asset_id, title, sha256, byte_length,
                         content_version, relative_path, stage_path, index_json,
-                        source_byte_length, created_at
+                        source_byte_length, created_at, raw_stage_path,
+                        source_relative_path, source_sha256, detected_encoding,
+                        selected_encoding, decode_state
                  FROM import_journal ORDER BY created_at ASC, operation_id ASC",
             )?;
             let journals = statement
@@ -1188,6 +2364,12 @@ impl Storage {
     fn recover_journal(&mut self, journal: &JournalRecord) -> Result<(), AppError> {
         let final_path = managed_path(&self.root, &journal.relative_path, "books")?;
         let stage_path = managed_path(&self.root, &journal.stage_path, "staging")?;
+        let raw_stage_path = (!journal.raw_stage_path.is_empty())
+            .then(|| managed_path(&self.root, &journal.raw_stage_path, "staging"))
+            .transpose()?;
+        let source_path = (!journal.source_relative_path.is_empty())
+            .then(|| managed_path(&self.root, &journal.source_relative_path, "sources"))
+            .transpose()?;
         let committed: Option<(String, String, String)> = self
             .conn
             .query_row(
@@ -1218,8 +2400,27 @@ impl Storage {
                     sync_parent(&final_path)?;
                 }
                 remove_owned_file(&stage_path)?;
+                if raw_stage_path.as_ref().is_some_and(|path| path.is_file()) {
+                    let raw_stage_path = raw_stage_path.as_ref().expect("checked above");
+                    if let Some(source_path) = source_path.as_ref() {
+                        if source_path.exists() {
+                            remove_owned_file(source_path)?;
+                        }
+                        if let Some(parent) = source_path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::rename(raw_stage_path, source_path)?;
+                    } else {
+                        remove_owned_file(raw_stage_path)?;
+                    }
+                } else if let Some(raw_stage_path) = raw_stage_path.as_ref() {
+                    remove_owned_file(raw_stage_path)?;
+                }
             } else {
                 remove_owned_file(&stage_path)?;
+                if let Some(raw_stage_path) = raw_stage_path.as_ref() {
+                    remove_owned_file(raw_stage_path)?;
+                }
             }
             self.conn.execute(
                 "DELETE FROM import_journal WHERE operation_id = ?1",
@@ -1231,6 +2432,9 @@ impl Storage {
         // No asset row means the operation never committed. The journal owns
         // these exact managed paths; clean them and discard the journal.
         remove_owned_file(&stage_path)?;
+        if let Some(raw_stage_path) = raw_stage_path.as_ref() {
+            remove_owned_file(raw_stage_path)?;
+        }
         let references: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM book_assets WHERE relative_path = ?1",
             params![journal.relative_path],
@@ -1238,6 +2442,9 @@ impl Storage {
         )?;
         if references == 0 {
             remove_owned_file(&final_path)?;
+            if let Some(source_path) = source_path.as_ref() {
+                remove_owned_file(source_path)?;
+            }
         }
         self.conn.execute(
             "DELETE FROM import_journal WHERE operation_id = ?1",
@@ -1247,15 +2454,26 @@ impl Storage {
     }
 
     fn remove_orphan_managed_files(&self) -> Result<(), AppError> {
-        let referenced: HashSet<String> = {
+        let referenced_books: HashSet<String> = {
             let mut statement = self.conn.prepare("SELECT relative_path FROM book_assets")?;
             let paths = statement
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<HashSet<_>, _>>()?;
             paths
         };
+        let referenced_sources: HashSet<String> = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT source_relative_path FROM txt_assets WHERE source_relative_path IS NOT NULL")?;
+            let result = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?;
+            result
+        };
         let books_root = self.root.join("books");
-        remove_orphans_recursive(&books_root, &self.root, &referenced)?;
+        remove_orphans_recursive(&books_root, &self.root, &referenced_books)?;
+        let sources_root = self.root.join("sources");
+        remove_orphans_recursive(&sources_root, &self.root, &referenced_sources)?;
         Ok(())
     }
 
@@ -1267,14 +2485,25 @@ impl Storage {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|extension| extension == "part")
+                && path.extension().is_some_and(|extension| {
+                    extension == "part" || extension == "raw" || extension == "old"
+                })
             {
                 let _ = fs::remove_file(path);
             }
         }
     }
+}
+
+/// Run the optional test-only pause/failure hook before the application
+/// storage mutex is acquired for the final commit. This keeps cancellation
+/// responsive while a native test waits at the commit boundary.
+pub(crate) fn before_import_commit(root: &Path, cancel: &AtomicBool) -> Result<(), AppError> {
+    maybe_inject_failure(root, cancel, FailurePoint::BeforeFinalCommit)
+}
+
+pub(crate) fn duplicate_validation_retry(error: &AppError) -> bool {
+    error.code == ErrorCode::ContentVersionMismatch && error.message == DUPLICATE_VALIDATION_RETRY
 }
 
 /// Validate a duplicate import target without borrowing `Storage`. A missing
@@ -1534,6 +2763,191 @@ pub(crate) fn validate_content_locator(
         locator,
         &verified.fingerprint,
     )
+}
+
+fn read_verified_text(
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+) -> Result<String, AppError> {
+    let path = managed_path(&context.root, &context.record.relative_path, "books")?;
+    let bytes = read_bytes(
+        &path,
+        0,
+        verified.index.byte_length,
+        Some(&verified.fingerprint),
+    )?;
+    String::from_utf8(bytes).map_err(|_| {
+        AppError::new(
+            ErrorCode::UnsupportedEncoding,
+            "managed TXT asset is not valid normalized UTF-8",
+        )
+    })
+}
+
+pub(crate) fn build_toc_from_context(
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+    book_id: &str,
+) -> Result<Vec<TocEntry>, AppError> {
+    let text = read_verified_text(context, verified)?;
+    let mut entries = build_toc(&text, book_id, &context.record.asset.content_version);
+    entries.iter_mut().for_each(|entry| {
+        entry.locator.resource_id = context.record.asset.id.clone();
+    });
+    Ok(entries)
+}
+
+fn search_text_stream(
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+    parameters: SearchParameters<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<SearchMatch>, Option<u64>, bool), AppError> {
+    let SearchParameters {
+        book_id,
+        content_version,
+        query,
+        case_sensitive,
+        cursor,
+        limit,
+    } = parameters;
+    if query.is_empty() || limit == 0 {
+        return Ok((Vec::new(), None, false));
+    }
+    let needle: Vec<char> = query.chars().collect();
+    if needle.is_empty() {
+        return Ok((Vec::new(), None, false));
+    }
+    let path = managed_path(&context.root, &context.record.relative_path, "books")?;
+    let mut pending = Vec::new();
+    let mut utf16_offset = 0_u64;
+    let mut ring: Vec<(char, u64)> = Vec::with_capacity(needle.len());
+    let mut seen = 0_u64;
+    let mut matches = Vec::new();
+    let mut byte_offset = 0_u64;
+    const CHUNK_BYTES: u64 = 64 * 1024;
+    while byte_offset < verified.index.byte_length {
+        if cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
+            return Err(AppError::new(
+                ErrorCode::ImportCancelled,
+                "search was cancelled",
+            ));
+        }
+        let chunk_length = CHUNK_BYTES.min(verified.index.byte_length - byte_offset);
+        pending.extend(read_bytes(
+            &path,
+            byte_offset,
+            chunk_length,
+            Some(&verified.fingerprint),
+        )?);
+        byte_offset += chunk_length;
+        let valid_length = match std::str::from_utf8(&pending) {
+            Ok(text) => text.len(),
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(_) => {
+                return Err(AppError::new(
+                    ErrorCode::UnsupportedEncoding,
+                    "managed TXT asset is not valid normalized UTF-8",
+                ));
+            }
+        };
+        let remainder = pending.split_off(valid_length);
+        let text = std::str::from_utf8(&pending).map_err(|_| {
+            AppError::new(
+                ErrorCode::UnsupportedEncoding,
+                "managed TXT asset is not valid normalized UTF-8",
+            )
+        })?;
+        for character in text.chars() {
+            let start_offset = utf16_offset;
+            utf16_offset += character.len_utf16() as u64;
+            ring.push((character, start_offset));
+            if ring.len() > needle.len() {
+                ring.remove(0);
+            }
+            if ring.len() != needle.len() || !chars_match(&ring, &needle, case_sensitive) {
+                continue;
+            }
+            let match_start = ring[0].1;
+            let match_end = utf16_offset;
+            if seen < cursor {
+                seen += 1;
+                continue;
+            }
+            if matches.len() >= limit as usize {
+                return Ok((matches, Some(seen), true));
+            }
+            let start_boundary = boundary_for_offset(
+                &context.root,
+                &context.record.relative_path,
+                &verified.index,
+                match_start,
+                BoundaryMode::Exact,
+                &verified.fingerprint,
+            )?;
+            let excerpt_start = boundary_for_offset(
+                &context.root,
+                &context.record.relative_path,
+                &verified.index,
+                match_start.saturating_sub(32),
+                BoundaryMode::Floor,
+                &verified.fingerprint,
+            )?;
+            let excerpt_end = boundary_for_offset(
+                &context.root,
+                &context.record.relative_path,
+                &verified.index,
+                match_end
+                    .saturating_add(32)
+                    .min(verified.index.utf16_length),
+                BoundaryMode::Ceiling,
+                &verified.fingerprint,
+            )?;
+            let excerpt = read_range(
+                &context.root,
+                &context.record.relative_path,
+                excerpt_start.byte_offset,
+                excerpt_end.byte_offset,
+                &verified.fingerprint,
+            )?;
+            let mut locator = locator_for(
+                &context.root,
+                &context.record,
+                &verified.index,
+                match_start,
+                start_boundary.byte_offset,
+                &verified.fingerprint,
+            )?;
+            locator.book_id = book_id.to_string();
+            locator.content_version = content_version.to_string();
+            matches.push(SearchMatch {
+                ordinal: seen,
+                locator,
+                excerpt,
+                match_start,
+                match_end,
+            });
+            seen += 1;
+        }
+        pending = remainder;
+    }
+    if !pending.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::UnsupportedEncoding,
+            "managed TXT asset ends with an incomplete UTF-8 sequence",
+        ));
+    }
+    Ok((matches, None, false))
+}
+
+fn chars_match(window: &[(char, u64)], needle: &[char], case_sensitive: bool) -> bool {
+    window.iter().zip(needle).all(|((left, _), right)| {
+        if case_sensitive {
+            left == right
+        } else {
+            left.to_lowercase().eq(right.to_lowercase())
+        }
+    })
 }
 
 fn build_sparse_index(text: &str) -> SparseIndex {
@@ -1897,6 +3311,58 @@ fn read_bytes(
     Ok(bytes)
 }
 
+fn read_cancelable_file<F>(
+    path: &Path,
+    cancel: &AtomicBool,
+    mut report: F,
+) -> Result<(Vec<u8>, u64), AppError>
+where
+    F: FnMut(u64, u64),
+{
+    let metadata = fs::metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::new(
+                ErrorCode::AssetMissing,
+                "retained TXT source bytes are missing",
+            )
+        } else {
+            AppError::new(ErrorCode::Io, error.to_string())
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            ErrorCode::AssetMissing,
+            "retained TXT source path is not a file",
+        ));
+    }
+    let total = metadata.len();
+    let mut file = File::open(path)?;
+    let mut bytes = Vec::with_capacity(total.min(8 * 1024 * 1024) as usize);
+    let mut chunk = [0_u8; 64 * 1024];
+    let mut read_total = 0_u64;
+    report(0, total);
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            return Err(import_cancelled());
+        }
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        read_total += read as u64;
+        report(read_total, total);
+    }
+    let final_metadata = fs::metadata(path)?;
+    if read_total != total || final_metadata.len() != total {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "retained TXT source bytes changed while reading",
+        ));
+    }
+    Ok((bytes, total))
+}
+
 fn read_file_checked(
     path: &Path,
     expected_length: u64,
@@ -2094,12 +3560,45 @@ fn sync_parent(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+fn insert_txt_decode_journal(
+    tx: &rusqlite::Transaction<'_>,
+    journal: &TxtDecodeJournal,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO txt_decode_journal(
+            operation_id, book_id, asset_id, old_content_version, relative_path,
+            stage_path, backup_path, new_content_version, byte_length, index_json,
+            source_sha256, detected_encoding, selected_encoding, decode_state, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            journal.operation_id,
+            journal.book_id,
+            journal.asset_id,
+            journal.old_content_version,
+            journal.relative_path,
+            journal.stage_path,
+            journal.backup_path,
+            journal.new_content_version,
+            journal.byte_length as i64,
+            journal.index_json,
+            journal.source_sha256,
+            encoding_name(&journal.detected_encoding),
+            encoding_name(&journal.selected_encoding),
+            decode_state_name(&journal.decode_state),
+            journal.created_at,
+        ],
+    )?;
+    Ok(())
+}
+
 fn insert_journal(tx: &rusqlite::Transaction<'_>, journal: &JournalRecord) -> Result<(), AppError> {
     tx.execute(
         "INSERT INTO import_journal(
             operation_id, book_id, asset_id, title, sha256, byte_length, content_version,
-            relative_path, stage_path, index_json, source_byte_length, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            relative_path, stage_path, index_json, source_byte_length, created_at,
+            raw_stage_path, source_relative_path, source_sha256,
+            detected_encoding, selected_encoding, decode_state
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             journal.operation_id,
             journal.book_id,
@@ -2112,7 +3611,13 @@ fn insert_journal(tx: &rusqlite::Transaction<'_>, journal: &JournalRecord) -> Re
             journal.stage_path,
             journal.index_json,
             journal.source_byte_length as i64,
-            journal.created_at
+            journal.created_at,
+            journal.raw_stage_path,
+            journal.source_relative_path,
+            journal.source_sha256,
+            encoding_name(&journal.detected_encoding),
+            encoding_name(&journal.selected_encoding),
+            decode_state_name(&journal.decode_state)
         ],
     )?;
     Ok(())
@@ -2210,9 +3715,45 @@ fn journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalRecord> 
         content_version: row.get(6)?,
         relative_path: row.get(7)?,
         stage_path: row.get(8)?,
+        raw_stage_path: row.get(12).unwrap_or_default(),
+        source_relative_path: row.get(13).unwrap_or_default(),
+        source_sha256: row.get(14).unwrap_or_default(),
+        detected_encoding: parse_encoding(
+            row.get::<_, String>(15)
+                .unwrap_or_else(|_| "utf8".to_string()),
+        ),
+        selected_encoding: parse_encoding(
+            row.get::<_, String>(16)
+                .unwrap_or_else(|_| "utf8".to_string()),
+        ),
+        decode_state: parse_decode_state(
+            row.get::<_, String>(17)
+                .unwrap_or_else(|_| "clean".to_string()),
+        ),
         index_json: row.get(9)?,
         source_byte_length: source_byte_length.max(0) as u64,
         created_at: row.get(11)?,
+    })
+}
+
+fn txt_decode_journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtDecodeJournal> {
+    let byte_length: i64 = row.get(8)?;
+    Ok(TxtDecodeJournal {
+        operation_id: row.get(0)?,
+        book_id: row.get(1)?,
+        asset_id: row.get(2)?,
+        old_content_version: row.get(3)?,
+        relative_path: row.get(4)?,
+        stage_path: row.get(5)?,
+        backup_path: row.get(6)?,
+        new_content_version: row.get(7)?,
+        byte_length: byte_length.max(0) as u64,
+        index_json: row.get(9)?,
+        source_sha256: row.get(10)?,
+        detected_encoding: parse_encoding(row.get(11)?),
+        selected_encoding: parse_encoding(row.get(12)?),
+        decode_state: parse_decode_state(row.get(13)?),
+        created_at: row.get(14)?,
     })
 }
 
@@ -2221,6 +3762,43 @@ fn title_from_path(path: &Path) -> String {
         .map(|value| value.to_string_lossy().trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Untitled".to_string())
+}
+
+fn encoding_name(encoding: &TxtEncoding) -> &'static str {
+    match encoding {
+        TxtEncoding::Auto => "auto",
+        TxtEncoding::Utf8 => "utf8",
+        TxtEncoding::Gb18030 => "gb18030",
+        TxtEncoding::Gbk => "gbk",
+        TxtEncoding::Utf16Le => "utf16le",
+        TxtEncoding::Utf16Be => "utf16be",
+    }
+}
+
+fn parse_encoding(value: String) -> TxtEncoding {
+    match value.to_ascii_lowercase().as_str() {
+        "auto" => TxtEncoding::Auto,
+        "gb18030" => TxtEncoding::Gb18030,
+        "gbk" | "gb2312" => TxtEncoding::Gbk,
+        "utf16le" | "utf-16le" => TxtEncoding::Utf16Le,
+        "utf16be" | "utf-16be" => TxtEncoding::Utf16Be,
+        _ => TxtEncoding::Utf8,
+    }
+}
+
+fn decode_state_name(state: &TxtDecodeState) -> &'static str {
+    match state {
+        TxtDecodeState::Clean => "clean",
+        TxtDecodeState::ReplacementCharacters => "replacement_characters",
+    }
+}
+
+fn parse_decode_state(value: String) -> TxtDecodeState {
+    if value == "replacement_characters" {
+        TxtDecodeState::ReplacementCharacters
+    } else {
+        TxtDecodeState::Clean
+    }
 }
 
 fn now_millis() -> i64 {
@@ -2405,6 +3983,222 @@ mod tests {
         assert_eq!(first.book.id, second.book.id);
         assert_eq!(first.asset.id, second.asset.id);
         assert_eq!(storage.list_books().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn m1_txt_metadata_tools_and_manual_encoding_switch_persist() {
+        let root = TestRoot::new();
+        let source = write_source(
+            &root.0,
+            "chapters.txt",
+            "第一章 开始😀\n正文中文\nChapter 2\n结尾\n".as_bytes(),
+        );
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "m1");
+        let info = storage.txt_encoding_for_book(&imported.book.id).unwrap();
+        assert!(info.can_change);
+        assert_eq!(info.selected, TxtEncoding::Utf8);
+
+        let toc = storage.list_toc(&imported.book.id).unwrap();
+        assert_eq!(toc.len(), 2);
+        assert_eq!(toc[0].title, "第一章 开始😀");
+        let locator = storage
+            .read_content_window(&imported.book.id, None, 64)
+            .unwrap()
+            .locator;
+        let bookmark = storage
+            .add_bookmark(&BookmarkRequest {
+                book_id: imported.book.id.clone(),
+                locator: locator.clone(),
+                excerpt: "开头".to_string(),
+            })
+            .unwrap();
+        assert_eq!(storage.list_bookmarks(&imported.book.id).unwrap().len(), 1);
+        let result = storage
+            .search_book(&SearchRequest {
+                book_id: imported.book.id.clone(),
+                query: "中文".to_string(),
+                case_sensitive: true,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            })
+            .unwrap();
+        assert_eq!(result.matches.len(), 1);
+        storage.delete_bookmark(&bookmark.id).unwrap();
+        assert!(storage
+            .list_bookmarks(&imported.book.id)
+            .unwrap()
+            .is_empty());
+
+        let raw_path = app_root
+            .join("sources")
+            .join(format!("{}.txt", imported.asset.id));
+        let replacement = [0xd6, 0xd0, 0xce, 0xc4];
+        fs::write(&raw_path, replacement).unwrap();
+        // This fixture models an explicit source re-association. Production
+        // code refuses an unverified replacement before this metadata update.
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_sha256 = ?1 WHERE asset_id = ?2",
+                params![sha256_bytes(&replacement), imported.asset.id],
+            )
+            .unwrap();
+        let switched = storage
+            .set_txt_encoding(&imported.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        assert_eq!(switched.selected, TxtEncoding::Gbk);
+        let window = storage
+            .read_content_window(&imported.book.id, None, 64)
+            .unwrap();
+        assert_eq!(window.text, "中文");
+    }
+
+    #[test]
+    fn redecoded_content_can_share_a_hash_without_merging_book_identity() {
+        let root = TestRoot::new();
+        let first_source = write_source(&root.0, "first.txt", "中文".as_bytes());
+        let second_source = write_source(&root.0, "second.txt", b"temporary");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let first = import(&mut storage, &first_source, "first");
+        let second = import(&mut storage, &second_source, "second");
+        assert_ne!(first.book.id, second.book.id);
+
+        let second_raw = app_root
+            .join("sources")
+            .join(format!("{}.txt", second.asset.id));
+        let replacement = [0xd6, 0xd0, 0xce, 0xc4];
+        fs::write(&second_raw, replacement).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_sha256 = ?1 WHERE asset_id = ?2",
+                params![sha256_bytes(&replacement), second.asset.id],
+            )
+            .unwrap();
+        storage
+            .set_txt_encoding(&second.book.id, TxtEncoding::Gbk)
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .read_content_window(&first.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
+        assert_eq!(
+            storage
+                .read_content_window(&second.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
+        assert_eq!(storage.list_books().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn normalized_duplicate_keeps_the_existing_raw_source_and_encoding() {
+        let root = TestRoot::new();
+        let first_source = write_source(&root.0, "utf8.txt", "中文".as_bytes());
+        let second_source = write_source(&root.0, "gbk.txt", &[0xd6, 0xd0, 0xce, 0xc4]);
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let first = import(&mut storage, &first_source, "utf8");
+        let second = import(&mut storage, &second_source, "gbk");
+        assert!(second.duplicate);
+        assert_eq!(first.book.id, second.book.id);
+        let retained = fs::read(
+            app_root
+                .join("sources")
+                .join(format!("{}.txt", first.asset.id)),
+        )
+        .unwrap();
+        assert_eq!(retained, "中文".as_bytes());
+        assert_eq!(
+            storage
+                .txt_encoding_for_book(&first.book.id)
+                .unwrap()
+                .selected,
+            TxtEncoding::Utf8
+        );
+    }
+
+    #[test]
+    fn search_honors_cancellation_before_scanning_chunks() {
+        let root = TestRoot::new();
+        let source = write_source(
+            &root.0,
+            "search-cancel.txt",
+            "needle ".repeat(20_000).as_bytes(),
+        );
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "search-cancel");
+        let context = storage.content_read_context(&imported.book.id).unwrap();
+        let verified = verify_content_context(&context).unwrap();
+        let cancel = AtomicBool::new(true);
+        let error = Storage::search_book_from_context_cancelable(
+            &SearchRequest {
+                book_id: imported.book.id,
+                query: "needle".to_string(),
+                case_sensitive: true,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            },
+            &context,
+            &verified,
+            Some(&cancel),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ImportCancelled);
+    }
+
+    #[test]
+    fn legacy_book_can_reassociate_a_source_after_matching_text_is_verified() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "legacy.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "legacy");
+        let managed_source = app_root
+            .join("sources")
+            .join(format!("{}.txt", imported.asset.id));
+        fs::remove_file(&managed_source).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_relative_path = NULL, source_sha256 = NULL
+                 WHERE asset_id = ?1",
+                params![imported.asset.id],
+            )
+            .unwrap();
+
+        let replacement = write_source(&root.0, "reassociated.txt", "中文".as_bytes());
+        let snapshot = storage
+            .snapshot_txt_reassociation(&imported.book.id)
+            .unwrap();
+        let prepared = Storage::prepare_txt_reassociation(
+            &app_root,
+            &snapshot,
+            &replacement,
+            "legacy-reassociate",
+        )
+        .unwrap();
+        let info = storage.commit_txt_reassociation(prepared).unwrap();
+        assert!(info.can_change);
+        assert!(managed_source.is_file());
+        assert_eq!(
+            storage
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
     }
 
     #[test]
@@ -2668,6 +4462,71 @@ mod tests {
                 .unwrap()
                 .all(|entry| entry.unwrap().path().read_dir().unwrap().next().is_none()));
         }
+    }
+
+    #[test]
+    fn interrupted_redecode_restores_the_previous_asset_on_reopen() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "redecode-recovery.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "redecode-recovery");
+        let raw_path = app_root
+            .join("sources")
+            .join(format!("{}.txt", imported.asset.id));
+        let replacement = [0xd6, 0xd0, 0xce, 0xc4];
+        fs::write(&raw_path, replacement).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_sha256 = ?1 WHERE asset_id = ?2",
+                params![sha256_bytes(&replacement), imported.asset.id],
+            )
+            .unwrap();
+
+        set_test_failure(FailurePoint::AfterRename);
+        let error = storage
+            .set_txt_encoding(&imported.book.id, TxtEncoding::Gbk)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Io);
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .flatten()
+            .any(|entry| entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "old")));
+        drop(storage);
+
+        let reopened = Storage::open(&app_root).unwrap();
+        assert_eq!(
+            reopened
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .flatten()
+            .all(|entry| entry
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "old")));
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .flatten()
+            .all(|entry| entry
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "part")));
+        let journal_count: i64 = reopened
+            .conn
+            .query_row("SELECT COUNT(*) FROM txt_decode_journal", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(journal_count, 0);
     }
 
     #[test]

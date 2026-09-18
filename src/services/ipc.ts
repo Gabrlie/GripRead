@@ -21,6 +21,17 @@ import type {
   ImportStatus,
   ImportTask,
   ReaderLocator,
+  TxtEncodingInfo,
+  TxtEncodingRequest,
+  TxtSourceRequest,
+  TxtDecodeStatus,
+  TxtDecodeTask,
+  TocEntry,
+  Bookmark,
+  BookmarkRequest,
+  BookmarkIdRequest,
+  SearchRequest,
+  SearchResponse,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -92,7 +103,7 @@ export const tauriServices: AppServices = {
       const selected = await open({
         multiple: false,
         directory: false,
-        filters: [{ name: "UTF-8 TXT", extensions: ["txt"] }],
+        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
       });
       if (selected === null) return null;
       if (typeof selected !== "string") throw new Error("Expected one TXT file");
@@ -111,6 +122,33 @@ export const tauriServices: AppServices = {
     listBooks: () => invokeCommand<LibraryBook[]>("list_books"),
     onImportProgress: (listener) =>
       listen<ImportStatus>("import-progress", (event) => listener(event.payload)),
+    getTxtEncoding: (bookId) =>
+      invokeCommand<TxtEncodingInfo>("get_txt_encoding", { request: { bookId } }),
+    pickAndReassociateTxt: async (bookId) => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
+      });
+      if (selected === null) return null;
+      if (typeof selected !== "string") throw new Error("Expected one TXT file");
+      return tauriServices.library.reassociateTxtSource({ bookId, path: selected });
+    },
+    reassociateTxtSource: (request) =>
+      invokeCommand<TxtEncodingInfo>("reassociate_txt_source", {
+        request: request satisfies TxtSourceRequest,
+      }),
+    startTxtDecode: (request) => invokeCommand<TxtDecodeTask>("start_txt_decode", { request }),
+    getTxtDecodeStatus: (operationId) =>
+      invokeCommand<TxtDecodeStatus>("get_txt_decode_status", {
+        request: { operationId } satisfies ImportOperationRequest,
+      }),
+    cancelTxtDecode: (operationId) =>
+      invokeCommand<CancelResult>("cancel_txt_decode", {
+        request: { operationId } satisfies ImportOperationRequest,
+      }),
+    onTxtDecodeProgress: (listener) =>
+      listen<TxtDecodeStatus>("txt-decode-progress", (event) => listener(event.payload)),
   },
   reader: {
     readContentWindow: (request: ReadContentRequest) =>
@@ -126,6 +164,15 @@ export const tauriServices: AppServices = {
     getSavedReaderLocator: (bookId) =>
       invokeCommand<ReaderLocator | null>("get_saved_reader_locator", {
         request: { bookId } satisfies BookRequest,
+      }),
+    listToc: (bookId) => invokeCommand<TocEntry[]>("list_toc", { request: { bookId } }),
+    listBookmarks: (bookId) => invokeCommand<Bookmark[]>("list_bookmarks", { request: { bookId } }),
+    addBookmark: (request) => invokeCommand<Bookmark>("add_bookmark", { request }),
+    deleteBookmark: (request) => invokeCommand<void>("delete_bookmark", { request }),
+    search: (request) => invokeCommand<SearchResponse>("search_book", { request }),
+    cancelSearch: (operationId) =>
+      invokeCommand<CancelResult>("cancel_search", {
+        request: { operationId } satisfies ImportOperationRequest,
       }),
   },
   settings: {

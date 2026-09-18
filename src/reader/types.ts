@@ -48,4 +48,6 @@ export interface ReaderSnapshot {
   loading: boolean;
   error: string | null;
   saveError: string | null;
+  /** Set when a saved locator belongs to an older body and cannot be mapped. */
+  positionWarning: string | null;
 }

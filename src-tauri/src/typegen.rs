@@ -12,6 +12,9 @@ const IPC_TYPES: &[&str] = &[
     "AppError",
     "AssetAvailability",
     "AssetKind",
+    "TxtEncoding",
+    "TxtDecodeState",
+    "TxtEncodingInfo",
     "Book",
     "BookAsset",
     "CancelResult",
@@ -26,6 +29,17 @@ const IPC_TYPES: &[&str] = &[
     "ReadContentRequest",
     "ResolveLocatorRequest",
     "BookRequest",
+    "TxtEncodingRequest",
+    "TxtSourceRequest",
+    "TxtDecodeTask",
+    "TxtDecodeStatus",
+    "TocEntry",
+    "Bookmark",
+    "BookmarkRequest",
+    "BookmarkIdRequest",
+    "SearchRequest",
+    "SearchMatch",
+    "SearchResponse",
     "StartImportRequest",
     "ImportOperationRequest",
     "SaveLocatorRequest",
@@ -58,6 +72,9 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<AppError>(&config)?;
     export_all::<AssetAvailability>(&config)?;
     export_all::<AssetKind>(&config)?;
+    export_all::<TxtEncoding>(&config)?;
+    export_all::<TxtDecodeState>(&config)?;
+    export_all::<TxtEncodingInfo>(&config)?;
     export_all::<Book>(&config)?;
     export_all::<BookAsset>(&config)?;
     export_all::<CancelResult>(&config)?;
@@ -72,6 +89,17 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ReadContentRequest>(&config)?;
     export_all::<ResolveLocatorRequest>(&config)?;
     export_all::<BookRequest>(&config)?;
+    export_all::<TxtEncodingRequest>(&config)?;
+    export_all::<TxtSourceRequest>(&config)?;
+    export_all::<TxtDecodeTask>(&config)?;
+    export_all::<TxtDecodeStatus>(&config)?;
+    export_all::<TocEntry>(&config)?;
+    export_all::<Bookmark>(&config)?;
+    export_all::<BookmarkRequest>(&config)?;
+    export_all::<BookmarkIdRequest>(&config)?;
+    export_all::<SearchRequest>(&config)?;
+    export_all::<SearchMatch>(&config)?;
+    export_all::<SearchResponse>(&config)?;
     export_all::<StartImportRequest>(&config)?;
     export_all::<ImportOperationRequest>(&config)?;
     export_all::<SaveLocatorRequest>(&config)?;

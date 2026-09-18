@@ -30,11 +30,19 @@ await Promise.all([
 const normalizedMixed = createMixedText();
 const mixedSource = createMixedSource(normalizedMixed);
 const millionSource = "\uFEFF" + "A中😀\r\n".repeat(200_000);
+const crossBlockSource = `${"a".repeat(65_535)}needle${"b".repeat(12_000)}`;
+const chaptersSource = "序言\n第一章 开始\n正文\nChapter 2\n结尾\n";
+const gbkSource = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a, 0xb5, 0xda, 0xd2, 0xbb, 0xd5, 0xc2]);
+const utf16LeSource = Buffer.from([0xff, 0xfe, 0x31, 0x00, 0x00, 0x4e, 0x0a, 0x00]);
 await Promise.all([
   writeFixture("mixed.txt", mixedSource),
   writeFixture("mixed-duplicate.txt", "\uFEFF" + normalizedMixed),
   writeFixture("million.txt", millionSource),
   writeFixture("replacement.txt", "Replacement text\n替换后的内容 😀\n".repeat(12)),
+  writeFixture("cross-block.txt", crossBlockSource),
+  writeFixture("chapters.txt", chaptersSource),
+  writeBinaryFixture("gbk.txt", gbkSource),
+  writeBinaryFixture("utf16le.txt", utf16LeSource),
 ]);
 
 const binary = join(
@@ -85,19 +93,48 @@ try {
     buildTimeoutMs,
   );
 
-  const phases = [
-    ["core", "tests/native/core.spec.ts"],
-    ["failures", "tests/native/failures.spec.ts"],
-    ["restart", "tests/native/restart.spec.ts"],
-    ["interaction", "tests/native/interaction.spec.ts"],
+  const allPhases = [
+    ["core", "tests/native/core.spec.ts", {}],
+    ["failures", "tests/native/failures.spec.ts", {}],
+    ["restart", "tests/native/restart.spec.ts", {}],
+    ["interaction", "tests/native/interaction.spec.ts", {}],
+    ["interaction-animated", "tests/native/interaction.spec.ts", { GRIPREAD_NATIVE_ANIMATED: "1" }],
+    ["m1-txt", "tests/native/m1-txt.spec.ts", {}],
+    ["crash", "tests/native/crash.spec.ts", {}, true],
+    ["crash-recovery", "tests/native/crash-recovery.spec.ts", {}],
   ];
-  for (const [phase, spec] of phases) {
-    await run(
-      ["exec", "wdio", "run", "wdio.conf.ts", "--spec", spec],
-      { ...environment, GRIPREAD_NATIVE_PHASE: phase },
-      `native-test ${phase}`,
-      testTimeoutMs,
+  const requestedPhases = process.env.GRIPREAD_NATIVE_PHASES?.split(",")
+    .map((phase) => phase.trim())
+    .filter(Boolean);
+  const unknownPhases = requestedPhases?.filter(
+    (phase) => !allPhases.some(([name]) => name === phase),
+  );
+  if (unknownPhases && unknownPhases.length > 0) {
+    throw new Error(`Unknown native acceptance phase(s): ${unknownPhases.join(", ")}`);
+  }
+  const phases = requestedPhases
+    ? allPhases.filter(([name]) => requestedPhases.includes(name))
+    : allPhases;
+  for (const [phase, spec, phaseEnvironment, expectedFailure] of phases) {
+    // Restart intentionally reopens the locator committed by the core phase.
+    // Other phases remain isolated so settings and reading positions cannot leak.
+    const phaseDataDirectory = join(
+      dataDirectory,
+      phase === "restart" ? "core" : phase === "crash-recovery" ? "crash" : phase,
     );
+    await mkdir(phaseDataDirectory, { recursive: true });
+    const command = ["exec", "wdio", "run", "wdio.conf.ts", "--spec", spec];
+    const phaseEnv = {
+      ...environment,
+      ...phaseEnvironment,
+      GRIPREAD_NATIVE_PHASE: phase,
+      GRIPREAD_TEST_DATA_DIR: phaseDataDirectory,
+    };
+    if (expectedFailure) {
+      await expectFailure(command, phaseEnv, `native-test ${phase}`, testTimeoutMs);
+    } else {
+      await run(command, phaseEnv, `native-test ${phase}`, testTimeoutMs);
+    }
   }
   completed = true;
   console.log("Native WebDriver acceptance passed (embedded macOS WebView).");
@@ -112,6 +149,10 @@ try {
 
 async function writeFixture(name, content) {
   await writeFile(join(fixtureDirectory, name), content, "utf8");
+}
+
+async function writeBinaryFixture(name, content) {
+  await writeFile(join(fixtureDirectory, name), content);
 }
 
 function createMixedText() {
@@ -202,6 +243,16 @@ function run(args, env, label, timeoutMs) {
       });
     });
   });
+}
+
+async function expectFailure(args, env, label, timeoutMs) {
+  try {
+    await run(args, env, label, timeoutMs);
+  } catch (error) {
+    console.log(`${label} failed as expected: ${error.message}`);
+    return;
+  }
+  throw new Error(`${label} unexpectedly passed; the crash boundary was not exercised`);
 }
 
 function positiveIntegerEnv(name, fallback) {

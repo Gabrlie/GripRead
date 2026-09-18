@@ -225,4 +225,43 @@ describe("StPageFlipAdapter", () => {
     await adapter.present(second, "next", context([first, second], 1));
     expect(flip.flipNext).toHaveBeenCalledTimes(1);
   });
+
+  it("stops the real PageFlip render loop and resize listener on dispose", async () => {
+    vi.useFakeTimers();
+    const pendingFrames = new Set<number>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      pendingFrames.add(id);
+      // Keep the callback pending so the test can observe whether teardown
+      // cancels the loop without depending on jsdom's visual timer.
+      void callback;
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      pendingFrames.delete(id);
+    });
+    const removeResize = vi.spyOn(window, "removeEventListener");
+    const { host, mount } = hostForTest();
+    const adapter = new StPageFlipAdapter(host, {
+      mount,
+      width: 100,
+      height: 100,
+      flippingTime: 1000,
+    });
+    const first = page("book", "a", 0, 2);
+    const second = page("book", "b", 1, 2);
+    adapter.setPages([first], 0);
+    await adapter.present(first, "open", context([first], 0));
+    adapter.setPages([first, second], 0);
+
+    const turning = adapter.present(second, "next", context([first, second], 1));
+    await vi.advanceTimersByTimeAsync(2);
+    adapter.dispose();
+    await turning;
+
+    expect(pendingFrames).toHaveLength(0);
+    expect(removeResize.mock.calls.some(([type]) => type === "resize")).toBe(true);
+    vi.unstubAllGlobals();
+  });
 });

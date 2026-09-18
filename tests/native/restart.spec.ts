@@ -1,7 +1,9 @@
 import { browser, expect } from "@wdio/globals";
+import { readFile } from "node:fs/promises";
 
 import {
   invoke,
+  dataPath,
   normalizedFixture,
   openBook,
   waitForAppReady,
@@ -21,19 +23,23 @@ describe("GripRead native process restart", () => {
     if (!entry) throw new Error(`Restart fixture book ${title} is missing`);
     const book: Book = entry.book;
 
+    const expectedLocator = JSON.parse(
+      await readFile(dataPath(".native-expected-locator.json"), "utf8"),
+    ) as ReaderLocator;
     const saved = await invoke<ReaderLocator | null>("get_saved_reader_locator", {
       request: { bookId: book.id },
     });
     if (!saved) throw new Error(`No saved locator exists for ${book.id}`);
     expect(saved.bookId).toBe(book.id);
-    expect(saved.offset).toBeGreaterThan(0);
+    expect(saved.offset).toBe(expectedLocator.offset);
+    expect(saved.contentVersion).toBe(expectedLocator.contentVersion);
 
-    const expected = await normalizedFixture("mixed.txt");
+    const expectedText = await normalizedFixture("mixed.txt");
     const page = await openBook(book.id);
     expect(page.bookId).toBe(book.id);
-    expect(page.start).toBe(saved.offset);
+    expect(page.start).toBe(expectedLocator.offset);
     expect(page.end - page.start).toBe(page.text.length);
-    expect(page.text).toBe(expected.slice(page.start, page.end));
+    expect(page.text).toBe(expectedText.slice(page.start, page.end));
     await clickReaderControl("reader-previous");
     await browser.waitUntil(async () => (await readPage()).start < page.start);
     const previous = await readPage();

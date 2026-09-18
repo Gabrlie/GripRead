@@ -33,6 +33,7 @@ const entry: LibraryBook = {
   },
   locator: null,
   totalLength: 10,
+  txtEncoding: null,
 };
 function runtime(books: LibraryBook[] = []) {
   return new AppRuntime({
@@ -43,12 +44,25 @@ function runtime(books: LibraryBook[] = []) {
       cancelImport: vi.fn(),
       getImportStatus: vi.fn(),
       onImportProgress: vi.fn(async () => () => {}),
+      startTxtDecode: vi.fn(),
+      getTxtDecodeStatus: vi.fn(),
+      cancelTxtDecode: vi.fn(async () => ({ requested: true })),
+      onTxtDecodeProgress: vi.fn(async () => () => {}),
+      getTxtEncoding: vi.fn(),
+      pickAndReassociateTxt: vi.fn(async () => null),
+      reassociateTxtSource: vi.fn(),
     },
     reader: {
       readContentWindow: vi.fn(),
       resolveLocator: vi.fn(),
       saveReaderLocator: vi.fn(),
       getSavedReaderLocator: vi.fn(),
+      listToc: vi.fn(async () => []),
+      listBookmarks: vi.fn(async () => []),
+      addBookmark: vi.fn(),
+      deleteBookmark: vi.fn(),
+      search: vi.fn(),
+      cancelSearch: vi.fn(),
     },
     settings: { getSettings: vi.fn(), saveSettings: vi.fn() },
   } satisfies AppServices);

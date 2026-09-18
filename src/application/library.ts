@@ -1,4 +1,11 @@
-import type { ImportStatus, LibraryBook } from "../types/generated";
+import type {
+  ImportStatus,
+  ImportPhase,
+  LibraryBook,
+  TxtDecodeStatus,
+  TxtEncoding,
+  TxtEncodingInfo,
+} from "../types/generated";
 import type { LibraryService, Unsubscribe } from "../services/contracts";
 
 export interface LibrarySnapshot {
@@ -8,8 +15,11 @@ export interface LibrarySnapshot {
   job: ImportStatus | null;
   importing: boolean;
   importError: string | null;
+  decodeJob: TxtDecodeStatus | null;
+  decoding: boolean;
+  decodeError: string | null;
 }
-export const isTerminal = (status: ImportStatus) =>
+export const isTerminal = (status: { phase: ImportPhase }) =>
   ["completed", "failed", "cancelled"].includes(status.phase);
 
 /** Owns the import across page/panel lifetimes. Events and polling share one terminal transition. */
@@ -21,14 +31,22 @@ export class LibraryStore {
     job: null,
     importing: false,
     importError: null,
+    decodeJob: null,
+    decoding: false,
+    decodeError: null,
   };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private unlisten: Unsubscribe | undefined;
+  private unlistenDecode: Unsubscribe | undefined;
   private generation = 0;
   private refreshVersion = 0;
   private operationId: string | null = null;
   private completed = new Set<string>();
+  private decodeOperationId: string | null = null;
+  private decodeTimer: ReturnType<typeof setTimeout> | undefined;
+  private decodeWaiter:
+    { resolve: (value: TxtEncodingInfo) => void; reject: (error: unknown) => void } | undefined;
   constructor(private service: LibraryService) {}
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -55,13 +73,28 @@ export class LibraryStore {
       .catch(() => {
         /* Polling is authoritative when event registration is unavailable. */
       });
+    void this.service
+      .onTxtDecodeProgress((status) => {
+        if (generation === this.generation) this.acceptDecode(status);
+      })
+      .then((unlisten) => {
+        if (generation !== this.generation) unlisten();
+        else this.unlistenDecode = unlisten;
+      })
+      .catch(() => {
+        /* Polling remains authoritative when event registration is unavailable. */
+      });
     if (this.operationId && this.snapshot.importing) void this.poll(generation);
+    if (this.decodeOperationId && this.snapshot.decoding) void this.pollDecode(generation);
     return () => {
       if (generation !== this.generation) return;
       this.generation++;
       this.unlisten?.();
       this.unlisten = undefined;
+      this.unlistenDecode?.();
+      this.unlistenDecode = undefined;
       clearTimeout(this.timer);
+      clearTimeout(this.decodeTimer);
     };
   };
   refresh = async () => {
@@ -98,6 +131,32 @@ export class LibraryStore {
       await this.service.cancelImport(this.operationId);
     } catch (error) {
       this.update({ importError: String(error) });
+    }
+  };
+  decodeTxt = (bookId: string, encoding: TxtEncoding): Promise<TxtEncodingInfo> => {
+    if (this.snapshot.decoding) return Promise.reject(new Error("TXT 编码转换正在进行"));
+    this.update({ decoding: true, decodeError: null, decodeJob: null });
+    return new Promise<TxtEncodingInfo>((resolve, reject) => {
+      this.decodeWaiter = { resolve, reject };
+      void this.service
+        .startTxtDecode({ bookId, encoding })
+        .then((task) => {
+          this.decodeOperationId = task.operationId;
+          void this.pollDecode(this.generation);
+        })
+        .catch((error) => {
+          this.decodeWaiter = undefined;
+          this.update({ decoding: false, decodeError: String(error) });
+          reject(error);
+        });
+    });
+  };
+  cancelDecode = async () => {
+    if (!this.decodeOperationId || !this.snapshot.decoding) return;
+    try {
+      await this.service.cancelTxtDecode(this.decodeOperationId);
+    } catch (error) {
+      this.update({ decodeError: String(error) });
     }
   };
   private accept(status: ImportStatus) {
@@ -140,5 +199,36 @@ export class LibraryStore {
       this.timer = setTimeout(() => {
         void this.poll(generation);
       }, 250);
+  }
+  private acceptDecode(status: TxtDecodeStatus) {
+    if (status.operationId !== this.decodeOperationId) return;
+    this.update({
+      decodeJob: status,
+      decoding: !isTerminal(status),
+      decodeError: status.error ? `${status.error.code}: ${status.error.message}` : null,
+    });
+    if (!isTerminal(status)) return;
+    clearTimeout(this.decodeTimer);
+    this.decodeOperationId = null;
+    const waiter = this.decodeWaiter;
+    this.decodeWaiter = undefined;
+    if (status.phase === "completed" && status.result) waiter?.resolve(status.result);
+    else waiter?.reject(new Error(status.error?.message ?? "TXT 编码转换未完成"));
+  }
+  private async pollDecode(generation: number) {
+    const id = this.decodeOperationId;
+    if (!id || generation !== this.generation) return;
+    try {
+      const status = await this.service.getTxtDecodeStatus(id);
+      if (generation === this.generation && id === this.decodeOperationId)
+        this.acceptDecode(status);
+    } catch (error) {
+      if (generation === this.generation && id === this.decodeOperationId) {
+        this.update({ decodeError: String(error) });
+      }
+    }
+    if (generation === this.generation && id === this.decodeOperationId && this.snapshot.decoding) {
+      this.decodeTimer = setTimeout(() => void this.pollDecode(generation), 250);
+    }
   }
 }

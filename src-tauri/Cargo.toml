@@ -28,6 +28,8 @@ native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
 fs2 = "0.4.3"
+chardetng = "0.1.17"
+encoding_rs = "0.8.35"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

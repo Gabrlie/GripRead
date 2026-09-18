@@ -10,6 +10,13 @@ const library = (): LibraryService => ({
   cancelImport: vi.fn(async () => ({ requested: true })),
   listBooks: vi.fn(async () => []),
   onImportProgress: vi.fn(async () => () => {}),
+  startTxtDecode: vi.fn(),
+  getTxtDecodeStatus: vi.fn(),
+  cancelTxtDecode: vi.fn(async () => ({ requested: true })),
+  onTxtDecodeProgress: vi.fn(async () => () => {}),
+  getTxtEncoding: vi.fn(),
+  pickAndReassociateTxt: vi.fn(async () => null),
+  reassociateTxtSource: vi.fn(),
 });
 const preferences: ReaderPreferences = {
   theme: "system",

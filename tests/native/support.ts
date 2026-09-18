@@ -11,6 +11,8 @@ import type {
   ImportTask,
   LibraryBook,
   ReaderPreferences,
+  TxtDecodeStatus,
+  TxtDecodeTask,
 } from "../../src/types/generated";
 
 const execFileAsync = promisify(execFile);
@@ -153,6 +155,17 @@ export async function useInstantPageTurns(): Promise<void> {
   await waitForAppReady();
 }
 
+export async function useAnimatedPageTurns(): Promise<void> {
+  if (process.env.GRIPREAD_NATIVE_ANIMATED !== "1") return;
+  const settings = await invoke<ReaderPreferences>("get_settings");
+  if (settings.pageTurnEffect === "curl") return;
+  await invoke("save_settings", {
+    request: { settings: { ...settings, pageTurnEffect: "curl" } },
+  });
+  await browser.refresh();
+  await waitForAppReady();
+}
+
 export async function waitForImport(operationId: string): Promise<ImportStatus> {
   let status: ImportStatus | undefined;
   await browser.waitUntil(
@@ -172,6 +185,32 @@ export async function waitForImport(operationId: string): Promise<ImportStatus> 
     throw new Error(`Import ${operationId} produced no status`);
   }
   return status;
+}
+
+export async function waitForTxtDecode(operationId: string): Promise<TxtDecodeStatus> {
+  let status: TxtDecodeStatus | undefined;
+  await browser.waitUntil(
+    async () => {
+      status = await invoke<TxtDecodeStatus>("get_txt_decode_status", {
+        request: { operationId },
+      });
+      return (["completed", "failed", "cancelled"] as ImportPhase[]).includes(status.phase);
+    },
+    {
+      timeout: TEST_TIMEOUT,
+      interval: 100,
+      timeoutMsg: `TXT decode ${operationId} did not reach a terminal state`,
+    },
+  );
+  if (!status) throw new Error(`TXT decode ${operationId} produced no status`);
+  return status;
+}
+
+export async function decodeTxt(bookId: string, encoding: string): Promise<TxtDecodeStatus> {
+  const task = await invoke<TxtDecodeTask>("start_txt_decode", {
+    request: { bookId, encoding },
+  });
+  return waitForTxtDecode(task.operationId);
 }
 
 export async function importFixture(name: string): Promise<ImportResult> {
@@ -217,7 +256,21 @@ export async function openBook(bookId: string): Promise<PageSnapshot> {
   await card.click();
 
   const page = await browser.$('[data-testid="reader-page"]');
-  await page.waitForExist({ timeout: TEST_TIMEOUT });
+  let diagnostic = "";
+  await browser.waitUntil(
+    async () => {
+      if (await page.isExisting()) return true;
+      diagnostic = await browser
+        .execute(() => document.body.innerText.slice(-1_000))
+        .catch(() => "unable to inspect native document");
+      return false;
+    },
+    {
+      timeout: TEST_TIMEOUT,
+      interval: 100,
+      timeoutMsg: `reader page did not appear: ${diagnostic}`,
+    },
+  );
   await page.waitForDisplayed({ timeout: TEST_TIMEOUT });
   return readPage();
 }
@@ -348,7 +401,49 @@ export async function waitForNextPage(previous: PageSnapshot): Promise<PageSnaps
       `reader-page did not advance from UTF-16 start ${previous.start}; state=${details}; ${String(error)}`,
     );
   }
+  // The curl adapter publishes the React page before its visual turn finishes.
+  // Let the embedded WebView settle before comparing text to UTF-16 offsets;
+  // this also exercises the adapter's cancellation path when turns are rapid.
+  if (process.env.GRIPREAD_NATIVE_ANIMATED === "1") {
+    await browser.pause(750);
+  }
+  snapshot = await readPage();
   if (!snapshot) throw new Error("reader-page did not advance");
+  return snapshot;
+}
+
+export async function seekReaderProgress(progress: number): Promise<PageSnapshot> {
+  const clamped = Math.max(0, Math.min(100, progress));
+  const slider = await browser.$('[data-testid="reader-progress"] input[type="range"]');
+  await slider.waitForExist({ timeout: TEST_TIMEOUT });
+  await browser.execute((value) => {
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-testid="reader-progress"] input[type="range"]',
+    );
+    if (!input) throw new Error("progress slider input is missing");
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!setValue) throw new Error("slider value setter is missing");
+    setValue.call(input, String(value));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, clamped);
+  let snapshot: PageSnapshot | undefined;
+  await browser.waitUntil(
+    async () => {
+      snapshot = await readPage();
+      return clamped === 0
+        ? snapshot.start === 0
+        : clamped === 100
+          ? snapshot.end === snapshot.total
+          : snapshot.start > 0 && snapshot.end < snapshot.total;
+    },
+    {
+      timeout: TEST_TIMEOUT,
+      interval: 100,
+      timeoutMsg: `reader-page did not seek to ${clamped}%`,
+    },
+  );
+  if (!snapshot) throw new Error(`reader-page did not seek to ${clamped}%`);
   return snapshot;
 }
 

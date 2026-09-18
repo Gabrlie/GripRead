@@ -87,6 +87,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   private animationOff: (() => void) | null = null;
   private animationToken = 0;
   private pageFlipReady: Promise<void> | null = null;
+  private pageFlipInitCancel: (() => void) | null = null;
 
   public constructor(host: HTMLElement, options: StPageFlipAdapterOptions = {}) {
     if (!host) throw new TypeError("StPageFlipAdapter requires an overlay host");
@@ -226,9 +227,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     this.currentPage = null;
     this.loaded = false;
     this.index = 0;
-    this.pageFlip?.destroy?.();
-    this.pageFlip = null;
-    this.pageFlipRoot = null;
+    this.resetPageFlip();
     this.mount.replaceChildren();
     if (this.ownsMount && this.mount.parentNode) this.mount.remove();
   }
@@ -351,6 +350,8 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   }
 
   private resetPageFlip(): void {
+    this.pageFlipInitCancel?.();
+    this.pageFlipInitCancel = null;
     this.pageFlip?.destroy?.();
     if (this.pageFlipRoot?.parentNode) this.pageFlipRoot.remove();
     this.pageFlip = null;
@@ -371,9 +372,12 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
         if (settled) return;
         settled = true;
         if (timer !== null) clearTimeout(timer);
+        if (this.pageFlipInitCancel === cancel) this.pageFlipInitCancel = null;
         flip.off?.("init", onInit);
         resolve();
       };
+      const cancel = () => finish();
+      this.pageFlipInitCancel = cancel;
       const onInit: PageFlipEventHandler = () => finish();
       on.call(flip, "init", onInit);
       // PageFlip currently emits init on a short timer. Keep a bounded

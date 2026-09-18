@@ -72,6 +72,22 @@ function serviceFor(
     async getSavedReaderLocator(bookId) {
       return saved[bookId] ?? null;
     },
+    async listToc() {
+      return [];
+    },
+    async listBookmarks() {
+      return [];
+    },
+    async addBookmark() {
+      throw new Error("not implemented in controller fixture");
+    },
+    async deleteBookmark() {},
+    async search() {
+      return { contentVersion: "", matches: [], nextCursor: null, hasMore: false };
+    },
+    async cancelSearch() {
+      return { requested: false };
+    },
   };
 }
 
@@ -182,6 +198,31 @@ describe("ReaderController", () => {
     expect(service.requests.map(({ direction }) => direction)).toEqual(["forward", "backward"]);
   });
 
+  it("opens from the beginning when a saved locator belongs to an older version", async () => {
+    const stale = locatorFor("book", 3);
+    stale.contentVersion = "old-version";
+    const service = serviceFor({ book: "abcdef" }, { book: stale });
+    const readContentWindow = service.readContentWindow.bind(service);
+    vi.spyOn(service, "readContentWindow")
+      .mockRejectedValueOnce({
+        code: "content_version_mismatch",
+        message: "saved locator targets an older version",
+      })
+      .mockImplementationOnce(readContentWindow);
+    const controller = new ReaderController(service, {
+      measurer: { measure: wholeWindowMeasurer },
+      maxUnits: 3,
+    });
+
+    await controller.open("book");
+
+    expect(controller.getSnapshot()).toMatchObject({
+      page: expect.objectContaining({ text: "abc", startOffset: 0 }),
+      positionWarning: expect.stringContaining("旧正文版本"),
+      error: null,
+    });
+  });
+
   it("seeks progress to EOF and loads the preceding window on previous", async () => {
     const service = serviceFor({ book: "abcdef" });
     const controller = new ReaderController(service, {
@@ -234,6 +275,46 @@ describe("ReaderController", () => {
       contentWindow: expect.objectContaining({ totalLength: 0, text: "" }),
       hasBefore: false,
       hasAfter: false,
+    });
+  });
+
+  it("does not split an emoji when constructing a saved locator context", async () => {
+    const content = `${"a".repeat(31)}😀${"b".repeat(80)}`;
+    const service = serviceFor({ book: content });
+    const controller = new ReaderController(service, {
+      measurer: { measure: wholeWindowMeasurer },
+      maxUnits: 64,
+    });
+
+    await controller.open("book");
+    await controller.flush();
+
+    const saved = service.saves.at(-1);
+    expect(saved?.offset).toBe(0);
+    expect(saved?.contextAfter).toBe("a".repeat(31));
+  });
+
+  it("does not append the window anchor context to a later page locator", async () => {
+    const service = serviceFor({ book: "abcdef" });
+    vi.spyOn(service, "readContentWindow").mockImplementation(async (request) => {
+      const window = windowFor(request.bookId, "abcdef", 0, 6);
+      window.locator.contextAfter = "abcdef";
+      return window;
+    });
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 6,
+    });
+
+    await controller.open("book");
+    await controller.next();
+    await controller.next();
+    await controller.next();
+    await controller.next();
+
+    expect(controller.getSnapshot().page).toMatchObject({
+      text: "e",
+      locator: expect.objectContaining({ offset: 4, contextAfter: "ef" }),
     });
   });
 

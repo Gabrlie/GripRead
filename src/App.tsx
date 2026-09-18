@@ -108,27 +108,29 @@ function MainContent() {
         </div>
       )}
       <div className={`flex-1 flex flex-col ${activeBook ? "" : "md:pl-64"} min-w-0`}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={activeBook ? `reader-${activeBook.book.id}` : activeTab}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex-1 flex flex-col min-w-0"
-          >
-            {activeBook ? (
-              <ReaderView />
-            ) : activeTab === "bookshelf" ? (
-              <BookshelfView />
-            ) : activeTab === "discover" ? (
-              <DiscoverView />
-            ) : activeTab === "subscription" ? (
-              <SubscriptionView />
-            ) : (
-              <SettingsView />
-            )}
-          </motion.div>
-        </AnimatePresence>
+        {activeBook ? (
+          <ReaderView />
+        ) : (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex-1 flex flex-col min-w-0"
+            >
+              {activeTab === "bookshelf" ? (
+                <BookshelfView />
+              ) : activeTab === "discover" ? (
+                <DiscoverView />
+              ) : activeTab === "subscription" ? (
+                <SubscriptionView />
+              ) : (
+                <SettingsView />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        )}
       </div>
       <ImportModal />
     </div>

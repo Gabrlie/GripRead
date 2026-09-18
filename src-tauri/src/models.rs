@@ -23,6 +23,33 @@ pub enum AssetKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TxtEncoding {
+    Auto,
+    Utf8,
+    Gb18030,
+    Gbk,
+    Utf16Le,
+    Utf16Be,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TxtDecodeState {
+    Clean,
+    ReplacementCharacters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtEncodingInfo {
+    pub detected: TxtEncoding,
+    pub selected: TxtEncoding,
+    pub state: TxtDecodeState,
+    pub can_change: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum AssetAvailability {
     Ready,
     Missing,
@@ -144,6 +171,102 @@ pub struct BookRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct TxtEncodingRequest {
+    pub book_id: String,
+    pub encoding: TxtEncoding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtSourceRequest {
+    pub book_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtDecodeTask {
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtDecodeStatus {
+    pub operation_id: String,
+    pub book_id: String,
+    pub phase: ImportPhase,
+    pub bytes_read: u64,
+    pub total_bytes: u64,
+    pub result: Option<TxtEncodingInfo>,
+    pub error: Option<AppError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TocEntry {
+    pub ordinal: u64,
+    pub title: String,
+    pub locator: ReaderLocator,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Bookmark {
+    pub id: String,
+    pub book_id: String,
+    pub content_version: String,
+    pub locator: ReaderLocator,
+    pub excerpt: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkRequest {
+    pub book_id: String,
+    pub locator: ReaderLocator,
+    pub excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkIdRequest {
+    pub bookmark_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRequest {
+    pub book_id: String,
+    pub query: String,
+    pub case_sensitive: bool,
+    pub cursor: Option<u64>,
+    pub limit: u32,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+    pub ordinal: u64,
+    pub locator: ReaderLocator,
+    pub excerpt: String,
+    pub match_start: u64,
+    pub match_end: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponse {
+    pub content_version: String,
+    pub matches: Vec<SearchMatch>,
+    pub next_cursor: Option<u64>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct StartImportRequest {
     pub path: String,
 }
@@ -167,6 +290,7 @@ pub struct LibraryBook {
     pub asset: BookAsset,
     pub locator: Option<ReaderLocator>,
     pub total_length: Option<u64>,
+    pub txt_encoding: Option<TxtEncodingInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
