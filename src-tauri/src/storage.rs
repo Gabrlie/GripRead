@@ -910,7 +910,6 @@ impl Storage {
             let (_, current_fingerprint) = file_fingerprint(&final_path)?;
             let preflight_matches = validated_existing.is_some_and(|snapshot| {
                 snapshot.relative_path == relative_path
-                    && snapshot.sha256 == prepared.sha256
                     && snapshot.fingerprint.as_deref() == Some(current_fingerprint.as_str())
             });
             if validated_existing.is_some() && !preflight_matches {
@@ -981,12 +980,14 @@ impl Storage {
             }
             let fingerprint = file_fingerprint(&final_path)?.1;
             let tx = self.conn.transaction()?;
-            insert_content_index(
-                &tx,
-                &asset_id,
-                &parse_index(&prepared.index_json)?,
-                &fingerprint,
-            )?;
+            if !keep_existing_source {
+                insert_content_index(
+                    &tx,
+                    &asset_id,
+                    &parse_index(&prepared.index_json)?,
+                    &fingerprint,
+                )?;
+            }
             if keep_existing_source {
                 // Preserve the existing selected encoding and source
                 // association for a normalized duplicate.
@@ -1176,10 +1177,10 @@ impl Storage {
         sha256: &str,
         source_sha256: &str,
     ) -> Result<Option<ImportTargetSnapshot>, AppError> {
-        let relative_path: Option<String> = self
+        let target: Option<(String, String)> = self
             .conn
             .query_row(
-                "SELECT a.relative_path
+                "SELECT a.relative_path, a.sha256
                  FROM book_assets a
                  WHERE a.dedup_hash = ?1
                     OR EXISTS (
@@ -1190,10 +1191,10 @@ impl Storage {
                           a.created_at ASC
                  LIMIT 1",
                 params![sha256, source_sha256],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        let Some(relative_path) = relative_path else {
+        let Some((relative_path, target_sha256)) = target else {
             return Ok(None);
         };
         let path = managed_path(&self.root, &relative_path, "books")?;
@@ -1204,7 +1205,10 @@ impl Storage {
         };
         Ok(Some(ImportTargetSnapshot {
             relative_path,
-            sha256: sha256.to_string(),
+            // The target may have been found by source bytes after a manual
+            // re-decode, so validation must use the hash currently committed
+            // for that asset rather than the incoming automatic decode hash.
+            sha256: target_sha256,
             fingerprint,
         }))
     }
@@ -1852,15 +1856,31 @@ impl Storage {
         tx.commit()?;
         // Once the journal is durable, finish publication even if cancellation
         // arrives. Recovery can then distinguish old and new content safely.
-        if final_path.exists() {
-            remove_owned_file(&backup_path)?;
-            fs::rename(&final_path, &backup_path)?;
-            sync_parent(&backup_path)?;
-        }
-        fs::rename(&stage_path, &final_path)?;
-        sync_parent(&final_path)?;
-        maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
-        let fingerprint = file_fingerprint(&final_path)?.1;
+        let fingerprint = match (|| -> Result<String, AppError> {
+            if final_path.exists() {
+                remove_owned_file(&backup_path)?;
+                fs::rename(&final_path, &backup_path)?;
+                sync_parent(&backup_path)?;
+            }
+            fs::rename(&stage_path, &final_path)?;
+            sync_parent(&final_path)?;
+            maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
+            Ok(file_fingerprint(&final_path)?.1)
+        })() {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                if let Err(recovery_error) = self.recover_txt_decode(&journal) {
+                    return Err(AppError::new(
+                        error.code.clone(),
+                        format!(
+                            "{}; TXT decode recovery failed: {}",
+                            error.message, recovery_error.message
+                        ),
+                    ));
+                }
+                return Err(error);
+            }
+        };
         let transaction = (|| -> Result<(), AppError> {
             let tx = self.conn.transaction()?;
             let current: String = tx.query_row(
@@ -1964,6 +1984,7 @@ impl Storage {
             &AtomicBool::new(false),
             |_, _, _| {},
         )?;
+        verify_prepared_txt_decode_source(&self.root, &prepared, &AtomicBool::new(false))?;
         self.commit_txt_decode(prepared, &AtomicBool::new(false))
     }
 
@@ -2546,6 +2567,42 @@ pub(crate) fn validate_import_target(
         fingerprint: Some(fingerprint),
         ..snapshot.clone()
     })
+}
+
+/// Re-hash a retained source after decoding preparation and before publication.
+/// This stays outside the storage mutex in command workers, so a same-length
+/// replacement cannot leave the new normalized asset paired with stale source
+/// metadata.
+pub(crate) fn verify_prepared_txt_decode_source(
+    root: &Path,
+    prepared: &PreparedTxtDecode,
+    cancel: &AtomicBool,
+) -> Result<(), AppError> {
+    let source_path = managed_path(root, &prepared.snapshot.source_relative_path, "sources")?;
+    let result = hash_file_with_cancel(&source_path, Some(cancel)).and_then(|actual| {
+        if actual != prepared.source_sha256 {
+            Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "retained TXT source bytes changed after decoding",
+            ))
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(error) = result {
+        let stage_path = managed_path(root, &prepared.stage_relative_path, "staging")?;
+        if let Err(cleanup_error) = remove_owned_file(&stage_path) {
+            return Err(AppError::new(
+                error.code,
+                format!(
+                    "{}; TXT decode staging cleanup failed: {}",
+                    error.message, cleanup_error.message
+                ),
+            ));
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Verify an asset and produce the only index that readers may use. On the
@@ -3336,6 +3393,7 @@ where
         ));
     }
     let total = metadata.len();
+    let (_, fingerprint_before) = file_fingerprint(path)?;
     let mut file = File::open(path)?;
     let mut bytes = Vec::with_capacity(total.min(8 * 1024 * 1024) as usize);
     let mut chunk = [0_u8; 64 * 1024];
@@ -3354,7 +3412,11 @@ where
         report(read_total, total);
     }
     let final_metadata = fs::metadata(path)?;
-    if read_total != total || final_metadata.len() != total {
+    let (_, fingerprint_after) = file_fingerprint(path)?;
+    if read_total != total
+        || final_metadata.len() != total
+        || fingerprint_before != fingerprint_after
+    {
         return Err(AppError::new(
             ErrorCode::ContentVersionMismatch,
             "retained TXT source bytes changed while reading",
@@ -3844,6 +3906,7 @@ fn maybe_inject_failure(
             | (FailurePoint::AfterRename, "after-rename") => {
                 // This hook exists only in native-test builds and is accepted
                 // only for the explicitly configured isolated test root.
+                let _ = fs::write(root.join(".native-fault-reached"), b"after-rename\n");
                 std::process::abort();
             }
             (FailurePoint::BeforeFinalCommit, "pause-before-commit") => {
@@ -3998,7 +4061,7 @@ mod tests {
         let imported = import(&mut storage, &source, "m1");
         let info = storage.txt_encoding_for_book(&imported.book.id).unwrap();
         assert!(info.can_change);
-        assert_eq!(info.selected, TxtEncoding::Utf8);
+        assert_eq!(info.selected, TxtEncoding::Auto);
 
         let toc = storage.list_toc(&imported.book.id).unwrap();
         assert_eq!(toc.len(), 2);
@@ -4123,7 +4186,43 @@ mod tests {
                 .txt_encoding_for_book(&first.book.id)
                 .unwrap()
                 .selected,
-            TxtEncoding::Utf8
+            TxtEncoding::Auto
+        );
+    }
+
+    #[test]
+    fn reimporting_a_source_after_manual_decode_keeps_the_existing_asset() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "manual.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let first = import(&mut storage, &source, "manual-first");
+        let switched = storage
+            .set_txt_encoding(&first.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        assert_eq!(switched.selected, TxtEncoding::Gbk);
+        let manual_text = storage
+            .read_content_window(&first.book.id, None, 128)
+            .unwrap()
+            .text;
+
+        let repeated = import(&mut storage, &source, "manual-repeat");
+        assert!(repeated.duplicate);
+        assert_eq!(repeated.book.id, first.book.id);
+        assert_eq!(repeated.asset.id, first.asset.id);
+        assert_eq!(
+            storage
+                .txt_encoding_for_book(&first.book.id)
+                .unwrap()
+                .selected,
+            TxtEncoding::Gbk
+        );
+        assert_eq!(
+            storage
+                .read_content_window(&first.book.id, None, 128)
+                .unwrap()
+                .text,
+            manual_text
         );
     }
 
@@ -4489,13 +4588,22 @@ mod tests {
             .set_txt_encoding(&imported.book.id, TxtEncoding::Gbk)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::Io);
+        // Publication failures are recovered before the command returns, so
+        // the current process remains readable without requiring a restart.
+        assert_eq!(
+            storage
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
         assert!(fs::read_dir(app_root.join("staging"))
             .unwrap()
             .flatten()
-            .any(|entry| entry
+            .all(|entry| entry
                 .path()
                 .extension()
-                .is_some_and(|extension| extension == "old")));
+                .is_none_or(|extension| extension != "old")));
         drop(storage);
 
         let reopened = Storage::open(&app_root).unwrap();

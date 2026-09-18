@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,7 +131,13 @@ try {
       GRIPREAD_TEST_DATA_DIR: phaseDataDirectory,
     };
     if (expectedFailure) {
-      await expectFailure(command, phaseEnv, `native-test ${phase}`, testTimeoutMs);
+      await expectFailure(
+        command,
+        phaseEnv,
+        `native-test ${phase}`,
+        testTimeoutMs,
+        join(phaseDataDirectory, ".native-fault-reached"),
+      );
     } else {
       await run(command, phaseEnv, `native-test ${phase}`, testTimeoutMs);
     }
@@ -245,10 +251,20 @@ function run(args, env, label, timeoutMs) {
   });
 }
 
-async function expectFailure(args, env, label, timeoutMs) {
+async function expectFailure(args, env, label, timeoutMs, requiredMarker) {
   try {
     await run(args, env, label, timeoutMs);
   } catch (error) {
+    if (requiredMarker) {
+      try {
+        await access(requiredMarker);
+      } catch {
+        throw new Error(
+          `${label} failed without reaching its configured fault boundary; ` +
+            `the driver/build error must not count as crash recovery evidence.\n${error.message}`,
+        );
+      }
+    }
     console.log(`${label} failed as expected: ${error.message}`);
     return;
   }

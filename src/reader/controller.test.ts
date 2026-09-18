@@ -223,6 +223,30 @@ describe("ReaderController", () => {
     });
   });
 
+  it("does not overwrite a stale saved locator until navigation chooses a new position", async () => {
+    const stale = locatorFor("book", 3);
+    stale.contentVersion = "old-version";
+    const service = serviceFor({ book: "abcdef" }, { book: stale });
+    const readContentWindow = service.readContentWindow.bind(service);
+    vi.spyOn(service, "readContentWindow")
+      .mockRejectedValueOnce({ code: "content_version_mismatch", message: "stale" })
+      .mockImplementation(readContentWindow);
+    const controller = new ReaderController(service, {
+      measurer: { measure: wholeWindowMeasurer },
+      maxUnits: 3,
+    });
+
+    await controller.open("book");
+    await controller.flush();
+    expect(service.saves).toHaveLength(0);
+    expect(controller.getSnapshot().positionWarning).toContain("旧正文版本");
+
+    await controller.next();
+    await controller.flush();
+    expect(service.saves.at(-1)?.offset).toBe(3);
+    expect(controller.getSnapshot().positionWarning).toBeNull();
+  });
+
   it("seeks progress to EOF and loads the preceding window on previous", async () => {
     const service = serviceFor({ book: "abcdef" });
     const controller = new ReaderController(service, {

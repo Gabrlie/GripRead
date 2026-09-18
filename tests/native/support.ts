@@ -416,33 +416,70 @@ export async function seekReaderProgress(progress: number): Promise<PageSnapshot
   const clamped = Math.max(0, Math.min(100, progress));
   const slider = await browser.$('[data-testid="reader-progress"] input[type="range"]');
   await slider.waitForExist({ timeout: TEST_TIMEOUT });
-  await browser.execute((value) => {
-    const input = document.querySelector<HTMLInputElement>(
-      '[data-testid="reader-progress"] input[type="range"]',
-    );
-    if (!input) throw new Error("progress slider input is missing");
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (!setValue) throw new Error("slider value setter is missing");
-    setValue.call(input, String(value));
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, clamped);
+  if (clamped === 0 || clamped === 100) {
+    await browser.execute((value) => {
+      const input = document.querySelector<HTMLInputElement>(
+        '[data-testid="reader-progress"] input[type="range"]',
+      );
+      if (!input) throw new Error("progress slider input is missing");
+      input.focus();
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: value === 0 ? "Home" : "End",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }, clamped);
+  } else {
+    await browser.execute((value) => {
+      const input = document.querySelector<HTMLInputElement>(
+        '[data-testid="reader-progress"] input[type="range"]',
+      );
+      if (!input) throw new Error("progress slider input is missing");
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (!setValue) throw new Error("slider value setter is missing");
+      setValue.call(input, String(value));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, clamped);
+  }
   let snapshot: PageSnapshot | undefined;
-  await browser.waitUntil(
-    async () => {
-      snapshot = await readPage();
-      return clamped === 0
-        ? snapshot.start === 0
-        : clamped === 100
-          ? snapshot.end === snapshot.total
-          : snapshot.start > 0 && snapshot.end < snapshot.total;
-    },
-    {
-      timeout: TEST_TIMEOUT,
-      interval: 100,
-      timeoutMsg: `reader-page did not seek to ${clamped}%`,
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        snapshot = await readPage();
+        return clamped === 0
+          ? snapshot.start === 0
+          : clamped === 100
+            ? snapshot.end === snapshot.total
+            : snapshot.start > 0 && snapshot.end < snapshot.total;
+      },
+      {
+        timeout: TEST_TIMEOUT,
+        interval: 100,
+        timeoutMsg: `reader-page did not seek to ${clamped}%`,
+      },
+    );
+  } catch (error) {
+    let details = "unavailable";
+    try {
+      details = JSON.stringify(
+        await browser.execute(() => ({
+          page: document.querySelector<HTMLElement>('[data-testid="reader-page"]')?.dataset,
+          slider: document.querySelector<HTMLInputElement>(
+            '[data-testid="reader-progress"] input[type="range"]',
+          )?.value,
+          alerts: Array.from(document.querySelectorAll('[role="alert"]')).map((node) =>
+            node.textContent?.trim(),
+          ),
+        })),
+      );
+    } catch (diagnosticError) {
+      details = `diagnostic failed: ${String(diagnosticError)}`;
+    }
+    throw new Error(`reader-page did not seek to ${clamped}%; state=${details}; ${String(error)}`);
+  }
   if (!snapshot) throw new Error(`reader-page did not seek to ${clamped}%`);
   return snapshot;
 }

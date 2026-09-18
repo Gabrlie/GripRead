@@ -189,6 +189,8 @@ export class ReaderController {
   private pendingSave: ReaderLocator | null = null;
   private saveWorker: Promise<void> | null = null;
   private readonly saveFailures = new Map<string, SaveFailure>();
+  /** Do not overwrite a stale saved locator until the user chooses a position. */
+  private suppressPositionSave = false;
 
   /**
    * Arrow properties intentionally keep the methods bound for
@@ -245,12 +247,15 @@ export class ReaderController {
       if (saved) {
         try {
           measured = await this.readAndMeasure(bookId, saved, "forward", epoch);
+          this.suppressPositionSave = false;
         } catch (error) {
           if (!requiresRelocation(error)) throw error;
           positionWarning = "上次阅读位置属于旧正文版本，已从开头打开；可使用目录或搜索重新定位。";
+          this.suppressPositionSave = true;
           measured = await this.readAndMeasure(bookId, null, "forward", epoch);
         }
       } else {
+        this.suppressPositionSave = false;
         measured = await this.readAndMeasure(bookId, null, "forward", epoch);
       }
       this.assertCurrent(epoch);
@@ -295,6 +300,7 @@ export class ReaderController {
     }
     const epoch = ++this.epoch;
     this.activeBookId = locator.bookId;
+    this.suppressPositionSave = false;
     return this.schedule(epoch, async () => {
       this.setLoading(true);
       const measured = await this.readAndMeasure(locator.bookId, locator, "forward", epoch);
@@ -320,6 +326,7 @@ export class ReaderController {
 
     const epoch = ++this.epoch;
     const boundedProgress = Math.min(1, Math.max(0, progress));
+    this.suppressPositionSave = false;
     return this.schedule(epoch, async () => {
       this.setLoading(true);
       const locator = await this.service.resolveLocator(bookId, boundedProgress);
@@ -443,6 +450,8 @@ export class ReaderController {
     const page = this.currentPage();
     if (!current || !page) return;
     if (!page.hasAfter) return;
+    this.suppressPositionSave = false;
+    this.clearPositionWarning();
 
     if (this.currentPageIndex + 1 < current.pages.length) {
       this.currentPageIndex += 1;
@@ -476,6 +485,8 @@ export class ReaderController {
     const page = this.currentPage();
     if (!current || !page) return;
     if (!page.hasBefore) return;
+    this.suppressPositionSave = false;
+    this.clearPositionWarning();
 
     if (this.currentPageIndex > 0) {
       this.currentPageIndex -= 1;
@@ -571,7 +582,7 @@ export class ReaderController {
 
     // Saving starts before presentation so a slow page-curl animation cannot
     // delay persistence or make the animation the owner of reading position.
-    if (displayed) this.queueSave(displayed.locator);
+    if (displayed && !this.suppressPositionSave) this.queueSave(displayed.locator);
 
     const context: ReaderPresentationContext = {
       index: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,
@@ -602,6 +613,12 @@ export class ReaderController {
   private setLoading(loading: boolean): void {
     if (this.snapshot.loading === loading) return;
     this.snapshot = { ...this.snapshot, loading };
+    this.notify();
+  }
+
+  private clearPositionWarning(): void {
+    if (!this.snapshot.positionWarning) return;
+    this.snapshot = { ...this.snapshot, positionWarning: null };
     this.notify();
   }
 

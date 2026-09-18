@@ -18,7 +18,7 @@ use crate::models::{
 use crate::storage::{
     before_import_commit, build_toc_from_context, duplicate_validation_retry,
     read_content_window_from_context, resolve_locator_from_context, validate_content_locator,
-    validate_import_target, verify_content_context, Storage,
+    validate_import_target, verify_content_context, verify_prepared_txt_decode_source, Storage,
 };
 
 pub struct AppState {
@@ -407,6 +407,7 @@ pub async fn start_txt_decode(
                     );
                 },
             )?;
+            verify_prepared_txt_decode_source(&root, &prepared, &cancel)?;
             let mut storage = storage
                 .lock()
                 .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;

@@ -14,7 +14,7 @@ pub struct DecodedTxt {
 /// changes the encoding.
 pub fn detect_and_decode(input: &[u8], requested: TxtEncoding) -> Result<DecodedTxt, AppError> {
     let (detected, bytes) = detect_bom(input);
-    let selected = if requested == TxtEncoding::Auto {
+    let effective = if requested == TxtEncoding::Auto {
         detected.clone().unwrap_or_else(|| {
             if std::str::from_utf8(input).is_ok() {
                 TxtEncoding::Utf8
@@ -28,9 +28,9 @@ pub fn detect_and_decode(input: &[u8], requested: TxtEncoding) -> Result<Decoded
     let bytes = if requested == TxtEncoding::Auto {
         bytes
     } else {
-        strip_bom_for(input, &selected)
+        strip_bom_for(input, &effective)
     };
-    let (text, state) = decode_with_encoding(bytes, &selected)?;
+    let (text, state) = decode_with_encoding(bytes, &effective)?;
     if requested == TxtEncoding::Auto && state == TxtDecodeState::ReplacementCharacters {
         return Err(AppError::new(
             ErrorCode::UnsupportedEncoding,
@@ -39,8 +39,11 @@ pub fn detect_and_decode(input: &[u8], requested: TxtEncoding) -> Result<Decoded
     }
     Ok(DecodedTxt {
         text: normalize_line_endings(&text),
-        detected: detected.unwrap_or_else(|| selected.clone()),
-        selected,
+        detected: detected.unwrap_or_else(|| effective.clone()),
+        // Keep the user's choice separate from the encoding used by this
+        // particular automatic detection pass. This lets the reader display
+        // and persist “自动识别” while still reporting the detected encoding.
+        selected: requested,
         state,
     })
 }

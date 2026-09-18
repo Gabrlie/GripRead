@@ -90,6 +90,21 @@ function highlightedText(
   );
 }
 
+function safeExcerpt(text: string, maxUnits = 160): string {
+  let end = Math.min(text.length, Math.max(0, maxUnits));
+  if (
+    end > 0 &&
+    end < text.length &&
+    text.charCodeAt(end - 1) >= 0xd800 &&
+    text.charCodeAt(end - 1) <= 0xdbff &&
+    text.charCodeAt(end) >= 0xdc00 &&
+    text.charCodeAt(end) <= 0xdfff
+  ) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
 export function ReaderView() {
   const { activeBook, closeReader } = useApp();
   const runtime = useRuntime();
@@ -114,6 +129,8 @@ export function ReaderView() {
   const [encodingInfo, setEncodingInfo] = useState<TxtEncodingInfo | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
+  const [searchCursor, setSearchCursor] = useState<number | null>(null);
+  const [searchHasMore, setSearchHasMore] = useState(false);
   const [highlight, setHighlight] = useState<{ start: number; end: number } | null>(null);
   const [searching, setSearching] = useState(false);
   const searchRequest = useRef(0);
@@ -163,6 +180,9 @@ export function ReaderView() {
       setBookmarks([]);
       setEncodingInfo(null);
       setSearchMatches([]);
+      setSearchCursor(null);
+      setSearchHasMore(false);
+      setSearching(false);
       setHighlight(null);
       searchRequest.current += 1;
       if (searchOperationId.current) {
@@ -196,13 +216,16 @@ export function ReaderView() {
       const created = await runtime.services.reader.addBookmark({
         bookId: activeBook.book.id,
         locator: state.page!.locator,
-        excerpt: state.page!.text.slice(0, 160),
+        excerpt: safeExcerpt(state.page!.text),
       });
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     });
   }, [activeBook, run, runtime.services.reader, state.contentWindow, state.page]);
   const search = useCallback(() => {
     if (!activeBook || !searchQuery.trim()) return;
+    setSearchMatches([]);
+    setSearchCursor(null);
+    setSearchHasMore(false);
     const requestId = ++searchRequest.current;
     const operationId = newSearchOperationId();
     const previousOperationId = searchOperationId.current;
@@ -222,7 +245,11 @@ export function ReaderView() {
           limit: 50,
           operationId,
         });
-        if (requestId === searchRequest.current) setSearchMatches(result.matches);
+        if (requestId === searchRequest.current) {
+          setSearchMatches(result.matches);
+          setSearchCursor(result.nextCursor);
+          setSearchHasMore(result.hasMore);
+        }
       } catch (error) {
         if (requestId === searchRequest.current && !isCancellationError(error)) throw error;
       } finally {
@@ -233,10 +260,66 @@ export function ReaderView() {
       }
     });
   }, [activeBook, run, runtime.services.reader, searchQuery]);
+  const loadMoreSearch = useCallback(() => {
+    if (!activeBook || !searchQuery.trim() || !searchHasMore || searchCursor === null || searching)
+      return;
+    const requestId = ++searchRequest.current;
+    const operationId = newSearchOperationId();
+    const previousOperationId = searchOperationId.current;
+    if (previousOperationId) {
+      void runtime.services.reader.cancelSearch(previousOperationId).catch(() => undefined);
+    }
+    searchOperationId.current = operationId;
+    setSearching(true);
+    run(async () => {
+      try {
+        const result = await runtime.services.reader.search({
+          bookId: activeBook.book.id,
+          query: searchQuery,
+          caseSensitive: true,
+          cursor: searchCursor,
+          limit: 50,
+          operationId,
+        });
+        if (requestId === searchRequest.current) {
+          setSearchMatches((current) => [...current, ...result.matches]);
+          setSearchCursor(result.nextCursor);
+          setSearchHasMore(result.hasMore);
+        }
+      } catch (error) {
+        if (requestId === searchRequest.current && !isCancellationError(error)) throw error;
+      } finally {
+        if (requestId === searchRequest.current) {
+          setSearching(false);
+          if (searchOperationId.current === operationId) searchOperationId.current = null;
+        }
+      }
+    });
+  }, [
+    activeBook,
+    run,
+    runtime.services.reader,
+    searchCursor,
+    searchHasMore,
+    searchQuery,
+    searching,
+  ]);
   const changeEncoding = useCallback(
     (encoding: TxtEncoding) => {
       if (!activeBook || !controller) return;
       run(async () => {
+        searchRequest.current += 1;
+        if (searchOperationId.current) {
+          await runtime.services.reader
+            .cancelSearch(searchOperationId.current)
+            .catch(() => undefined);
+          searchOperationId.current = null;
+        }
+        setSearching(false);
+        setSearchMatches([]);
+        setSearchCursor(null);
+        setSearchHasMore(false);
+        setHighlight(null);
         await controller.flush();
         const next = await runtime.library.decodeTxt(activeBook.book.id, encoding);
         setEncodingInfo(next);
@@ -809,7 +892,10 @@ export function ReaderView() {
                           .catch(() => undefined);
                         searchOperationId.current = null;
                       }
+                      setSearching(false);
                       setSearchMatches([]);
+                      setSearchCursor(null);
+                      setSearchHasMore(false);
                       setHighlight(null);
                       setSearchQuery(event.target.value);
                     }}
@@ -840,6 +926,11 @@ export function ReaderView() {
                     </Button>
                   ))}
                 </div>
+                {searchHasMore && (
+                  <Button variant="outline" onClick={loadMoreSearch} disabled={searching}>
+                    {searching ? "正在搜索…" : "加载更多"}
+                  </Button>
+                )}
               </div>
             )}
           </DialogContent>

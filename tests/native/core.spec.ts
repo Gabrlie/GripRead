@@ -124,10 +124,17 @@ describe("GripRead native M0 acceptance", () => {
     const current = await waitForNextPage(first);
     expect(current.start).toBeGreaterThan(first.start);
     await clickSaveControl();
-    const saved = await invoke("get_saved_reader_locator", {
-      request: { bookId: mixed.book.id },
-    });
-    await writeFile(dataPath(".native-expected-locator.json"), JSON.stringify(saved), "utf8");
+    // Record the expected position from the rendered page and fixture metadata,
+    // independently of the persistence command used by the restart phase.
+    await writeFile(
+      dataPath(".native-expected-locator.json"),
+      JSON.stringify({
+        bookId: mixed.book.id,
+        offset: current.start,
+        contentVersion: mixed.book.contentVersion,
+      }),
+      "utf8",
+    );
     await clickReaderControl("reader-close");
 
     const books = await listBooks();
