@@ -1,4 +1,4 @@
-# GripRead
+# GripRead · 手不释卷
 
 GripRead is a lightweight, local-first novel and RSS reader designed for continuous reading across Android, Windows, and macOS. Local files work without an account; optional WebDAV adds a cloud book folder, reading-state synchronization, and backup recovery.
 
@@ -6,7 +6,7 @@ The planned stack is Tauri 2, React, TypeScript, Vite, Tailwind CSS, shadcn/ui, 
 
 ## Development
 
-Read [AGENTS.md](AGENTS.md) and the [.ai documentation map](.ai/README.md). The M0 smoke host is runnable on macOS after installing dependencies:
+Read [AGENTS.md](AGENTS.md) and the [.ai documentation map](.ai/README.md). The current M0 repair connects the product shell to local TXT services. Install dependencies and run:
 
 ```sh
 pnpm install
@@ -16,7 +16,7 @@ pnpm tauri build --debug
 pnpm test:native
 ```
 
-The smoke host exercises TXT import, local book listing, bounded content windows, reader turns, and position persistence. `pnpm test:native` starts the real macOS Tauri host without watch mode and verifies that the native binary reaches its running state. Product screens and M1 local-reading features remain separate tasks.
+The supported path is UTF-8 TXT import, local reading, position persistence, and reading preferences. Deferred features are marked unavailable in the interface. `pnpm test:native` builds a dedicated macOS test application and runs the WebdriverIO embedded suite against an isolated data directory. Test plugins and test data-directory overrides are excluded from ordinary builds. See the [active repair](.ai/plans/2026-09-17-m0-repair.md) for acceptance evidence and remaining limitations.
 
 Documentation checks require Node.js 22 or newer and no third-party packages:
 

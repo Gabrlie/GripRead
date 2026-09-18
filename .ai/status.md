@@ -2,16 +2,16 @@
 
 ## Current stage
 
-Documentation foundation and the M0 logic foundation are implemented. The repository now has a Tauri 2 smoke host, Rust local storage, TXT normalization, typed IPC bindings, a framework-independent reader session, and repeatable native startup checks. Product screens and the full local-reading milestone remain planned.
+M0 is in progress. The existing storage and IPC foundation and uncommitted product pages require integration repairs before acceptance. Wider product specifications remain planned.
 
 ## Active task
 
-The [M0 logic task](plans/2026-09-17-m0-logic.md) is reviewed and ready for handoff. Its macOS debug binary, `test:native` startup smoke, Rust checks, TypeScript checks, generated bindings, and focused reader tests are available; native WebDriver coverage and the full page implementation are not yet delivered.
+Implement the approved [M0 repair](plans/2026-09-17-m0-repair.md): real imports and observable failures, recoverable storage, measured reading pages, supported preferences, and macOS native acceptance. Preserve the current visual layout and make deferred features explicitly unavailable.
 
 ## Blockers
 
-The test-only WebDriver plugin and WebdriverIO runner still need to be added for the requested embedded macOS acceptance. Android and Windows evidence are outside the current logic handoff. EPUB, source compatibility, RSS, sync, and AIGC remain later stages.
+The local Rust, frontend, generated-binding, documentation, boundary, production frontend build, ordinary Tauri macOS build, and isolated embedded WebDriver checks pass. Native automation still does not drive the macOS system file picker, and a separate animated WebKit run remains a diagnostic check rather than the deterministic acceptance default.
 
 ## Next entry point
 
-Add the test-only embedded WebDriver plugin and macOS WebdriverIO suite against the existing smoke host, then create a separate page task or the next bounded M0/M1 task from the [task template](plans/task-template.md). Later roadmap stages are not assigned.
+Review the integrated diff, record the native evidence and picker limitation, then decide whether the M0 milestone can close. Do not start later roadmap stages. Android and Windows native checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.

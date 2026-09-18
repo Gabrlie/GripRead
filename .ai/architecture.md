@@ -33,6 +33,8 @@ Do not create generic plugin frameworks or placeholder runtime services for defe
 
 The owning subsystem defines semantic obligations; executable type declarations become authoritative once implemented. Shared command inputs and outputs must be explicit, validated at external boundaries, and updated together with consumers. Avoid independent, manually synchronized copies of IPC types.
 
+`src/application` owns application-lifetime import and preference stores. `src/context` owns navigation and display state only. `src/services/contracts.ts` declares library, reader, and settings ports; `src/services/ipc.ts` is their production platform adapter. Pages never manufacture book identities, content, or persistence results. The reader controller remains independent of React and pages.
+
 Long-running operations expose an operation identity, progress, cancellation, and a terminal result. Resource owners release listeners, workers, and requests when work ends. Stale callbacks cannot overwrite a newer user action. Persistent jobs resume from stored state where the operation requires durability; transient searches need not become database jobs.
 
 The [workflow](engineering/workflow.md) owns implementation discipline and [verification](engineering/testing.md) owns validation methods. Stage-specific runtime choices, including the source JavaScript engine and AI storage/provider, are recorded by their subsystems rather than assumed by the application foundation.

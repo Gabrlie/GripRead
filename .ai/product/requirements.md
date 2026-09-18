@@ -2,6 +2,8 @@
 
 Status: planned
 
+The application is named 手不释卷 in Chinese and GripRead in English.
+
 ## Goal
 
 GripRead is a lightweight reader for people who read novels on both a phone and a desktop. Its primary outcome is immediate local reading and a reliable return to the same passage across devices. The default product language is Chinese; maintained engineering documentation is English.

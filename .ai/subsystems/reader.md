@@ -24,6 +24,14 @@ Load local content first. Missing resources produce actionable loading or failur
 
 Clean EPUB and source markup before rendering; scripts and application IPC are not exposed to imported content. Resolve book resources through the file/content adapter rather than arbitrary paths supplied by markup. Image loading and late font availability must not silently move the reading position.
 
+## M0 implementation contract
+
+TXT is one resource named Full text; content windows do not create chapters. Forward windows begin at their locator; backward windows end exclusively at it. Both reject surrogate-pair splits. The controller measures a single visible page using actual WebView typography and dimensions, retains bounded window data, and reflows from the current locator. Previous-page navigation after restart loads a backward window instead of relying on session history.
+
+Navigation is serialized within a session. Opening another book or reflowing invalidates stale results. Position saves are ordered and coalesce pending locations; explicit flush, leaving a book, and normal native exit wait for persistence and report failures. Instant and StPageFlip presentation adapters consume measured pages and own no reading location. Reduced motion uses instant presentation; selection, controls, and open dialogs suppress reading gestures. Unsupported modes remain unavailable.
+
+Supported preferences use the settings service and persist in SQLite. Theme follows live system changes when selected. Basic reading uses system fonts, local SVG icons, and local cover placeholders without remote asset requests.
+
 ## Acceptance
 
 - Read a million-character TXT and an illustrated EPUB without mounting the entire book in the DOM.

@@ -11,9 +11,11 @@ node --test scripts/check-docs.test.mjs
 
 The checker validates maintained root/.ai Markdown, required sections and statuses, local file and heading links, and bounded entry-document word counts. Its tests use temporary fixtures to prove invalid documentation is rejected. It does not fetch external URLs or prove semantic consistency; review those explicitly.
 
-## Application checks to establish
+## Application checks
 
-The M0 foundation exposes executable commands for strict TypeScript checks, frontend build, Rust formatting/static checks, generated-binding freshness, dependency-direction checks, documentation checks, focused unit tests, and native startup smoke. `pnpm check` runs the offline repository checks; `pnpm tauri build --debug` verifies the macOS native build and `pnpm test:native` starts the real host, while the WebdriverIO embedded suite remains a separate follow-up until its test-only Tauri plugin and runner are added.
+`pnpm check` aggregates formatting, documentation, generated-binding freshness, TypeScript, dependency boundaries, frontend and Rust tests, Rust formatting/static checks, and the frontend build. The boundary checker parses module edges and tests rejected fixtures; generated IPC types are checked against their Rust definitions. `pnpm tauri build --debug` verifies an ordinary macOS native build.
+
+`pnpm test:native` uses WebdriverIO with the embedded Tauri driver in a dedicated test build. The native-test feature, frontend test mode, and capability override must be enabled together; ordinary builds exclude test plugins, fault injection, and test entry points. The runner uses isolated data and process lifetimes and must propagate build, assertion, crash, and timeout failures. A startup log line never establishes acceptance.
 
 Use fixtures and observable outcomes for parsing, state, and service behavior. Exercise IPC changes through their real consumers. UI work also needs visual inspection, keyboard/touch checks, and reduced-motion behavior. Native/platform claims require evidence from the corresponding target, not an inference from a browser build or a different operating system.
 
