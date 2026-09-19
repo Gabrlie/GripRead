@@ -247,6 +247,37 @@ describe("ReaderController", () => {
     expect(controller.getSnapshot().positionWarning).toBeNull();
   });
 
+  it.each(["locator", "progress"])(
+    "keeps a stale saved position after a failed %s seek and reflow",
+    async (mode) => {
+      const stale = { ...locatorFor("book", 3), contentVersion: "old-version" };
+      const service = serviceFor({ book: "abcdef" }, { book: stale });
+      const read = service.readContentWindow.bind(service);
+      const readSpy = vi
+        .spyOn(service, "readContentWindow")
+        .mockRejectedValueOnce({ code: "content_version_mismatch", message: "stale" })
+        .mockImplementation(read);
+      const controller = new ReaderController(service, {
+        measurer: { measure: wholeWindowMeasurer },
+        maxUnits: 3,
+      });
+      await controller.open("book");
+      readSpy.mockRejectedValueOnce(new Error("temporary read failure"));
+      await expect(
+        mode === "locator" ? controller.seek(locatorFor("book", 3)) : controller.seekProgress(0.5),
+      ).rejects.toThrow("temporary read failure");
+      await controller.reflow();
+      await controller.flush();
+      expect(service.saves).toHaveLength(0);
+      expect(controller.getSnapshot().positionWarning).toContain("旧正文版本");
+      await controller.seekProgress(0.5);
+      await controller.flush();
+      expect(service.saves.at(-1)?.offset).toBe(3);
+      expect(controller.getSnapshot().positionWarning).toBeNull();
+      controller.dispose();
+    },
+  );
+
   it("seeks progress to EOF and loads the preceding window on previous", async () => {
     const service = serviceFor({ book: "abcdef" });
     const controller = new ReaderController(service, {

@@ -24,7 +24,7 @@ export function Navbar() {
     <>
       {/* Mobile Apple-style Floating Island Dock */}
       <nav
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-sm rounded-full bg-surface/85 dark:bg-surface/80 backdrop-blur-2xl border border-surface-variant/50 shadow-[0_10px_35px_rgba(0,0,0,0.12)] md:hidden transition-all duration-200 pointer-events-auto select-none"
+        className="glass-dock fixed bottom-4 inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none"
         aria-label="Mobile Navigation Dock"
       >
         <div className="flex items-center justify-around h-[60px] px-2 py-1">
@@ -59,7 +59,7 @@ export function Navbar() {
 
       {/* Desktop Left Sidebar */}
       <aside
-        className="hidden md:flex flex-col w-64 h-screen fixed top-0 left-0 bg-surface border-r border-surface-variant/40 z-40 p-6 select-none"
+        className="hidden md:flex flex-col w-64 h-screen fixed top-0 left-0 glass-sidebar z-40 p-6 select-none"
         aria-label="Desktop Sidebar"
       >
         <div className="flex items-center gap-3 mb-8 px-2">
@@ -86,8 +86,8 @@ export function Navbar() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl transition-all text-left ${
                   isActive
-                    ? "bg-surface-container text-primary font-medium shadow-sm"
-                    : "text-secondary hover:bg-surface-container-low hover:text-on-surface"
+                    ? "bg-primary/10 text-primary font-medium shadow-xs"
+                    : "text-secondary hover:bg-surface-container/50 hover:text-on-surface"
                 }`}
               >
                 <Icon name={tab.icon} size={22} fill={isActive} />

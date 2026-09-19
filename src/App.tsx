@@ -1,5 +1,5 @@
 import React, { Component, type ReactNode, useEffect, useState } from "react";
-import { MotionConfig, AnimatePresence, motion } from "motion/react";
+import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
@@ -111,25 +111,17 @@ function MainContent() {
         {activeBook ? (
           <ReaderView />
         ) : (
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex-1 flex flex-col min-w-0"
-            >
-              {activeTab === "bookshelf" ? (
-                <BookshelfView />
-              ) : activeTab === "discover" ? (
-                <DiscoverView />
-              ) : activeTab === "subscription" ? (
-                <SubscriptionView />
-              ) : (
-                <SettingsView />
-              )}
-            </motion.div>
-          </AnimatePresence>
+          <div key={activeTab} className="flex-1 flex flex-col min-w-0">
+            {activeTab === "bookshelf" ? (
+              <BookshelfView />
+            ) : activeTab === "discover" ? (
+              <DiscoverView />
+            ) : activeTab === "subscription" ? (
+              <SubscriptionView />
+            ) : (
+              <SettingsView />
+            )}
+          </div>
         )}
       </div>
       <ImportModal />

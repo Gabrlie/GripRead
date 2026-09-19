@@ -15,9 +15,14 @@ export function DropdownMenuContent({
       <Menu.Positioner align={align} sideOffset={sideOffset} className="z-[60]">
         <Menu.Popup
           className={cn(
-            "min-w-48 rounded-2xl bg-surface border border-surface-variant/50 p-1.5 text-on-surface shadow-xl outline-none",
+            "glass-dropdown min-w-48 rounded-2xl p-1.5 text-on-surface outline-none animate-in fade-in-0 zoom-in-95",
             className,
           )}
+          style={{
+            WebkitBackdropFilter: "blur(40px) saturate(180%)",
+            backdropFilter: "blur(40px) saturate(180%)",
+            ...props.style,
+          }}
           {...props}
         >
           {children}
@@ -30,7 +35,7 @@ export function DropdownMenuItem({ className, ...props }: Menu.Item.Props) {
   return (
     <Menu.Item
       className={cn(
-        "flex items-center gap-2 rounded-xl px-3 py-2 text-xs outline-none cursor-pointer data-[highlighted]:bg-surface-container data-[disabled]:opacity-40 data-[disabled]:cursor-default",
+        "flex items-center gap-2 rounded-xl px-3 py-2 text-xs outline-none cursor-pointer data-[highlighted]:bg-surface-container data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed transition-colors",
         className,
       )}
       {...props}

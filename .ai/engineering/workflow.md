@@ -20,7 +20,7 @@ Change shared interfaces together with all consumers. Use monotonic database sch
 
 Update the owning specification with behavioral changes, and use the [documentation standard](../AGENTS.md) for consequential decisions. Keep source declarations authoritative and explain non-obvious behavior close to its implementation. Do not copy declarations into multiple reference pages.
 
-Review the integrated diff for lost requirements, interface mismatches, duplicate behavior, inappropriate dependencies, and error handling. Run [relevant checks](testing.md), fix failures without weakening their meaning, and record unrun checks as unrun. A successful isolated module test does not replace verification of its changed integration path.
+Review the integrated diff for lost requirements, interface mismatches, duplicate behavior, inappropriate dependencies, and error handling. Run [relevant checks](testing.md), fix failures without weakening their meaning, and record unrun checks as unrun. A successful isolated module test does not replace verification of its changed integration path. For page changes, compare actual phone and desktop renders against the existing visual baseline in [interaction design](../design/interaction.md); preserve deferred regions and controls when connecting services. Report any intended visual departure before treating it as an accepted change.
 
 ## Git and handoff
 

@@ -37,14 +37,16 @@ export function ImportModal() {
         {label}
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl p-5 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>导入本地 TXT</DialogTitle>
+            <DialogTitle className="font-title-editorial">导入本地 TXT</DialogTitle>
             <DialogDescription>
               TXT 正文会自动识别编码并保存到本地。关闭面板后导入继续。
             </DialogDescription>
           </DialogHeader>
-          <p role="status">{label}</p>
+          <p role="status" className="text-sm text-primary">
+            {label}
+          </p>
           {state.job && (
             <>
               <Progress

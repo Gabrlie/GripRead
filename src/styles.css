@@ -2,206 +2,375 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-surface-rgb: 251 249 243;
+:root,
+.theme-warm-tea {
+  /* 柔雅暖茶：以温润焙茶琥珀为灵魂，暖香恬淡，彻底消除违和蓝调 */
+  --color-surface-rgb: 251 248 241;
   --color-surface: rgb(var(--color-surface-rgb));
-  --color-background-rgb: 251 249 243;
+  --color-background-rgb: 251 248 241;
   --color-background: rgb(var(--color-background-rgb));
-  --color-surface-container-rgb: 240 238 232;
+  --color-surface-container-rgb: 241 236 226;
   --color-surface-container: rgb(var(--color-surface-container-rgb));
-  --color-surface-container-low-rgb: 245 243 237;
+  --color-surface-container-low-rgb: 247 243 234;
   --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
-  --color-surface-container-high-rgb: 234 232 226;
+  --color-surface-container-high-rgb: 235 229 217;
   --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
-  --color-surface-container-highest-rgb: 228 226 221;
+  --color-surface-container-highest-rgb: 228 221 208;
   --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
   --color-surface-container-lowest-rgb: 255 255 255;
   --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 228 226 221;
+  --color-surface-variant-rgb: 232 225 212;
   --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 27 28 24;
+  --color-on-surface-rgb: 44 36 29;
   --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 63 72 80;
+  --color-on-surface-variant-rgb: 88 77 67;
   --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 100 93 88;
+  --color-secondary-rgb: 120 106 93;
   --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-secondary-container-rgb: 234 225 218;
+  --color-secondary-container-rgb: 237 229 218;
   --color-secondary-container: rgb(var(--color-secondary-container-rgb));
-  --color-on-secondary-container-rgb: 106 99 94;
+  --color-on-secondary-container-rgb: 84 72 61;
   --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
-  --color-outline-rgb: 112 120 129;
+  --color-outline-rgb: 140 126 112;
   --color-outline: rgb(var(--color-outline-rgb));
-  --color-outline-variant-rgb: 191 199 210;
+  --color-outline-variant-rgb: 212 201 187;
   --color-outline-variant: rgb(var(--color-outline-variant-rgb));
-  --color-primary-rgb: 0 97 148;
+  --color-primary-rgb: 146 84 41; /* 暖茶琥珀色，温润雅致 */
   --color-primary: rgb(var(--color-primary-rgb));
-  --color-primary-fixed-rgb: 204 229 255;
+  --color-primary-fixed-rgb: 247 225 204;
   --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+
+  /* Scrollbar tokens for light theme */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
+  --scrollbar-thumb-active: rgba(0, 0, 0, 0.5);
 }
 
 /* Paper swatch: 羊脂白 */
 .theme-bone-white {
+  /* 羊脂白：文人砚墨幽青，宛如白玉瓷盘衬古墨 */
   --color-surface-rgb: 250 248 245;
   --color-surface: rgb(var(--color-surface-rgb));
   --color-background-rgb: 250 248 245;
   --color-background: rgb(var(--color-background-rgb));
-  --color-surface-container-rgb: 243 240 232;
+  --color-surface-container-rgb: 239 236 231;
   --color-surface-container: rgb(var(--color-surface-container-rgb));
-  --color-surface-container-low-rgb: 248 246 240;
+  --color-surface-container-low-rgb: 245 243 239;
   --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
-  --color-surface-container-high-rgb: 237 233 224;
+  --color-surface-container-high-rgb: 232 228 222;
   --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
-  --color-surface-container-highest-rgb: 229 224 214;
+  --color-surface-container-highest-rgb: 224 219 212;
   --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
   --color-surface-container-lowest-rgb: 255 255 255;
   --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 229 224 214;
+  --color-surface-variant-rgb: 226 222 216;
   --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 34 32 28;
+  --color-on-surface-rgb: 30 33 37;
   --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 66 63 57;
+  --color-on-surface-variant-rgb: 68 73 80;
   --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 104 99 92;
+  --color-secondary-rgb: 98 105 115;
   --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-primary-rgb: 0 97 148;
+  --color-secondary-container-rgb: 231 228 223;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 72 77 86;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 116 122 132;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 198 202 210;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 42 59 76; /* 砚墨青，沉稳雅致 */
   --color-primary: rgb(var(--color-primary-rgb));
+  --color-primary-fixed-rgb: 218 229 240;
+  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
 }
 
 /* Paper swatch: 宣纸微黄 */
 .theme-xuan-paper {
-  --color-surface-rgb: 243 236 224;
+  /* 宣纸微黄：天然草木微黄纸纹，配以古籍朱砂印泥暖红 */
+  --color-surface-rgb: 244 237 225;
   --color-surface: rgb(var(--color-surface-rgb));
-  --color-background-rgb: 243 236 224;
+  --color-background-rgb: 244 237 225;
   --color-background: rgb(var(--color-background-rgb));
-  --color-surface-container-rgb: 234 225 208;
+  --color-surface-container-rgb: 233 223 207;
   --color-surface-container: rgb(var(--color-surface-container-rgb));
   --color-surface-container-low-rgb: 239 231 217;
   --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
-  --color-surface-container-high-rgb: 226 215 196;
+  --color-surface-container-high-rgb: 225 214 196;
   --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
-  --color-surface-container-highest-rgb: 218 208 188;
+  --color-surface-container-highest-rgb: 217 205 186;
   --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
-  --color-surface-container-lowest-rgb: 250 246 238;
+  --color-surface-container-lowest-rgb: 251 247 240;
   --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 218 208 188;
+  --color-surface-variant-rgb: 220 208 190;
   --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 43 37 29;
+  --color-on-surface-rgb: 45 36 25;
   --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 79 71 60;
+  --color-on-surface-variant-rgb: 86 73 57;
   --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 110 100 86;
+  --color-secondary-rgb: 118 102 82;
   --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-primary-rgb: 133 77 14;
+  --color-secondary-container-rgb: 227 216 198;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 78 65 48;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 136 120 99;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 206 192 171;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 164 61 36; /* 朱砂印泥红，古朴金石风韵 */
   --color-primary: rgb(var(--color-primary-rgb));
-  --color-primary-fixed-rgb: 254 240 138;
+  --color-primary-fixed-rgb: 252 222 212;
   --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
 }
 
 /* Paper swatch: 墨绿温润 */
 .theme-jade-green {
-  --color-surface-rgb: 231 235 228;
+  /* 墨绿温润：极度护眼的雨后竹青与淡青瓷底色 */
+  --color-surface-rgb: 237 241 235;
   --color-surface: rgb(var(--color-surface-rgb));
-  --color-background-rgb: 231 235 228;
+  --color-background-rgb: 237 241 235;
   --color-background: rgb(var(--color-background-rgb));
-  --color-surface-container-rgb: 214 221 210;
+  --color-surface-container-rgb: 222 229 219;
   --color-surface-container: rgb(var(--color-surface-container-rgb));
-  --color-surface-container-low-rgb: 223 229 220;
+  --color-surface-container-low-rgb: 230 236 228;
   --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
-  --color-surface-container-high-rgb: 204 212 199;
+  --color-surface-container-high-rgb: 213 221 210;
   --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
-  --color-surface-container-highest-rgb: 193 204 188;
+  --color-surface-container-highest-rgb: 203 213 199;
   --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
-  --color-surface-container-lowest-rgb: 241 244 239;
+  --color-surface-container-lowest-rgb: 247 250 246;
   --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 193 204 188;
+  --color-surface-variant-rgb: 206 216 203;
   --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 25 36 27;
+  --color-on-surface-rgb: 25 38 29;
   --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 57 71 59;
+  --color-on-surface-variant-rgb: 62 78 68;
   --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 86 99 88;
+  --color-secondary-rgb: 92 110 98;
   --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-primary-rgb: 45 90 60;
-  --color-primary: rgb(var(--color-primary-rgb));
-  --color-primary-fixed-rgb: 198 231 206;
-  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
-}
-
-/* Dark mode: 温暖微暗 */
-.dark,
-.theme-warm-dark {
-  --color-surface-rgb: 24 23 22;
-  --color-surface: rgb(var(--color-surface-rgb));
-  --color-background-rgb: 24 23 22;
-  --color-background: rgb(var(--color-background-rgb));
-  --color-surface-container-rgb: 34 32 30;
-  --color-surface-container: rgb(var(--color-surface-container-rgb));
-  --color-surface-container-low-rgb: 29 27 26;
-  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
-  --color-surface-container-high-rgb: 44 42 39;
-  --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
-  --color-surface-container-highest-rgb: 56 53 49;
-  --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
-  --color-surface-container-lowest-rgb: 39 37 34;
-  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 56 53 49;
-  --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 238 234 225;
-  --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 168 161 150;
-  --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 168 161 150;
-  --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-secondary-container-rgb: 51 48 44;
+  --color-secondary-container-rgb: 217 226 215;
   --color-secondary-container: rgb(var(--color-secondary-container-rgb));
-  --color-on-secondary-container-rgb: 206 197 191;
+  --color-on-secondary-container-rgb: 54 70 60;
   --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
-  --color-outline-rgb: 110 104 95;
+  --color-outline-rgb: 110 128 116;
   --color-outline: rgb(var(--color-outline-rgb));
-  --color-outline-variant-rgb: 69 66 61;
+  --color-outline-variant-rgb: 188 202 192;
   --color-outline-variant: rgb(var(--color-outline-variant-rgb));
-  --color-primary-rgb: 56 189 248;
+  --color-primary-rgb: 34 94 65; /* 竹青墨玉，宁心护眼 */
   --color-primary: rgb(var(--color-primary-rgb));
-  --color-primary-fixed-rgb: 12 74 110;
+  --color-primary-fixed-rgb: 208 238 222;
   --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
 }
 
-/* Dark mode: OLED 纯黑 */
+/* ========================================================
+   深色模式适配 (Dark Mode): 彻底告别刺眼荧光青蓝，夜读温和不刺眼
+   ======================================================== */
+
+/* 1. 暖茶深色 (Dark Warm Tea) - 默认暗色基线 */
+.dark,
+.dark.theme-warm-tea,
+.dark .theme-warm-tea,
+.theme-warm-dark,
+.theme-warm-dark.theme-warm-tea {
+  --color-surface-rgb: 26 24 22;
+  --color-surface: rgb(var(--color-surface-rgb));
+  --color-background-rgb: 26 24 22;
+  --color-background: rgb(var(--color-background-rgb));
+  --color-surface-container-low-rgb: 32 30 27;
+  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
+  --color-surface-container-rgb: 39 36 32;
+  --color-surface-container: rgb(var(--color-surface-container-rgb));
+  --color-surface-container-high-rgb: 48 44 40;
+  --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
+  --color-surface-container-highest-rgb: 58 54 48;
+  --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
+  --color-surface-container-lowest-rgb: 21 19 18;
+  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
+  --color-surface-variant-rgb: 54 49 44;
+  --color-surface-variant: rgb(var(--color-surface-variant-rgb));
+  --color-on-surface-rgb: 236 230 220; /* 柔和暖米白文字 */
+  --color-on-surface: rgb(var(--color-on-surface-rgb));
+  --color-on-surface-variant-rgb: 172 161 148;
+  --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
+  --color-secondary-rgb: 154 143 131;
+  --color-secondary: rgb(var(--color-secondary-rgb));
+  --color-secondary-container-rgb: 48 44 39;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 214 204 193;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 112 101 90;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 68 62 55;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 212 153 96; /* 柔和暖蜜琥珀，舒适微光，绝不刺眼 */
+  --color-primary: rgb(var(--color-primary-rgb));
+  --color-primary-fixed-rgb: 60 38 18;
+  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+
+  /* Scrollbar tokens for dark theme */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.4);
+  --scrollbar-thumb-active: rgba(255, 255, 255, 0.55);
+}
+
+/* 2. 羊脂白深色 (Dark Bone White) - 月下沉砚 */
+.dark.theme-bone-white,
+.dark .theme-bone-white,
+.theme-warm-dark.theme-bone-white {
+  --color-surface-rgb: 22 23 25;
+  --color-surface: rgb(var(--color-surface-rgb));
+  --color-background-rgb: 22 23 25;
+  --color-background: rgb(var(--color-background-rgb));
+  --color-surface-container-low-rgb: 28 29 32;
+  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
+  --color-surface-container-rgb: 34 36 40;
+  --color-surface-container: rgb(var(--color-surface-container-rgb));
+  --color-surface-container-high-rgb: 43 46 51;
+  --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
+  --color-surface-container-highest-rgb: 53 57 63;
+  --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
+  --color-surface-container-lowest-rgb: 17 18 20;
+  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
+  --color-surface-variant-rgb: 48 52 58;
+  --color-surface-variant: rgb(var(--color-surface-variant-rgb));
+  --color-on-surface-rgb: 235 238 242;
+  --color-on-surface: rgb(var(--color-on-surface-rgb));
+  --color-on-surface-variant-rgb: 158 165 175;
+  --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
+  --color-secondary-rgb: 142 150 162;
+  --color-secondary: rgb(var(--color-secondary-rgb));
+  --color-secondary-container-rgb: 40 43 48;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 202 209 219;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 98 106 118;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 60 65 74;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 150 174 198; /* 月白霜青，纯净柔和 */
+  --color-primary: rgb(var(--color-primary-rgb));
+  --color-primary-fixed-rgb: 25 38 52;
+  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+}
+
+/* 3. 宣纸深色 (Dark Xuan Paper) - 古木藏书 */
+.dark.theme-xuan-paper,
+.dark .theme-xuan-paper,
+.theme-warm-dark.theme-xuan-paper {
+  --color-surface-rgb: 27 24 19;
+  --color-surface: rgb(var(--color-surface-rgb));
+  --color-background-rgb: 27 24 19;
+  --color-background: rgb(var(--color-background-rgb));
+  --color-surface-container-low-rgb: 33 29 23;
+  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
+  --color-surface-container-rgb: 41 36 29;
+  --color-surface-container: rgb(var(--color-surface-container-rgb));
+  --color-surface-container-high-rgb: 50 44 36;
+  --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
+  --color-surface-container-highest-rgb: 60 53 43;
+  --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
+  --color-surface-container-lowest-rgb: 22 19 15;
+  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
+  --color-surface-variant-rgb: 56 49 40;
+  --color-surface-variant: rgb(var(--color-surface-variant-rgb));
+  --color-on-surface-rgb: 236 228 214;
+  --color-on-surface: rgb(var(--color-on-surface-rgb));
+  --color-on-surface-variant-rgb: 174 160 142;
+  --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
+  --color-secondary-rgb: 156 142 124;
+  --color-secondary: rgb(var(--color-secondary-rgb));
+  --color-secondary-container-rgb: 50 44 35;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 216 202 184;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 114 102 85;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 70 61 49;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 204 116 90; /* 温润熟赭朱砂，柔和如红泥小火炉 */
+  --color-primary: rgb(var(--color-primary-rgb));
+  --color-primary-fixed-rgb: 68 28 18;
+  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+}
+
+/* 4. 墨绿深色 (Dark Jade Green) - 幽篁夜静 */
+.dark.theme-jade-green,
+.dark .theme-jade-green,
+.theme-warm-dark.theme-jade-green {
+  --color-surface-rgb: 19 25 21;
+  --color-surface: rgb(var(--color-surface-rgb));
+  --color-background-rgb: 19 25 21;
+  --color-background: rgb(var(--color-background-rgb));
+  --color-surface-container-low-rgb: 24 31 26;
+  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
+  --color-surface-container-rgb: 30 39 33;
+  --color-surface-container: rgb(var(--color-surface-container-rgb));
+  --color-surface-container-high-rgb: 38 48 41;
+  --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
+  --color-surface-container-highest-rgb: 47 59 50;
+  --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
+  --color-surface-container-lowest-rgb: 15 20 17;
+  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
+  --color-surface-variant-rgb: 42 54 46;
+  --color-surface-variant: rgb(var(--color-surface-variant-rgb));
+  --color-on-surface-rgb: 226 237 229;
+  --color-on-surface: rgb(var(--color-on-surface-rgb));
+  --color-on-surface-variant-rgb: 152 172 158;
+  --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
+  --color-secondary-rgb: 136 156 142;
+  --color-secondary: rgb(var(--color-secondary-rgb));
+  --color-secondary-container-rgb: 37 47 40;
+  --color-secondary-container: rgb(var(--color-secondary-container-rgb));
+  --color-on-secondary-container-rgb: 198 218 204;
+  --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
+  --color-outline-rgb: 96 114 102;
+  --color-outline: rgb(var(--color-outline-rgb));
+  --color-outline-variant-rgb: 54 67 58;
+  --color-outline-variant: rgb(var(--color-outline-variant-rgb));
+  --color-primary-rgb: 106 179 138; /* 浅翠松石温绿，沉静护眼 */
+  --color-primary: rgb(var(--color-primary-rgb));
+  --color-primary-fixed-rgb: 15 48 30;
+  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+}
+
+/* 5. OLED 纯黑适配: 极致节电，保留当前主题柔和调性，绝不闪瞎眼 */
 .theme-oled {
   --color-surface-rgb: 0 0 0;
   --color-surface: rgb(var(--color-surface-rgb));
   --color-background-rgb: 0 0 0;
   --color-background: rgb(var(--color-background-rgb));
+  --color-surface-container-lowest-rgb: 0 0 0;
+  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
+  --color-surface-container-low-rgb: 10 10 10;
+  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
   --color-surface-container-rgb: 18 18 18;
   --color-surface-container: rgb(var(--color-surface-container-rgb));
-  --color-surface-container-low-rgb: 8 8 8;
-  --color-surface-container-low: rgb(var(--color-surface-container-low-rgb));
   --color-surface-container-high-rgb: 26 26 26;
   --color-surface-container-high: rgb(var(--color-surface-container-high-rgb));
   --color-surface-container-highest-rgb: 36 36 36;
   --color-surface-container-highest: rgb(var(--color-surface-container-highest-rgb));
-  --color-surface-container-lowest-rgb: 20 20 20;
-  --color-surface-container-lowest: rgb(var(--color-surface-container-lowest-rgb));
-  --color-surface-variant-rgb: 34 34 34;
+  --color-surface-variant-rgb: 32 32 32;
   --color-surface-variant: rgb(var(--color-surface-variant-rgb));
-  --color-on-surface-rgb: 229 229 229;
+  --color-on-surface-rgb: 232 232 232;
   --color-on-surface: rgb(var(--color-on-surface-rgb));
-  --color-on-surface-variant-rgb: 153 153 153;
+  --color-on-surface-variant-rgb: 156 156 156;
   --color-on-surface-variant: rgb(var(--color-on-surface-variant-rgb));
-  --color-secondary-rgb: 136 136 136;
+  --color-secondary-rgb: 140 140 140;
   --color-secondary: rgb(var(--color-secondary-rgb));
-  --color-secondary-container-rgb: 31 31 31;
+  --color-secondary-container-rgb: 24 24 24;
   --color-secondary-container: rgb(var(--color-secondary-container-rgb));
-  --color-on-secondary-container-rgb: 204 204 204;
+  --color-on-secondary-container-rgb: 200 200 200;
   --color-on-secondary-container: rgb(var(--color-on-secondary-container-rgb));
-  --color-outline-rgb: 68 68 68;
+  --color-outline-rgb: 64 64 64;
   --color-outline: rgb(var(--color-outline-rgb));
-  --color-outline-variant-rgb: 45 45 45;
+  --color-outline-variant-rgb: 40 40 40;
   --color-outline-variant: rgb(var(--color-outline-variant-rgb));
-  --color-primary-rgb: 56 189 248;
-  --color-primary: rgb(var(--color-primary-rgb));
-  --color-primary-fixed-rgb: 7 89 133;
-  --color-primary-fixed: rgb(var(--color-primary-fixed-rgb));
+
+  /* Scrollbar tokens for OLED theme */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.25);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.45);
+  --scrollbar-thumb-active: rgba(255, 255, 255, 0.6);
 }
 
 @layer base {
@@ -218,11 +387,11 @@
   }
 
   .pb-safe {
-    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .pt-safe {
-    padding-top: max(env(safe-area-inset-top, 0px), 0.5rem);
+    padding-top: env(safe-area-inset-top, 0px);
   }
 
   * {
@@ -231,6 +400,68 @@
     @apply border-border;
     outline-color: var(--color-primary);
   }
+}
+
+/* ========================================================
+   Application Scrollbar System (类原生现代极细胶囊滚动条)
+   与应用雅致人文风格高度契合，半透明圆角药丸滑块，悬停平滑反馈
+   ======================================================== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-track-piece {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 书架页专属：彻底隐藏全局及元素滚动条，保持页面纯净，并保留所有平滑滚动功能 */
+html.shelf-hide-scrollbar,
+html.shelf-hide-scrollbar body,
+.shelf-hide-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+html.shelf-hide-scrollbar::-webkit-scrollbar,
+html.shelf-hide-scrollbar body::-webkit-scrollbar,
+.shelf-hide-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .no-scrollbar::-webkit-scrollbar,
@@ -248,27 +479,108 @@
   text-align: start;
 }
 
-/* Authentic Frosted Glass Material (毛玻璃效果) */
+/* ========================================================
+   Authentic Apple-grade Frosted Glass Material (类苹果磨砂玻璃)
+   精准对齐 macOS 原生窗口标题栏的透光率与色温（中性微白高光透光），彻底消除顶栏与原生窗口的割裂感
+   ======================================================== */
+:root {
+  --glass-chrome-alpha: 0.45;
+  --glass-dock-alpha: 0.52;
+}
+.dark,
+.theme-warm-dark {
+  --glass-chrome-alpha: 0.58;
+  --glass-dock-alpha: 0.64;
+}
+.theme-oled {
+  --glass-chrome-alpha: 0.65;
+  --glass-dock-alpha: 0.7;
+}
 .glass-header {
-  background-color: color-mix(in srgb, var(--color-surface, #fbf9f3) 85%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
+  background-color: rgba(255, 255, 255, var(--glass-chrome-alpha)) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.02);
+}
+
+.glass-sidebar {
+  background-color: rgba(255, 255, 255, var(--glass-chrome-alpha)) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 1px 0 12px rgba(0, 0, 0, 0.02);
+}
+
+.glass-dock {
+  background-color: rgba(255, 255, 255, var(--glass-dock-alpha)) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .glass-dropdown {
-  background-color: color-mix(
-    in srgb,
-    var(--color-surface-container-lowest, #ffffff) 88%,
-    transparent
-  );
+  background-color: rgba(255, 255, 255, 0.85) !important;
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12);
+}
+
+/* Dark Mode Frosted Glass - 完美衔接 macOS 深色窗口标题栏材质 */
+.dark .glass-header,
+.theme-warm-dark .glass-header {
+  background-color: rgba(28, 28, 30, var(--glass-chrome-alpha)) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
+}
+
+.theme-oled .glass-header {
+  background-color: rgba(0, 0, 0, var(--glass-chrome-alpha)) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+}
+
+.dark .glass-sidebar,
+.theme-warm-dark .glass-sidebar {
+  background-color: rgba(28, 28, 30, var(--glass-chrome-alpha)) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 1px 0 12px rgba(0, 0, 0, 0.35);
+}
+
+.theme-oled .glass-sidebar {
+  background-color: rgba(0, 0, 0, var(--glass-chrome-alpha)) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 1px 0 12px rgba(0, 0, 0, 0.5);
+}
+
+.dark .glass-dock,
+.theme-warm-dark .glass-dock {
+  background-color: rgba(36, 36, 38, var(--glass-dock-alpha)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.theme-oled .glass-dock {
+  background-color: rgba(18, 18, 18, var(--glass-dock-alpha)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
 }
 
 .dark .glass-dropdown,
-.theme-warm-dark .glass-dropdown,
+.theme-warm-dark .glass-dropdown {
+  background-color: rgba(36, 36, 38, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
 .theme-oled .glass-dropdown {
-  background-color: color-mix(in srgb, var(--color-surface-container, #22201e) 88%, transparent);
+  background-color: rgba(18, 18, 18, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -306,6 +618,7 @@
   overflow-wrap: anywhere;
 }
 .reader-prose {
+  text-align: justify;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;

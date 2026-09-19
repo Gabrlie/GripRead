@@ -300,7 +300,6 @@ export class ReaderController {
     }
     const epoch = ++this.epoch;
     this.activeBookId = locator.bookId;
-    this.suppressPositionSave = false;
     return this.schedule(epoch, async () => {
       this.setLoading(true);
       const measured = await this.readAndMeasure(locator.bookId, locator, "forward", epoch);
@@ -308,6 +307,7 @@ export class ReaderController {
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, locator.offset);
+      this.suppressPositionSave = false;
       this.snapshot = { ...this.snapshot, positionWarning: null };
       await this.presentCurrent("seek", epoch);
     });
@@ -326,7 +326,6 @@ export class ReaderController {
 
     const epoch = ++this.epoch;
     const boundedProgress = Math.min(1, Math.max(0, progress));
-    this.suppressPositionSave = false;
     return this.schedule(epoch, async () => {
       this.setLoading(true);
       const locator = await this.service.resolveLocator(bookId, boundedProgress);
@@ -336,6 +335,7 @@ export class ReaderController {
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, locator.offset);
+      this.suppressPositionSave = false;
       this.snapshot = { ...this.snapshot, positionWarning: null };
       await this.presentCurrent("seek", epoch);
     });

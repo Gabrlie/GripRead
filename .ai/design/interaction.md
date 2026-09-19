@@ -4,13 +4,19 @@ Status: planned
 
 ## Visual language
 
-Use a quiet paper-like palette: background `#F7F4ED`, body text `#292D29`, and restrained green `#58705C`, with a corresponding dark theme. Interface typography uses system sans-serif; reading supports a Song-style serif and imported fonts. Use spacing and fine separators to establish hierarchy.
+The existing page implementation is the visual baseline. Preserve its paper surfaces, tone-specific accents, editorial headings, fine separators, rounded cards, desktop sidebar, and floating phone navigation. Use the colors in the [theme stylesheet](../../src/styles.css) and [Tailwind configuration](../../tailwind.config.js) as the single token source. Bundled reading fonts and local SVG icons keep reading independent of external asset requests.
 
-Default novel typography is 20 px text with 1.8 line height, 24 px horizontal phone padding, and an approximately 720 px maximum text width per desktop page. Typography controls include size, line height, margins, font, and theme. Motion parameters belong exclusively to [motion design](motion.md).
+Service integration does not authorize redesigning or removing page regions. Library retains its unified glass header, group strip, four-line list cards, and cover grid with three phone columns and five desktop columns. Discovery retains search, source pills, eight category tiles, and the recommendation region. Subscriptions retain channel and article regions. Settings retains its overview, grouped rows, segmented appearance control, and paper swatches. The reader retains its centered page, unobtrusive metadata, overlay toolbars, and compact typography panel. Preserve these structures when replacing fixture data with real services.
+
+Unavailable capabilities remain visible and disabled. Preserve the current page hierarchy, card components, and control geometry; replace fixture identities and statistics with truthful unavailable content inside their existing regions. The shelf group strip uses only the service snapshot, including an empty group list; discovery categories are a separate presentation taxonomy. Remove fabricated books, feeds, statistics, and success responses without replacing whole screens with a single unavailable message. Empty content regions use truthful empty states within the existing layout. Completed capabilities keep their established controls and consume real service state.
+
+Novel typography starts at 18 px with 1.8 line height. Measure each page inside the actual available viewport; toolbar visibility must not obscure or repaginate the text. Motion parameters belong exclusively to [motion design](motion.md). Future screen capabilities below remain planned and do not supersede the current visual baseline without an explicit design request.
+
+The glass header and desktop sidebar use background alpha 0.45 in light mode, 0.58 in dark mode, and 0.65 in OLED mode; the floating dock uses 0.52, 0.64, and 0.70 respectively. Keep blur at 20 px and saturation at 180%, preserve foreground opacity and existing borders/shadows, and share the header material across the shelf title and group strip. These values reveal in-app content without changing native window transparency. Dropdown material remains more opaque for readability.
 
 ## Navigation and screens
 
-Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. Desktop RSS retains its three-column workspace.
+Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. The current desktop RSS shell retains its channel and article columns; a reading pane is planned.
 
 | Screen | Phone | Desktop |
 | --- | --- | --- |
@@ -27,7 +33,7 @@ Show a single continue-reading entry before the shelf. Support custom groups and
 
 Find Books retains successful results when one source fails. Book details show source, title, author, cover, introduction, latest chapter, and a contents entry. Offer add-to-shelf, read, update check, chapter cache, and source switching according to available capabilities. Unsupported operations explain their cause.
 
-Empty Library offers file import and book discovery; empty RSS offers a feed URL or OPML import. Do not require cloud setup before these actions.
+Empty Library offers local file import; discovery, RSS feed URLs, and OPML controls remain disabled until their services are delivered. Do not require cloud setup before these actions.
 
 ## Reading controls
 

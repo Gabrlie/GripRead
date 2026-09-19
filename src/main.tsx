@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import { App } from "./App";
+import "@fontsource-variable/literata/wght.css";
+import "@fontsource-variable/noto-serif-sc/wght.css";
+import "@fontsource-variable/hanken-grotesk/wght.css";
 import "./styles.css";
 
 async function start() {

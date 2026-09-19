@@ -3,7 +3,7 @@ import type { LibraryBook } from "../types/generated";
 export type NavTab = "bookshelf" | "discover" | "subscription" | "settings";
 export interface ShelfViewState {
   query: string;
-  filter: "all" | "ready" | "missing";
+  groupId: string;
   layout: "list" | "grid";
   scroll: number;
 }
@@ -22,7 +22,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeBook, setActiveBook] = useState<LibraryBook | null>(null);
   const [shelf, setShelfState] = useState<ShelfViewState>({
     query: "",
-    filter: "all",
+    groupId: "all",
     layout: "list",
     scroll: 0,
   });

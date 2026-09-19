@@ -1,0 +1,185 @@
+import { useState } from "react";
+import { useLibrary, useShelf } from "../../application/runtime";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "../ui/dialog";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Icon } from "../ui/Icon";
+
+export function GroupManager({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { state, store } = useShelf();
+  const { state: library } = useLibrary();
+  const [name, setName] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = state.groups.find((group) => group.id === selectedId);
+  const run = (action: () => Promise<void>) =>
+    void action().catch(() => {
+      /* Store exposes the failure and keeps the dialog open. */
+    });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-surface border-surface-variant/50 max-w-sm w-[calc(100%-2rem)] rounded-2xl p-5 space-y-4">
+        <DialogHeader>
+          <DialogTitle className="font-title-editorial text-base font-semibold text-on-surface text-left">
+            分组管理
+          </DialogTitle>
+          <DialogDescription className="text-secondary text-xs text-left">
+            管理书架分组与其中的书籍，分组不会改变书籍正文。
+          </DialogDescription>
+        </DialogHeader>
+        {state.error && (
+          <p role="alert" className="text-xs text-error">
+            {state.error}
+          </p>
+        )}
+        {selected ? (
+          <div className="space-y-3 text-xs">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedId(null);
+                setName("");
+              }}
+              className="h-7 px-1"
+            >
+              <Icon name="arrow_back" size={14} />
+              全部分组
+            </Button>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                run(async () => {
+                  await store.rename(selected.id, name);
+                });
+              }}
+            >
+              <Input
+                aria-label="分组名称"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="h-8 text-xs bg-surface-container"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                disabled={state.saving || !name.trim()}
+                className="h-8 text-xs"
+              >
+                保存
+              </Button>
+            </form>
+            <div className="max-h-56 overflow-auto space-y-1.5" aria-label="分组书籍">
+              {library.books.length === 0 && (
+                <p className="text-secondary py-3">导入书籍后可在这里加入分组。</p>
+              )}
+              {library.books.map((book) => (
+                <label
+                  key={book.book.id}
+                  className="flex items-center justify-between gap-3 py-2 px-2 rounded-lg bg-surface-container"
+                >
+                  <span className="truncate">{book.book.title}</span>
+                  <input
+                    aria-label={`将 ${book.book.title} 加入 ${selected.name}`}
+                    type="checkbox"
+                    checked={selected.bookIds.includes(book.book.id)}
+                    disabled={state.saving}
+                    onChange={(event) => {
+                      const ids = state.groups
+                        .filter(
+                          (group) =>
+                            group.id !== selected.id && group.bookIds.includes(book.book.id),
+                        )
+                        .map((group) => group.id);
+                      if (event.target.checked) ids.push(selected.id);
+                      run(() => store.setBookGroups(book.book.id, ids));
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs text-error h-7"
+              disabled={state.saving}
+              onClick={() =>
+                run(async () => {
+                  await store.remove(selected.id);
+                  setSelectedId(null);
+                  setName("");
+                })
+              }
+            >
+              删除分组（保留书籍）
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-1.5 text-xs text-left max-h-64 overflow-auto">
+              {state.groups.map((group) => (
+                <button
+                  key={group.id}
+                  onClick={() => {
+                    setSelectedId(group.id);
+                    setName(group.name);
+                  }}
+                  className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-surface-container"
+                >
+                  <span className="text-on-surface font-medium">{group.name}</span>
+                  <span className="text-secondary text-[11px]">
+                    {group.bookIds.length} 本 <span aria-hidden="true">›</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                run(async () => {
+                  await store.create(name);
+                  setName("");
+                });
+              }}
+            >
+              <Input
+                aria-label="新分组名称"
+                placeholder="新分组名称"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="h-8 text-xs bg-surface-container"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                disabled={state.saving || !name.trim()}
+                className="h-8 text-xs"
+              >
+                添加
+              </Button>
+            </form>
+          </>
+        )}
+        <DialogFooter className="pt-2">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            完成
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

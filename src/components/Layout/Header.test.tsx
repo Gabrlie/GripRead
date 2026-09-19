@@ -14,9 +14,7 @@ describe("shelf menu", () => {
     trigger.focus();
     await user.keyboard("{ArrowDown}");
     expect(
-      (await screen.findByRole("menuitem", { name: "远程书籍 · 未开放" })).getAttribute(
-        "aria-disabled",
-      ),
+      (await screen.findByRole("menuitem", { name: "远程书籍" })).getAttribute("aria-disabled"),
     ).toBe("true");
     await user.keyboard("{Escape}");
     expect(document.activeElement).toBe(trigger);
@@ -24,5 +22,18 @@ describe("shelf menu", () => {
     await user.keyboard("{ArrowDown}");
     await user.click(screen.getByRole("menuitem", { name: "刷新书架" }));
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("allows toggling shelf layout from the menu with dynamic badge", async () => {
+    const user = userEvent.setup();
+    const toggleLayout = vi.fn();
+    render(<Header title="书架" onToggleLayout={toggleLayout} layoutMode="list" />);
+    const trigger = screen.getByRole("button", { name: "更多选项" });
+    await user.click(trigger);
+    const layoutItem = await screen.findByRole("menuitem", { name: /书架布局/ });
+    expect(layoutItem).toBeTruthy();
+    expect(screen.getByText("列表")).toBeTruthy();
+    await user.click(layoutItem);
+    expect(toggleLayout).toHaveBeenCalledOnce();
   });
 });

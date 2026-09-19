@@ -1,9 +1,10 @@
 import type { ReaderPreferences } from "../types/generated";
+
 export function applyTheme(settings: ReaderPreferences) {
   const root = document.documentElement;
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   const render = () => {
-    const dark = settings.theme === "dark" || (settings.theme === "system" && media.matches);
+    const isDark = settings.theme === "dark" || (settings.theme === "system" && media.matches);
     root.classList.remove(
       "dark",
       "theme-warm-dark",
@@ -13,8 +14,11 @@ export function applyTheme(settings: ReaderPreferences) {
       "theme-xuan-paper",
       "theme-jade-green",
     );
-    if (dark) root.classList.add("dark", settings.oledBlack ? "theme-oled" : "theme-warm-dark");
-    else root.classList.add(`theme-${settings.paperTone}`);
+    // Always attach the user's selected paper tone identity
+    root.classList.add(`theme-${settings.paperTone || "warm-tea"}`);
+    if (isDark) {
+      root.classList.add("dark", settings.oledBlack ? "theme-oled" : "theme-warm-dark");
+    }
   };
   render();
   media.addEventListener("change", render);

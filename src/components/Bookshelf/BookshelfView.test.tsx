@@ -110,4 +110,42 @@ describe("real library presentation", () => {
     await userEvent.click(screen.getByText("重试"));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
+
+  it("does not repopulate an empty group snapshot or attach a remote cover by title", async () => {
+    const app = runtime([{ ...entry, book: { ...entry.book, title: "宿命之环" } }]);
+    await app.library.refresh();
+    view(app);
+    await waitFor(() => expect(app.shelf.getSnapshot().loading).toBe(false));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim())).toEqual(["全部"]);
+    expect(document.querySelector('img[src^="https:"]')).toBeNull();
+    expect(screen.queryByText("今日 42 分钟")).toBeNull();
+  });
+
+  it("exposes a chapter failure and retries without hiding the book", async () => {
+    const app = runtime([entry]);
+    vi.mocked(app.services.reader.listToc).mockRejectedValueOnce(new Error("cannot read TOC"));
+    await app.library.refresh();
+    view(app);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("目录读取失败"));
+    expect(screen.getByTestId("library-book-real-book")).toBeTruthy();
+    await userEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("manages shelf-hide-scrollbar class on mount and unmount", async () => {
+    const app = runtime();
+    await app.library.refresh();
+    const { unmount } = render(
+      <RuntimeContext.Provider value={app}>
+        <AppProvider>
+          <BookshelfView />
+        </AppProvider>
+      </RuntimeContext.Provider>,
+    );
+    expect(document.documentElement.classList.contains("shelf-hide-scrollbar")).toBe(true);
+    expect(document.body.classList.contains("shelf-hide-scrollbar")).toBe(true);
+    unmount();
+    expect(document.documentElement.classList.contains("shelf-hide-scrollbar")).toBe(false);
+    expect(document.body.classList.contains("shelf-hide-scrollbar")).toBe(false);
+  });
 });
