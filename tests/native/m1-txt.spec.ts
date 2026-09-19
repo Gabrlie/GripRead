@@ -1,6 +1,16 @@
-import { expect } from "@wdio/globals";
+import { browser, expect } from "@wdio/globals";
 
-import { decodeTxt, importFixture, invoke, waitForAppReady } from "./support";
+import {
+  decodeTxt,
+  importFixture,
+  invoke,
+  waitForAppReady,
+  refreshLibraryInUi,
+  openBook,
+  clickReaderControl,
+  waitForReaderClosed,
+  readPage,
+} from "./support";
 import type {
   Bookmark,
   ContentWindow,
@@ -87,5 +97,36 @@ describe("GripRead native M1 TXT tools", () => {
     expect(response.matches).toHaveLength(1);
     expect(response.matches[0]?.excerpt).toContain("needle");
     expect(response.matches[0]?.locator.offset).toBe(65_535);
+  });
+  it("connects the preserved reader controls to TOC, bookmarks and highlighted search", async () => {
+    const source = await importFixture("chapters.txt");
+    await refreshLibraryInUi(source.book.id);
+    await openBook(source.book.id);
+    await browser.$('button[aria-label="目录"]').click();
+    await browser.$('[role="dialog"]').waitForDisplayed();
+    const chapter = await (await browser.$('[role="dialog"]')).$("button*=第一章");
+    await chapter.waitForDisplayed();
+    await chapter.click();
+    await browser.waitUntil(async () => (await readPage()).start > 0);
+    await browser.$('button[aria-label="添加书签"]').click();
+    await browser.$('button[aria-label="书签"]').click();
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          () => document.querySelectorAll('[role="dialog"] button[aria-label="删除书签"]').length,
+        )) === 2,
+    );
+    await browser.keys("Escape");
+    await browser.$('button[aria-label="搜索正文"]').click();
+    const input = await browser.$('input[aria-label="搜索关键词"]');
+    await input.setValue("结尾");
+    await browser.keys("Enter");
+    const result = await (await browser.$('[role="dialog"]')).$("button*=结尾");
+    await result.waitForDisplayed();
+    await result.click();
+    await browser.$('[data-testid="reader-highlight"]').waitForDisplayed();
+    expect(await browser.$('[data-testid="reader-highlight"]').getText()).toBe("结尾");
+    await clickReaderControl("reader-close");
+    await waitForReaderClosed();
   });
 });

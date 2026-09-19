@@ -86,13 +86,10 @@ describe("native typography and reader interaction", () => {
     await trigger.click();
     const dialog = await browser.$('[role="dialog"]:not([hidden])');
     await dialog.waitForDisplayed();
-    const slider = await dialog.$('input[type="range"]');
-    await slider.waitForExist();
-    await browser.execute(() => {
-      document
-        .querySelector('[role="dialog"]:not([hidden])')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
+    const larger = await dialog.$('button[aria-label="增大字号"]');
+    await larger.waitForDisplayed();
+    await larger.click();
+    await browser.keys("Escape");
     await ensureSettled();
     await browser.waitUntil(async () =>
       browser.execute(() => !document.querySelector('[role="dialog"]:not([hidden])')),

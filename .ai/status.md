@@ -6,12 +6,12 @@ M0 remains in progress. Storage, IPC, measured reading, PageFlip cleanup, macOS 
 
 ## Active task
 
-Complete [M0 closeout and M1 TXT reading](plans/2026-09-18-m0-m1-txt.md), then review storage, reader, and native evidence. Preserve the visual layout and deferred entries. The repair protects stale locators, recovers failed re-decode publication, preserves manual encoding on repeat imports, and exposes search paging and cancellation.
+The [review repairs](plans/2026-09-18-m0-m1-txt.md) are verified for integration into main. The current restored visual layout is preserved; groups serialize reads and mutations, chapter failures support retry, and deferred regions use disabled controls without production fixtures. Glass backgrounds use the agreed alpha values.
 
 ## Blockers
 
-`pnpm check`, the ordinary macOS debug build, and the full native suite now pass. Native fixtures still bypass system picker selection; native window close/quit and TXT source re-association evidence remain manual.
+`pnpm check` passes with 65 frontend and 37 Rust tests. The ordinary macOS build and complete native suite pass, including presentation and group persistence. System-picker selection/cancellation, native window close/quit, and source re-association evidence remain outstanding.
 
 ## Next entry point
 
-Record system-picker selection/cancellation, native window close/quit, and TXT source re-association. Android and Windows native checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
+Record remaining M0 native evidence before marking the stage complete. Android and Windows checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
