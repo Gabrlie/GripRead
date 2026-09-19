@@ -6,7 +6,7 @@ M0 remains in progress. Storage, IPC, measured reading, PageFlip cleanup, macOS 
 
 ## Active task
 
-The [review repairs](plans/2026-09-18-m0-m1-txt.md) are verified for integration into main. The current restored visual layout is preserved; groups serialize reads and mutations, chapter failures support retry, and deferred regions use disabled controls without production fixtures. Glass backgrounds use the agreed alpha values.
+The [review repairs](plans/2026-09-18-m0-m1-txt.md) are verified and integrated into main. The current restored visual layout is preserved; groups serialize reads and mutations, chapter failures support retry, and deferred regions use disabled controls without production fixtures. Glass backgrounds use the agreed alpha values.
 
 ## Blockers
 
