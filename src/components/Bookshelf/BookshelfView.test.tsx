@@ -38,6 +38,11 @@ const entry: LibraryBook = {
 function runtime(books: LibraryBook[] = []) {
   return new AppRuntime({
     library: {
+      listGroups: vi.fn(async () => []),
+      createGroup: vi.fn(),
+      renameGroup: vi.fn(),
+      deleteGroup: vi.fn(),
+      setBookGroups: vi.fn(),
       listBooks: vi.fn(async () => books),
       pickAndImportTxt: vi.fn(async () => null),
       startImport: vi.fn(),

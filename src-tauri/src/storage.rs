@@ -19,13 +19,13 @@ use crate::error::{AppError, ErrorCode};
 use crate::m1_txt::build_toc;
 use crate::models::{
     AssetAvailability, AssetKind, Book, BookAsset, Bookmark, BookmarkRequest, ContentWindow,
-    ImportPhase, ImportResult, LibraryBook, ReadContentRequest, ReaderLocator, ReaderPreferences,
-    ResolveLocatorRequest, SearchMatch, SearchRequest, SearchResponse, TocEntry, TxtDecodeState,
-    TxtEncoding, TxtEncodingInfo, WindowDirection,
+    ImportPhase, ImportResult, LibraryBook, LibraryGroup, ReadContentRequest, ReaderLocator,
+    ReaderPreferences, ResolveLocatorRequest, SearchMatch, SearchRequest, SearchResponse, TocEntry,
+    TxtDecodeState, TxtEncoding, TxtEncodingInfo, WindowDirection,
 };
 use crate::txt::detect_and_decode;
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -64,7 +64,7 @@ pub(crate) struct PreparedImport {
     decode_state: TxtDecodeState,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TxtDecodeSnapshot {
     pub(crate) book_id: String,
     pub(crate) asset_id: String,
@@ -72,6 +72,7 @@ pub(crate) struct TxtDecodeSnapshot {
     pub(crate) source_relative_path: String,
     pub(crate) source_sha256: String,
     pub(crate) content_version: String,
+    pub(crate) selected_encoding: TxtEncoding,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,8 @@ pub(crate) struct ImportTargetSnapshot {
     relative_path: String,
     sha256: String,
     fingerprint: Option<String>,
+    source_sha256: Option<String>,
+    selected_encoding: Option<TxtEncoding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -559,6 +562,48 @@ impl Storage {
             tx.commit()?;
         }
 
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 6 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE library_groups (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL UNIQUE CHECK(length(trim(name)) > 0)
+                );
+                CREATE TABLE book_groups (
+                    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    group_id TEXT NOT NULL REFERENCES library_groups(id) ON DELETE CASCADE,
+                    PRIMARY KEY(book_id, group_id)
+                );
+                CREATE INDEX book_groups_group_idx ON book_groups(group_id);",
+            )?;
+            // Editable template groups are seeded only by this migration.
+            // Membership always comes from an explicit user selection.
+            for name in [
+                "玄幻修真",
+                "科幻未来",
+                "悬疑灵异",
+                "历史架空",
+                "都市生活",
+                "游戏竞技",
+                "完结归档",
+            ] {
+                tx.execute(
+                    "INSERT INTO library_groups(id, name) VALUES (?1, ?2)",
+                    params![Uuid::new_v4().to_string(), name],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (6, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -728,6 +773,12 @@ impl Storage {
 
         let (book_id, asset_id, relative_path, title, duplicate, needs_publish, created_at) =
             if let Some(existing) = existing {
+                if existing.asset.sha256 != prepared.sha256 {
+                    return Err(AppError::new(
+                        ErrorCode::ContentVersionMismatch,
+                        DUPLICATE_VALIDATION_RETRY,
+                    ));
+                }
                 let final_path = managed_path(&self.root, &existing.relative_path, "books")?;
                 let needs_publish = !final_path.is_file();
                 (
@@ -755,8 +806,15 @@ impl Storage {
 
         let content_version = prepared.sha256.clone();
         let source_byte_length = prepared.source_byte_length;
-        let source_relative_path = format!("sources/{asset_id}.txt");
-        let journal = JournalRecord {
+        // A duplicate may be restoring missing source bytes. Give that
+        // publication its own path so rollback never needs to infer ownership
+        // of an older, committed source from hashes or missing stage files.
+        let source_relative_path = if duplicate {
+            format!("sources/{asset_id}-{}.txt", prepared.operation_id)
+        } else {
+            format!("sources/{asset_id}.txt")
+        };
+        let mut journal = JournalRecord {
             operation_id: prepared.operation_id.clone(),
             book_id: book_id.clone(),
             asset_id: asset_id.clone(),
@@ -776,6 +834,26 @@ impl Storage {
             source_byte_length,
             created_at,
         };
+        let existing_source: Option<(Option<String>, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT source_relative_path, source_sha256 FROM txt_assets WHERE asset_id = ?1",
+                params![asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let keep_existing_source = existing_source.as_ref().is_some_and(|(path, hash)| {
+            path.as_deref()
+                .and_then(|value| managed_path(&self.root, value, "sources").ok())
+                .is_some_and(|path| {
+                    path.is_file() && hash.as_deref().is_some_and(|h| !h.is_empty())
+                })
+        });
+        if keep_existing_source {
+            // This operation does not own the retained source; recovery may
+            // only remove or publish files actually owned by its journal.
+            journal.source_relative_path.clear();
+        }
 
         if needs_publish {
             let tx = self.conn.transaction()?;
@@ -788,7 +866,7 @@ impl Storage {
 
             let final_path = managed_path(&self.root, &relative_path, "books")?;
             let raw_stage_path = managed_path(&self.root, &journal.raw_stage_path, "staging")?;
-            let source_path = managed_path(&self.root, &journal.source_relative_path, "sources")?;
+            let source_path = managed_path(&self.root, &source_relative_path, "sources")?;
             if let Some(parent) = final_path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -797,7 +875,9 @@ impl Storage {
             }
             fs::rename(&stage_path, &final_path)?;
             sync_parent(&final_path)?;
-            if raw_stage_path.is_file() {
+            if keep_existing_source {
+                remove_owned_file(&raw_stage_path)?;
+            } else if raw_stage_path.is_file() {
                 if source_path.exists() {
                     remove_owned_file(&source_path)?;
                 }
@@ -845,8 +925,9 @@ impl Storage {
                 &parse_index(&journal.index_json)?,
                 &fingerprint,
             )?;
-            tx.execute(
-                "INSERT INTO txt_assets(
+            if !keep_existing_source {
+                tx.execute(
+                    "INSERT INTO txt_assets(
                     asset_id, detected_encoding, selected_encoding, decode_state,
                     source_relative_path, source_sha256, toc_json, updated_at
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
@@ -857,16 +938,17 @@ impl Storage {
                     source_relative_path = excluded.source_relative_path,
                     source_sha256 = excluded.source_sha256,
                     updated_at = excluded.updated_at",
-                params![
-                    journal.asset_id,
-                    encoding_name(&journal.detected_encoding),
-                    encoding_name(&journal.selected_encoding),
-                    decode_state_name(&journal.decode_state),
-                    journal.source_relative_path,
-                    journal.source_sha256,
-                    now_millis(),
-                ],
-            )?;
+                    params![
+                        journal.asset_id,
+                        encoding_name(&journal.detected_encoding),
+                        encoding_name(&journal.selected_encoding),
+                        decode_state_name(&journal.decode_state),
+                        journal.source_relative_path,
+                        journal.source_sha256,
+                        now_millis(),
+                    ],
+                )?;
+            }
             // Keep the journal until the same transaction that publishes the
             // book, asset, and index commits. If the final commit fails, the
             // journal still names the newly renamed file so the in-process
@@ -934,30 +1016,15 @@ impl Storage {
                     ));
                 }
             }
+            if cancel.load(Ordering::Acquire) {
+                return Err(import_cancelled());
+            }
+            // Source restoration is publication as well. Its journal lets a
+            // failed metadata commit discard unassociated raw bytes safely.
+            let tx = self.conn.transaction()?;
+            insert_journal(&tx, &journal)?;
+            tx.commit()?;
             fs::remove_file(stage_path)?;
-            let existing_source: Option<(Option<String>, Option<String>)> = self
-                .conn
-                .query_row(
-                    "SELECT source_relative_path, source_sha256
-                     FROM txt_assets WHERE asset_id = ?1",
-                    params![asset_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            let keep_existing_source =
-                existing_source
-                    .as_ref()
-                    .is_some_and(|(relative_path, source_sha256)| {
-                        relative_path
-                            .as_deref()
-                            .and_then(|value| managed_path(&self.root, value, "sources").ok())
-                            .is_some_and(|path| {
-                                path.is_file()
-                                    && source_sha256
-                                        .as_deref()
-                                        .is_some_and(|hash| !hash.is_empty())
-                            })
-                    });
             let source_path = managed_path(&self.root, &source_relative_path, "sources")?;
             if keep_existing_source {
                 // A normalized duplicate must keep the original raw source
@@ -974,9 +1041,6 @@ impl Storage {
                 }
                 fs::rename(&raw_stage_path, &source_path)?;
                 sync_parent(&source_path)?;
-            }
-            if cancel.load(Ordering::Acquire) {
-                return Err(import_cancelled());
             }
             let fingerprint = file_fingerprint(&final_path)?.1;
             let tx = self.conn.transaction()?;
@@ -1019,6 +1083,10 @@ impl Storage {
                     ],
                 )?;
             }
+            tx.execute(
+                "DELETE FROM import_journal WHERE operation_id = ?1",
+                params![prepared.operation_id],
+            )?;
             tx.commit()?;
             let existing = self
                 .conn
@@ -1058,11 +1126,14 @@ impl Storage {
     where
         F: FnMut(ImportPhase, u64, u64),
     {
-        let prepared = Self::prepare_import(&self.root, source, operation_id, cancel, report)?;
+        let mut prepared = Self::prepare_import(&self.root, source, operation_id, cancel, report)?;
         let result = (|| -> Result<ImportResult, AppError> {
             for attempt in 0..=1 {
                 let target =
                     self.snapshot_import_target(&prepared.sha256, &prepared.source_sha256)?;
+                if let Some(target) = target.as_ref() {
+                    prepare_import_for_target(&self.root, &mut prepared, target, cancel)?;
+                }
                 let validated_target = target
                     .as_ref()
                     .map(|target| validate_import_target(&self.root, target, cancel))
@@ -1083,11 +1154,7 @@ impl Storage {
             unreachable!("duplicate validation retry loop always returns")
         })();
         if result.is_err() && !self.journal_exists(operation_id)? {
-            let stage = self
-                .root
-                .join("staging")
-                .join(format!("{operation_id}.part"));
-            let _ = fs::remove_file(stage);
+            self.cleanup_import(operation_id)?;
         }
         result
     }
@@ -1128,6 +1195,7 @@ impl Storage {
                 )
                 .optional()?;
             remove_owned_file(&stage)?;
+            self.cleanup_uncommitted_import_source(&journal)?;
             if let Some(raw_stage) = raw_stage.as_ref() {
                 remove_owned_file(raw_stage)?;
             }
@@ -1177,24 +1245,21 @@ impl Storage {
         sha256: &str,
         source_sha256: &str,
     ) -> Result<Option<ImportTargetSnapshot>, AppError> {
-        let target: Option<(String, String)> = self
+        let target: Option<(String, String, Option<String>, Option<String>)> = self
             .conn
             .query_row(
-                "SELECT a.relative_path, a.sha256
+                "SELECT a.relative_path, a.sha256, t.source_sha256, t.selected_encoding
                  FROM book_assets a
-                 WHERE a.dedup_hash = ?1
-                    OR EXISTS (
-                        SELECT 1 FROM txt_assets t
-                        WHERE t.asset_id = a.id AND t.source_sha256 = ?2
-                    )
-                 ORDER BY CASE WHEN a.dedup_hash = ?1 THEN 0 ELSE 1 END,
+                 LEFT JOIN txt_assets t ON t.asset_id = a.id
+                 WHERE a.sha256 = ?1 OR t.source_sha256 = ?2
+                 ORDER BY CASE WHEN t.source_sha256 = ?2 THEN 0 ELSE 1 END,
                           a.created_at ASC
                  LIMIT 1",
                 params![sha256, source_sha256],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((relative_path, target_sha256)) = target else {
+        let Some((relative_path, target_sha256, source_sha256, selected_encoding)) = target else {
             return Ok(None);
         };
         let path = managed_path(&self.root, &relative_path, "books")?;
@@ -1210,6 +1275,8 @@ impl Storage {
             // for that asset rather than the incoming automatic decode hash.
             sha256: target_sha256,
             fingerprint,
+            source_sha256,
+            selected_encoding: selected_encoding.map(parse_encoding),
         }))
     }
 
@@ -1223,12 +1290,9 @@ impl Storage {
                 "SELECT a.id, a.book_id, a.kind, a.sha256, a.byte_length,
                         a.content_version, a.relative_path, a.created_at
                  FROM book_assets a
-                 WHERE a.dedup_hash = ?1
-                    OR EXISTS (
-                        SELECT 1 FROM txt_assets t
-                        WHERE t.asset_id = a.id AND t.source_sha256 = ?2
-                    )
-                 ORDER BY CASE WHEN a.dedup_hash = ?1 THEN 0 ELSE 1 END,
+                 LEFT JOIN txt_assets t ON t.asset_id = a.id
+                 WHERE a.sha256 = ?1 OR t.source_sha256 = ?2
+                 ORDER BY CASE WHEN t.source_sha256 = ?2 THEN 0 ELSE 1 END,
                           a.created_at ASC
                  LIMIT 1",
                 params![sha256, source_sha256],
@@ -1248,6 +1312,131 @@ impl Storage {
             .collect::<Result<Vec<_>, _>>()
             .map_err(AppError::from)?;
         Ok(books)
+    }
+
+    pub fn list_groups(&self) -> Result<Vec<LibraryGroup>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT g.id, g.name, m.book_id FROM library_groups g
+             LEFT JOIN book_groups m ON m.group_id = g.id ORDER BY g.rowid, m.book_id",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut groups: Vec<LibraryGroup> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let book_id: Option<String> = row.get(2)?;
+            if groups.last().map_or(true, |group| group.id != id) {
+                groups.push(LibraryGroup {
+                    id,
+                    name: row.get(1)?,
+                    book_ids: Vec::new(),
+                });
+            }
+            if let Some(book_id) = book_id {
+                if let Some(group) = groups.last_mut() {
+                    group.book_ids.push(book_id);
+                }
+            }
+        }
+        Ok(groups)
+    }
+
+    pub fn create_group(&self, name: &str) -> Result<LibraryGroup, AppError> {
+        let name = self.validate_group_name(name, None)?;
+        let id = Uuid::new_v4().to_string();
+        self.conn.execute(
+            "INSERT INTO library_groups(id, name) VALUES (?1, ?2)",
+            params![id, name],
+        )?;
+        Ok(LibraryGroup {
+            id,
+            name,
+            book_ids: Vec::new(),
+        })
+    }
+
+    pub fn rename_group(&self, id: &str, name: &str) -> Result<LibraryGroup, AppError> {
+        let name = self.validate_group_name(name, Some(id))?;
+        if self.conn.execute(
+            "UPDATE library_groups SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )? == 0
+        {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "library group was not found",
+            ));
+        }
+        self.list_groups()?
+            .into_iter()
+            .find(|group| group.id == id)
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "library group was not found"))
+    }
+
+    pub fn delete_group(&self, id: &str) -> Result<(), AppError> {
+        if self
+            .conn
+            .execute("DELETE FROM library_groups WHERE id = ?1", params![id])?
+            == 0
+        {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "library group was not found",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn set_book_groups(&mut self, book_id: &str, group_ids: &[String]) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        let book_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM books WHERE id = ?1)",
+            params![book_id],
+            |row| row.get(0),
+        )?;
+        if !book_exists {
+            return Err(AppError::new(ErrorCode::NotFound, "book was not found"));
+        }
+        let unique_ids: HashSet<&String> = group_ids.iter().collect();
+        for group_id in &unique_ids {
+            let group_exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
+                params![group_id],
+                |row| row.get(0),
+            )?;
+            if !group_exists {
+                return Err(AppError::new(
+                    ErrorCode::NotFound,
+                    "library group was not found",
+                ));
+            }
+        }
+        tx.execute(
+            "DELETE FROM book_groups WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        for group_id in unique_ids {
+            tx.execute(
+                "INSERT INTO book_groups(book_id, group_id) VALUES (?1, ?2)",
+                params![book_id, group_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn validate_group_name(&self, name: &str, except_id: Option<&str>) -> Result<String, AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::invalid_argument("group name cannot be empty"));
+        }
+        let duplicate: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_groups WHERE name = ?1 AND (?2 IS NULL OR id != ?2))",
+            params![name, except_id], |row| row.get(0),
+        )?;
+        if duplicate {
+            return Err(AppError::invalid_argument("group name already exists"));
+        }
+        Ok(name.to_string())
     }
 
     pub fn list_library_books(&self) -> Result<Vec<LibraryBook>, AppError> {
@@ -1606,28 +1795,21 @@ impl Storage {
 
     pub(crate) fn snapshot_txt_decode(&self, book_id: &str) -> Result<TxtDecodeSnapshot, AppError> {
         let context = self.content_read_context(book_id)?;
-        let source_relative_path: Option<String> = self
+        let source: Option<(Option<String>, Option<String>, String)> = self
             .conn
             .query_row(
-                "SELECT source_relative_path FROM txt_assets WHERE asset_id = ?1",
+                "SELECT source_relative_path, source_sha256, selected_encoding
+                 FROM txt_assets WHERE asset_id = ?1",
                 params![context.record.asset.id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        let Some(source_relative_path) = source_relative_path else {
+        let Some((Some(source_relative_path), source_sha256, selected_encoding)) = source else {
             return Err(AppError::new(
                 ErrorCode::UnsupportedEncoding,
                 "this book has no retained source bytes",
             ));
         };
-        let source_sha256: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT source_sha256 FROM txt_assets WHERE asset_id = ?1",
-                params![context.record.asset.id],
-                |row| row.get(0),
-            )
-            .optional()?;
         Ok(TxtDecodeSnapshot {
             book_id: context.record.asset.book_id,
             asset_id: context.record.asset.id,
@@ -1635,6 +1817,7 @@ impl Storage {
             source_relative_path,
             source_sha256: source_sha256.unwrap_or_default(),
             content_version: context.record.asset.content_version,
+            selected_encoding: parse_encoding(selected_encoding),
         })
     }
 
@@ -1851,9 +2034,25 @@ impl Storage {
             decode_state: prepared.decode_state.clone(),
             created_at: now_millis(),
         };
-        let tx = self.conn.transaction()?;
-        insert_txt_decode_journal(&tx, &journal)?;
-        tx.commit()?;
+        let register = (|| -> Result<(), AppError> {
+            // The preparation runs without the storage lock. Reject a stale
+            // snapshot before touching the live file or writing a journal;
+            // otherwise a crash could associate stale bytes with a newer DB.
+            if self.snapshot_txt_decode(&prepared.snapshot.book_id)? != prepared.snapshot {
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "book content or source changed while decoding",
+                ));
+            }
+            let tx = self.conn.transaction()?;
+            insert_txt_decode_journal(&tx, &journal)?;
+            tx.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = register {
+            remove_owned_file(&stage_path)?;
+            return Err(error);
+        }
         // Once the journal is durable, finish publication even if cancellation
         // arrives. Recovery can then distinguish old and new content safely.
         let fingerprint = match (|| -> Result<String, AppError> {
@@ -2401,6 +2600,7 @@ impl Storage {
             .optional()?;
 
         if let Some((_, committed_path, committed_hash)) = committed {
+            self.cleanup_uncommitted_import_source(journal)?;
             // A duplicate import can journal an already committed asset. Keep
             // that identity and repair its missing file only when the staged
             // bytes match the committed hash. Never let an unfinished journal
@@ -2421,20 +2621,7 @@ impl Storage {
                     sync_parent(&final_path)?;
                 }
                 remove_owned_file(&stage_path)?;
-                if raw_stage_path.as_ref().is_some_and(|path| path.is_file()) {
-                    let raw_stage_path = raw_stage_path.as_ref().expect("checked above");
-                    if let Some(source_path) = source_path.as_ref() {
-                        if source_path.exists() {
-                            remove_owned_file(source_path)?;
-                        }
-                        if let Some(parent) = source_path.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
-                        fs::rename(raw_stage_path, source_path)?;
-                    } else {
-                        remove_owned_file(raw_stage_path)?;
-                    }
-                } else if let Some(raw_stage_path) = raw_stage_path.as_ref() {
+                if let Some(raw_stage_path) = raw_stage_path.as_ref() {
                     remove_owned_file(raw_stage_path)?;
                 }
             } else {
@@ -2471,6 +2658,38 @@ impl Storage {
             "DELETE FROM import_journal WHERE operation_id = ?1",
             params![journal.operation_id],
         )?;
+        Ok(())
+    }
+
+    fn cleanup_uncommitted_import_source(&self, journal: &JournalRecord) -> Result<(), AppError> {
+        if journal.source_relative_path.is_empty() {
+            return Ok(());
+        }
+        // Older journals also named existing sources. If the staged raw
+        // bytes remain, their rename never happened and the live source is
+        // not owned by this operation.
+        if !journal.raw_stage_path.is_empty()
+            && managed_path(&self.root, &journal.raw_stage_path, "staging")?.exists()
+        {
+            return Ok(());
+        }
+        let associated: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM txt_assets
+             WHERE source_relative_path = ?1)",
+            params![journal.source_relative_path],
+            |row| row.get(0),
+        )?;
+        // An older duplicate journal may name a committed source with a
+        // different byte representation and already have discarded its raw
+        // stage. A database reference always takes precedence over that
+        // ambiguous journal; new restorations use an operation-owned path.
+        if !associated {
+            remove_owned_file(&managed_path(
+                &self.root,
+                &journal.source_relative_path,
+                "sources",
+            )?)?;
+        }
         Ok(())
     }
 
@@ -2525,6 +2744,54 @@ pub(crate) fn before_import_commit(root: &Path, cancel: &AtomicBool) -> Result<(
 
 pub(crate) fn duplicate_validation_retry(error: &AppError) -> bool {
     error.code == ErrorCode::ContentVersionMismatch && error.message == DUPLICATE_VALIDATION_RETRY
+}
+
+/// Re-importing identical source bytes must honor the book's current encoding,
+/// including when its normalized file needs to be restored. Decode and index
+/// that source outside the shared storage mutex before publication.
+pub(crate) fn prepare_import_for_target(
+    root: &Path,
+    prepared: &mut PreparedImport,
+    target: &ImportTargetSnapshot,
+    cancel: &AtomicBool,
+) -> Result<(), AppError> {
+    if target.source_sha256.as_deref() != Some(prepared.source_sha256.as_str()) {
+        return Ok(());
+    }
+    let Some(selected) = target.selected_encoding.as_ref() else {
+        return Ok(());
+    };
+    if selected == &prepared.selected_encoding && prepared.sha256 == target.sha256 {
+        return Ok(());
+    }
+    let raw_path = managed_path(root, &prepared.raw_stage_relative_path, "staging")?;
+    let (bytes, _) = read_cancelable_file(&raw_path, cancel, |_, _| {})?;
+    let decoded = detect_and_decode(&bytes, selected.clone())?;
+    let sha256 = sha256_bytes(decoded.text.as_bytes());
+    if sha256 != target.sha256 {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "the retained encoding no longer reproduces the committed book",
+        ));
+    }
+    let index_json = serde_json::to_string(&build_sparse_index(&decoded.text))?;
+    if cancel.load(Ordering::Acquire) {
+        return Err(import_cancelled());
+    }
+    let stage_path = managed_path(root, &prepared.stage_relative_path, "staging")?;
+    let mut stage = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(stage_path)?;
+    stage.write_all(decoded.text.as_bytes())?;
+    stage.sync_all()?;
+    prepared.sha256 = sha256;
+    prepared.byte_length = decoded.text.len() as u64;
+    prepared.index_json = index_json;
+    prepared.selected_encoding = decoded.selected;
+    prepared.detected_encoding = decoded.detected;
+    prepared.decode_state = decoded.state;
+    Ok(())
 }
 
 /// Validate a duplicate import target without borrowing `Storage`. A missing
@@ -4227,6 +4494,303 @@ mod tests {
     }
 
     #[test]
+    fn repeat_import_repairs_missing_manual_assets_without_resetting_encoding() {
+        for (remove_body, remove_source) in [(true, false), (false, true), (true, true)] {
+            let root = TestRoot::new();
+            let source = write_source(&root.0, "manual-repair.txt", "中文".as_bytes());
+            let app_root = root.0.join("data");
+            let mut storage = Storage::open(&app_root).unwrap();
+            let first = import(&mut storage, &source, "manual-first");
+            storage
+                .set_txt_encoding(&first.book.id, TxtEncoding::Gbk)
+                .unwrap();
+            let original = storage
+                .read_content_window(&first.book.id, None, 128)
+                .unwrap();
+            storage.save_position(&original.locator).unwrap();
+            if remove_body {
+                fs::remove_file(
+                    app_root.join(format!("books/{}/{}.txt", first.book.id, first.asset.id)),
+                )
+                .unwrap();
+            }
+            if remove_source {
+                fs::remove_file(app_root.join(format!("sources/{}.txt", first.asset.id))).unwrap();
+            }
+            let repeated = import(&mut storage, &source, "manual-repair");
+            assert!(repeated.duplicate);
+            assert_eq!(repeated.book.id, first.book.id);
+            assert_eq!(repeated.asset.id, first.asset.id);
+            assert_eq!(repeated.book.content_version, original.content_version);
+            assert_eq!(
+                storage
+                    .txt_encoding_for_book(&first.book.id)
+                    .unwrap()
+                    .selected,
+                TxtEncoding::Gbk
+            );
+            assert_eq!(
+                storage
+                    .read_content_window(&first.book.id, None, 128)
+                    .unwrap()
+                    .text,
+                original.text
+            );
+            assert_eq!(
+                storage.saved_position(&first.book.id).unwrap(),
+                Some(original.locator)
+            );
+            drop(storage);
+            let reopened = Storage::open(&app_root).unwrap();
+            assert_eq!(
+                reopened
+                    .read_content_window(&first.book.id, None, 128)
+                    .unwrap()
+                    .text,
+                original.text
+            );
+        }
+    }
+
+    #[test]
+    fn import_dedup_prefers_source_identity_and_includes_redecoded_content() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "original.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let original = import(&mut storage, &source, "original");
+        storage
+            .set_txt_encoding(&original.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        let other_source = write_source(&root.0, "other.txt", "\u{feff}中文".as_bytes());
+        let other = import(&mut storage, &other_source, "other");
+        assert_ne!(original.book.id, other.book.id);
+        assert_eq!(
+            import(&mut storage, &source, "repeat").book.id,
+            original.book.id
+        );
+        let current = storage
+            .read_content_window(&original.book.id, None, 128)
+            .unwrap();
+        let equivalent = write_source(&root.0, "equivalent.txt", current.text.as_bytes());
+        let repeated = import(&mut storage, &equivalent, "equivalent");
+        assert!(repeated.duplicate);
+        assert_eq!(repeated.book.id, original.book.id);
+        assert_eq!(storage.list_books().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn failed_duplicate_source_restore_discards_only_uncommitted_raw_bytes() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "original.txt", "中文".as_bytes());
+        let replacement = write_source(&root.0, "replacement.txt", &[0xd6, 0xd0, 0xce, 0xc4]);
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let original = import(&mut storage, &source, "original");
+        let raw_path = app_root.join(format!("sources/{}.txt", original.asset.id));
+        fs::remove_file(&raw_path).unwrap();
+        storage
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_source_update BEFORE UPDATE ON txt_assets
+             BEGIN SELECT RAISE(ABORT, 'injected source failure'); END;",
+            )
+            .unwrap();
+        let error = storage
+            .import_txt(&replacement, "failed-restore", &no_cancel(), |_, _, _| {})
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Database);
+        storage.cleanup_import("failed-restore").unwrap();
+        assert!(!raw_path.exists());
+        assert!(fs::read_dir(app_root.join("sources"))
+            .unwrap()
+            .next()
+            .is_none());
+        assert!(!storage.journal_exists("failed-restore").unwrap());
+        assert_eq!(
+            storage
+                .read_content_window(&original.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
+    }
+
+    #[test]
+    fn interrupted_duplicate_repair_never_replaces_the_retained_source() {
+        for (legacy_journal, raw_stage_removed) in [(false, false), (true, false), (true, true)] {
+            let root = TestRoot::new();
+            let source = write_source(&root.0, "original.txt", "中文".as_bytes());
+            let equivalent = write_source(&root.0, "equivalent.txt", &[0xd6, 0xd0, 0xce, 0xc4]);
+            let app_root = root.0.join("data");
+            let mut storage = Storage::open(&app_root).unwrap();
+            let original = import(&mut storage, &source, "original");
+            fs::remove_file(app_root.join(format!(
+                "books/{}/{}.txt",
+                original.book.id, original.asset.id
+            )))
+            .unwrap();
+            set_test_failure(FailurePoint::AfterJournal);
+            assert!(storage
+                .import_txt(
+                    &equivalent,
+                    "interrupted-repair",
+                    &no_cancel(),
+                    |_, _, _| {}
+                )
+                .is_err());
+            if legacy_journal {
+                storage.conn.execute(
+                "UPDATE import_journal SET source_relative_path = ?1 WHERE operation_id = 'interrupted-repair'",
+                params![format!("sources/{}.txt", original.asset.id)],
+            ).unwrap();
+            }
+            if raw_stage_removed {
+                fs::remove_file(app_root.join("staging/interrupted-repair.raw")).unwrap();
+            }
+            drop(storage);
+            let reopened = Storage::open(&app_root).unwrap();
+            assert_eq!(
+                fs::read(app_root.join(format!("sources/{}.txt", original.asset.id))).unwrap(),
+                "中文".as_bytes()
+            );
+            assert_eq!(
+                reopened
+                    .read_content_window(&original.book.id, None, 64)
+                    .unwrap()
+                    .text,
+                "中文"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_decode_is_rejected_before_publication_and_cleans_its_stage() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "concurrent.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "original");
+        let snapshot = storage.snapshot_txt_decode(&imported.book.id).unwrap();
+        let prepared = Storage::prepare_txt_decode(
+            &app_root,
+            &snapshot,
+            TxtEncoding::Utf8,
+            "stale",
+            &no_cancel(),
+            |_, _, _| {},
+        )
+        .unwrap();
+        storage
+            .set_txt_encoding(&imported.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        let live_path = app_root.join(&snapshot.relative_path);
+        let fingerprint = file_fingerprint(&live_path).unwrap().1;
+        // Publication must not be reached by the losing decode request.
+        set_test_failure(FailurePoint::AfterRename);
+        let error = storage
+            .commit_txt_decode(prepared.clone(), &no_cancel())
+            .unwrap_err();
+        TEST_FAILURE_POINT.with(|value| value.set(0));
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+        assert_eq!(file_fingerprint(&live_path).unwrap().1, fingerprint);
+        assert!(!app_root.join(prepared.stage_relative_path).exists());
+        assert!(!app_root.join(prepared.backup_relative_path).exists());
+        assert_eq!(
+            storage
+                .txt_encoding_for_book(&imported.book.id)
+                .unwrap()
+                .selected,
+            TxtEncoding::Gbk
+        );
+        assert!(storage
+            .read_content_window(&imported.book.id, None, 64)
+            .is_ok());
+        assert_eq!(
+            storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM txt_decode_journal", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn decode_journal_failure_removes_staging_before_returning() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "decode-failure.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "original");
+        storage
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_decode_journal BEFORE INSERT ON txt_decode_journal
+             BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END;",
+            )
+            .unwrap();
+        assert_eq!(
+            storage
+                .set_txt_encoding(&imported.book.id, TxtEncoding::Gbk)
+                .unwrap_err()
+                .code,
+            ErrorCode::Database
+        );
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .next()
+            .is_none());
+        assert_eq!(
+            storage
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            "中文"
+        );
+    }
+
+    #[test]
+    fn concurrent_encoding_changes_conflict_even_when_text_is_unchanged() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "ascii.txt", b"same text");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "original");
+        let snapshot = storage.snapshot_txt_decode(&imported.book.id).unwrap();
+        let stale = Storage::prepare_txt_decode(
+            &app_root,
+            &snapshot,
+            TxtEncoding::Gbk,
+            "stale",
+            &no_cancel(),
+            |_, _, _| {},
+        )
+        .unwrap();
+        storage
+            .set_txt_encoding(&imported.book.id, TxtEncoding::Utf8)
+            .unwrap();
+        assert_eq!(
+            storage
+                .commit_txt_decode(stale, &no_cancel())
+                .unwrap_err()
+                .code,
+            ErrorCode::ContentVersionMismatch
+        );
+        assert_eq!(
+            storage
+                .txt_encoding_for_book(&imported.book.id)
+                .unwrap()
+                .selected,
+            TxtEncoding::Utf8
+        );
+        assert!(fs::read_dir(app_root.join("staging"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[test]
     fn search_honors_cancellation_before_scanning_chunks() {
         let root = TestRoot::new();
         let source = write_source(
@@ -4719,5 +5283,155 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].book.id, imported.book.id);
         assert_eq!(summaries[0].total_length, Some(8));
+    }
+
+    #[test]
+    fn groups_persist_memberships_and_deletion_preserves_reading_data() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "groups.txt", "第一章\n阅读分组😀".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "groups");
+        let window = storage
+            .read_content_window(&imported.book.id, None, 64)
+            .unwrap();
+        storage.save_position(&window.locator).unwrap();
+        let template = storage.list_groups().unwrap();
+        assert_eq!(template.len(), 7);
+        assert!(template.iter().all(|group| group.book_ids.is_empty()));
+        assert_eq!(template[0].name, "玄幻修真");
+        let group = storage.create_group("  我的阅读  ").unwrap();
+        assert_eq!(group.name, "我的阅读");
+        storage
+            .set_book_groups(
+                &imported.book.id,
+                &[group.id.clone(), template[0].id.clone(), group.id.clone()],
+            )
+            .unwrap();
+        let renamed = storage.rename_group(&group.id, "最近阅读").unwrap();
+        assert_eq!(renamed.book_ids, vec![imported.book.id.clone()]);
+        drop(storage);
+        let storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.list_groups().unwrap().last(), Some(&renamed));
+        storage.delete_group(&group.id).unwrap();
+        storage.delete_group(&template[0].id).unwrap();
+        assert_eq!(storage.list_books().unwrap(), vec![imported.book.clone()]);
+        assert_eq!(
+            storage.saved_position(&imported.book.id).unwrap(),
+            Some(window.locator)
+        );
+        assert_eq!(
+            storage
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            window.text
+        );
+        let remaining = storage.list_groups().unwrap();
+        assert_eq!(remaining.len(), 6);
+        assert!(remaining.iter().all(|group| group.book_ids.is_empty()));
+        drop(storage);
+        let reopened = Storage::open(&app_root).unwrap();
+        assert_eq!(reopened.list_groups().unwrap(), remaining);
+    }
+
+    #[test]
+    fn group_validation_and_membership_failure_preserve_existing_groups() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "membership.txt", b"membership");
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let imported = import(&mut storage, &source, "membership");
+        let group = storage.create_group("自定义").unwrap();
+        assert_eq!(
+            storage.create_group("  ").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            storage.create_group(" 自定义 ").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            storage
+                .rename_group(&group.id, "玄幻修真")
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            storage.rename_group("absent", "未知").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            storage.delete_group("absent").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        storage
+            .set_book_groups(&imported.book.id, std::slice::from_ref(&group.id))
+            .unwrap();
+        let before = storage.list_groups().unwrap();
+        assert_eq!(
+            storage
+                .set_book_groups(&imported.book.id, &[group.id.clone(), "absent".to_string()])
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            storage
+                .set_book_groups("absent", std::slice::from_ref(&group.id))
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(storage.list_groups().unwrap(), before);
+        storage.set_book_groups(&imported.book.id, &[]).unwrap();
+        assert!(storage
+            .list_groups()
+            .unwrap()
+            .iter()
+            .all(|group| group.book_ids.is_empty()));
+    }
+
+    #[test]
+    fn group_migration_preserves_v5_books_assets_positions_and_saved_preferences() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "upgrade.txt", b"upgrade");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "upgrade");
+        assert_eq!(
+            storage.get_settings().unwrap().theme,
+            crate::models::ThemeMode::Light
+        );
+        assert_eq!(storage.get_settings().unwrap().font_size, 18.0);
+        let saved_settings = ReaderPreferences {
+            theme: crate::models::ThemeMode::System,
+            font_size: 20.0,
+            ..ReaderPreferences::default()
+        };
+        storage.save_settings(&saved_settings).unwrap();
+        let locator = storage
+            .read_content_window(&imported.book.id, None, 64)
+            .unwrap()
+            .locator;
+        storage.save_position(&locator).unwrap();
+        // Recreate the exact v5 boundary: group schema did not exist yet.
+        storage.conn.execute_batch("DROP TABLE book_groups; DROP TABLE library_groups; DELETE FROM schema_migrations WHERE version = 6;").unwrap();
+        drop(storage);
+        let reopened = Storage::open(&app_root).unwrap();
+        let library = reopened.list_library_books().unwrap();
+        assert_eq!(library[0].book, imported.book);
+        assert_eq!(library[0].asset.id, imported.asset.id);
+        assert_eq!(
+            reopened.saved_position(&imported.book.id).unwrap(),
+            Some(locator)
+        );
+        assert_eq!(reopened.get_settings().unwrap(), saved_settings);
+        assert_eq!(reopened.list_groups().unwrap().len(), 7);
+        assert!(reopened
+            .list_groups()
+            .unwrap()
+            .iter()
+            .all(|group| group.book_ids.is_empty()));
     }
 }

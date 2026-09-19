@@ -33,4 +33,35 @@ describe("native service boundary", () => {
       message: "asset_missing: asset gone",
     });
   });
+  it("persists group operations through their typed library commands", async () => {
+    invokeMock.mockReset();
+    const group = { id: "group", name: "自定义", bookIds: ["book"] };
+    invokeMock.mockResolvedValueOnce([group]);
+    expect(await tauriServices.library.listGroups()).toEqual([group]);
+    expect(invokeMock).toHaveBeenLastCalledWith("list_groups", undefined);
+    invokeMock.mockResolvedValueOnce(group);
+    expect(await tauriServices.library.createGroup("自定义")).toEqual(group);
+    expect(invokeMock).toHaveBeenLastCalledWith("create_group", { request: { name: "自定义" } });
+    invokeMock.mockResolvedValueOnce({ ...group, name: "已重命名" });
+    expect(await tauriServices.library.renameGroup("group", "已重命名")).toMatchObject({
+      name: "已重命名",
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("rename_group", {
+      request: { id: "group", name: "已重命名" },
+    });
+    invokeMock.mockResolvedValueOnce(undefined);
+    await tauriServices.library.setBookGroups("book", ["group"]);
+    expect(invokeMock).toHaveBeenLastCalledWith("set_book_groups", {
+      request: { bookId: "book", groupIds: ["group"] },
+    });
+    invokeMock.mockResolvedValueOnce(undefined);
+    await tauriServices.library.deleteGroup("group");
+    expect(invokeMock).toHaveBeenLastCalledWith("delete_group", { request: { id: "group" } });
+  });
+  it("reports rejected group membership changes instead of pretending they persisted", async () => {
+    invokeMock.mockRejectedValueOnce({ code: "not_found", message: "library group was not found" });
+    await expect(tauriServices.library.setBookGroups("book", ["absent"])).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
 });

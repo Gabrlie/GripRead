@@ -171,6 +171,40 @@ pub struct BookRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryGroup {
+    pub id: String,
+    pub name: String,
+    pub book_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameGroupRequest {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetBookGroupsRequest {
+    pub book_id: String,
+    pub group_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TxtEncodingRequest {
     pub book_id: String,
     pub encoding: TxtEncoding,
@@ -336,10 +370,10 @@ pub struct ReaderPreferences {
 impl Default for ReaderPreferences {
     fn default() -> Self {
         Self {
-            theme: ThemeMode::System,
+            theme: ThemeMode::Light,
             paper_tone: PaperTone::WarmTea,
             oled_black: false,
-            font_size: 20.0,
+            font_size: 18.0,
             line_height: 1.8,
             font_family: ReaderFont::Serif,
             page_turn_effect: PageTurnEffect::Curl,

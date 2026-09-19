@@ -7,6 +7,11 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppError,
   LibraryBook,
+  LibraryGroup,
+  CreateGroupRequest,
+  RenameGroupRequest,
+  GroupRequest,
+  SetBookGroupsRequest,
   ReaderPreferences,
   ReadContentRequest,
   StartImportRequest,
@@ -120,6 +125,23 @@ export const tauriServices: AppServices = {
         request: { operationId } satisfies ImportOperationRequest,
       }),
     listBooks: () => invokeCommand<LibraryBook[]>("list_books"),
+    listGroups: () => invokeCommand<LibraryGroup[]>("list_groups"),
+    createGroup: (name) =>
+      invokeCommand<LibraryGroup>("create_group", {
+        request: { name } satisfies CreateGroupRequest,
+      }),
+    renameGroup: (id, name) =>
+      invokeCommand<LibraryGroup>("rename_group", {
+        request: { id, name } satisfies RenameGroupRequest,
+      }),
+    deleteGroup: (id) =>
+      invokeCommand<void>("delete_group", {
+        request: { id } satisfies GroupRequest,
+      }),
+    setBookGroups: (bookId, groupIds) =>
+      invokeCommand<void>("set_book_groups", {
+        request: { bookId, groupIds } satisfies SetBookGroupsRequest,
+      }),
     onImportProgress: (listener) =>
       listen<ImportStatus>("import-progress", (event) => listener(event.payload)),
     getTxtEncoding: (bookId) =>

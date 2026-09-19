@@ -9,16 +9,18 @@ use uuid::Uuid;
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     BookRequest, Bookmark, BookmarkIdRequest, BookmarkRequest, CancelResult, ContentWindow,
-    ImportOperationRequest, ImportPhase, ImportResult, ImportStatus, ImportTask, LibraryBook,
-    ReadContentRequest, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
-    SaveLocatorRequest, SaveSettingsRequest, SearchRequest, SearchResponse, StartImportRequest,
+    CreateGroupRequest, GroupRequest, ImportOperationRequest, ImportPhase, ImportResult,
+    ImportStatus, ImportTask, LibraryBook, LibraryGroup, ReadContentRequest, ReaderLocator,
+    ReaderPreferences, RenameGroupRequest, ResolveLocatorRequest, SaveLocatorRequest,
+    SaveSettingsRequest, SearchRequest, SearchResponse, SetBookGroupsRequest, StartImportRequest,
     TocEntry, TxtDecodeStatus, TxtDecodeTask, TxtEncodingInfo, TxtEncodingRequest,
     TxtSourceRequest,
 };
 use crate::storage::{
     before_import_commit, build_toc_from_context, duplicate_validation_retry,
-    read_content_window_from_context, resolve_locator_from_context, validate_content_locator,
-    validate_import_target, verify_content_context, verify_prepared_txt_decode_source, Storage,
+    prepare_import_for_target, read_content_window_from_context, resolve_locator_from_context,
+    validate_content_locator, validate_import_target, verify_content_context,
+    verify_prepared_txt_decode_source, Storage,
 };
 
 pub struct AppState {
@@ -98,7 +100,7 @@ pub async fn start_import(
         let blocking_imports = Arc::clone(&worker_imports);
         let blocking_app = worker_app.clone();
         let blocking = tauri::async_runtime::spawn_blocking(move || {
-            let prepared = Storage::prepare_import(
+            let mut prepared = Storage::prepare_import(
                 &data_root,
                 &source,
                 &blocking_operation_id,
@@ -130,6 +132,9 @@ pub async fn start_import(
                         })?;
                         guard.snapshot_import_target(&prepared.sha256, &prepared.source_sha256)?
                     };
+                    if let Some(target) = target.as_ref() {
+                        prepare_import_for_target(&data_root, &mut prepared, target, &cancel)?;
+                    }
                     let validated_target = target
                         .as_ref()
                         .map(|target| validate_import_target(&data_root, target, &cancel))
@@ -284,6 +289,108 @@ pub async fn list_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, 
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, format!("library worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<LibraryGroup>, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .list_groups()
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("library group worker stopped: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+pub async fn create_group(
+    request: CreateGroupRequest,
+    state: State<'_, AppState>,
+) -> Result<LibraryGroup, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .create_group(&request.name)
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("library group worker stopped: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+pub async fn rename_group(
+    request: RenameGroupRequest,
+    state: State<'_, AppState>,
+) -> Result<LibraryGroup, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .rename_group(&request.id, &request.name)
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("library group worker stopped: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+pub async fn delete_group(
+    request: GroupRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .delete_group(&request.id)
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("library group worker stopped: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+pub async fn set_book_groups(
+    request: SetBookGroupsRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .set_book_groups(&request.book_id, &request.group_ids)
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("library group worker stopped: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
@@ -516,6 +623,7 @@ pub async fn set_txt_encoding(
             &AtomicBool::new(false),
             |_, _, _| {},
         )?;
+        verify_prepared_txt_decode_source(&root, &prepared, &AtomicBool::new(false))?;
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?

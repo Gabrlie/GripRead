@@ -4,6 +4,7 @@ import type {
   ImportStatus,
   ImportTask,
   LibraryBook,
+  LibraryGroup,
   ReaderLocator,
   ReaderPreferences,
   ReadContentRequest,
@@ -27,6 +28,11 @@ export interface LibraryService {
   getImportStatus(operationId: string): Promise<ImportStatus>;
   cancelImport(operationId: string): Promise<CancelResult>;
   listBooks(): Promise<LibraryBook[]>;
+  listGroups(): Promise<LibraryGroup[]>;
+  createGroup(name: string): Promise<LibraryGroup>;
+  renameGroup(id: string, name: string): Promise<LibraryGroup>;
+  deleteGroup(id: string): Promise<void>;
+  setBookGroups(bookId: string, groupIds: string[]): Promise<void>;
   onImportProgress(listener: (status: ImportStatus) => void): Promise<Unsubscribe>;
   getTxtEncoding(bookId: string): Promise<TxtEncodingInfo>;
   pickAndReassociateTxt(bookId: string): Promise<TxtEncodingInfo | null>;

@@ -44,6 +44,11 @@ const IPC_TYPES: &[&str] = &[
     "ImportOperationRequest",
     "SaveLocatorRequest",
     "LibraryBook",
+    "LibraryGroup",
+    "CreateGroupRequest",
+    "RenameGroupRequest",
+    "GroupRequest",
+    "SetBookGroupsRequest",
     "ThemeMode",
     "PaperTone",
     "ReaderFont",
@@ -104,6 +109,11 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ImportOperationRequest>(&config)?;
     export_all::<SaveLocatorRequest>(&config)?;
     export_all::<LibraryBook>(&config)?;
+    export_all::<LibraryGroup>(&config)?;
+    export_all::<CreateGroupRequest>(&config)?;
+    export_all::<RenameGroupRequest>(&config)?;
+    export_all::<GroupRequest>(&config)?;
+    export_all::<SetBookGroupsRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;
     export_all::<PaperTone>(&config)?;
     export_all::<ReaderFont>(&config)?;

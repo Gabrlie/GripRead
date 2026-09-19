@@ -7,11 +7,12 @@ pub mod txt;
 pub mod typegen;
 
 use commands::{
-    add_bookmark, cancel_import, cancel_search, cancel_txt_decode, delete_bookmark,
-    get_import_status, get_saved_reader_locator, get_settings, get_txt_decode_status,
-    get_txt_encoding, list_bookmarks, list_books, list_toc, read_content_window,
-    reassociate_txt_source, resolve_reader_locator, save_reader_locator, save_settings,
-    search_book, set_txt_encoding, start_import, start_txt_decode, AppState,
+    add_bookmark, cancel_import, cancel_search, cancel_txt_decode, create_group, delete_bookmark,
+    delete_group, get_import_status, get_saved_reader_locator, get_settings, get_txt_decode_status,
+    get_txt_encoding, list_bookmarks, list_books, list_groups, list_toc, read_content_window,
+    reassociate_txt_source, rename_group, resolve_reader_locator, save_reader_locator,
+    save_settings, search_book, set_book_groups, set_txt_encoding, start_import, start_txt_decode,
+    AppState,
 };
 use tauri::{Emitter, Manager};
 
@@ -42,6 +43,11 @@ pub fn run() {
             get_import_status,
             cancel_import,
             list_books,
+            list_groups,
+            create_group,
+            rename_group,
+            delete_group,
+            set_book_groups,
             get_txt_encoding,
             reassociate_txt_source,
             start_txt_decode,
