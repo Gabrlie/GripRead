@@ -427,12 +427,13 @@ pub async fn reassociate_txt_source(
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
             .snapshot_txt_reassociation(&request.book_id)?;
-        let prepared = Storage::prepare_txt_reassociation(
+        let mut prepared = Storage::prepare_txt_reassociation(
             &root,
             &snapshot,
             &PathBuf::from(request.path),
             &operation_id,
         )?;
+        Storage::verify_prepared_txt_reassociation(&root, &mut prepared)?;
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1040,4 +1041,88 @@ fn publish_txt_decode_status(
     if let Some(status) = next_status {
         let _ = app.emit("txt-decode-progress", status);
     }
+}
+
+#[tauri::command]
+pub async fn update_book(
+    request: crate::models::UpdateBookRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::Book, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .update_book(&request)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+#[tauri::command]
+pub async fn remove_book(request: BookRequest, state: State<'_, AppState>) -> Result<(), AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .remove_book(&request.book_id)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+#[tauri::command]
+pub async fn restore_book(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .restore_book(&request.book_id)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+#[tauri::command]
+pub async fn list_removed_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .list_removed_books()
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+#[tauri::command]
+pub async fn get_shelf_preferences(
+    state: State<'_, AppState>,
+) -> Result<crate::models::ShelfPreferences, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .get_shelf_preferences()
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+#[tauri::command]
+pub async fn save_shelf_preferences(
+    request: crate::models::SaveShelfPreferencesRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::ShelfPreferences, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .save_shelf_preferences(&request.preferences)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }

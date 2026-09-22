@@ -137,6 +137,8 @@ export function ReaderView() {
   const [searchCursor, setSearchCursor] = useState<number | null>(null);
   const [searchHasMore, setSearchHasMore] = useState(false);
   const [highlight, setHighlight] = useState<{ start: number; end: number } | null>(null);
+  const [searchComplete, setSearchComplete] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const searchRequest = useRef(0);
   const searchOperationId = useRef<string | null>(null);
@@ -199,6 +201,8 @@ export function ReaderView() {
       setSearchMatches([]);
       setSearchCursor(null);
       setSearchHasMore(false);
+      setSearchComplete(false);
+      setSearchError(null);
       setSearching(false);
       setHighlight(null);
       searchRequest.current += 1;
@@ -257,6 +261,8 @@ export function ReaderView() {
       void runtime.services.reader.cancelSearch(previousOperationId).catch(() => undefined);
     }
     searchOperationId.current = operationId;
+    setSearchComplete(false);
+    setSearchError(null);
     setSearching(true);
     setHighlight(null);
     run(async () => {
@@ -273,9 +279,11 @@ export function ReaderView() {
           setSearchMatches(result.matches);
           setSearchCursor(result.nextCursor);
           setSearchHasMore(result.hasMore);
+          setSearchComplete(true);
         }
       } catch (error) {
-        if (requestId === searchRequest.current && !isCancellationError(error)) throw error;
+        if (requestId === searchRequest.current && !isCancellationError(error))
+          setSearchError(String(error));
       } finally {
         if (requestId === searchRequest.current) {
           setSearching(false);
@@ -294,6 +302,8 @@ export function ReaderView() {
       void runtime.services.reader.cancelSearch(previousOperationId).catch(() => undefined);
     }
     searchOperationId.current = operationId;
+    setSearchComplete(false);
+    setSearchError(null);
     setSearching(true);
     run(async () => {
       try {
@@ -309,9 +319,11 @@ export function ReaderView() {
           setSearchMatches((current) => [...current, ...result.matches]);
           setSearchCursor(result.nextCursor);
           setSearchHasMore(result.hasMore);
+          setSearchComplete(true);
         }
       } catch (error) {
-        if (requestId === searchRequest.current && !isCancellationError(error)) throw error;
+        if (requestId === searchRequest.current && !isCancellationError(error))
+          setSearchError(String(error));
       } finally {
         if (requestId === searchRequest.current) {
           setSearching(false);
@@ -340,6 +352,8 @@ export function ReaderView() {
             .catch(() => undefined);
           searchOperationId.current = null;
         }
+        setSearchComplete(false);
+        setSearchError(null);
         setSearching(false);
         setSearchMatches([]);
         setSearchCursor(null);
@@ -438,6 +452,7 @@ export function ReaderView() {
   }, [controller, preferences?.fontSize, preferences?.lineHeight, preferences?.fontFamily, run]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (document.querySelector('[data-exit-pending="true"]')) return;
       if (event.key === "Escape" && !event.defaultPrevented) {
         if (panel) {
           event.preventDefault();
@@ -1116,6 +1131,8 @@ export function ReaderView() {
                           .catch(() => undefined);
                         searchOperationId.current = null;
                       }
+                      setSearchComplete(false);
+                      setSearchError(null);
                       setSearching(false);
                       setSearchMatches([]);
                       setSearchCursor(null);
@@ -1131,7 +1148,20 @@ export function ReaderView() {
                     搜索
                   </Button>
                 </div>
-                {searchMatches.length === 0 && searchQuery && !searching && (
+                {searching && (
+                  <p role="status" className="text-sm text-secondary">
+                    正在搜索…
+                  </p>
+                )}
+                {searchError && (
+                  <div role="alert" className="text-sm text-error">
+                    {searchError}
+                    <Button size="sm" variant="outline" onClick={search}>
+                      重试搜索
+                    </Button>
+                  </div>
+                )}
+                {searchComplete && !searchError && searchMatches.length === 0 && !searching && (
                   <p className="text-sm text-secondary">没有找到匹配内容。</p>
                 )}
                 <div className="max-h-64 overflow-auto space-y-1">

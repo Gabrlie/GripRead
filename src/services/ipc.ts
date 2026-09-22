@@ -5,6 +5,10 @@ export type { LibraryService, ReaderService, SettingsService, AppServices } from
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  Book,
+  UpdateBookRequest,
+  ShelfPreferences,
+  SaveShelfPreferencesRequest,
   AppError,
   LibraryBook,
   LibraryGroup,
@@ -124,6 +128,13 @@ export const tauriServices: AppServices = {
       invokeCommand<CancelResult>("cancel_import", {
         request: { operationId } satisfies ImportOperationRequest,
       }),
+    listRemovedBooks: () => invokeCommand<LibraryBook[]>("list_removed_books"),
+    updateBook: (request) =>
+      invokeCommand<Book>("update_book", { request: request satisfies UpdateBookRequest }),
+    removeBook: (bookId) =>
+      invokeCommand<void>("remove_book", { request: { bookId } satisfies BookRequest }),
+    restoreBook: (bookId) =>
+      invokeCommand<void>("restore_book", { request: { bookId } satisfies BookRequest }),
     listBooks: () => invokeCommand<LibraryBook[]>("list_books"),
     listGroups: () => invokeCommand<LibraryGroup[]>("list_groups"),
     createGroup: (name) =>
@@ -198,6 +209,11 @@ export const tauriServices: AppServices = {
       }),
   },
   settings: {
+    getShelfPreferences: () => invokeCommand<ShelfPreferences>("get_shelf_preferences"),
+    saveShelfPreferences: (preferences) =>
+      invokeCommand<ShelfPreferences>("save_shelf_preferences", {
+        request: { preferences } satisfies SaveShelfPreferencesRequest,
+      }),
     getSettings: () => invokeCommand<ReaderPreferences>("get_settings"),
     saveSettings: (settings) =>
       invokeCommand<ReaderPreferences>("save_settings", {

@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LibraryStore } from "./library";
+import { LibraryStore, orderBooks } from "./library";
 import { SettingsStore } from "./settings";
 import type { LibraryService } from "../services/contracts";
-import type { ImportStatus, ReaderPreferences } from "../types/generated";
+import type {
+  ImportResult,
+  ImportStatus,
+  LibraryBook,
+  ReaderPreferences,
+} from "../types/generated";
 const library = (): LibraryService => ({
   pickAndImportTxt: vi.fn(async () => null),
   startImport: vi.fn(async () => ({ operationId: "op" })),
@@ -13,6 +18,10 @@ const library = (): LibraryService => ({
   renameGroup: vi.fn(),
   deleteGroup: vi.fn(),
   setBookGroups: vi.fn(),
+  listRemovedBooks: vi.fn(async () => []),
+  updateBook: vi.fn(),
+  removeBook: vi.fn(),
+  restoreBook: vi.fn(),
   listBooks: vi.fn(async () => []),
   onImportProgress: vi.fn(async () => () => {}),
   startTxtDecode: vi.fn(),
@@ -32,6 +41,29 @@ const preferences: ReaderPreferences = {
   fontFamily: "serif",
   pageTurnEffect: "curl",
 };
+const book = (
+  id: string,
+  title: string,
+  createdAt: number,
+  lastReadAt: number | null,
+): LibraryBook => ({
+  book: { id, title, author: null, contentVersion: `v-${id}`, createdAt, updatedAt: createdAt },
+  asset: {
+    id: `asset-${id}`,
+    bookId: id,
+    kind: "txt",
+    sha256: `hash-${id}`,
+    byteLength: 1,
+    contentVersion: `v-${id}`,
+    availability: "ready",
+    createdAt,
+  },
+  locator: null,
+  totalLength: 1,
+  txtEncoding: null,
+  lastReadAt,
+  removedAt: null,
+});
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {
   it("ignores late polling failures and repeated terminal events from an older job", async () => {
@@ -141,6 +173,114 @@ describe("application-owned import", () => {
     await store.refresh();
     expect(store.getSnapshot().error).toContain("database unavailable");
   });
+  it("keeps removed-book loading distinct from a confirmed empty archive", async () => {
+    let resolve!: (books: LibraryBook[]) => void;
+    const service = library();
+    vi.mocked(service.listRemovedBooks).mockReturnValue(
+      new Promise<LibraryBook[]>((res) => {
+        resolve = res;
+      }),
+    );
+    const store = new LibraryStore(service);
+    const pending = store.loadRemoved();
+    expect(store.getSnapshot()).toMatchObject({ removedLoading: true, removedLoaded: false });
+    resolve([]);
+    await pending;
+    expect(store.getSnapshot()).toMatchObject({
+      removedLoading: false,
+      removedLoaded: true,
+      removedBooks: [],
+    });
+  });
+  it("queues shelf mutations, refreshes both views, and keeps failures visible", async () => {
+    const service = library();
+    const entry = book("book", "标题", 1, null);
+    vi.mocked(service.listBooks).mockResolvedValue([entry]);
+    vi.mocked(service.listRemovedBooks).mockResolvedValue([]);
+    const store = new LibraryStore(service);
+    await store.refresh();
+    await store.remove(entry);
+    expect(service.removeBook).toHaveBeenCalledWith("book");
+    expect(store.getSnapshot()).toMatchObject({
+      lastRemoved: { id: "book", title: "标题" },
+      managing: false,
+      managementError: null,
+    });
+    vi.mocked(service.updateBook).mockRejectedValueOnce(new Error("metadata unavailable"));
+    await expect(store.edit({ bookId: "book", title: "新标题", author: null })).rejects.toThrow(
+      "metadata unavailable",
+    );
+    expect(store.getSnapshot().managementError).toContain("metadata unavailable");
+  });
+  it("does not leave a stale refresh spinner after a failed mutation", async () => {
+    let release!: (books: LibraryBook[]) => void;
+    const service = library();
+    vi.mocked(service.listBooks).mockReturnValue(
+      new Promise<LibraryBook[]>((resolve) => {
+        release = resolve;
+      }),
+    );
+    vi.mocked(service.removeBook).mockRejectedValueOnce(new Error("archive unavailable"));
+    const store = new LibraryStore(service);
+    const refresh = store.refresh();
+    const pending = store.remove(book("book", "标题", 1, null));
+    await expect(pending).rejects.toThrow("archive unavailable");
+    expect(store.getSnapshot()).toMatchObject({ loading: false, managing: false });
+    release([]);
+    await refresh;
+  });
+  it("clears the undo banner when a duplicate import restores an archived book", async () => {
+    const service = library();
+    const entry = book("book", "标题", 1, null);
+    const result: ImportResult = {
+      book: entry.book,
+      asset: entry.asset,
+      duplicate: true,
+      sourceByteLength: entry.asset.byteLength,
+    };
+    vi.mocked(service.listBooks).mockResolvedValue([entry]);
+    vi.mocked(service.listRemovedBooks).mockResolvedValue([entry]);
+    vi.mocked(service.startImport).mockResolvedValue({ operationId: "restore-import" });
+    vi.mocked(service.getImportStatus).mockResolvedValue({
+      operationId: "restore-import",
+      phase: "completed",
+      bytesRead: 1,
+      totalBytes: 1,
+      result,
+      error: null,
+    });
+    const store = new LibraryStore(service);
+    await store.refresh();
+    await store.remove(entry);
+    expect(store.getSnapshot().lastRemoved).toEqual({ id: "book", title: "标题" });
+    await store.importTxt("/book.txt");
+    expect(store.getSnapshot().lastRemoved).toBeNull();
+    expect(service.listRemovedBooks).toHaveBeenCalled();
+  });
+});
+describe("shelf ordering", () => {
+  const entries = [
+    book("old", "第 10 章", 1, null),
+    book("recent", "第 2 章", 2, 30),
+    book("middle", "第 1 章", 3, 20),
+  ];
+  it("uses persisted recent, imported, and natural title ordering", () => {
+    expect(orderBooks(entries, "recent_read").map((entry) => entry.book.id)).toEqual([
+      "recent",
+      "middle",
+      "old",
+    ]);
+    expect(orderBooks(entries, "imported").map((entry) => entry.book.id)).toEqual([
+      "middle",
+      "recent",
+      "old",
+    ]);
+    expect(orderBooks(entries, "title").map((entry) => entry.book.id)).toEqual([
+      "middle",
+      "recent",
+      "old",
+    ]);
+  });
 });
 describe("durable settings", () => {
   it("serializes saves and keeps the newest preference update", async () => {
@@ -175,6 +315,27 @@ describe("durable settings", () => {
     store.retry();
     await store.flush();
     expect(store.getSnapshot().error).toBeNull();
+    expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 24 });
+  });
+  it("does not let a stale reload overwrite a write that started after it", async () => {
+    let resolveReload!: (value: ReaderPreferences) => void;
+    const getSettings = vi
+      .fn<() => Promise<ReaderPreferences>>()
+      .mockResolvedValueOnce(preferences)
+      .mockReturnValueOnce(
+        new Promise<ReaderPreferences>((resolve) => {
+          resolveReload = resolve;
+        }),
+      );
+    const save = vi.fn(async (value: ReaderPreferences) => value);
+    const store = new SettingsStore({ getSettings, saveSettings: save });
+    await store.load();
+    const reload = store.load();
+    store.set({ fontSize: 24 });
+    resolveReload(preferences);
+    await reload;
+    await store.flush();
+    expect(store.getSnapshot().value?.fontSize).toBe(24);
     expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 24 });
   });
 });

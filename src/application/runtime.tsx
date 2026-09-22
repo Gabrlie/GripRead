@@ -1,4 +1,5 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
+import type { ShelfPreferences } from "../types/generated";
 import type { AppServices } from "../services/contracts";
 import { LibraryStore } from "./library";
 import { ShelfStore } from "./shelf";
@@ -7,15 +8,35 @@ export class AppRuntime {
   readonly library: LibraryStore;
   readonly shelf: ShelfStore;
   readonly settings: SettingsStore;
+  readonly shelfPreferences: SettingsStore<ShelfPreferences>;
   readerFlush: (() => Promise<void>) | null = null;
   constructor(readonly services: AppServices) {
     this.library = new LibraryStore(services.library);
     this.shelf = new ShelfStore(services.library, services.reader);
     this.settings = new SettingsStore(services.settings);
+    this.shelfPreferences = new SettingsStore({
+      getSettings: services.settings.getShelfPreferences,
+      saveSettings: services.settings.saveShelfPreferences,
+    });
   }
-  flush = async () => {
-    await this.readerFlush?.();
-    await this.settings.flush();
+  flush = async (retryFailed = false) => {
+    let firstError: unknown;
+    const flushers = [
+      this.readerFlush,
+      this.settings.flush,
+      this.shelfPreferences.flush,
+      () => this.library.flush(retryFailed),
+      () => this.shelf.flush(retryFailed),
+    ];
+    for (const flush of flushers) {
+      if (!flush) continue;
+      try {
+        await flush();
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError) throw firstError;
   };
 }
 export const RuntimeContext = createContext<AppRuntime | null>(null);
@@ -35,5 +56,10 @@ export function useSettings() {
 
 export function useShelf() {
   const store = useRuntime().shelf;
+  return { state: useSyncExternalStore(store.subscribe, store.getSnapshot), store };
+}
+
+export function useShelfPreferences() {
+  const store = useRuntime().shelfPreferences;
   return { state: useSyncExternalStore(store.subscribe, store.getSnapshot), store };
 }

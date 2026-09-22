@@ -4,4 +4,4 @@ import type { BookAsset } from "./BookAsset";
 import type { ReaderLocator } from "./ReaderLocator";
 import type { TxtEncodingInfo } from "./TxtEncodingInfo";
 
-export type LibraryBook = { book: Book, asset: BookAsset, locator: ReaderLocator | null, totalLength: number | null, txtEncoding: TxtEncodingInfo | null, };
+export type LibraryBook = { book: Book, asset: BookAsset, locator: ReaderLocator | null, totalLength: number | null, txtEncoding: TxtEncodingInfo | null, lastReadAt: number | null, removedAt: number | null, };

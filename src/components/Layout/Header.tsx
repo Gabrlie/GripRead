@@ -24,6 +24,9 @@ interface HeaderProps {
   layoutMode?: "list" | "grid";
   onCacheManage?: () => void;
   onGroupManage?: () => void;
+  onBookManage?: () => void;
+  onRemovedBooks?: () => void;
+  onSort?: () => void;
 }
 
 export function Header({
@@ -42,9 +45,20 @@ export function Header({
   layoutMode,
   onCacheManage,
   onGroupManage,
+  onBookManage,
+  onRemovedBooks,
+  onSort,
 }: HeaderProps) {
   const hasShelfOptions = Boolean(
-    onUpdateToc || onAddLocal || onRemoteBooks || onToggleLayout || onCacheManage || onGroupManage,
+    onUpdateToc ||
+    onAddLocal ||
+    onRemoteBooks ||
+    onToggleLayout ||
+    onCacheManage ||
+    onGroupManage ||
+    onSort ||
+    onBookManage ||
+    onRemovedBooks,
   );
 
   const content = (
@@ -164,6 +178,24 @@ export function Header({
                 <Icon name="label" size={16} className="text-primary" />
                 <span>分组管理</span>
               </DropdownMenuItem>
+              {onSort && (
+                <DropdownMenuItem onClick={onSort}>
+                  <Icon name="view_list" size={16} className="text-primary" />
+                  <span>书架排序</span>
+                </DropdownMenuItem>
+              )}
+              {onBookManage && (
+                <DropdownMenuItem onClick={onBookManage}>
+                  <Icon name="auto_stories" size={16} className="text-primary" />
+                  <span>书籍管理</span>
+                </DropdownMenuItem>
+              )}
+              {onRemovedBooks && (
+                <DropdownMenuItem onClick={onRemovedBooks}>
+                  <Icon name="folder_open" size={16} className="text-primary" />
+                  <span>已移出书籍</span>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : onMoreClick ? (

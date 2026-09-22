@@ -1,4 +1,6 @@
 import type {
+  UpdateBookRequest,
+  ShelfSort,
   ImportStatus,
   ImportPhase,
   LibraryBook,
@@ -10,6 +12,12 @@ import type { LibraryService, Unsubscribe } from "../services/contracts";
 
 export interface LibrarySnapshot {
   books: LibraryBook[];
+  removedBooks: LibraryBook[];
+  removedLoading: boolean;
+  removedLoaded: boolean;
+  managementError: string | null;
+  managing: boolean;
+  lastRemoved: { id: string; title: string } | null;
   loading: boolean;
   error: string | null;
   job: ImportStatus | null;
@@ -22,10 +30,36 @@ export interface LibrarySnapshot {
 export const isTerminal = (status: { phase: ImportPhase }) =>
   ["completed", "failed", "cancelled"].includes(status.phase);
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/(?:^|\s)([a-z][a-z0-9_]*)\s*:/i);
+  return match?.[1];
+}
+
+function isValidationError(error: unknown): boolean {
+  return errorCode(error) === "invalid_argument" || errorCode(error) === "not_found";
+}
+
+interface FailedWrite {
+  revision: number;
+  error: unknown;
+  retry: (() => Promise<unknown>) | null;
+}
+
 /** Owns the import across page/panel lifetimes. Events and polling share one terminal transition. */
 export class LibraryStore {
   private snapshot: LibrarySnapshot = {
     books: [],
+    removedBooks: [],
+    removedLoading: false,
+    removedLoaded: false,
+    managementError: null,
+    managing: false,
+    lastRemoved: null,
     loading: true,
     error: null,
     job: null,
@@ -107,6 +141,117 @@ export class LibraryStore {
       if (version === this.refreshVersion) this.update({ loading: false, error: String(error) });
     }
   };
+  private managementQueue: Promise<void> = Promise.resolve();
+  private pendingChanges = 0;
+  private removedRevision = 0;
+  private pendingWrites = new Set<Promise<void>>();
+  private writeRevision = 0;
+  private failedWrites = new Map<string, FailedWrite>();
+  loadRemoved = async () => {
+    const revision = ++this.removedRevision;
+    this.update({ removedLoading: true, managementError: null });
+    try {
+      const removedBooks = await this.service.listRemovedBooks();
+      if (revision === this.removedRevision)
+        this.update({ removedBooks, removedLoading: false, removedLoaded: true });
+    } catch (error) {
+      if (revision === this.removedRevision)
+        this.update({ removedLoading: false, removedLoaded: true, managementError: String(error) });
+    }
+  };
+  private manage(key: string, action: () => Promise<unknown>): Promise<void> {
+    this.pendingChanges++;
+    this.update({ managing: true });
+    const revision = ++this.writeRevision;
+    let resolveWrite!: () => void;
+    let rejectWrite!: (error: unknown) => void;
+    const write = new Promise<void>((resolve, reject) => {
+      resolveWrite = resolve;
+      rejectWrite = reject;
+    });
+    this.pendingWrites.add(write);
+    void write.catch(() => undefined).finally(() => this.pendingWrites.delete(write));
+    const pending = this.managementQueue.then(async () => {
+      ++this.refreshVersion;
+      ++this.removedRevision;
+      this.update({ managementError: null });
+      try {
+        try {
+          await action();
+          const previous = this.failedWrites.get(key);
+          if (previous && previous.revision < revision) this.failedWrites.delete(key);
+          resolveWrite();
+        } catch (error) {
+          if (!isValidationError(error)) {
+            this.failedWrites.set(key, { revision, error, retry: action });
+          }
+          rejectWrite(error);
+          throw error;
+        }
+        await this.refresh();
+        await this.loadRemoved();
+        if (this.snapshot.error || this.snapshot.managementError)
+          throw new Error(this.snapshot.error ?? this.snapshot.managementError!);
+      } catch (error) {
+        // The pre-mutation refresh was invalidated so it cannot put an older
+        // snapshot back into the shelf. Surface the failure while releasing
+        // both loading indicators instead of leaving a spinner forever.
+        this.update({
+          loading: false,
+          removedLoading: false,
+          managementError: String(error),
+        });
+        throw error;
+      } finally {
+        this.pendingChanges--;
+        this.update({ managing: this.pendingChanges > 0 });
+      }
+    });
+    this.managementQueue = pending.catch(() => undefined);
+    return pending;
+  }
+  hasUnresolvedWrites = () => this.failedWrites.size > 0;
+  discardFailedWrites = () => {
+    // Explicit cancellation abandons only rejected intents; pending writes and
+    // committed records are never touched.
+    this.failedWrites.clear();
+  };
+  flush = async (retryFailed = false) => {
+    for (;;) {
+      const writes = [...this.pendingWrites];
+      if (writes.length) await Promise.allSettled(writes);
+      if (this.pendingWrites.size) continue;
+      const failures = [...this.failedWrites.entries()];
+      if (!failures.length) return;
+      if (!retryFailed) throw failures[0][1].error;
+      for (const [key, failure] of failures) {
+        if (this.failedWrites.get(key)?.revision !== failure.revision) continue;
+        if (!failure.retry) throw failure.error;
+        this.failedWrites.delete(key);
+        try {
+          await failure.retry();
+        } catch (error) {
+          const newer = this.failedWrites.get(key);
+          if (!newer || newer.revision <= failure.revision)
+            this.failedWrites.set(key, { ...failure, error });
+          throw error;
+        }
+      }
+    }
+  };
+  edit = (request: UpdateBookRequest) =>
+    this.manage(`book:${request.bookId}:metadata`, () => this.service.updateBook(request));
+  remove = (book: LibraryBook) =>
+    this.manage(`book:${book.book.id}:shelf`, async () => {
+      await this.service.removeBook(book.book.id);
+      this.update({ lastRemoved: { id: book.book.id, title: book.book.title } });
+    });
+  restore = (id: string) =>
+    this.manage(`book:${id}:shelf`, async () => {
+      await this.service.restoreBook(id);
+      if (this.snapshot.lastRemoved?.id === id) this.update({ lastRemoved: null });
+    });
+  dismissUndo = () => this.update({ lastRemoved: null });
   importTxt = async (path?: string) => {
     if (this.snapshot.importing) return;
     this.update({ importing: true, importError: null, job: null });
@@ -182,7 +327,12 @@ export class LibraryStore {
     if (isTerminal(status)) {
       this.completed.add(status.operationId);
       clearTimeout(this.timer);
-      if (status.phase === "completed") void this.refresh();
+      if (status.phase === "completed") {
+        if (status.result && this.snapshot.lastRemoved?.id === status.result.book.id)
+          this.update({ lastRemoved: null });
+        void this.refresh();
+        void this.loadRemoved();
+      }
     }
   }
   private async poll(generation: number) {
@@ -231,4 +381,17 @@ export class LibraryStore {
       this.decodeTimer = setTimeout(() => void this.pollDecode(generation), 250);
     }
   }
+}
+
+const titleOrder = new Intl.Collator("zh-Hans", { numeric: true, sensitivity: "base" });
+export function orderBooks(books: readonly LibraryBook[], sort: ShelfSort): LibraryBook[] {
+  return [...books].sort((a, b) => {
+    const primary =
+      sort === "title"
+        ? titleOrder.compare(a.book.title, b.book.title)
+        : sort === "recent_read"
+          ? (b.lastReadAt ?? -1) - (a.lastReadAt ?? -1)
+          : b.book.createdAt - a.book.createdAt;
+    return primary || b.book.createdAt - a.book.createdAt || a.book.id.localeCompare(b.book.id);
+  });
 }

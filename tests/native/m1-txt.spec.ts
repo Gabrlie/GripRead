@@ -1,9 +1,14 @@
 import { browser, expect } from "@wdio/globals";
+import { access, readFile, rename, unlink } from "node:fs/promises";
 
 import {
   decodeTxt,
+  dataPath,
+  expectInvokeError,
+  fixturePath,
   importFixture,
   invoke,
+  managedAssetPath,
   waitForAppReady,
   refreshLibraryInUi,
   openBook,
@@ -17,6 +22,7 @@ import type {
   ImportResult,
   SearchResponse,
   TocEntry,
+  LibraryBook,
   TxtEncodingInfo,
 } from "../../src/types/generated";
 
@@ -98,6 +104,68 @@ describe("GripRead native M1 TXT tools", () => {
     expect(response.matches[0]?.excerpt).toContain("needle");
     expect(response.matches[0]?.locator.offset).toBe(65_535);
   });
+  it("accepts only a matching retained source during reassociation", async () => {
+    const imported = await importFixture("mixed.txt");
+    const retained = dataPath(`sources/${imported.asset.id}.txt`);
+    await unlink(retained);
+
+    const wrong = await expectInvokeError("reassociate_txt_source", {
+      request: { bookId: imported.book.id, path: fixturePath("replacement.txt") },
+    });
+    expect(wrong.message).toContain("does not reproduce");
+    await expect(access(retained)).rejects.toThrow();
+
+    const info = await invoke<TxtEncodingInfo>("reassociate_txt_source", {
+      request: { bookId: imported.book.id, path: fixturePath("mixed-duplicate.txt") },
+    });
+    expect(info.canChange).toBe(true);
+    expect(await readFile(retained)).toEqual(await readFile(fixturePath("mixed-duplicate.txt")));
+  });
+  it("keeps metadata, preferences, records, and identity through archive and reimport", async () => {
+    const imported = await importFixture("chapters.txt");
+    const edited = await invoke<{ id: string; title: string; author: string | null }>(
+      "update_book",
+      { request: { bookId: imported.book.id, title: "  已编辑书名  ", author: " 作者 " } },
+    );
+    expect(edited).toMatchObject({
+      id: imported.book.id,
+      title: "已编辑书名",
+      author: "作者",
+    });
+    const preferences = await invoke<{ layout: string; sort: string; groupId: string }>(
+      "save_shelf_preferences",
+      { request: { preferences: { layout: "grid", sort: "title", groupId: "all" } } },
+    );
+    expect(preferences).toEqual({ layout: "grid", sort: "title", groupId: "all" });
+
+    await invoke("remove_book", { request: { bookId: imported.book.id } });
+    expect(
+      (await invoke<LibraryBook[]>("list_books")).some(
+        (entry) => entry.book.id === imported.book.id,
+      ),
+    ).toBe(false);
+    const removed = await invoke<LibraryBook[]>("list_removed_books");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.asset.id).toBe(imported.asset.id);
+    expect(await invoke("get_shelf_preferences")).toEqual(preferences);
+
+    await invoke("restore_book", { request: { bookId: imported.book.id } });
+    expect(
+      (await invoke<LibraryBook[]>("list_books")).some(
+        (entry) => entry.book.id === imported.book.id,
+      ),
+    ).toBe(true);
+    await invoke("remove_book", { request: { bookId: imported.book.id } });
+    const repeated = await importFixture("chapters.txt");
+    expect(repeated.duplicate).toBe(true);
+    expect(repeated.book.id).toBe(imported.book.id);
+    expect(repeated.asset.id).toBe(imported.asset.id);
+    expect(
+      (await invoke<LibraryBook[]>("list_removed_books")).some(
+        (entry) => entry.book.id === imported.book.id,
+      ),
+    ).toBe(false);
+  });
   it("connects the preserved reader controls to TOC, bookmarks and highlighted search", async () => {
     const source = await importFixture("chapters.txt");
     await refreshLibraryInUi(source.book.id);
@@ -126,6 +194,23 @@ describe("GripRead native M1 TXT tools", () => {
     await result.click();
     await browser.$('[data-testid="reader-highlight"]').waitForDisplayed();
     expect(await browser.$('[data-testid="reader-highlight"]').getText()).toBe("结尾");
+
+    await browser.$('button[aria-label="搜索正文"]').click();
+    const searchInput = await browser.$('input[aria-label="搜索关键词"]');
+    await searchInput.setValue("明确不存在的关键词");
+    await browser.keys("Enter");
+    await browser.$("p*=没有找到匹配内容").waitForDisplayed();
+
+    const managedPath = await managedAssetPath(source.book.id);
+    const missingPath = `${managedPath}.native-search-missing`;
+    await rename(managedPath, missingPath);
+    try {
+      await searchInput.setValue("结尾");
+      await browser.keys("Enter");
+      await browser.$('[role="alert"]*=managed content file is missing').waitForDisplayed();
+    } finally {
+      await rename(missingPath, managedPath);
+    }
     await clickReaderControl("reader-close");
     await waitForReaderClosed();
   });

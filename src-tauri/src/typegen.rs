@@ -55,6 +55,11 @@ const IPC_TYPES: &[&str] = &[
     "PageTurnEffect",
     "ReaderPreferences",
     "SaveSettingsRequest",
+    "UpdateBookRequest",
+    "ShelfLayout",
+    "ShelfSort",
+    "ShelfPreferences",
+    "SaveShelfPreferencesRequest",
 ];
 
 pub fn generated_types() -> Result<String, AppError> {
@@ -120,6 +125,11 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<PageTurnEffect>(&config)?;
     export_all::<ReaderPreferences>(&config)?;
     export_all::<SaveSettingsRequest>(&config)?;
+    export_all::<UpdateBookRequest>(&config)?;
+    export_all::<ShelfLayout>(&config)?;
+    export_all::<ShelfSort>(&config)?;
+    export_all::<ShelfPreferences>(&config)?;
+    export_all::<SaveShelfPreferencesRequest>(&config)?;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

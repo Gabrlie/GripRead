@@ -1,4 +1,11 @@
-import React, { Component, type ReactNode, useEffect, useState } from "react";
+import React, {
+  Component,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
@@ -10,6 +17,7 @@ import {
   useRuntime,
   useSettings,
   useLibrary,
+  useShelfPreferences,
 } from "./application/runtime";
 import { applyTheme } from "./application/theme";
 import { Navbar } from "./components/Layout/Navbar";
@@ -73,7 +81,20 @@ function MainContent() {
   const runtime = useRuntime();
   const { state: library } = useLibrary();
   const { state: settings } = useSettings();
+  const { state: shelfPreferences, store: shelfPreferenceStore } = useShelfPreferences();
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [closePending, setClosePending] = useState(false);
+  const closeRetry = useRef<(() => Promise<void>) | null>(null);
+  useLayoutEffect(() => {
+    if (!closePending) return;
+    // Dialogs render in portals outside the app root. Pause their inputs too
+    // so no new saves are enqueued after the exit flush has begun.
+    const wasInert = document.body.inert;
+    document.body.inert = true;
+    return () => {
+      document.body.inert = wasInert;
+    };
+  }, [closePending]);
   useEffect(() => runtime.library.connect(), [runtime]);
   useEffect(() => {
     void runtime.settings.load();
@@ -82,29 +103,75 @@ function MainContent() {
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | undefined;
-    void listenForClose(runtime.flush, (error) => setCloseError(String(error)))
+    void listenForClose(
+      async (retryFailed = false) => {
+        // A previous settings save may already have failed before the native
+        // close request. Retry its retained value, then await ordered saves.
+        if (runtime.settings.getSnapshot().error) runtime.settings.retry();
+        if (shelfPreferenceStore.getSnapshot().error) shelfPreferenceStore.retry();
+        await runtime.flush(retryFailed);
+      },
+      (error, retry) => {
+        if (disposed) return;
+        closeRetry.current = retry;
+        setCloseError(String(error));
+      },
+      (pending) => {
+        if (disposed) return;
+        setClosePending(pending);
+        if (pending) setCloseError(null);
+      },
+    )
       .then((fn) => {
         if (disposed) fn();
         else cleanup = fn;
       })
-      .catch((error) => setCloseError(String(error)));
+      .catch((error) => {
+        if (!disposed) setCloseError(String(error));
+      });
     return () => {
       disposed = true;
       cleanup?.();
+      closeRetry.current = null;
     };
-  }, [runtime]);
+  }, [runtime, shelfPreferenceStore]);
   return (
     <div
-      data-testid={!library.loading && !library.error && settings.value ? "app-ready" : undefined}
+      data-testid={
+        !library.loading && !library.error && settings.value && shelfPreferences.value
+          ? "app-ready"
+          : undefined
+      }
+      inert={closePending}
+      data-exit-pending={closePending ? "true" : undefined}
       className="min-h-screen flex flex-col bg-surface text-on-surface min-w-0"
     >
       <Navbar />
       {closeError && (
         <div role="alert" className="fixed top-0 z-[100] bg-error-container text-error p-3 w-full">
           退出前保存失败：{closeError}
-          <button className="ml-3 underline" onClick={() => setCloseError(null)}>
-            返回重试
+          <button
+            className="ml-3 underline"
+            onClick={() => {
+              if (closeRetry.current) void closeRetry.current();
+              else setCloseError(null);
+            }}
+          >
+            {closeRetry.current ? "重试退出" : "返回"}
           </button>
+          {(runtime.library.hasUnresolvedWrites() || runtime.shelf.hasUnresolvedWrites()) && (
+            <button
+              className="ml-3 underline"
+              onClick={() => {
+                runtime.library.discardFailedWrites();
+                runtime.shelf.discardFailedWrites();
+                closeRetry.current = null;
+                setCloseError(null);
+              }}
+            >
+              放弃未保存的书架操作，返回应用
+            </button>
+          )}
         </div>
       )}
       <div className={`flex-1 flex flex-col ${activeBook ? "" : "md:pl-64"} min-w-0`}>

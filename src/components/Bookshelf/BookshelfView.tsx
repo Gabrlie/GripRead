@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { useApp } from "../../context/AppContext";
-import { useLibrary, useShelf } from "../../application/runtime";
+import { useLibrary, useShelf, useShelfPreferences } from "../../application/runtime";
 import type { LibraryBook } from "../../types/generated";
 import type { ShelfChapterLabels } from "../../application/shelf";
 import { Header } from "../Layout/Header";
@@ -9,6 +9,8 @@ import { Card, CardContent } from "../ui/card";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
+import { LibraryManager } from "./LibraryManager";
+import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 
 type ShelfBook = {
@@ -24,6 +26,8 @@ export function BookshelfView() {
   const { shelf, setShelf, openReader } = useApp();
   const { state, store } = useLibrary();
   const { state: groupState, store: groupStore } = useShelf();
+  const preferences = useShelfPreferences();
+  const [manager, setManager] = useState<"manage" | "removed" | "sort" | null>(null);
   const [isSearching, setIsSearching] = useState(Boolean(shelf.query));
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const tabsListRef = useRef<HTMLDivElement>(null);
@@ -36,7 +40,7 @@ export function BookshelfView() {
   const selectedBooks = selectedGroup ? new Set(selectedGroup.bookIds) : null;
   const layoutMode = shelf.layout;
   const searchQuery = shelf.query;
-  const filteredBooks: ShelfBook[] = state.books
+  const filteredBooks: ShelfBook[] = orderBooks(state.books, shelf.sort)
     .filter(
       (entry) =>
         (!selectedBooks || selectedBooks.has(entry.book.id)) &&
@@ -69,9 +73,22 @@ export function BookshelfView() {
   }, []);
 
   useEffect(() => {
-    if (!groupState.loading && !groupState.error && !selectedGroup && shelf.groupId !== "all")
+    if (
+      preferences.state.value &&
+      !groupState.loading &&
+      !groupState.error &&
+      !selectedGroup &&
+      shelf.groupId !== "all"
+    )
       setShelf({ groupId: "all" });
-  }, [groupState.loading, groupState.error, selectedGroup, shelf.groupId, setShelf]);
+  }, [
+    groupState.loading,
+    groupState.error,
+    selectedGroup,
+    shelf.groupId,
+    setShelf,
+    preferences.state.value,
+  ]);
 
   // 书架页专属：挂载时隐藏全局/窗口滚动条，卸载时恢复
   useEffect(() => {
@@ -179,6 +196,9 @@ export function BookshelfView() {
           onToggleLayout={handleToggleLayout}
           layoutMode={layoutMode}
           onGroupManage={() => setIsGroupModalOpen(true)}
+          onSort={() => setManager("sort")}
+          onBookManage={() => setManager("manage")}
+          onRemovedBooks={() => setManager("removed")}
         />
 
         {/* Row 2: Category Tabs Bar (流畅左右滑动，支持鼠标滚轮/触摸横向滚动，极简下划线滑块) */}
@@ -286,9 +306,56 @@ export function BookshelfView() {
             正在读取书架…
           </p>
         )}
+        {preferences.state.error && (
+          <div role="alert" className="text-xs text-error rounded-xl bg-error-container p-3 mb-3">
+            书架偏好保存失败：{preferences.state.error}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                preferences.state.value ? preferences.store.retry() : void preferences.store.load()
+              }
+            >
+              重试
+            </Button>
+          </div>
+        )}
+        {state.lastRemoved && (
+          <div
+            role="status"
+            className="text-xs text-secondary rounded-xl bg-surface-container p-3 mb-3 flex items-center gap-2"
+          >
+            <span className="flex-1 truncate">已移出：{state.lastRemoved.title}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={state.managing}
+              onClick={() => void store.restore(state.lastRemoved!.id).catch(() => undefined)}
+            >
+              撤销
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="关闭撤销提示"
+              onClick={store.dismissUndo}
+            >
+              <Icon name="close" size={14} />
+            </Button>
+          </div>
+        )}
+        {state.managementError && !manager && (
+          <p role="alert" className="text-xs text-error">
+            {state.managementError}
+          </p>
+        )}
         {/* Book List / Grid */}
         <section aria-label="书架书籍列表" className="mt-1 pb-6">
-          {filteredBooks.length === 0 ? (
+          {state.loading ? (
+            <p role="status" className="text-xs text-secondary py-10 text-center">
+              正在读取书架…
+            </p>
+          ) : state.error ? null : filteredBooks.length === 0 ? (
             <div className="bg-surface-container-low rounded-2xl p-10 text-center my-6 space-y-3 border border-surface-variant/30">
               <div className="w-12 h-12 rounded-full bg-surface-container mx-auto flex items-center justify-center text-secondary">
                 <Icon name="auto_stories" size={24} />
@@ -331,6 +398,7 @@ export function BookshelfView() {
         </section>
       </div>
 
+      <LibraryManager mode={manager} onClose={() => setManager(null)} />
       <GroupManager open={isGroupModalOpen} onOpenChange={setIsGroupModalOpen} />
     </div>
   );

@@ -1,4 +1,7 @@
 import type {
+  Book,
+  UpdateBookRequest,
+  ShelfPreferences,
   CancelResult,
   ContentWindow,
   ImportStatus,
@@ -28,6 +31,10 @@ export interface LibraryService {
   getImportStatus(operationId: string): Promise<ImportStatus>;
   cancelImport(operationId: string): Promise<CancelResult>;
   listBooks(): Promise<LibraryBook[]>;
+  listRemovedBooks(): Promise<LibraryBook[]>;
+  updateBook(request: UpdateBookRequest): Promise<Book>;
+  removeBook(bookId: string): Promise<void>;
+  restoreBook(bookId: string): Promise<void>;
   listGroups(): Promise<LibraryGroup[]>;
   createGroup(name: string): Promise<LibraryGroup>;
   renameGroup(id: string, name: string): Promise<LibraryGroup>;
@@ -55,6 +62,8 @@ export interface ReaderService {
   cancelSearch(operationId: string): Promise<CancelResult>;
 }
 export interface SettingsService {
+  getShelfPreferences(): Promise<ShelfPreferences>;
+  saveShelfPreferences(preferences: ShelfPreferences): Promise<ShelfPreferences>;
   getSettings(): Promise<ReaderPreferences>;
   saveSettings(settings: ReaderPreferences): Promise<ReaderPreferences>;
 }

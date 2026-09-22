@@ -1,17 +1,22 @@
 import type { ReaderPreferences } from "../types/generated";
-import type { SettingsService } from "../services/contracts";
-export interface SettingsSnapshot {
-  value: ReaderPreferences | null;
+interface PreferencePort<T> {
+  getSettings(): Promise<T>;
+  saveSettings(settings: T): Promise<T>;
+}
+export interface SettingsSnapshot<T = ReaderPreferences> {
+  value: T | null;
   error: string | null;
   saving: boolean;
 }
-export class SettingsStore {
-  private snapshot: SettingsSnapshot = { value: null, error: null, saving: false };
+export class SettingsStore<T extends object = ReaderPreferences> {
+  private snapshot: SettingsSnapshot<T> = { value: null, error: null, saving: false };
   private listeners = new Set<() => void>();
-  private pending: ReaderPreferences | null = null;
+  private pending: T | null = null;
   private running: Promise<void> | null = null;
   private loading: Promise<void> | null = null;
-  constructor(private service: SettingsService) {}
+  private loadRevision = 0;
+  private writeRevision = 0;
+  constructor(private service: PreferencePort<T>) {}
   getSnapshot = () => this.snapshot;
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -19,23 +24,48 @@ export class SettingsStore {
       this.listeners.delete(fn);
     };
   };
-  private update(patch: Partial<SettingsSnapshot>) {
+  private update(patch: Partial<SettingsSnapshot<T>>) {
     this.snapshot = { ...this.snapshot, ...patch };
     this.listeners.forEach((fn) => fn());
   }
   load = () => {
     if (this.loading) return this.loading;
+    const revision = ++this.loadRevision;
+    const writeRevision = this.writeRevision;
+    const hadPendingWrite = Boolean(this.pending || this.running || this.snapshot.saving);
     this.loading = this.service
       .getSettings()
-      .then((value) => this.update({ value, error: null }))
-      .catch((error) => this.update({ error: String(error) }))
+      .then((value) => {
+        // A read that started before a local write must not put stale disk
+        // state back into the controls or replace an optimistic value.
+        if (
+          revision === this.loadRevision &&
+          writeRevision === this.writeRevision &&
+          !hadPendingWrite &&
+          !this.pending &&
+          !this.running &&
+          !this.snapshot.saving
+        )
+          this.update({ value, error: null });
+      })
+      .catch((error) => {
+        if (
+          revision === this.loadRevision &&
+          writeRevision === this.writeRevision &&
+          !hadPendingWrite &&
+          !this.pending &&
+          !this.running
+        )
+          this.update({ error: String(error) });
+      })
       .finally(() => {
         this.loading = null;
       });
     return this.loading;
   };
-  set = (patch: Partial<ReaderPreferences>) => {
+  set = (patch: Partial<T>) => {
     if (!this.snapshot.value) return;
+    this.writeRevision++;
     this.pending = { ...this.snapshot.value, ...patch };
     this.update({ value: this.pending, saving: true, error: null });
     this.startSave();
@@ -52,7 +82,8 @@ export class SettingsStore {
       const value = this.pending;
       this.pending = null;
       try {
-        await this.service.saveSettings(value);
+        const saved = await this.service.saveSettings(value);
+        if (!this.pending && this.snapshot.value === value) this.update({ value: saved });
       } catch (error) {
         this.pending ??= value;
         this.update({ saving: false, error: String(error) });
@@ -62,12 +93,20 @@ export class SettingsStore {
     this.update({ saving: false, error: null });
   }
   retry = () => {
+    if (!this.pending) {
+      void this.load();
+      return;
+    }
     this.update({ error: null, saving: true });
     this.startSave();
   };
   flush = async () => {
     if (!this.snapshot.value) return;
-    if (this.running) await this.running;
+    while (this.running || (this.pending && !this.snapshot.error)) {
+      if (!this.running) this.startSave();
+      const running = this.running;
+      if (running) await running;
+    }
     if (this.snapshot.error) throw new Error(this.snapshot.error);
   };
 }

@@ -47,3 +47,8 @@ export type { ReaderFont } from "./generated/ReaderFont";
 export type { PageTurnEffect } from "./generated/PageTurnEffect";
 export type { ReaderPreferences } from "./generated/ReaderPreferences";
 export type { SaveSettingsRequest } from "./generated/SaveSettingsRequest";
+export type { UpdateBookRequest } from "./generated/UpdateBookRequest";
+export type { ShelfLayout } from "./generated/ShelfLayout";
+export type { ShelfSort } from "./generated/ShelfSort";
+export type { ShelfPreferences } from "./generated/ShelfPreferences";
+export type { SaveShelfPreferencesRequest } from "./generated/SaveShelfPreferencesRequest";

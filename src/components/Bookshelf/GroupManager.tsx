@@ -141,7 +141,12 @@ export function GroupManager({
                 >
                   <span className="text-on-surface font-medium">{group.name}</span>
                   <span className="text-secondary text-[11px]">
-                    {group.bookIds.length} 本 <span aria-hidden="true">›</span>
+                    {
+                      group.bookIds.filter((id) =>
+                        library.books.some((item) => item.book.id === id),
+                      ).length
+                    }{" "}
+                    本 <span aria-hidden="true">›</span>
                   </span>
                 </button>
               ))}

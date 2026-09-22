@@ -1,6 +1,26 @@
 import type { LibraryBook, LibraryGroup, TocEntry } from "../types/generated";
 import type { LibraryService, ReaderService } from "../services/contracts";
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/(?:^|\s)([a-z][a-z0-9_]*)\s*:/i);
+  return match?.[1];
+}
+
+function isValidationError(error: unknown): boolean {
+  return errorCode(error) === "invalid_argument" || errorCode(error) === "not_found";
+}
+
+interface FailedWrite {
+  revision: number;
+  error: unknown;
+  retry: (() => Promise<unknown>) | null;
+}
+
 export interface ShelfChapterLabels {
   current: string;
   latest: string;
@@ -42,6 +62,9 @@ export class ShelfStore {
   private listeners = new Set<() => void>();
   private groupQueue: Promise<void> = Promise.resolve();
   private pendingChanges = 0;
+  private pendingWrites = new Set<Promise<void>>();
+  private writeRevision = 0;
+  private failedWrites = new Map<string, FailedWrite>();
   private chapterRevision = 0;
   private chapterCache = new Map<string, { contentVersion: string; entries: TocEntry[] }>();
   constructor(
@@ -88,13 +111,37 @@ export class ShelfStore {
       throw error;
     }
   }
-  private change(action: () => Promise<unknown>): Promise<void> {
+  private change(
+    key: string,
+    action: () => Promise<unknown>,
+    retry: (() => Promise<unknown>) | null = action,
+  ): Promise<void> {
     this.pendingChanges += 1;
     this.update({ saving: true });
+    const revision = ++this.writeRevision;
+    let resolveWrite!: () => void;
+    let rejectWrite!: (error: unknown) => void;
+    const write = new Promise<void>((resolve, reject) => {
+      resolveWrite = resolve;
+      rejectWrite = reject;
+    });
+    this.pendingWrites.add(write);
+    void write.catch(() => undefined).finally(() => this.pendingWrites.delete(write));
     return this.enqueueGroups(async () => {
       this.update({ error: null });
       try {
-        await action();
+        try {
+          await action();
+          const previous = this.failedWrites.get(key);
+          if (previous && previous.revision < revision) this.failedWrites.delete(key);
+          resolveWrite();
+        } catch (error) {
+          if (!isValidationError(error)) {
+            this.failedWrites.set(key, { revision, error, retry });
+          }
+          rejectWrite(error);
+          throw error;
+        }
         await this.refreshGroups();
       } catch (error) {
         this.update({ error: String(error) });
@@ -105,6 +152,35 @@ export class ShelfStore {
       }
     });
   }
+  hasUnresolvedWrites = () => this.failedWrites.size > 0;
+  discardFailedWrites = () => {
+    // Explicit cancellation abandons only rejected intents; pending writes and
+    // committed records are never touched.
+    this.failedWrites.clear();
+  };
+  flush = async (retryFailed = false) => {
+    for (;;) {
+      const writes = [...this.pendingWrites];
+      if (writes.length) await Promise.allSettled(writes);
+      if (this.pendingWrites.size) continue;
+      const failures = [...this.failedWrites.entries()];
+      if (!failures.length) return;
+      if (!retryFailed) throw failures[0][1].error;
+      for (const [key, failure] of failures) {
+        if (this.failedWrites.get(key)?.revision !== failure.revision) continue;
+        if (!failure.retry) throw failure.error;
+        this.failedWrites.delete(key);
+        try {
+          await failure.retry();
+        } catch (error) {
+          const newer = this.failedWrites.get(key);
+          if (!newer || newer.revision <= failure.revision)
+            this.failedWrites.set(key, { ...failure, error });
+          throw error;
+        }
+      }
+    }
+  };
   private async loadChapters(books: LibraryBook[], revision: number) {
     const results = await Promise.all(
       books.map(async (book) => {
@@ -145,9 +221,21 @@ export class ShelfStore {
     this.chapterCache = cache;
     this.update({ chapters, chapterErrors });
   }
-  create = (name: string) => this.change(() => this.library.createGroup(name));
-  rename = (id: string, name: string) => this.change(() => this.library.renameGroup(id, name));
-  remove = (id: string) => this.change(() => this.library.deleteGroup(id));
+  create = (name: string) => {
+    const trimmed = name.trim();
+    const key = `group:create:${trimmed}`;
+    const reconcile = async () => {
+      const groups = await this.library.listGroups();
+      this.update({ groups });
+      if (!groups.some((group) => group.name.trim() === trimmed)) {
+        throw new Error(`分组“${trimmed}”仍未确认，请重试或取消操作`);
+      }
+    };
+    return this.change(key, () => this.library.createGroup(name), reconcile);
+  };
+  rename = (id: string, name: string) =>
+    this.change(`group:${id}:rename`, () => this.library.renameGroup(id, name));
+  remove = (id: string) => this.change(`group:${id}:remove`, () => this.library.deleteGroup(id));
   setBookGroups = (bookId: string, groupIds: string[]) =>
-    this.change(() => this.library.setBookGroups(bookId, groupIds));
+    this.change(`book:${bookId}:groups`, () => this.library.setBookGroups(bookId, groupIds));
 }

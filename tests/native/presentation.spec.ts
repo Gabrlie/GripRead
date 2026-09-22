@@ -11,6 +11,7 @@ import {
   useInstantPageTurns,
   invoke,
   fixturePath,
+  TEST_TIMEOUT,
 } from "./support";
 import type { LibraryGroup, ReaderPreferences } from "../../src/types/generated";
 
@@ -79,6 +80,25 @@ async function capture(name: string) {
   await browser.saveScreenshot(resolve(output, `${name}.png`));
 }
 
+async function waitForGlassMaterial(headerAlpha: string, dockAlpha: string, name: string) {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        ({ headerAlpha: expectedHeader, dockAlpha: expectedDock }) => {
+          const header = getComputedStyle(document.querySelector(".glass-header")!).backgroundColor;
+          const dock = getComputedStyle(document.querySelector(".glass-dock")!).backgroundColor;
+          return header.includes(expectedHeader) && dock.includes(expectedDock);
+        },
+        { headerAlpha, dockAlpha },
+      ),
+    {
+      timeout: TEST_TIMEOUT,
+      interval: 100,
+      timeoutMsg: `glass material did not settle for ${name}`,
+    },
+  );
+}
+
 describe("current page geometry and material", () => {
   before(async () => {
     await waitForAppReady();
@@ -114,6 +134,7 @@ describe("current page geometry and material", () => {
     await invoke("save_settings", { request: { settings: { ...settings, theme: "dark" } } });
     await browser.execute(() => location.reload());
     await waitForAppReady();
+    await waitForGlassMaterial("0.58", "0.64", "dark");
     await capture("phone-bookshelf-dark");
     if (!baseline) {
       const material = await browser.execute(() => ({
@@ -198,6 +219,7 @@ describe("current page geometry and material", () => {
       await waitForAppReady();
       await browser.execute(() => window.scrollTo(0, 180));
       await browser.waitUntil(async () => (await browser.execute(() => scrollY)) > 100);
+      await waitForGlassMaterial(headerAlpha, dockAlpha, name);
       await capture(`phone-glass-scroll-${name}`);
       const material = await browser.execute(() => ({
         header: getComputedStyle(document.querySelector(".glass-header")!).backgroundColor,

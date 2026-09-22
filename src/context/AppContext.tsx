@@ -1,11 +1,13 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import type { LibraryBook } from "../types/generated";
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { useShelfPreferences } from "../application/runtime";
+import type { ShelfSort, LibraryBook } from "../types/generated";
 export type NavTab = "bookshelf" | "discover" | "subscription" | "settings";
 export interface ShelfViewState {
   query: string;
   groupId: string;
   layout: "list" | "grid";
   scroll: number;
+  sort: ShelfSort;
 }
 interface Navigation {
   activeTab: NavTab;
@@ -20,14 +22,28 @@ const Context = createContext<Navigation | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>("bookshelf");
   const [activeBook, setActiveBook] = useState<LibraryBook | null>(null);
-  const [shelf, setShelfState] = useState<ShelfViewState>({
-    query: "",
-    groupId: "all",
-    layout: "list",
-    scroll: 0,
-  });
-  const setShelf = (patch: Partial<ShelfViewState>) =>
-    setShelfState((prev) => ({ ...prev, ...patch }));
+  const { state: preferences, store } = useShelfPreferences();
+  const [transient, setTransient] = useState({ query: "", scroll: 0 });
+  useEffect(() => {
+    void store.load();
+  }, [store]);
+  const shelf: ShelfViewState = {
+    ...transient,
+    ...(preferences.value ?? { groupId: "all", layout: "list", sort: "recent_read" }),
+  };
+  const setShelf = (patch: Partial<ShelfViewState>) => {
+    if (patch.query !== undefined || patch.scroll !== undefined)
+      setTransient((prev) => ({
+        query: patch.query ?? prev.query,
+        scroll: patch.scroll ?? prev.scroll,
+      }));
+    if (patch.layout !== undefined || patch.groupId !== undefined || patch.sort !== undefined)
+      store.set({
+        layout: patch.layout ?? shelf.layout,
+        groupId: patch.groupId ?? shelf.groupId,
+        sort: patch.sort ?? shelf.sort,
+      });
+  };
   return (
     <Context.Provider
       value={{

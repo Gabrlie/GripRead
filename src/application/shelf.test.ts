@@ -42,6 +42,8 @@ const entry: LibraryBook = {
   },
   totalLength: 100,
   txtEncoding: null,
+  lastReadAt: null,
+  removedAt: null,
 };
 const chapters: TocEntry[] = [
   { ordinal: 0, title: "第一章", locator: entry.locator! },
@@ -57,6 +59,10 @@ function setup() {
     renameGroup: vi.fn(async (id, name) => ({ id, name, bookIds: [] })),
     deleteGroup: vi.fn(async () => {}),
     setBookGroups: vi.fn(async () => {}),
+    listRemovedBooks: vi.fn(async () => []),
+    updateBook: vi.fn(),
+    removeBook: vi.fn(),
+    restoreBook: vi.fn(),
     listBooks: vi.fn(async () => []),
     pickAndImportTxt: vi.fn(async () => null),
     startImport: vi.fn(),

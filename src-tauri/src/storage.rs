@@ -23,9 +23,10 @@ use crate::models::{
     ReaderPreferences, ResolveLocatorRequest, SearchMatch, SearchRequest, SearchResponse, TocEntry,
     TxtDecodeState, TxtEncoding, TxtEncodingInfo, WindowDirection,
 };
+use crate::models::{ShelfPreferences, UpdateBookRequest};
 use crate::txt::detect_and_decode;
 
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -73,6 +74,8 @@ pub(crate) struct TxtDecodeSnapshot {
     pub(crate) source_sha256: String,
     pub(crate) content_version: String,
     pub(crate) selected_encoding: TxtEncoding,
+    position: Option<ReaderLocator>,
+    bookmarks: Vec<Bookmark>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,12 +91,16 @@ pub(crate) struct PreparedTxtDecode {
     pub(crate) detected_encoding: TxtEncoding,
     pub(crate) selected_encoding: TxtEncoding,
     pub(crate) decode_state: TxtDecodeState,
+    relocated: Vec<(Option<String>, ReaderLocator)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TxtReassociationSnapshot {
+    pub(crate) book_id: String,
     pub(crate) asset_id: String,
-    pub(crate) source_relative_path: String,
+    pub(crate) source_relative_path: Option<String>,
+    pub(crate) source_sha256: Option<String>,
+    pub(crate) target_relative_path: String,
     pub(crate) content_version: String,
     pub(crate) selected_encoding: TxtEncoding,
 }
@@ -103,6 +110,7 @@ pub(crate) struct PreparedTxtReassociation {
     pub(crate) snapshot: TxtReassociationSnapshot,
     pub(crate) stage_relative_path: String,
     pub(crate) source_sha256: String,
+    pub(crate) stage_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -604,6 +612,21 @@ impl Storage {
             tx.commit()?;
         }
 
+        let current: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if current < 7 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch("CREATE TABLE shelf_removals (book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE, removed_at INTEGER NOT NULL); CREATE TABLE shelf_preferences (id INTEGER PRIMARY KEY CHECK(id = 1), preferences_json TEXT NOT NULL);")?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES(7,?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -957,6 +980,10 @@ impl Storage {
                 "DELETE FROM import_journal WHERE operation_id = ?1",
                 params![journal.operation_id],
             )?;
+            tx.execute(
+                "DELETE FROM shelf_removals WHERE book_id = ?1",
+                params![journal.book_id],
+            )?;
             tx.commit()?;
 
             report(
@@ -1086,6 +1113,10 @@ impl Storage {
             tx.execute(
                 "DELETE FROM import_journal WHERE operation_id = ?1",
                 params![prepared.operation_id],
+            )?;
+            tx.execute(
+                "DELETE FROM shelf_removals WHERE book_id = ?1",
+                params![book_id],
             )?;
             tx.commit()?;
             let existing = self
@@ -1440,15 +1471,24 @@ impl Storage {
     }
 
     pub fn list_library_books(&self) -> Result<Vec<LibraryBook>, AppError> {
+        self.list_shelf_books(false)
+    }
+    pub fn list_removed_books(&self) -> Result<Vec<LibraryBook>, AppError> {
+        self.list_shelf_books(true)
+    }
+    fn list_shelf_books(&self, removed: bool) -> Result<Vec<LibraryBook>, AppError> {
         let mut statement = self.conn.prepare(
             "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
                     a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
-                    a.relative_path, a.created_at
+                    a.relative_path, a.created_at, p.updated_at, r.removed_at
              FROM books b JOIN book_assets a ON a.book_id = b.id
+             LEFT JOIN reading_positions p ON p.book_id = b.id
+             LEFT JOIN shelf_removals r ON r.book_id = b.id
+             WHERE (r.book_id IS NOT NULL) = ?1
              ORDER BY b.updated_at DESC, b.id ASC, a.created_at ASC",
         )?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![removed], |row| {
                 let book = Book {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -1458,12 +1498,17 @@ impl Storage {
                     updated_at: row.get(5)?,
                 };
                 let record = asset_from_columns(row, 6)?;
-                Ok((book, record))
+                Ok((
+                    book,
+                    record,
+                    row.get::<_, Option<i64>>(14)?,
+                    row.get::<_, Option<i64>>(15)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(book, mut record)| {
+            .map(|(book, mut record, last_read_at, removed_at)| {
                 let path = managed_path(&self.root, &record.relative_path, "books")?;
                 record.asset.availability = if is_regular_file(&path) {
                     AssetAvailability::Ready
@@ -1483,6 +1528,8 @@ impl Storage {
                     locator,
                     total_length,
                     txt_encoding,
+                    last_read_at,
+                    removed_at,
                 })
             })
             .collect()
@@ -1818,6 +1865,8 @@ impl Storage {
             source_sha256: source_sha256.unwrap_or_default(),
             content_version: context.record.asset.content_version,
             selected_encoding: parse_encoding(selected_encoding),
+            position: self.saved_position(book_id)?,
+            bookmarks: self.list_bookmarks(book_id)?,
         })
     }
 
@@ -1826,19 +1875,36 @@ impl Storage {
         book_id: &str,
     ) -> Result<TxtReassociationSnapshot, AppError> {
         let context = self.content_read_context(book_id)?;
-        let selected_encoding: String = self
+        let source: (Option<String>, Option<String>, String) = self
             .conn
             .query_row(
-                "SELECT selected_encoding FROM txt_assets WHERE asset_id = ?1",
+                "SELECT source_relative_path, source_sha256, selected_encoding
+                 FROM txt_assets WHERE asset_id = ?1",
                 params![context.record.asset.id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?
-            .unwrap_or_else(|| "utf8".to_string());
-        let source_relative_path = format!("sources/{}.txt", context.record.asset.id);
+            .unwrap_or((None, None, "utf8".to_string()));
+        let (source_relative_path, source_sha256, selected_encoding) = source;
+        let default_relative_path = format!("sources/{}.txt", context.record.asset.id);
+        let target_relative_path = source_relative_path
+            .clone()
+            .unwrap_or_else(|| default_relative_path.clone());
+        if let Some(relative_path) = source_relative_path.as_deref() {
+            let source_path = managed_path(&self.root, relative_path, "sources")?;
+            if source_path.is_file() {
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "the book already has retained TXT source bytes",
+                ));
+            }
+        }
         Ok(TxtReassociationSnapshot {
+            book_id: context.record.asset.book_id,
             asset_id: context.record.asset.id,
             source_relative_path,
+            source_sha256,
+            target_relative_path,
             content_version: context.record.asset.content_version,
             selected_encoding: parse_encoding(selected_encoding),
         })
@@ -1874,12 +1940,57 @@ impl Storage {
                 snapshot: snapshot.clone(),
                 stage_relative_path,
                 source_sha256,
+                stage_fingerprint: None,
             })
         })();
         if result.is_err() {
             let _ = fs::remove_file(stage_path);
         }
         result
+    }
+
+    /// Verify the operation-owned staging bytes before acquiring the storage
+    /// mutex. The locked commit only compares this metadata fingerprint, so a
+    /// large retained source is never hashed while readers are blocked.
+    pub(crate) fn verify_prepared_txt_reassociation(
+        root: &Path,
+        prepared: &mut PreparedTxtReassociation,
+    ) -> Result<(), AppError> {
+        let stage_path = managed_path(root, &prepared.stage_relative_path, "staging")?;
+        let result = (|| -> Result<String, AppError> {
+            if !stage_path.is_file() {
+                return Err(AppError::new(
+                    ErrorCode::AssetMissing,
+                    "prepared TXT source staging file is missing",
+                ));
+            }
+            let fingerprint_before = file_fingerprint(&stage_path)?.1;
+            let actual_hash = hash_file(&stage_path)?;
+            let fingerprint_after = file_fingerprint(&stage_path)?.1;
+            if fingerprint_before != fingerprint_after {
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "prepared TXT source changed during verification",
+                ));
+            }
+            if actual_hash != prepared.source_sha256 {
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "prepared TXT source bytes changed",
+                ));
+            }
+            Ok(fingerprint_after)
+        })();
+        match result {
+            Ok(fingerprint) => {
+                prepared.stage_fingerprint = Some(fingerprint);
+                Ok(())
+            }
+            Err(error) => {
+                let _ = remove_owned_file(&stage_path);
+                Err(error)
+            }
+        }
     }
 
     pub(crate) fn commit_txt_reassociation(
@@ -1889,13 +2000,51 @@ impl Storage {
         let stage_path = managed_path(&self.root, &prepared.stage_relative_path, "staging")?;
         let source_path = managed_path(
             &self.root,
-            &prepared.snapshot.source_relative_path,
+            &prepared.snapshot.target_relative_path,
             "sources",
         )?;
         if !stage_path.is_file() {
             return Err(AppError::new(
                 ErrorCode::AssetMissing,
                 "prepared TXT source staging file is missing",
+            ));
+        }
+        // Preparation reads and hashes the candidate outside the storage
+        // mutex. Recheck the complete database association and the cheap file
+        // fingerprint while the mutex is held before publishing the source.
+        match self.snapshot_txt_reassociation(&prepared.snapshot.book_id) {
+            Ok(current) if current == prepared.snapshot => {}
+            Ok(_) => {
+                remove_owned_file(&stage_path)?;
+                return Err(AppError::new(
+                    ErrorCode::ContentVersionMismatch,
+                    "book content or source changed while associating TXT",
+                ));
+            }
+            Err(error) => {
+                remove_owned_file(&stage_path)?;
+                return Err(error);
+            }
+        }
+        let Some(expected_fingerprint) = prepared.stage_fingerprint.as_deref() else {
+            remove_owned_file(&stage_path)?;
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "prepared TXT source was not verified",
+            ));
+        };
+        let current_fingerprint = match file_fingerprint(&stage_path) {
+            Ok((_, fingerprint)) => fingerprint,
+            Err(error) => {
+                remove_owned_file(&stage_path)?;
+                return Err(error);
+            }
+        };
+        if current_fingerprint != expected_fingerprint {
+            remove_owned_file(&stage_path)?;
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "prepared TXT source bytes changed",
             ));
         }
         if source_path.exists() {
@@ -1906,9 +2055,15 @@ impl Storage {
             ));
         }
         if let Some(parent) = source_path.parent() {
-            fs::create_dir_all(parent)?;
+            if let Err(error) = fs::create_dir_all(parent) {
+                remove_owned_file(&stage_path)?;
+                return Err(error.into());
+            }
         }
-        fs::rename(&stage_path, &source_path)?;
+        if let Err(error) = fs::rename(&stage_path, &source_path) {
+            remove_owned_file(&stage_path)?;
+            return Err(error.into());
+        }
         let transaction = (|| -> Result<(), AppError> {
             self.conn.execute(
                 "INSERT INTO txt_assets(
@@ -1922,7 +2077,7 @@ impl Storage {
                 params![
                     prepared.snapshot.asset_id,
                     encoding_name(&prepared.snapshot.selected_encoding),
-                    prepared.snapshot.source_relative_path,
+                    prepared.snapshot.target_relative_path,
                     prepared.source_sha256,
                     now_millis(),
                 ],
@@ -1968,6 +2123,71 @@ impl Storage {
         let normalized_bytes = decoded.text.as_bytes();
         let content_version = sha256_bytes(normalized_bytes);
         let index_json = serde_json::to_string(&build_sparse_index(&decoded.text))?;
+        let targets: Vec<(Option<String>, &ReaderLocator)> = snapshot
+            .position
+            .iter()
+            .map(|locator| (None, locator))
+            .chain(
+                snapshot
+                    .bookmarks
+                    .iter()
+                    .map(|bookmark| (Some(bookmark.id.clone()), &bookmark.locator)),
+            )
+            .filter(|(_, locator)| {
+                locator.content_version == snapshot.content_version
+                    && locator.resource_id == snapshot.asset_id
+            })
+            .collect();
+        let mut relocated = Vec::new();
+        if content_version != snapshot.content_version && !targets.is_empty() {
+            if let Ok(old) = detect_and_decode(&bytes, snapshot.selected_encoding.clone()) {
+                if sha256_bytes(old.text.as_bytes()) == snapshot.content_version {
+                    let offsets: Vec<u64> =
+                        targets.iter().map(|(_, locator)| locator.offset).collect();
+                    let mapped = crate::relocation::map_offsets(
+                        &bytes,
+                        snapshot.selected_encoding.clone(),
+                        decoded.selected.clone(),
+                        &old.text,
+                        &decoded.text,
+                        &offsets,
+                        cancel,
+                    )?;
+                    let boundaries = crate::txt::utf16_boundaries(&decoded.text);
+                    for ((id, locator), mapped_offset) in targets.into_iter().zip(mapped) {
+                        if let Some(offset) = mapped_offset {
+                            if let Ok(index) =
+                                boundaries.binary_search_by_key(&offset, |(units, _)| *units)
+                            {
+                                let before = boundaries.partition_point(|(units, _)| {
+                                    *units < offset.saturating_sub(32)
+                                });
+                                let after = boundaries
+                                    .partition_point(|(units, _)| {
+                                        *units <= offset.saturating_add(32)
+                                    })
+                                    .saturating_sub(1);
+                                relocated.push((
+                                    id,
+                                    ReaderLocator {
+                                        content_version: content_version.clone(),
+                                        offset,
+                                        context_before: decoded.text
+                                            [boundaries[before].1..boundaries[index].1]
+                                            .to_string(),
+                                        context_after: decoded.text
+                                            [boundaries[index].1..boundaries[after].1]
+                                            .to_string(),
+                                        ..locator.clone()
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let stage_relative_path = format!("staging/redecode-{operation_id}.part");
         let backup_relative_path = format!("staging/redecode-{operation_id}.old");
         let stage_path = managed_path(root, &stage_relative_path, "staging")?;
@@ -1982,6 +2202,7 @@ impl Storage {
             Ok(PreparedTxtDecode {
                 operation_id: operation_id.to_string(),
                 snapshot: snapshot.clone(),
+                relocated,
                 stage_relative_path,
                 backup_relative_path,
                 content_version,
@@ -2041,7 +2262,7 @@ impl Storage {
             if self.snapshot_txt_decode(&prepared.snapshot.book_id)? != prepared.snapshot {
                 return Err(AppError::new(
                     ErrorCode::ContentVersionMismatch,
-                    "book content or source changed while decoding",
+                    "book content, source or reading records changed while decoding",
                 ));
             }
             let tx = self.conn.transaction()?;
@@ -2134,6 +2355,18 @@ impl Storage {
                 "DELETE FROM toc_cache WHERE asset_id = ?1",
                 params![prepared.snapshot.asset_id],
             )?;
+            for (bookmark_id, locator) in &prepared.relocated {
+                let json = serde_json::to_string(locator)?;
+                if let Some(id) = bookmark_id {
+                    tx.execute("UPDATE bookmarks SET content_version = ?1, locator_json = ?2, excerpt = ?3 WHERE id = ?4 AND NOT EXISTS(SELECT 1 FROM bookmarks other WHERE other.book_id = ?5 AND other.content_version = ?1 AND json_extract(other.locator_json,'$.offset') = ?6 AND other.id != ?4)", params![locator.content_version,json,locator.context_after,id,locator.book_id,locator.offset as i64])?;
+                } else {
+                    // Preserve recency: encoding repair is not a new reading session.
+                    tx.execute(
+                        "UPDATE reading_positions SET locator_json = ?1 WHERE book_id = ?2",
+                        params![json, locator.book_id],
+                    )?;
+                }
+            }
             tx.execute(
                 "DELETE FROM txt_decode_journal WHERE operation_id = ?1",
                 params![prepared.operation_id],
@@ -2298,6 +2531,85 @@ impl Storage {
                 })
             })
             .transpose()
+    }
+
+    pub fn update_book(&self, request: &UpdateBookRequest) -> Result<Book, AppError> {
+        let title = request.title.trim();
+        let author = request
+            .author
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if title.is_empty()
+            || title.chars().count() > 512
+            || author.is_some_and(|value| value.chars().count() > 256)
+        {
+            return Err(AppError::invalid_argument(
+                "title is required (max 512 characters); author allows 256 characters",
+            ));
+        }
+        self.get_book(&request.book_id)?;
+        self.conn.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+            params![title, author, now_millis(), request.book_id],
+        )?;
+        self.get_book(&request.book_id)
+    }
+    pub fn remove_book(&self, book_id: &str) -> Result<(), AppError> {
+        self.get_book(book_id)?;
+        self.conn.execute("INSERT INTO shelf_removals(book_id,removed_at) VALUES(?1,?2) ON CONFLICT(book_id) DO NOTHING",params![book_id,now_millis()])?;
+        Ok(())
+    }
+    pub fn restore_book(&self, book_id: &str) -> Result<(), AppError> {
+        self.get_book(book_id)?;
+        self.conn.execute(
+            "DELETE FROM shelf_removals WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        Ok(())
+    }
+    pub fn get_shelf_preferences(&self) -> Result<ShelfPreferences, AppError> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT preferences_json FROM shelf_preferences WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut value: ShelfPreferences = json
+            .map(|json| serde_json::from_str(&json))
+            .transpose()?
+            .unwrap_or_default();
+        if value.group_id != "all"
+            && !self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
+                params![value.group_id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            value.group_id = "all".into();
+        }
+        Ok(value)
+    }
+    pub fn save_shelf_preferences(
+        &self,
+        value: &ShelfPreferences,
+    ) -> Result<ShelfPreferences, AppError> {
+        if value.group_id != "all"
+            && !self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
+                params![value.group_id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "shelf group does not exist",
+            ));
+        }
+        self.conn.execute("INSERT INTO shelf_preferences(id,preferences_json) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET preferences_json = excluded.preferences_json",params![serde_json::to_string(value)?])?;
+        Ok(value.clone())
     }
 
     pub fn get_settings(&self) -> Result<ReaderPreferences, AppError> {
@@ -4845,13 +5157,14 @@ mod tests {
         let snapshot = storage
             .snapshot_txt_reassociation(&imported.book.id)
             .unwrap();
-        let prepared = Storage::prepare_txt_reassociation(
+        let mut prepared = Storage::prepare_txt_reassociation(
             &app_root,
             &snapshot,
             &replacement,
             "legacy-reassociate",
         )
         .unwrap();
+        Storage::verify_prepared_txt_reassociation(&app_root, &mut prepared).unwrap();
         let info = storage.commit_txt_reassociation(prepared).unwrap();
         assert!(info.can_change);
         assert!(managed_source.is_file());
@@ -4861,6 +5174,161 @@ mod tests {
                 .unwrap()
                 .text,
             "中文"
+        );
+    }
+
+    #[test]
+    fn stale_reassociation_is_rejected_before_source_publication() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "stale-source.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "stale-source");
+        let managed_source = app_root.join(format!("sources/{}.txt", imported.asset.id));
+        fs::remove_file(&managed_source).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_relative_path = NULL, source_sha256 = NULL
+                 WHERE asset_id = ?1",
+                params![imported.asset.id],
+            )
+            .unwrap();
+        let replacement = write_source(&root.0, "replacement-source.txt", "中文".as_bytes());
+        let snapshot = storage
+            .snapshot_txt_reassociation(&imported.book.id)
+            .unwrap();
+        let mut prepared = Storage::prepare_txt_reassociation(
+            &app_root,
+            &snapshot,
+            &replacement,
+            "stale-reassociate",
+        )
+        .unwrap();
+        Storage::verify_prepared_txt_reassociation(&app_root, &mut prepared).unwrap();
+        fs::write(&managed_source, "中文".as_bytes()).unwrap();
+        let error = storage.commit_txt_reassociation(prepared).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+        assert!(!app_root.join("staging/stale-reassociate.raw").exists());
+        assert!(managed_source.is_file());
+    }
+
+    #[test]
+    fn reassociation_rejects_stage_changed_after_unlocked_verification() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "stage.txt", b"valid text");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "first");
+        fs::remove_file(app_root.join(format!("sources/{}.txt", imported.asset.id))).unwrap();
+        let snapshot = storage
+            .snapshot_txt_reassociation(&imported.book.id)
+            .unwrap();
+        let mut prepared =
+            Storage::prepare_txt_reassociation(&app_root, &snapshot, &source, "changed-stage")
+                .unwrap();
+        Storage::verify_prepared_txt_reassociation(&app_root, &mut prepared).unwrap();
+        let stage = app_root.join(&prepared.stage_relative_path);
+        fs::write(&stage, b"other text").unwrap();
+        assert_eq!(
+            storage.commit_txt_reassociation(prepared).unwrap_err().code,
+            ErrorCode::ContentVersionMismatch
+        );
+        assert!(!stage.exists());
+        assert!(!app_root.join(&snapshot.target_relative_path).exists());
+        assert_eq!(
+            storage
+                .read_content_window(&imported.book.id, None, 64)
+                .unwrap()
+                .text,
+            "valid text"
+        );
+    }
+
+    #[test]
+    fn reassociation_refuses_a_nondefault_retained_source() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "nondefault-source.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "nondefault-source");
+        let default_path = app_root.join(format!("sources/{}.txt", imported.asset.id));
+        let custom_relative = format!("sources/{}-retained.txt", imported.asset.id);
+        let custom_path = app_root.join(&custom_relative);
+        fs::rename(&default_path, &custom_path).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_relative_path = ?1, source_sha256 = ?2
+                 WHERE asset_id = ?3",
+                params![
+                    custom_relative,
+                    sha256_bytes("中文".as_bytes()),
+                    imported.asset.id
+                ],
+            )
+            .unwrap();
+
+        let error = storage
+            .snapshot_txt_reassociation(&imported.book.id)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+        assert!(custom_path.is_file());
+        assert_eq!(fs::read(&custom_path).unwrap(), "中文".as_bytes());
+    }
+
+    #[test]
+    fn stale_reassociation_cannot_replace_a_concurrent_operation_owned_source() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "concurrent-source.txt", "中文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "concurrent-source");
+        let default_path = app_root.join(format!("sources/{}.txt", imported.asset.id));
+        fs::remove_file(&default_path).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE txt_assets SET source_relative_path = NULL, source_sha256 = NULL
+                 WHERE asset_id = ?1",
+                params![imported.asset.id],
+            )
+            .unwrap();
+
+        let replacement = write_source(&root.0, "concurrent-replacement.txt", "中文".as_bytes());
+        let snapshot = storage
+            .snapshot_txt_reassociation(&imported.book.id)
+            .unwrap();
+        let mut prepared = Storage::prepare_txt_reassociation(
+            &app_root,
+            &snapshot,
+            &replacement,
+            "concurrent-reassociate",
+        )
+        .unwrap();
+        Storage::verify_prepared_txt_reassociation(&app_root, &mut prepared).unwrap();
+
+        let duplicate = import(&mut storage, &source, "concurrent-import");
+        assert!(duplicate.duplicate);
+        let operation_source: String = storage
+            .conn
+            .query_row(
+                "SELECT source_relative_path FROM txt_assets WHERE asset_id = ?1",
+                params![imported.asset.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(
+            operation_source,
+            format!("sources/{}.txt", imported.asset.id)
+        );
+        let error = storage.commit_txt_reassociation(prepared).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+        assert!(!app_root.join("staging/concurrent-reassociate.raw").exists());
+        assert!(app_root.join(&operation_source).is_file());
+        assert_eq!(
+            fs::read(app_root.join(&operation_source)).unwrap(),
+            "中文".as_bytes()
         );
     }
 
@@ -5393,6 +5861,202 @@ mod tests {
     }
 
     #[test]
+    fn metadata_archive_restore_and_reimport_preserve_identity() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "manage.txt", b"chapter one\nchapter two");
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let first = import(&mut storage, &source, "first");
+        let loc = storage
+            .read_content_window(&first.book.id, None, 128)
+            .unwrap()
+            .locator;
+        storage.save_position(&loc).unwrap();
+        let bookmark = storage
+            .add_bookmark(&BookmarkRequest {
+                book_id: first.book.id.clone(),
+                locator: loc.clone(),
+                excerpt: "chapter one".into(),
+            })
+            .unwrap();
+        let group = storage.list_groups().unwrap().remove(0);
+        storage
+            .set_book_groups(&first.book.id, std::slice::from_ref(&group.id))
+            .unwrap();
+        let prefs = ShelfPreferences {
+            layout: crate::models::ShelfLayout::Grid,
+            sort: crate::models::ShelfSort::Title,
+            group_id: group.id.clone(),
+        };
+        storage.save_shelf_preferences(&prefs).unwrap();
+        let edited = storage
+            .update_book(&UpdateBookRequest {
+                book_id: first.book.id.clone(),
+                title: "  Revised title  ".into(),
+                author: Some(" Writer ".into()),
+            })
+            .unwrap();
+        assert_eq!(edited.content_version, first.book.content_version);
+        assert_eq!(edited.title, "Revised title");
+        assert_eq!(edited.author.as_deref(), Some("Writer"));
+        assert!(storage
+            .update_book(&UpdateBookRequest {
+                book_id: first.book.id.clone(),
+                title: " ".into(),
+                author: None
+            })
+            .is_err());
+        storage.remove_book(&first.book.id).unwrap();
+        assert!(storage.list_library_books().unwrap().is_empty());
+        assert_eq!(
+            storage.list_removed_books().unwrap()[0].asset.id,
+            first.asset.id
+        );
+        drop(storage);
+        let mut storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.get_shelf_preferences().unwrap(), prefs);
+        assert_eq!(storage.saved_position(&first.book.id).unwrap(), Some(loc));
+        assert_eq!(storage.list_bookmarks(&first.book.id).unwrap()[0], bookmark);
+        assert!(storage
+            .list_groups()
+            .unwrap()
+            .iter()
+            .any(|g| g.id == group.id && g.book_ids.contains(&first.book.id)));
+        fs::remove_file(app_root.join(format!("books/{}/{}.txt", first.book.id, first.asset.id)))
+            .unwrap();
+        let repeated = import(&mut storage, &source, "again");
+        assert!(repeated.duplicate);
+        assert_eq!(repeated.book.id, first.book.id);
+        assert_eq!(repeated.asset.id, first.asset.id);
+        assert_eq!(repeated.book.title, "Revised title");
+        assert!(storage.list_removed_books().unwrap().is_empty());
+        assert_eq!(
+            storage.list_library_books().unwrap()[0].asset.availability,
+            AssetAvailability::Ready
+        );
+        storage.remove_book(&first.book.id).unwrap();
+        storage.restore_book(&first.book.id).unwrap();
+        assert_eq!(storage.list_library_books().unwrap().len(), 1);
+        storage.delete_group(&group.id).unwrap();
+        assert_eq!(storage.get_shelf_preferences().unwrap().group_id, "all");
+    }
+
+    #[test]
+    fn archived_duplicate_commit_failure_does_not_restore_the_shelf_entry() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "archive.txt", b"original content");
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let first = import(&mut storage, &source, "first");
+        storage.remove_book(&first.book.id).unwrap();
+        storage.conn.execute_batch("CREATE TRIGGER fail_restore BEFORE DELETE ON shelf_removals BEGIN SELECT RAISE(ABORT,'restore fault'); END;").unwrap();
+        assert!(storage
+            .import_txt(
+                &source,
+                "failed-restore",
+                &AtomicBool::new(false),
+                |_, _, _| {}
+            )
+            .is_err());
+        assert_eq!(storage.list_removed_books().unwrap().len(), 1);
+        assert!(storage.list_library_books().unwrap().is_empty());
+        assert_eq!(
+            storage
+                .read_content_window(&first.book.id, None, 128)
+                .unwrap()
+                .text,
+            "original content"
+        );
+    }
+
+    #[test]
+    fn decode_maps_positions_and_bookmarks_through_original_byte_boundaries() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "anchors.txt", "中文AB\r\n尾文".as_bytes());
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let first = import(&mut storage, &source, "first");
+        let loc = ReaderLocator {
+            offset: 2,
+            context_before: "中文".into(),
+            context_after: "AB\n尾文".into(),
+            ..storage
+                .read_content_window(&first.book.id, None, 128)
+                .unwrap()
+                .locator
+        };
+        storage.save_position(&loc).unwrap();
+        let bookmark = storage
+            .add_bookmark(&BookmarkRequest {
+                book_id: first.book.id.clone(),
+                locator: loc,
+                excerpt: "AB".into(),
+            })
+            .unwrap();
+        storage
+            .set_txt_encoding(&first.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        let window = storage
+            .read_content_window(&first.book.id, None, 128)
+            .unwrap();
+        let mapped = storage.saved_position(&first.book.id).unwrap().unwrap();
+        assert_eq!(mapped.offset, 3);
+        assert_eq!(mapped.content_version, window.content_version);
+        assert!(mapped.context_after.starts_with("AB\n"));
+        let mapped_bookmark = storage.list_bookmarks(&first.book.id).unwrap().remove(0);
+        assert_eq!(mapped_bookmark.id, bookmark.id);
+        assert_eq!(mapped_bookmark.locator, mapped);
+        storage
+            .set_txt_encoding(&first.book.id, TxtEncoding::Utf8)
+            .unwrap();
+        assert_eq!(
+            storage
+                .saved_position(&first.book.id)
+                .unwrap()
+                .unwrap()
+                .offset,
+            2
+        );
+    }
+
+    #[test]
+    fn ambiguous_decode_offsets_remain_unresolved_and_inflight_saves_conflict() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "uncertain.txt", "中文AB".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let first = import(&mut storage, &source, "first");
+        let mut loc = storage
+            .read_content_window(&first.book.id, None, 128)
+            .unwrap()
+            .locator;
+        loc.offset = 1;
+        storage.save_position(&loc).unwrap();
+        storage
+            .set_txt_encoding(&first.book.id, TxtEncoding::Gbk)
+            .unwrap();
+        assert_eq!(storage.saved_position(&first.book.id).unwrap(), Some(loc));
+        let snapshot = storage.snapshot_txt_decode(&first.book.id).unwrap();
+        let prepared = Storage::prepare_txt_decode(
+            &app_root,
+            &snapshot,
+            TxtEncoding::Utf8,
+            "conflict",
+            &AtomicBool::new(false),
+            |_, _, _| {},
+        )
+        .unwrap();
+        let newer = storage
+            .read_content_window(&first.book.id, None, 128)
+            .unwrap()
+            .locator;
+        storage.save_position(&newer).unwrap();
+        let error = storage
+            .commit_txt_decode(prepared, &AtomicBool::new(false))
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+        assert_eq!(storage.saved_position(&first.book.id).unwrap(), Some(newer));
+    }
+
+    #[test]
     fn group_migration_preserves_v5_books_assets_positions_and_saved_preferences() {
         let root = TestRoot::new();
         let source = write_source(&root.0, "upgrade.txt", b"upgrade");
@@ -5416,7 +6080,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE book_groups; DROP TABLE library_groups; DELETE FROM schema_migrations WHERE version = 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();

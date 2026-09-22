@@ -325,6 +325,8 @@ pub struct LibraryBook {
     pub locator: Option<ReaderLocator>,
     pub total_length: Option<u64>,
     pub txt_encoding: Option<TxtEncodingInfo>,
+    pub last_read_at: Option<i64>,
+    pub removed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -404,4 +406,48 @@ impl ReaderPreferences {
 #[serde(rename_all = "camelCase")]
 pub struct SaveSettingsRequest {
     pub settings: ReaderPreferences,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBookRequest {
+    pub book_id: String,
+    pub title: String,
+    pub author: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShelfLayout {
+    #[default]
+    List,
+    Grid,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShelfSort {
+    #[default]
+    RecentRead,
+    Imported,
+    Title,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfPreferences {
+    pub layout: ShelfLayout,
+    pub sort: ShelfSort,
+    pub group_id: String,
+}
+impl Default for ShelfPreferences {
+    fn default() -> Self {
+        Self {
+            layout: ShelfLayout::List,
+            sort: ShelfSort::RecentRead,
+            group_id: "all".into(),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveShelfPreferencesRequest {
+    pub preferences: ShelfPreferences,
 }
