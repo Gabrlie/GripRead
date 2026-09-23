@@ -12,6 +12,8 @@ import {
   invoke,
   fixturePath,
   TEST_TIMEOUT,
+  showReaderControls,
+  readPage,
 } from "./support";
 import type { LibraryGroup, ReaderPreferences } from "../../src/types/generated";
 
@@ -126,6 +128,36 @@ describe("current page geometry and material", () => {
       await navigate(1, "书架");
       await openBook(book.book.id);
       await capture(`${label}-reader`);
+      if (!baseline) {
+        const before = await readPage();
+        const hidden = await browser.execute(() => ({
+          controlsHidden: Boolean(
+            document.querySelector('[data-testid="reader-close"]')?.closest("[inert]"),
+          ),
+          top: document.querySelector('[data-testid="reader-page"]')!.getBoundingClientRect().top,
+          bottom: document.querySelector('[data-testid="reader-page"]')!.getBoundingClientRect()
+            .bottom,
+          height: innerHeight,
+        }));
+        expect(hidden.controlsHidden).toBe(true);
+        expect(hidden.top).toBeLessThanOrEqual(24);
+        expect(hidden.bottom).toBeGreaterThanOrEqual(hidden.height - 24);
+        await showReaderControls();
+        await capture(`${label}-reader-controls`);
+        const after = await readPage();
+        expect(after.start).toBe(before.start);
+        expect(after.end).toBe(before.end);
+        const actions = await browser.execute(() => ({
+          top: Array.from(document.querySelectorAll("header button[aria-label]")).map((node) =>
+            node.getAttribute("aria-label"),
+          ),
+          bottom: Array.from(
+            document.querySelector('button[aria-label="搜索正文"]')!.parentElement!.children,
+          ).map((node) => node.getAttribute("aria-label")),
+        }));
+        expect(actions.top).toEqual(["返回书架", "目录规则", "编码格式", "更多"]);
+        expect(actions.bottom).toEqual(["搜索正文", "自动翻页", "目录", "设置"]);
+      }
       await clickReaderControl("reader-close");
       await waitForReaderClosed();
     }

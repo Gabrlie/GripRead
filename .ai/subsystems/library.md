@@ -4,7 +4,7 @@ Status: planned
 
 ## Scope
 
-Manage book identity, imported assets, shelf membership, groups, reading status, and device availability. File transfer and replication belong to [Sync](sync.md); the shelf presentation belongs to [interaction design](../design/interaction.md).
+Manage book identity, imported assets, shelf membership, groups, reading status, and device availability. File transfer and replication belong to [Sync](sync.md); the shelf presentation belongs to [interaction design](../design/interaction.md). The next planned import and reader slice is tracked in the [active plan](../plans/2026-09-23-import-reader-experience.md).
 
 ## Interfaces
 
@@ -14,7 +14,11 @@ Use content hashes to detect repeated local assets and a content version to dist
 
 ## Behavior
 
-Import TXT and supported EPUB through platform file access; desktop also accepts dropped files. Manage shelf groups and reading states: unread, reading, and finished. Expose recent reading, chapter updates, progress, and local availability. Read local metadata before performing network work.
+Import TXT and supported EPUB through platform file access; desktop also accepts dropped files. A normal TXT import requires only a file choice and runs in the background without opening a progress, metadata, encoding, or confirmation dialog. Picker cancellation is silent. After committed success, refresh the shelf without automatically opening the book. Show dismissible success notices for 3 seconds and failure notices for 8 seconds; pointer or keyboard focus pauses their dismissal. Dismissing a notice never cancels its job or erases its terminal result. After a failure notice expires, keep the latest failure details and retry action available from the import entry. Do not expose incomplete assets as readable books.
+
+Use automatic encoding detection for ordinary imports. Offer an explicit encoding retry at import time only when automatic decoding fails, so successful imports need no encoding step. Keep the reader's encoding action available for later correction of a readable file.
+
+Manage shelf groups and reading states: unread, reading, and finished. Expose recent reading, chapter updates, progress, and local availability. Read local metadata before performing network work.
 
 Removing a shelf entry removes its shelf membership and replicates that removal when sync is enabled; it does not delete the remote original book. Clearing cached chapters affects only this device. Permanent asset deletion, if later added, must be a distinct operation with its own scope.
 
@@ -26,7 +30,7 @@ Imported originals, chapter caches, and derived indexes have separate ownership 
 
 Native file selection accepts one TXT; the encoding behavior is owned by [the TXT decoding decision](../notes/implemented/2026-09-18-txt-m1.md). Cancelling the picker creates no task. Application-owned tasks continue after the import panel closes; polling and events converge on one terminal state. A completed import includes its committed result. Shelf snapshots, including an empty snapshot, are authoritative. Unknown metadata uses explicit defaults.
 
-Imports prepare normalized content outside the database mutex. A durable import journal records ownership before file publication; startup obtains exclusive access and reconciles journal entries and committed assets. Recovery removes incomplete products and retains committed identities and valid positions. Reconstructible sparse UTF-16/byte indexes accelerate bounded reads. Managed-file identity and metadata invalidate the verified content cache; changed content produces an explicit version error.
+Imports prepare the representation used by decoding, content versions, positions, search, and recovery outside the database mutex. Required conversion detects the encoding, removes its BOM, and normalizes CRLF/CR to LF; it does not rewrite prose or remove paragraphs. Measure file reading, decoding/conversion, hashing and indexing, staging writes/synchronization, commit, shelf refresh, and time to first readable page separately before optimizing repeated work. The name of a progress phase is not evidence that its named step is the bottleneck. A durable import journal records ownership before file publication; startup obtains exclusive access and reconciles journal entries and committed assets. Recovery removes incomplete products and retains committed identities and valid positions. Reconstructible sparse UTF-16/byte indexes accelerate bounded reads. Managed-file identity and metadata invalidate the verified content cache; changed content produces an explicit version error.
 
 ## Local group implementation
 
@@ -37,6 +41,9 @@ The application shelf store serializes group reads and mutations. Chapter metada
 ## Acceptance
 
 - Reimport identical content without duplicating its asset; preserve book identity when its local path changes.
+- Complete normal import with only a file choice; success and failure notices expire or dismiss without changing job outcomes, and picker cancellation remains silent.
+- Offer explicit import-time encoding retry only after automatic decoding failure; interrupted or failed imports leave no apparently readable partial asset.
+- Compare import, commit, shelf refresh, and first-readable-page timings independently on representative TXT sizes before attributing slowness to representation conversion.
 - Manage groups, reading state, recent books, and local availability across restarts.
 - Distinguish shelf removal, cache cleanup, and cloud-file operations.
 - Associate or download a missing local-book asset and retrieve uncached source chapters through the appropriate path.

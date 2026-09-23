@@ -20,14 +20,19 @@ import type {
   BookmarkIdRequest,
   SearchRequest,
   SearchResponse,
+  PreviewTocRuleRequest,
+  SaveTocRuleRequest,
+  TxtTocRule,
+  TxtTocRulePreview,
   TxtDecodeStatus,
   TxtDecodeTask,
+  TxtEncoding,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
 export interface LibraryService {
-  pickAndImportTxt(): Promise<ImportTask | null>;
-  startImport(path: string): Promise<ImportTask>;
+  pickAndImportTxt(encoding?: TxtEncoding): Promise<ImportTask | null>;
+  startImport(path: string, encoding?: TxtEncoding): Promise<ImportTask>;
   getImportStatus(operationId: string): Promise<ImportStatus>;
   cancelImport(operationId: string): Promise<CancelResult>;
   listBooks(): Promise<LibraryBook[]>;
@@ -55,6 +60,9 @@ export interface ReaderService {
   saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
   getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
   listToc(bookId: string): Promise<TocEntry[]>;
+  getTocRule(bookId: string): Promise<TxtTocRule>;
+  previewTocRule(request: PreviewTocRuleRequest): Promise<TxtTocRulePreview>;
+  saveTocRule(request: SaveTocRuleRequest): Promise<TxtTocRule>;
   listBookmarks(bookId: string): Promise<Bookmark[]>;
   addBookmark(request: BookmarkRequest): Promise<Bookmark>;
   deleteBookmark(request: BookmarkIdRequest): Promise<void>;

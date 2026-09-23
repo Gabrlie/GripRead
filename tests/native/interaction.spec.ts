@@ -16,6 +16,7 @@ import {
   waitForReaderClosed,
   useAnimatedPageTurns,
   useInstantPageTurns,
+  showReaderControls,
   TEST_TIMEOUT,
 } from "./support";
 
@@ -82,7 +83,8 @@ describe("native typography and reader interaction", () => {
     await browser.keys("ArrowRight");
     expect((await readPage()).start).toBe(page.start);
     await browser.execute(() => window.getSelection()?.removeAllRanges());
-    const trigger = await browser.$('button[aria-label="排版设置"]');
+    await showReaderControls();
+    const trigger = await browser.$('button[aria-label="设置"]');
     await trigger.click();
     const dialog = await browser.$('[role="dialog"]:not([hidden])');
     await dialog.waitForDisplayed();

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -9,12 +10,13 @@ use uuid::Uuid;
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     BookRequest, Bookmark, BookmarkIdRequest, BookmarkRequest, CancelResult, ContentWindow,
-    CreateGroupRequest, GroupRequest, ImportOperationRequest, ImportPhase, ImportResult,
-    ImportStatus, ImportTask, LibraryBook, LibraryGroup, ReadContentRequest, ReaderLocator,
-    ReaderPreferences, RenameGroupRequest, ResolveLocatorRequest, SaveLocatorRequest,
-    SaveSettingsRequest, SearchRequest, SearchResponse, SetBookGroupsRequest, StartImportRequest,
-    TocEntry, TxtDecodeStatus, TxtDecodeTask, TxtEncodingInfo, TxtEncodingRequest,
-    TxtSourceRequest,
+    CreateGroupRequest, GetTocRuleRequest, GroupRequest, ImportOperationRequest, ImportPhase,
+    ImportResult, ImportStatus, ImportTask, LibraryBook, LibraryGroup, PreviewTocRuleRequest,
+    ReadContentRequest, ReaderLocator, ReaderPreferences, RenameGroupRequest,
+    ResolveLocatorRequest, SaveLocatorRequest, SaveSettingsRequest, SaveTocRuleRequest,
+    SearchRequest, SearchResponse, SetBookGroupsRequest, StartImportRequest, TocEntry,
+    TxtDecodeStatus, TxtDecodeTask, TxtEncoding, TxtEncodingInfo, TxtEncodingRequest,
+    TxtSourceRequest, TxtTocRulePreview,
 };
 use crate::storage::{
     before_import_commit, build_toc_from_context, duplicate_validation_retry,
@@ -29,6 +31,7 @@ pub struct AppState {
     imports: Arc<Mutex<HashMap<String, ImportOperation>>>,
     txt_decodes: Arc<Mutex<HashMap<String, TxtDecodeOperation>>>,
     searches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    toc_builds: Arc<Mutex<HashMap<TocBuildKey, Arc<TocBuildFlight>>>>,
 }
 
 struct ImportOperation {
@@ -41,6 +44,83 @@ struct TxtDecodeOperation {
     status: TxtDecodeStatus,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct TocBuildKey {
+    book_id: String,
+    content_version: String,
+    rule_identity: String,
+    rule_revision: i64,
+}
+
+struct TocBuildFlight {
+    result: Mutex<Option<Result<Vec<TocEntry>, AppError>>>,
+    ready: Condvar,
+}
+
+impl TocBuildFlight {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) -> Result<Vec<TocEntry>, AppError> {
+        let mut result = self
+            .result
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "TOC build result lock is poisoned"))?;
+        loop {
+            if let Some(result) = result.as_ref() {
+                return result.clone();
+            }
+            result = self.ready.wait(result).map_err(|_| {
+                AppError::new(ErrorCode::Database, "TOC build result lock is poisoned")
+            })?;
+        }
+    }
+
+    fn complete(&self, result: Result<Vec<TocEntry>, AppError>) {
+        let mut stored = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *stored = Some(result);
+        self.ready.notify_all();
+    }
+}
+
+fn acquire_toc_build(
+    builds: &Mutex<HashMap<TocBuildKey, Arc<TocBuildFlight>>>,
+    key: TocBuildKey,
+) -> Result<(Arc<TocBuildFlight>, bool), AppError> {
+    let mut builds = builds
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "TOC build registry is poisoned"))?;
+    if let Some(flight) = builds.get(&key) {
+        return Ok((Arc::clone(flight), false));
+    }
+    let flight = Arc::new(TocBuildFlight::new());
+    builds.insert(key, Arc::clone(&flight));
+    Ok((flight, true))
+}
+
+fn release_toc_build(
+    builds: &Mutex<HashMap<TocBuildKey, Arc<TocBuildFlight>>>,
+    key: &TocBuildKey,
+    flight: &Arc<TocBuildFlight>,
+) {
+    let mut builds = builds
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if builds
+        .get(key)
+        .is_some_and(|registered| Arc::ptr_eq(registered, flight))
+    {
+        builds.remove(key);
+    }
+}
+
 impl AppState {
     pub fn new(data_dir: PathBuf) -> Result<Self, AppError> {
         let storage = Storage::open(&data_dir)?;
@@ -51,6 +131,7 @@ impl AppState {
             imports: Arc::new(Mutex::new(HashMap::new())),
             txt_decodes: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
+            toc_builds: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }
@@ -94,6 +175,7 @@ pub async fn start_import(
     let worker_operation_id = operation_id.clone();
     let worker_imports = Arc::clone(&imports);
     let source = PathBuf::from(request.path);
+    let requested_encoding = request.encoding.unwrap_or(TxtEncoding::Auto);
     let worker_app = app.clone();
     tauri::async_runtime::spawn(async move {
         let blocking_operation_id = worker_operation_id.clone();
@@ -104,6 +186,7 @@ pub async fn start_import(
                 &data_root,
                 &source,
                 &blocking_operation_id,
+                requested_encoding,
                 &cancel,
                 |phase, bytes_read, total_bytes| {
                     publish_import_status(
@@ -640,34 +723,150 @@ pub async fn list_toc(
     state: State<'_, AppState>,
 ) -> Result<Vec<TocEntry>, AppError> {
     let storage = Arc::clone(&state.storage);
+    let builds = Arc::clone(&state.toc_builds);
     tauri::async_runtime::spawn_blocking(move || {
-        let context = {
-            let storage = storage
-                .lock()
-                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-            storage.content_read_context(&request.book_id)?
-        };
-        let verified = verify_content_context(&context)?;
-        if let Some(entries) = {
-            let storage = storage
-                .lock()
-                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-            storage.cached_toc(&context)?
-        } {
-            return Ok(entries);
-        }
-        let entries = build_toc_from_context(&context, &verified, &request.book_id)?;
-        {
-            let storage = storage
-                .lock()
-                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-            storage.persist_content_index(&context, &verified)?;
-            storage.cache_toc(&context, &entries)?;
-        }
-        Ok(entries)
+        list_toc_current(&storage, &builds, &request.book_id)
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, format!("toc worker stopped: {error}")))?
+}
+
+fn list_toc_current(
+    storage: &Mutex<Storage>,
+    builds: &Mutex<HashMap<TocBuildKey, Arc<TocBuildFlight>>>,
+    book_id: &str,
+) -> Result<Vec<TocEntry>, AppError> {
+    loop {
+        let (context, rule, revision, content_version) = {
+            let storage = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            let context = storage.content_read_context(book_id)?;
+            let (rule, revision) = storage.toc_rule_snapshot(book_id)?;
+            let content_version = storage.get_book(book_id)?.content_version;
+            (context, rule, revision, content_version)
+        };
+        let key = TocBuildKey {
+            book_id: book_id.to_string(),
+            content_version,
+            rule_identity: serde_json::to_string(&rule)?,
+            rule_revision: revision,
+        };
+        let (flight, is_builder) = acquire_toc_build(builds, key.clone())?;
+        let result = if !is_builder {
+            flight.wait()
+        } else {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let verified = verify_content_context(&context)?;
+                if let Some(entries) = {
+                    let storage = storage.lock().map_err(|_| {
+                        AppError::new(ErrorCode::Database, "storage lock is poisoned")
+                    })?;
+                    let cached = storage.cached_toc(&context, &rule, revision)?;
+                    if cached.is_some() {
+                        storage.persist_content_index(&context, &verified)?;
+                    }
+                    cached
+                } {
+                    return Ok(entries);
+                }
+                let entries = build_toc_from_context(&context, &verified, book_id, &rule)?;
+                {
+                    let storage = storage.lock().map_err(|_| {
+                        AppError::new(ErrorCode::Database, "storage lock is poisoned")
+                    })?;
+                    storage.persist_content_index(&context, &verified)?;
+                    storage.cache_toc(&context, &entries, &rule, revision)?;
+                }
+                Ok(entries)
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::new(
+                    ErrorCode::Io,
+                    "TOC build worker stopped unexpectedly",
+                ))
+            });
+            flight.complete(result.clone());
+            release_toc_build(builds, &key, &flight);
+            result
+        };
+        // A rule save or re-decode can finish while this caller is building
+        // or waiting for another caller. Retry from the latest snapshot, so
+        // neither old successes nor errors replace the current directory.
+        if storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .toc_snapshot_is_current(&context, &rule, revision)?
+        {
+            return result;
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_toc_rule(
+    request: GetTocRuleRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::TxtTocRule, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .get_toc_rule(&request.book_id)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("TOC rule worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn save_toc_rule(
+    request: SaveTocRuleRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::TxtTocRule, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .save_toc_rule(&request.book_id, &request.rule)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("TOC rule worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn preview_toc_rule(
+    request: PreviewTocRuleRequest,
+    state: State<'_, AppState>,
+) -> Result<TxtTocRulePreview, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        let entries = build_toc_from_context(&context, &verified, &request.book_id, &request.rule)?;
+        if !storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .content_snapshot_is_current(&context)?
+        {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "content changed while the directory rule was being previewed",
+            ));
+        }
+        Ok(TxtTocRulePreview { entries })
+    })
+    .await
+    .map_err(|error| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("TOC preview worker stopped: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
@@ -1125,4 +1324,143 @@ pub async fn save_shelf_preferences(
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{TxtTocRule, TxtTocRuleMode};
+    use std::time::{Duration, Instant};
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("gripread-toc-command-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn wait_for_callers(flight: &Arc<TocBuildFlight>, callers: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // The registry and test builder each own one reference. Each real
+        // command owns another only after joining this exact pending build.
+        while Arc::strong_count(flight) < callers + 2 {
+            assert!(
+                Instant::now() < deadline,
+                "TOC requests did not join the pending build"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn coalesced_toc_callers_retry_after_rules_or_content_change() {
+        for change_content in [false, true] {
+            let root = TestRoot::new();
+            let source = root.0.join("chapters.txt");
+            std::fs::write(&source, "第一章 开始\nChapter 2\n").unwrap();
+            let mut storage = Storage::open(&root.0.join("data")).unwrap();
+            let imported = storage
+                .import_txt(&source, "toc", &AtomicBool::new(false), |_, _, _| {})
+                .unwrap();
+            let old_entries = storage.list_toc(&imported.book.id).unwrap();
+            let (rule, revision) = storage.toc_rule_snapshot(&imported.book.id).unwrap();
+            let key = TocBuildKey {
+                book_id: imported.book.id.clone(),
+                content_version: imported.book.content_version.clone(),
+                rule_identity: serde_json::to_string(&rule).unwrap(),
+                rule_revision: revision,
+            };
+            let storage = Arc::new(Mutex::new(storage));
+            let builds = Arc::new(Mutex::new(HashMap::new()));
+            let (flight, is_builder) = acquire_toc_build(&builds, key.clone()).unwrap();
+            assert!(is_builder);
+            let (send, receive) = std::sync::mpsc::channel();
+            let workers = (0..2)
+                .map(|_| {
+                    let storage = Arc::clone(&storage);
+                    let builds = Arc::clone(&builds);
+                    let book_id = imported.book.id.clone();
+                    let send = send.clone();
+                    std::thread::spawn(move || {
+                        send.send(list_toc_current(&storage, &builds, &book_id))
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            wait_for_callers(&flight, 2);
+            let current = {
+                let mut storage = storage.lock().unwrap();
+                if change_content {
+                    storage
+                        .set_txt_encoding(&imported.book.id, TxtEncoding::Utf16Le)
+                        .unwrap();
+                } else {
+                    storage
+                        .save_toc_rule(
+                            &imported.book.id,
+                            &TxtTocRule {
+                                mode: TxtTocRuleMode::English,
+                                pattern: String::new(),
+                            },
+                        )
+                        .unwrap();
+                }
+                storage.list_toc(&imported.book.id).unwrap()
+            };
+            assert_ne!(current, old_entries);
+            flight.complete(Ok(old_entries));
+            release_toc_build(&builds, &key, &flight);
+            for _ in 0..2 {
+                assert_eq!(
+                    receive
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap()
+                        .unwrap(),
+                    current
+                );
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            assert!(builds.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn toc_build_failure_releases_registry_and_allows_a_later_retry() {
+        let root = TestRoot::new();
+        let source = root.0.join("chapters.txt");
+        let text = "Chapter 1\nBody\n";
+        std::fs::write(&source, text).unwrap();
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let imported = storage
+            .import_txt(&source, "toc", &AtomicBool::new(false), |_, _, _| {})
+            .unwrap();
+        let path = root
+            .0
+            .join("data/books")
+            .join(&imported.book.id)
+            .join(format!("{}.txt", imported.asset.id));
+        std::fs::remove_file(&path).unwrap();
+        let storage = Mutex::new(storage);
+        let builds = Mutex::new(HashMap::new());
+        assert!(list_toc_current(&storage, &builds, &imported.book.id).is_err());
+        assert!(builds.lock().unwrap().is_empty());
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(
+            list_toc_current(&storage, &builds, &imported.book.id).unwrap()[0].title,
+            "Chapter 1"
+        );
+        assert!(builds.lock().unwrap().is_empty());
+    }
 }

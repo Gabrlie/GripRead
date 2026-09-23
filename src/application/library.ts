@@ -23,10 +23,27 @@ export interface LibrarySnapshot {
   job: ImportStatus | null;
   importing: boolean;
   importError: string | null;
+  importOutcome: ImportOutcome | null;
+  importNotice: ImportNotice | null;
+  importDetailsRequested: boolean;
   decodeJob: TxtDecodeStatus | null;
   decoding: boolean;
   decodeError: string | null;
 }
+
+export interface ImportOutcome {
+  phase: "completed" | "failed" | "cancelled";
+  status: ImportStatus | null;
+  error: string | null;
+  retryWithEncoding: boolean;
+}
+
+export interface ImportNotice {
+  id: number;
+  phase: ImportOutcome["phase"];
+  message: string;
+}
+
 export const isTerminal = (status: { phase: ImportPhase }) =>
   ["completed", "failed", "cancelled"].includes(status.phase);
 
@@ -65,6 +82,9 @@ export class LibraryStore {
     job: null,
     importing: false,
     importError: null,
+    importOutcome: null,
+    importNotice: null,
+    importDetailsRequested: false,
     decodeJob: null,
     decoding: false,
     decodeError: null,
@@ -77,6 +97,12 @@ export class LibraryStore {
   private refreshVersion = 0;
   private operationId: string | null = null;
   private completed = new Set<string>();
+  private importAttempt = 0;
+  private noticeRevision = 0;
+  private noticeTimerRevision = 0;
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  private noticeRemainingMs = 0;
+  private noticeDeadline = 0;
   private decodeOperationId: string | null = null;
   private decodeTimer: ReturnType<typeof setTimeout> | undefined;
   private decodeWaiter:
@@ -93,6 +119,59 @@ export class LibraryStore {
     this.snapshot = { ...this.snapshot, ...patch };
     this.listeners.forEach((listener) => listener());
   }
+  private stopNoticeTimer() {
+    this.noticeTimerRevision++;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = undefined;
+  }
+  private scheduleNoticeDismissal(id: number, delayMs: number) {
+    this.noticeTimerRevision++;
+    const timerRevision = this.noticeTimerRevision;
+    this.noticeRemainingMs = delayMs;
+    this.noticeDeadline = Date.now() + delayMs;
+    this.noticeTimer = setTimeout(() => {
+      if (timerRevision !== this.noticeTimerRevision || this.snapshot.importNotice?.id !== id)
+        return;
+      this.noticeTimer = undefined;
+      this.noticeRemainingMs = 0;
+      this.update({ importNotice: null });
+    }, delayMs);
+  }
+  private showImportNotice(phase: ImportOutcome["phase"], message: string, durationMs: number) {
+    this.stopNoticeTimer();
+    const id = ++this.noticeRevision;
+    this.update({ importNotice: { id, phase, message } });
+    this.scheduleNoticeDismissal(id, durationMs);
+  }
+  dismissImportNotice = (id: number) => {
+    if (this.snapshot.importNotice?.id !== id) return;
+    this.stopNoticeTimer();
+    this.noticeRemainingMs = 0;
+    this.update({ importNotice: null });
+  };
+  pauseImportNotice = (id: number) => {
+    if (this.snapshot.importNotice?.id !== id || !this.noticeTimer) return;
+    this.noticeRemainingMs = Math.max(0, this.noticeDeadline - Date.now());
+    this.stopNoticeTimer();
+  };
+  resumeImportNotice = (id: number) => {
+    if (this.snapshot.importNotice?.id !== id || this.noticeTimer) return;
+    const remaining = this.noticeRemainingMs;
+    if (remaining <= 0) {
+      this.dismissImportNotice(id);
+      return;
+    }
+    this.scheduleNoticeDismissal(id, remaining);
+  };
+  private clearImportNotice() {
+    this.stopNoticeTimer();
+    this.noticeRemainingMs = 0;
+    if (this.snapshot.importNotice) this.update({ importNotice: null });
+  }
+  requestImportDetails = () => this.update({ importDetailsRequested: true });
+  consumeImportDetailsRequest = () => {
+    if (this.snapshot.importDetailsRequested) this.update({ importDetailsRequested: false });
+  };
   connect = () => {
     const generation = ++this.generation;
     void this.refresh();
@@ -252,30 +331,54 @@ export class LibraryStore {
       if (this.snapshot.lastRemoved?.id === id) this.update({ lastRemoved: null });
     });
   dismissUndo = () => this.update({ lastRemoved: null });
-  importTxt = async (path?: string) => {
+  importTxt = async (path?: string, encoding?: TxtEncoding) => {
     if (this.snapshot.importing) return;
+    const attempt = ++this.importAttempt;
+    this.clearImportNotice();
+    this.operationId = null;
+    clearTimeout(this.timer);
     this.update({ importing: true, importError: null, job: null });
     try {
       const task =
         path === undefined
-          ? await this.service.pickAndImportTxt()
-          : await this.service.startImport(path);
+          ? await this.service.pickAndImportTxt(encoding)
+          : await this.service.startImport(path, encoding);
+      if (attempt !== this.importAttempt) return;
       if (!task) {
-        this.update({ importing: false });
+        // Closing the native picker is not an import failure. Keep the last
+        // terminal result available through the status entry.
+        this.update({ importing: false, importError: null });
         return;
       }
       this.operationId = task.operationId;
       await this.poll(this.generation);
     } catch (error) {
-      this.update({ importing: false, importError: String(error) });
+      if (attempt !== this.importAttempt) return;
+      const message = String(error);
+      const retryWithEncoding =
+        errorCode(error) === "unsupported_encoding" &&
+        (encoding === undefined || encoding === "auto");
+      this.update({
+        importing: false,
+        importError: message,
+        importOutcome: {
+          phase: "failed",
+          status: null,
+          error: message,
+          retryWithEncoding,
+        },
+      });
+      this.showImportNotice("failed", "导入失败", 8_000);
     }
   };
   cancel = async () => {
-    if (!this.operationId || !this.snapshot.importing) return;
+    const id = this.operationId;
+    if (!id || !this.snapshot.importing) return;
     try {
-      await this.service.cancelImport(this.operationId);
+      await this.service.cancelImport(id);
     } catch (error) {
-      this.update({ importError: String(error) });
+      if (id === this.operationId && this.snapshot.importing && !this.completed.has(id))
+        this.update({ importError: String(error) });
     }
   };
   decodeTxt = (bookId: string, encoding: TxtEncoding): Promise<TxtEncodingInfo> => {
@@ -314,9 +417,20 @@ export class LibraryStore {
         result: null,
         error: { code: "io", message },
       };
-      this.update({ job: failed, importing: false, importError: message });
+      this.update({
+        job: failed,
+        importing: false,
+        importError: message,
+        importOutcome: {
+          phase: "failed",
+          status: failed,
+          error: message,
+          retryWithEncoding: false,
+        },
+      });
       this.completed.add(status.operationId);
       clearTimeout(this.timer);
+      this.showImportNotice("failed", "导入失败", 8_000);
       return;
     }
     this.update({
@@ -327,6 +441,28 @@ export class LibraryStore {
     if (isTerminal(status)) {
       this.completed.add(status.operationId);
       clearTimeout(this.timer);
+      const phase = status.phase as ImportOutcome["phase"];
+      const message = status.error
+        ? `${status.error.code}: ${status.error.message}`
+        : phase === "failed"
+          ? "导入失败，请重新选择文件后重试。"
+          : null;
+      const retryWithEncoding = phase === "failed" && status.error?.code === "unsupported_encoding";
+      this.update({
+        importOutcome: {
+          phase,
+          status,
+          error: message,
+          retryWithEncoding,
+        },
+      });
+      if (phase === "completed") {
+        this.showImportNotice("completed", "导入完成", 3_000);
+      } else if (phase === "failed") {
+        this.showImportNotice("failed", "导入失败", 8_000);
+      } else {
+        this.showImportNotice("cancelled", "导入已取消", 2_500);
+      }
       if (status.phase === "completed") {
         if (status.result && this.snapshot.lastRemoved?.id === status.result.book.id)
           this.update({ lastRemoved: null });

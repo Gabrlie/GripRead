@@ -1,46 +1,98 @@
+use crate::error::AppError;
 use crate::models::{Bookmark, ReaderLocator, SearchMatch, TocEntry};
+use crate::models::{TxtTocRule, TxtTocRuleMode};
 use crate::txt::utf16_boundaries;
+use regex::Regex;
 
 const CONTEXT_UNITS: usize = 32;
 
 pub fn build_toc(text: &str, book_id: &str, content_version: &str) -> Vec<TocEntry> {
-    let boundaries = utf16_boundaries(text);
+    build_toc_with_rule(
+        text,
+        book_id,
+        content_version,
+        &TxtTocRule {
+            mode: TxtTocRuleMode::Automatic,
+            pattern: String::new(),
+        },
+    )
+    .expect("automatic TOC rules do not contain a regex")
+}
+
+/// Build the TOC with a single forward pass over normalized lines. Per-entry
+/// locator context is limited to `CONTEXT_UNITS` around the heading, so adding
+/// chapters never triggers another walk across the full text.
+pub fn build_toc_with_rule(
+    text: &str,
+    book_id: &str,
+    content_version: &str,
+    rule: &TxtTocRule,
+) -> Result<Vec<TocEntry>, AppError> {
+    let custom_regex = if rule.mode == TxtTocRuleMode::Custom {
+        Some(Regex::new(&rule.pattern).map_err(|error| {
+            AppError::invalid_argument(format!("invalid TOC rule pattern: {error}"))
+        })?)
+    } else {
+        None
+    };
     let mut entries = Vec::new();
-    let mut line_start_byte = 0usize;
     let mut ordinal = 0u64;
-    for (line_end_byte, _) in text.match_indices('\n') {
-        let line = &text[line_start_byte..line_end_byte];
-        if let Some(title) = chapter_title(line) {
-            let offset = boundaries
-                .iter()
-                .find_map(|(units, byte)| (*byte == line_start_byte).then_some(*units))
-                .unwrap_or_default();
+    let mut line_start_byte = 0usize;
+    let mut line_start_units = 0u64;
+    for raw_line in text.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        if let Some(title) = chapter_title_for_rule(line, rule, custom_regex.as_ref()) {
             entries.push(TocEntry {
                 ordinal,
                 title,
-                locator: make_locator(text, book_id, content_version, offset),
+                locator: make_toc_locator(
+                    text,
+                    book_id,
+                    content_version,
+                    line_start_byte,
+                    line_start_units,
+                ),
             });
             ordinal += 1;
         }
-        line_start_byte = line_end_byte + 1;
+        line_start_byte += raw_line.len();
+        line_start_units += raw_line.encode_utf16().count() as u64;
     }
-    if line_start_byte <= text.len() {
-        if let Some(title) = chapter_title(&text[line_start_byte..]) {
-            let offset = boundaries
-                .iter()
-                .find_map(|(units, byte)| (*byte == line_start_byte).then_some(*units))
-                .unwrap_or_default();
-            entries.push(TocEntry {
-                ordinal,
-                title,
-                locator: make_locator(text, book_id, content_version, offset),
-            });
-        }
+    Ok(entries)
+}
+
+pub fn validate_toc_rule(rule: &TxtTocRule) -> Result<(), AppError> {
+    if rule.mode == TxtTocRuleMode::Custom {
+        Regex::new(&rule.pattern).map_err(|error| {
+            AppError::invalid_argument(format!("invalid TOC rule pattern: {error}"))
+        })?;
     }
-    entries
+    Ok(())
 }
 
 fn chapter_title(line: &str) -> Option<String> {
+    chinese_chapter_title(line).or_else(|| english_chapter_title(line))
+}
+
+fn chapter_title_for_rule(
+    line: &str,
+    rule: &TxtTocRule,
+    custom_regex: Option<&Regex>,
+) -> Option<String> {
+    match rule.mode {
+        TxtTocRuleMode::Automatic => chapter_title(line),
+        TxtTocRuleMode::Chinese => chinese_chapter_title(line),
+        TxtTocRuleMode::English => english_chapter_title(line),
+        TxtTocRuleMode::Custom => {
+            let title = line.trim();
+            (title.chars().count() <= 120 && custom_regex.is_some_and(|regex| regex.is_match(line)))
+                .then(|| title.to_string())
+                .filter(|title| !title.is_empty())
+        }
+    }
+}
+
+fn chinese_chapter_title(line: &str) -> Option<String> {
     let title = line.trim();
     if title.is_empty() || title.len() > 120 {
         return None;
@@ -49,9 +101,53 @@ fn chapter_title(line: &str) -> Option<String> {
     let looks_chinese = title.starts_with('第')
         && chinese.iter().any(|suffix| title.contains(suffix))
         && title.chars().count() >= 3;
-    let lower = title.to_ascii_lowercase();
-    let looks_english = lower.starts_with("chapter ") && title.chars().count() <= 100;
-    (looks_chinese || looks_english).then(|| title.to_string())
+    looks_chinese.then(|| title.to_string())
+}
+
+fn english_chapter_title(line: &str) -> Option<String> {
+    let title = line.trim();
+    if title.is_empty() || title.len() > 120 {
+        return None;
+    }
+    (title.to_ascii_lowercase().starts_with("chapter ") && title.chars().count() <= 100)
+        .then(|| title.to_string())
+}
+
+fn make_toc_locator(
+    text: &str,
+    book_id: &str,
+    content_version: &str,
+    byte_offset: usize,
+    unit_offset: u64,
+) -> ReaderLocator {
+    // Match the existing locator slices: round a start boundary forward and
+    // an end boundary forward when the 32-unit boundary splits a surrogate.
+    let before: Vec<_> = text[..byte_offset]
+        .chars()
+        .rev()
+        .scan(0, |units, character| {
+            *units += character.len_utf16();
+            (*units <= CONTEXT_UNITS).then_some(character)
+        })
+        .collect();
+    let after = text[byte_offset..]
+        .chars()
+        .scan(0, |units, character| {
+            if *units >= CONTEXT_UNITS {
+                return None;
+            }
+            *units += character.len_utf16();
+            Some(character)
+        })
+        .collect();
+    ReaderLocator {
+        book_id: book_id.to_string(),
+        content_version: content_version.to_string(),
+        resource_id: "full-text".to_string(),
+        offset: unit_offset,
+        context_before: before.into_iter().rev().collect(),
+        context_after: after,
+    }
 }
 
 pub fn search_text(
@@ -180,6 +276,74 @@ mod tests {
             .locator
             .context_before
             .is_char_boundary(entries[0].locator.context_before.len()));
+    }
+
+    #[test]
+    fn directory_rules_select_headings_without_changing_text_offsets() {
+        let text = "前言😀\n第一章 开始\n正文\nChapter 2\nPart 3 — 尾声";
+        for (mode, pattern, expected) in [
+            (
+                TxtTocRuleMode::Automatic,
+                "",
+                vec!["第一章 开始", "Chapter 2"],
+            ),
+            (TxtTocRuleMode::Chinese, "", vec!["第一章 开始"]),
+            (TxtTocRuleMode::English, "", vec!["Chapter 2"]),
+            (
+                TxtTocRuleMode::Custom,
+                "^Part [0-9]+",
+                vec!["Part 3 — 尾声"],
+            ),
+            (TxtTocRuleMode::Custom, "^Missing$", vec![]),
+        ] {
+            let entries = build_toc_with_rule(
+                text,
+                "book",
+                "version",
+                &TxtTocRule {
+                    mode,
+                    pattern: pattern.to_string(),
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                entries
+                    .iter()
+                    .map(|entry| entry.title.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            for (ordinal, entry) in entries.iter().enumerate() {
+                let byte_offset = text.find(&entry.title).unwrap();
+                let offset = text[..byte_offset].encode_utf16().count() as u64;
+                assert_eq!(entry.ordinal, ordinal as u64);
+                assert_eq!(entry.locator, make_locator(text, "book", "version", offset));
+            }
+        }
+        let invalid = TxtTocRule {
+            mode: TxtTocRuleMode::Custom,
+            pattern: "[".to_string(),
+        };
+        assert!(validate_toc_rule(&invalid).is_err());
+        assert!(build_toc_with_rule(text, "book", "version", &invalid).is_err());
+        assert!(build_toc("", "book", "version").is_empty());
+    }
+
+    #[test]
+    fn single_pass_toc_preserves_context_when_surrogates_cross_window_edges() {
+        for padding in 0..40 {
+            let text = format!(
+                "😀{}\nChapter 1\n{}😀\nChapter 2",
+                "a".repeat(padding),
+                "b".repeat(padding)
+            );
+            for entry in build_toc(&text, "book", "version") {
+                assert_eq!(
+                    entry.locator,
+                    make_locator(&text, "book", "version", entry.locator.offset)
+                );
+            }
+        }
     }
 
     #[test]

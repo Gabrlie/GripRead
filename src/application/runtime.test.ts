@@ -50,6 +50,9 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     saveReaderLocator: vi.fn(),
     getSavedReaderLocator: vi.fn(),
     listToc: vi.fn(async () => []),
+    getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
+    previewTocRule: vi.fn(async () => ({ entries: [] })),
+    saveTocRule: vi.fn(async (request) => request.rule),
     listBookmarks: vi.fn(),
     addBookmark: vi.fn(),
     deleteBookmark: vi.fn(),
@@ -65,6 +68,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
       lineHeight: 1.8,
       fontFamily: "serif",
       pageTurnEffect: "curl",
+      autoPageSeconds: 8,
     })),
     saveSettings: vi.fn(async (value) => value),
     getShelfPreferences: vi.fn(async (): Promise<ShelfPreferences> => ({

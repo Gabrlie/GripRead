@@ -15,7 +15,10 @@
           "permissions": [
             "wdio:default",
             "wdio-webdriver:default",
-            "core:window:allow-set-size"
+            "core:window:allow-set-size",
+            "core:window:allow-show",
+            "core:window:allow-unminimize",
+            "core:window:allow-set-focus"
           ]
         }
       ]

@@ -15,6 +15,7 @@ import {
   clickReaderControl,
   waitForReaderClosed,
   readPage,
+  showReaderControls,
 } from "./support";
 import type {
   Bookmark,
@@ -166,18 +167,19 @@ describe("GripRead native M1 TXT tools", () => {
       ),
     ).toBe(false);
   });
-  it("connects the preserved reader controls to TOC, bookmarks and highlighted search", async () => {
+  it("connects the reader controls to TOC, bookmarks and highlighted search", async () => {
     const source = await importFixture("chapters.txt");
     await refreshLibraryInUi(source.book.id);
     await openBook(source.book.id);
+    await showReaderControls();
     await browser.$('button[aria-label="目录"]').click();
     await browser.$('[role="dialog"]').waitForDisplayed();
     const chapter = await (await browser.$('[role="dialog"]')).$("button*=第一章");
     await chapter.waitForDisplayed();
     await chapter.click();
     await browser.waitUntil(async () => (await readPage()).start > 0);
-    await browser.$('button[aria-label="添加书签"]').click();
-    await browser.$('button[aria-label="书签"]').click();
+    await browser.$('button[aria-label="更多"]').click();
+    await browser.$("button*=添加当前位置书签").click();
     await browser.waitUntil(
       async () =>
         (await browser.execute(

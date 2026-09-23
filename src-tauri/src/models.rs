@@ -243,6 +243,48 @@ pub struct TocEntry {
     pub locator: ReaderLocator,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TxtTocRuleMode {
+    Automatic,
+    Chinese,
+    English,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtTocRule {
+    pub mode: TxtTocRuleMode,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TxtTocRulePreview {
+    pub entries: Vec<TocEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTocRuleRequest {
+    pub book_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveTocRuleRequest {
+    pub book_id: String,
+    pub rule: TxtTocRule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewTocRuleRequest {
+    pub book_id: String,
+    pub rule: TxtTocRule,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Bookmark {
@@ -303,6 +345,9 @@ pub struct SearchResponse {
 #[serde(rename_all = "camelCase")]
 pub struct StartImportRequest {
     pub path: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub encoding: Option<TxtEncoding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -367,6 +412,12 @@ pub struct ReaderPreferences {
     pub line_height: f64,
     pub font_family: ReaderFont,
     pub page_turn_effect: PageTurnEffect,
+    #[serde(default = "default_auto_page_seconds")]
+    pub auto_page_seconds: u8,
+}
+
+fn default_auto_page_seconds() -> u8 {
+    8
 }
 
 impl Default for ReaderPreferences {
@@ -379,6 +430,7 @@ impl Default for ReaderPreferences {
             line_height: 1.8,
             font_family: ReaderFont::Serif,
             page_turn_effect: PageTurnEffect::Curl,
+            auto_page_seconds: default_auto_page_seconds(),
         }
     }
 }
@@ -396,6 +448,11 @@ impl ReaderPreferences {
         if !self.line_height.is_finite() || !(1.0..=3.5).contains(&self.line_height) {
             return Err(AppError::invalid_argument(
                 "line_height must be a finite value between 1 and 3.5",
+            ));
+        }
+        if !(2..=60).contains(&self.auto_page_seconds) {
+            return Err(AppError::invalid_argument(
+                "auto_page_seconds must be between 2 and 60",
             ));
         }
         Ok(())

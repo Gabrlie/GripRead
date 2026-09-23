@@ -2,16 +2,16 @@
 
 ## Current stage
 
-M0 remains in progress. Storage, IPC, reading, PageFlip cleanup, macOS close/quit checks, and recovery are integrated. The M1 TXT and local-library slice includes encoding, verified re-decode relocation, TOC, bookmarks, cancellable search, editable metadata, persisted shelf preferences, and reversible shelf removal; wider M1 remains planned.
+M0 remains in progress. The local TXT/library slice includes import recovery, encoding correction, TOC, search, bookmarks, shelf management, and durable reading positions; wider M1 remains planned.
 
 ## Active task
 
-The [macOS closeout and local-library implementation](plans/2026-09-19-local-library-closeout.md) is implemented and reviewed on `codex/local-library-closeout`. Metadata editing, sorting, shelf preferences, reversible removal, and verified TXT relocation preserve the existing visual baseline. Exit now waits for accepted library/group writes and offers safe retry or explicit abandonment of rejected shelf intents.
+The [silent import and immersive reading implementation](plans/2026-09-23-import-reader-experience.md) is implemented and reviewed. It includes expiring import notices, per-book directory rules, faster directory generation, full-height reading, rearranged tools, and automatic turning. Concurrency and exit failures identified during review are fixed.
 
 ## Blockers
 
-`pnpm check` passes: 88 frontend and 55 Rust tests. The ordinary build and affected native phases pass; the complete native suite passed before final review. System picker import/cancellation, window close, Quit, save-failure retry, and relaunch have real evidence. Source re-association has automated IPC coverage; its manual system-picker evidence remains pending.
+`pnpm check` passes with 113 frontend and 64 Rust tests. The ordinary macOS build and all affected native phases pass, including 30 cases and expected crash/recovery behavior. Desktop and phone-sized renders were inspected. Manual source-reassociation picker evidence and other-platform acceptance remain pending.
 
 ## Next entry point
 
-Record the remaining source-picker evidence before marking the stage complete. Android and Windows checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
+Collect the remaining system-picker evidence before stage closeout; detailed import-stage and first-render profiling remain available follow-up work. Android and Windows checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.

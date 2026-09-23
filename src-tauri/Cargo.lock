@@ -1367,6 +1367,7 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "fs2",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

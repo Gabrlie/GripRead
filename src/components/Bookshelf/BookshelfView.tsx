@@ -62,7 +62,17 @@ export function BookshelfView() {
         missing: entry.asset.availability === "missing",
       };
     });
-  const handleAddLocal = () => void store.importTxt();
+  const handleAddLocal = () => {
+    if (state.importing) {
+      store.requestImportDetails();
+      return;
+    }
+    if (state.importOutcome?.phase === "failed") {
+      store.requestImportDetails();
+      return;
+    }
+    void store.importTxt();
+  };
   const handleUpdateToc = () => void store.refresh();
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });
   useEffect(() => {
@@ -367,7 +377,6 @@ export function BookshelfView() {
                 data-testid="import-button"
                 variant="default"
                 size="sm"
-                disabled={state.importing}
                 onClick={handleAddLocal}
                 className="mt-2 bg-primary text-on-primary text-xs cursor-pointer"
               >

@@ -4,7 +4,7 @@ Status: planned
 
 ## Scope
 
-Parse TXT and DRM-free reflowable EPUB, render normalized chapters, and support offline reading, navigation, search, and bookmarks. Online chapters enter through the same content interface. Screen layout and default typography belong to [interaction design](../design/interaction.md).
+Parse TXT and DRM-free reflowable EPUB, render normalized chapters, and support offline reading, navigation, search, and bookmarks. Online chapters enter through the same content interface. Screen layout and default typography belong to [interaction design](../design/interaction.md). The current planned import and reader work is tracked in the [active plan](../plans/2026-09-23-import-reader-experience.md).
 
 ## Interfaces
 
@@ -18,11 +18,17 @@ Keep these interfaces sufficient for future read-only content retrieval; do not 
 
 Novels default to pagination with page-curl, slide, and instant effects, plus an optional scrolling mode. StPageFlip is the planned page-curl adapter: it receives already paginated content and owns neither text parsing nor persisted positions. General interface transitions follow [motion design](../design/motion.md).
 
-Changing fonts, size, orientation, viewport, or single/double-page layout reflows from the text locator. Cross-chapter turns must preserve content without missing or repeating text. Retain only the required reading window in the DOM; a large novel must not be rendered in full.
+Changing fonts, size, orientation, viewport, or single/double-page layout reflows from the text locator. Toolbar visibility and panel changes overlay stable page geometry and do not repaginate or alter the saved passage. Cross-chapter turns must preserve content without missing or repeating text. Retain only the required reading window in the DOM; a large novel must not be rendered in full.
 
 Load local content first. Missing resources produce actionable loading or failure states without discarding readable content. Persist position independently of animation completion. Selection temporarily disables page-turn gestures. Reader search and bookmarks use content positions, not display pages.
 
 Clean EPUB and source markup before rendering; scripts and application IPC are not exposed to imported content. Resolve book resources through the file/content adapter rather than arbitrary paths supplied by markup. Image loading and late font availability must not silently move the reading position.
+
+For TXT, build directory entries from heading lines in the existing text and preserve document order and UTF-16 text locations. Support automatic recognition, built-in heading presets, and a per-book custom Rust regular expression, with preview, apply, and restore-default actions. Preview reports matched titles and locations but does not change the saved rule; invalid expressions keep the active directory and show an inline error, while zero matches provide full-text navigation. Applying a rule rebuilds only directory metadata: it does not rewrite the body, change book identity or content version, or invalidate bookmarks and search positions. Version directory caches by content version and rule revision, deduplicate concurrent builds for the same key, and reject stale previews/builds after a newer choice. Encoding changes continue through the established content-version and verified-position relocation path, then rebuild rule-derived metadata for the new version.
+
+Directory generation must not rescan the entire TXT once for every matched chapter. Build chapter locations in work proportional to the text and matches, independently from first-page rendering and shelf usability; benchmark cold and warm uncached cases with dense headings to verify the improvement.
+
+Automatic page turning uses the existing reader controller and presentation modes. Its initial interval is 8 seconds per page and the chosen interval persists; the running state is session-local and never resumes automatically after reopening. It waits for a page/window turn to finish before starting the next interval, never overlaps turns, and pauses for manual reading interaction, controls or panels, text selection, blur/background, content replacement, reflow, encoding changes, navigation failure, or the final page. Resume requires an explicit user action and does not replay elapsed background time.
 
 ## M0 implementation contract
 
@@ -35,7 +41,10 @@ Supported preferences use the settings service and persist in SQLite. Theme foll
 ## Acceptance
 
 - Read a million-character TXT and an illustrated EPUB without mounting the entire book in the DOM.
+- Build TXT directories for Chinese, English, and numeric headings, custom rules, invalid rules, and no matches; preview cancellation and per-book rule changes preserve body text, content identity, and reader positions.
+- Verify directory cache invalidation and stale-result rejection after rapid rule changes or encoding correction, and show that TOC work no longer performs a full-text scan per chapter.
 - Turn across chapter boundaries in every reading mode without dropped or duplicated text.
+- Run automatic turning at its default and a changed interval, verify each pause condition, and confirm reopening never starts it automatically.
 - Change typography, orientation, window size, and page count, then reopen at the same passage.
 - Exercise touch, keyboard navigation, selection, search, bookmarks, missing images, malformed content, and offline reopening.
 - Replace the content version and verify position recovery reports uncertainty rather than silently selecting an unrelated passage.

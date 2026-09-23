@@ -41,6 +41,11 @@ import type {
   BookmarkIdRequest,
   SearchRequest,
   SearchResponse,
+  GetTocRuleRequest,
+  PreviewTocRuleRequest,
+  SaveTocRuleRequest,
+  TxtTocRule,
+  TxtTocRulePreview,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -108,7 +113,7 @@ function invokeCommand<T>(command: string, args?: Record<string, unknown>): Prom
 
 export const tauriServices: AppServices = {
   library: {
-    pickAndImportTxt: async () => {
+    pickAndImportTxt: async (encoding) => {
       const selected = await open({
         multiple: false,
         directory: false,
@@ -116,10 +121,15 @@ export const tauriServices: AppServices = {
       });
       if (selected === null) return null;
       if (typeof selected !== "string") throw new Error("Expected one TXT file");
-      return tauriServices.library.startImport(selected);
+      return tauriServices.library.startImport(selected, encoding);
     },
-    startImport: (path) =>
-      invokeCommand<ImportTask>("start_import", { request: { path } satisfies StartImportRequest }),
+    startImport: (path, encoding) =>
+      invokeCommand<ImportTask>("start_import", {
+        request: {
+          path,
+          ...(encoding === undefined ? {} : { encoding }),
+        } satisfies StartImportRequest,
+      }),
     getImportStatus: (operationId) =>
       invokeCommand<ImportStatus>("get_import_status", {
         request: { operationId } satisfies ImportOperationRequest,
@@ -199,6 +209,18 @@ export const tauriServices: AppServices = {
         request: { bookId } satisfies BookRequest,
       }),
     listToc: (bookId) => invokeCommand<TocEntry[]>("list_toc", { request: { bookId } }),
+    getTocRule: (bookId) =>
+      invokeCommand<TxtTocRule>("get_toc_rule", {
+        request: { bookId } satisfies GetTocRuleRequest,
+      }),
+    previewTocRule: (request) =>
+      invokeCommand<TxtTocRulePreview>("preview_toc_rule", {
+        request: request satisfies PreviewTocRuleRequest,
+      }),
+    saveTocRule: (request) =>
+      invokeCommand<TxtTocRule>("save_toc_rule", {
+        request: request satisfies SaveTocRuleRequest,
+      }),
     listBookmarks: (bookId) => invokeCommand<Bookmark[]>("list_bookmarks", { request: { bookId } }),
     addBookmark: (request) => invokeCommand<Bookmark>("add_bookmark", { request }),
     deleteBookmark: (request) => invokeCommand<void>("delete_bookmark", { request }),

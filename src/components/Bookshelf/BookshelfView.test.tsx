@@ -1,14 +1,19 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BookshelfView } from "./BookshelfView";
+import { ImportModal } from "./ImportModal";
 import { AppProvider } from "../../context/AppContext";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
-import type { LibraryBook } from "../../types/generated";
-afterEach(cleanup);
+import type { ImportStatus, LibraryBook } from "../../types/generated";
+afterEach(() => {
+  cleanup();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
 beforeAll(() => {
   window.scrollTo = vi.fn();
 });
@@ -69,6 +74,9 @@ function runtime(books: LibraryBook[] = []) {
       saveReaderLocator: vi.fn(),
       getSavedReaderLocator: vi.fn(),
       listToc: vi.fn(async () => []),
+      getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
+      previewTocRule: vi.fn(async () => ({ entries: [] })),
+      saveTocRule: vi.fn(async (request) => request.rule),
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),
@@ -92,6 +100,7 @@ function view(app: AppRuntime) {
     <RuntimeContext.Provider value={app}>
       <AppProvider>
         <BookshelfView />
+        <ImportModal />
       </AppProvider>
     </RuntimeContext.Provider>,
   );
@@ -105,6 +114,99 @@ describe("real library presentation", () => {
     expect(screen.queryByText("宿命之环")).toBeNull();
     await userEvent.click(screen.getByTestId("import-button"));
     expect(app.services.library.pickAndImportTxt).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByLabelText("关闭导入提示")).toBeNull();
+  });
+  it("imports silently and opens optional progress from the import entry", async () => {
+    vi.useFakeTimers();
+    const app = runtime();
+    vi.mocked(app.services.library.pickAndImportTxt).mockResolvedValue({ operationId: "active" });
+    vi.mocked(app.services.library.getImportStatus).mockResolvedValue({
+      operationId: "active",
+      phase: "reading",
+      bytesRead: 5,
+      totalBytes: 10,
+      result: null,
+      error: null,
+    });
+    await app.library.refresh();
+    view(app);
+    await act(async () => fireEvent.click(screen.getByTestId("import-button")));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "查看导入进度" }).textContent).toContain("50%");
+    await act(async () => fireEvent.click(screen.getByTestId("import-button")));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(app.services.library.pickAndImportTxt).toHaveBeenCalledTimes(1);
+    await act(async () => fireEvent.click(screen.getAllByRole("button", { name: "关闭" })[0]));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(app.library.getSnapshot().importing).toBe(true);
+    expect(app.services.library.cancelImport).not.toHaveBeenCalled();
+  });
+  it("recovers an expired decoding failure through the import entry and selected encoding", async () => {
+    vi.useFakeTimers();
+    const app = runtime();
+    const failed: ImportStatus = {
+      operationId: "failed",
+      phase: "failed",
+      bytesRead: 10,
+      totalBytes: 10,
+      result: null,
+      error: { code: "unsupported_encoding", message: "无法识别文本编码" },
+    };
+    vi.mocked(app.services.library.pickAndImportTxt)
+      .mockResolvedValueOnce({ operationId: "failed" })
+      .mockResolvedValueOnce({ operationId: "retried" });
+    vi.mocked(app.services.library.getImportStatus)
+      .mockResolvedValueOnce(failed)
+      .mockResolvedValueOnce({
+        ...failed,
+        operationId: "retried",
+        phase: "completed",
+        error: null,
+        result: {
+          book: entry.book,
+          asset: entry.asset,
+          duplicate: false,
+          sourceByteLength: 10,
+        },
+      });
+    await app.library.refresh();
+    view(app);
+    await act(async () => fireEvent.click(screen.getByTestId("import-button")));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("导入失败 · 查看详情")).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(8_000));
+    expect(screen.queryByText("导入失败 · 查看详情")).toBeNull();
+    await act(async () => fireEvent.click(screen.getByTestId("import-button")));
+    expect(screen.getByRole("alert").textContent).toContain("无法识别文本编码");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "gbk" } });
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "选择文件并按编码重试" })),
+    );
+    expect(app.services.library.pickAndImportTxt).toHaveBeenLastCalledWith("gbk");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("导入完成：真实文本")).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(3_000));
+    expect(screen.queryByText("导入完成：真实文本")).toBeNull();
+    expect(app.library.getSnapshot().importOutcome?.phase).toBe("completed");
+  });
+  it("keeps a notice while hovered or focused and expires it after both interactions end", async () => {
+    vi.useFakeTimers();
+    const app = runtime();
+    vi.mocked(app.services.library.startImport).mockRejectedValue(new Error("disk unavailable"));
+    await app.library.refresh();
+    view(app);
+    await act(() => app.library.importTxt("/book.txt"));
+    const notice = screen.getByText("导入失败 · 查看详情");
+    fireEvent.pointerEnter(notice);
+    fireEvent.focus(notice);
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    fireEvent.pointerLeave(notice);
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByText("导入失败 · 查看详情")).toBeTruthy();
+    fireEvent.blur(notice, { relatedTarget: document.body });
+    await act(() => vi.advanceTimersByTimeAsync(8_000));
+    expect(screen.queryByText("导入失败 · 查看详情")).toBeNull();
   });
   it("does not show an empty shelf action while the initial snapshot is loading", async () => {
     let resolve!: (books: LibraryBook[]) => void;

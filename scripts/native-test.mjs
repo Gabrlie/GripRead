@@ -101,6 +101,7 @@ try {
     ["interaction-animated", "tests/native/interaction.spec.ts", { GRIPREAD_NATIVE_ANIMATED: "1" }],
     ["presentation", "tests/native/presentation.spec.ts", {}],
     ["m1-txt", "tests/native/m1-txt.spec.ts", {}],
+    ["reader-tools", "tests/native/reader-tools.spec.ts", {}],
     ["crash", "tests/native/crash.spec.ts", {}, true],
     ["crash-recovery", "tests/native/crash-recovery.spec.ts", {}],
   ];

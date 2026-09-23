@@ -69,6 +69,15 @@ function serviceFor(
       saves.push({ ...value });
       return onSave(value);
     },
+    async getTocRule() {
+      return { mode: "automatic", pattern: "" };
+    },
+    async previewTocRule() {
+      return { entries: [] };
+    },
+    async saveTocRule(request) {
+      return request.rule;
+    },
     async getSavedReaderLocator(bookId) {
       return saved[bookId] ?? null;
     },

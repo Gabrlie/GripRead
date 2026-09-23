@@ -137,9 +137,21 @@ export async function expectInvokeError(command: string, args: unknown): Promise
 }
 
 export async function waitForAppReady(): Promise<void> {
+  // Await the new document after refresh before invoking its Tauri bridge.
   const marker = await browser.$('[data-testid="app-ready"]');
   await marker.waitForExist({ timeout: TEST_TIMEOUT });
   await marker.waitForDisplayed({ timeout: TEST_TIMEOUT });
+  // A hidden/occluded WKWebView suspends CSS transitions and automatic reading.
+  // Bring the real isolated test window forward; do not spoof visibility state.
+  await browser.tauri.execute(async ({ core }) => {
+    await core.invoke("plugin:window|show", { label: "main" });
+    await core.invoke("plugin:window|unminimize", { label: "main" });
+    await core.invoke("plugin:window|set_focus", { label: "main" });
+  });
+  await browser.waitUntil(
+    async () => browser.execute(() => document.visibilityState === "visible"),
+    { timeout: TEST_TIMEOUT, interval: 100, timeoutMsg: "Native test WebView remained hidden" },
+  );
 }
 
 export async function useInstantPageTurns(): Promise<void> {
@@ -307,15 +319,77 @@ export async function readPage(): Promise<PageSnapshot> {
 export async function clickReaderControl(
   testId: "reader-next" | "reader-previous" | "reader-close",
 ): Promise<void> {
+  if (testId === "reader-close" && (await browser.$('[role="dialog"]').isExisting())) {
+    await browser.keys("Escape");
+    await browser.waitUntil(async () => !(await browser.$('[role="dialog"]').isExisting()));
+  }
+  await showReaderControls();
   const control = await browser.$(`[data-testid="${testId}"]`);
   await control.waitForExist({ timeout: TEST_TIMEOUT });
-  await browser.execute((selector) => {
-    const element = document.querySelector<HTMLElement>(selector);
-    if (!element) {
-      throw new Error(`missing reader control ${selector}`);
-    }
-    element.click();
-  }, `[data-testid="${testId}"]`);
+  await control.click();
+}
+
+export async function showReaderControls(): Promise<void> {
+  const hidden = await browser.execute(() =>
+    Boolean(document.querySelector('[data-testid="reader-close"]')?.closest("[inert]")),
+  );
+  if (hidden) {
+    // The embedded driver's element click only dispatches `click`; the reader
+    // consumes pointer gestures. Exercise its real handler with a center tap.
+    await browser.execute(() => {
+      const page = document.querySelector<HTMLElement>('[data-testid="reader-page"]')!;
+      const rect = page.getBoundingClientRect();
+      const pointer = {
+        bubbles: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      };
+      page.dispatchEvent(new PointerEvent("pointerdown", pointer));
+      page.dispatchEvent(new PointerEvent("pointerup", pointer));
+    });
+  }
+  await browser
+    .waitUntil(
+      async () =>
+        browser.execute(() => {
+          const button = document.querySelector<HTMLElement>('[data-testid="reader-close"]');
+          if (!button || button.closest("[inert]")) return false;
+          const rect = button.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= innerHeight;
+        }),
+      { timeout: TEST_TIMEOUT, interval: 50, timeoutMsg: "Reader controls did not become visible" },
+    )
+    .catch(async (error: unknown) => {
+      const state = await browser.execute(() => {
+        const button = document.querySelector<HTMLElement>('[data-testid="reader-close"]');
+        const page = document.querySelector<HTMLElement>('[data-testid="reader-page"]');
+        const header = button?.closest("header");
+        const style = header ? getComputedStyle(header) : null;
+        return {
+          button: button?.getBoundingClientRect().toJSON(),
+          page: page?.getBoundingClientRect().toJSON(),
+          inert: button?.closest("[inert]")?.outerHTML.slice(0, 400),
+          header: button?.closest("header")?.className,
+          selection: window.getSelection()?.toString().length,
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+          viewport: [innerWidth, innerHeight],
+          visibility: document.visibilityState,
+          focused: document.hasFocus(),
+          transform: style?.transform,
+          translateY: style?.getPropertyValue("--tw-translate-y"),
+          transition: [style?.transitionProperty, style?.transitionDuration],
+          animations: header?.getAnimations().map((animation) => ({
+            playState: animation.playState,
+            currentTime: animation.currentTime,
+            timeline: animation.timeline?.currentTime,
+          })),
+        };
+      });
+      await browser.saveScreenshot(dataPath(".reader-controls-failure.png"));
+      throw new Error(`${String(error)}; reader controls state=${JSON.stringify(state)}`);
+    });
 }
 
 export async function waitForPageStart(start: number): Promise<PageSnapshot> {
@@ -516,23 +590,11 @@ export async function waitForReaderClosed(): Promise<void> {
 }
 
 export async function clickSaveControl(): Promise<void> {
-  const selectors = [
-    '[data-testid="reader-save"]',
-    'button[title="保存书签"]',
-    'button[aria-label="保存阅读位置"]',
-  ];
-  for (const selector of selectors) {
-    const control = await browser.$(selector);
-    if (await control.isExisting()) {
-      await browser.execute((value) => {
-        const element = document.querySelector<HTMLElement>(value);
-        if (!element) throw new Error(`missing save control ${value}`);
-        element.click();
-      }, selector);
-      return;
-    }
-  }
-  throw new Error("No reader save control is present");
+  await showReaderControls();
+  await browser.$('button[aria-label="更多"]').click();
+  const control = await browser.$('[data-testid="reader-save"]');
+  await control.waitForDisplayed({ timeout: TEST_TIMEOUT });
+  await control.click();
 }
 
 export async function managedAssetPath(bookId: string): Promise<string> {

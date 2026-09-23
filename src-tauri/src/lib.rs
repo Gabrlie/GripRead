@@ -10,11 +10,11 @@ pub mod typegen;
 use commands::{
     add_bookmark, cancel_import, cancel_search, cancel_txt_decode, create_group, delete_bookmark,
     delete_group, get_import_status, get_saved_reader_locator, get_settings, get_shelf_preferences,
-    get_txt_decode_status, get_txt_encoding, list_bookmarks, list_books, list_groups,
-    list_removed_books, list_toc, read_content_window, reassociate_txt_source, remove_book,
-    rename_group, resolve_reader_locator, restore_book, save_reader_locator, save_settings,
-    save_shelf_preferences, search_book, set_book_groups, set_txt_encoding, start_import,
-    start_txt_decode, update_book, AppState,
+    get_toc_rule, get_txt_decode_status, get_txt_encoding, list_bookmarks, list_books, list_groups,
+    list_removed_books, list_toc, preview_toc_rule, read_content_window, reassociate_txt_source,
+    remove_book, rename_group, resolve_reader_locator, restore_book, save_reader_locator,
+    save_settings, save_shelf_preferences, save_toc_rule, search_book, set_book_groups,
+    set_txt_encoding, start_import, start_txt_decode, update_book, AppState,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -115,7 +115,10 @@ pub fn run() {
             restore_book,
             list_removed_books,
             get_shelf_preferences,
-            save_shelf_preferences
+            save_shelf_preferences,
+            get_toc_rule,
+            save_toc_rule,
+            preview_toc_rule
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

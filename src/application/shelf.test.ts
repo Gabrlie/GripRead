@@ -79,6 +79,9 @@ function setup() {
   };
   const reader: ReaderService = {
     listToc: vi.fn(async () => chapters),
+    getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
+    previewTocRule: vi.fn(async () => ({ entries: [] })),
+    saveTocRule: vi.fn(async (request) => request.rule),
     readContentWindow: vi.fn(),
     resolveLocator: vi.fn(),
     saveReaderLocator: vi.fn(),
@@ -232,6 +235,26 @@ describe("shelf chapter snapshots", () => {
     });
     expect(store.getSnapshot().chapterErrors.book).toContain("文件缺失");
     expect(store.getSnapshot().error).toBeNull();
+  });
+
+  it("does not restore old-rule labels after invalidation, failed reload, or a late read", async () => {
+    const { reader, store } = setup();
+    await store.load([entry]);
+    expect(store.getSnapshot().chapters.book.latest).toBe("第二章");
+    const old = deferred<TocEntry[]>();
+    vi.mocked(reader.listToc).mockReturnValueOnce(old.promise);
+    const staleLoad = store.load([entry]);
+    store.invalidateChapterCache(entry.book.id);
+    vi.mocked(reader.listToc).mockRejectedValueOnce(new Error("new directory unavailable"));
+    await store.load([entry]);
+    old.resolve(chapters);
+    await staleLoad;
+    expect(store.getSnapshot().chapters.book.latest).toBe("目录读取失败");
+    expect(store.getSnapshot().chapterErrors.book).toContain("new directory unavailable");
+    expect(store.getSnapshot().loading).toBe(false);
+    await store.load([entry]);
+    expect(store.getSnapshot().chapters.book.latest).toBe("第二章");
+    expect(store.getSnapshot().chapterErrors).toEqual({});
   });
 
   it.each(["success", "failure"] as const)(

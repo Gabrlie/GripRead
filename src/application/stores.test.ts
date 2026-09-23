@@ -40,6 +40,7 @@ const preferences: ReaderPreferences = {
   lineHeight: 1.8,
   fontFamily: "serif",
   pageTurnEffect: "curl",
+  autoPageSeconds: 8,
 };
 const book = (
   id: string,
@@ -66,6 +67,159 @@ const book = (
 });
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {
+  it("expires success feedback without losing the result or refreshing twice", async () => {
+    vi.useFakeTimers();
+    const service = library();
+    let notify!: (status: ImportStatus) => void;
+    vi.mocked(service.onImportProgress).mockImplementation(async (listener) => {
+      notify = listener;
+      return () => {};
+    });
+    const entry = book("imported", "导入的书", 1, null);
+    const completed: ImportStatus = {
+      operationId: "op",
+      phase: "completed",
+      bytesRead: 1,
+      totalBytes: 1,
+      result: {
+        book: entry.book,
+        asset: entry.asset,
+        duplicate: false,
+        sourceByteLength: 1,
+      },
+      error: null,
+    };
+    vi.mocked(service.getImportStatus).mockResolvedValue(completed);
+    vi.mocked(service.listBooks).mockResolvedValue([entry]);
+    const store = new LibraryStore(service);
+    const disconnect = store.connect();
+    await store.importTxt("/book.txt");
+    expect(store.getSnapshot().importNotice?.phase).toBe("completed");
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(store.getSnapshot().importNotice).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.getSnapshot()).toMatchObject({
+      books: [entry],
+      importing: false,
+      importNotice: null,
+      importOutcome: { phase: "completed", status: completed },
+    });
+    notify(completed);
+    expect(store.getSnapshot().importNotice).toBeNull();
+    expect(service.listBooks).toHaveBeenCalledTimes(2);
+    expect(service.listRemovedBooks).toHaveBeenCalledTimes(1);
+    disconnect();
+  });
+  it("pauses feedback for interaction and resumes its remaining lifetime", async () => {
+    vi.useFakeTimers();
+    const service = library();
+    vi.mocked(service.startImport).mockRejectedValue(new Error("disk unavailable"));
+    const store = new LibraryStore(service);
+    await store.importTxt("/book.txt");
+    const id = store.getSnapshot().importNotice!.id;
+    await vi.advanceTimersByTimeAsync(2_000);
+    store.pauseImportNotice(id);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(store.getSnapshot().importNotice?.id).toBe(id);
+    store.resumeImportNotice(id);
+    await vi.advanceTimersByTimeAsync(5_999);
+    expect(store.getSnapshot().importNotice?.id).toBe(id);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.getSnapshot()).toMatchObject({
+      importNotice: null,
+      importOutcome: { phase: "failed", error: "Error: disk unavailable" },
+    });
+    store.requestImportDetails();
+    expect(store.getSnapshot().importDetailsRequested).toBe(true);
+  });
+  it("keeps a newer notice alive when an older timeout or dismissal arrives", async () => {
+    vi.useFakeTimers();
+    const service = library();
+    vi.mocked(service.startImport).mockRejectedValue(new Error("disk unavailable"));
+    const store = new LibraryStore(service);
+    await store.importTxt("/first.txt");
+    const firstId = store.getSnapshot().importNotice!.id;
+    await vi.advanceTimersByTimeAsync(7_000);
+    await store.importTxt("/second.txt");
+    const secondId = store.getSnapshot().importNotice!.id;
+    store.dismissImportNotice(firstId);
+    store.pauseImportNotice(firstId);
+    store.resumeImportNotice(firstId);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.getSnapshot().importNotice?.id).toBe(secondId);
+    store.dismissImportNotice(secondId);
+    expect(store.getSnapshot()).toMatchObject({
+      importNotice: null,
+      importOutcome: { phase: "failed" },
+    });
+    expect(service.cancelImport).not.toHaveBeenCalled();
+  });
+  it("keeps picker cancellation silent and retains the last failed outcome", async () => {
+    vi.useFakeTimers();
+    const service = library();
+    const store = new LibraryStore(service);
+    await store.importTxt();
+    expect(store.getSnapshot()).toMatchObject({
+      importing: false,
+      importError: null,
+      importOutcome: null,
+      importNotice: null,
+    });
+    vi.mocked(service.startImport).mockRejectedValue(new Error("disk unavailable"));
+    await store.importTxt("/book.txt");
+    const outcome = store.getSnapshot().importOutcome;
+    await store.importTxt();
+    expect(store.getSnapshot()).toMatchObject({
+      importing: false,
+      importError: null,
+      job: null,
+      importOutcome: outcome,
+      importNotice: null,
+    });
+  });
+  it("ignores a cancellation failure after its job has finished and a new one starts", async () => {
+    vi.useFakeTimers();
+    const service = library();
+    let notify!: (status: ImportStatus) => void;
+    let rejectCancel!: (error: Error) => void;
+    vi.mocked(service.onImportProgress).mockImplementation(async (listener) => {
+      notify = listener;
+      return () => {};
+    });
+    vi.mocked(service.cancelImport).mockImplementation(
+      () => new Promise((_, reject) => (rejectCancel = reject)),
+    );
+    vi.mocked(service.startImport)
+      .mockResolvedValueOnce({ operationId: "old" })
+      .mockResolvedValueOnce({ operationId: "new" });
+    const progress: ImportStatus = {
+      operationId: "old",
+      phase: "reading",
+      bytesRead: 1,
+      totalBytes: 10,
+      result: null,
+      error: null,
+    };
+    vi.mocked(service.getImportStatus).mockImplementation(async (operationId) => ({
+      ...progress,
+      operationId,
+    }));
+    const store = new LibraryStore(service);
+    const disconnect = store.connect();
+    await store.importTxt("/first.txt");
+    const cancellation = store.cancel();
+    notify({ ...progress, phase: "cancelled" });
+    await store.importTxt("/second.txt");
+    rejectCancel(new Error("late cancellation failure"));
+    await cancellation;
+    expect(store.getSnapshot()).toMatchObject({
+      importing: true,
+      importError: null,
+      job: { operationId: "new", phase: "reading" },
+      importNotice: null,
+    });
+    disconnect();
+  });
   it("ignores late polling failures and repeated terminal events from an older job", async () => {
     vi.useFakeTimers();
     const service = library();

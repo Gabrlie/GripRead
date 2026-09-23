@@ -93,6 +93,16 @@ export class ShelfStore {
     await Promise.all([groups, this.loadChapters(books, revision)]);
     if (revision === this.chapterRevision) this.update({ loading: false });
   };
+  /** A rule change invalidates derived labels even when the text version is unchanged. */
+  invalidateChapterCache = (bookId: string) => {
+    ++this.chapterRevision;
+    this.chapterCache.delete(bookId);
+    const chapters = { ...this.snapshot.chapters };
+    const chapterErrors = { ...this.snapshot.chapterErrors };
+    delete chapters[bookId];
+    delete chapterErrors[bookId];
+    this.update({ chapters, chapterErrors, loading: false });
+  };
   private enqueueGroups<T>(action: () => Promise<T>): Promise<T> {
     const pending = this.groupQueue.then(action);
     this.groupQueue = pending.then(
