@@ -194,7 +194,14 @@ describe("GripRead native M1 TXT tools", () => {
     const result = await (await browser.$('[role="dialog"]')).$("button*=结尾");
     await result.waitForDisplayed();
     await result.click();
-    await browser.$('[data-testid="reader-highlight"]').waitForDisplayed();
+    // Re-query on each poll: the page renderer replaces its paragraphs when
+    // the seek replaces the page, so an element handle found earlier can go stale.
+    await browser.waitUntil(async () =>
+      browser.execute(() => {
+        const mark = document.querySelector<HTMLElement>('[data-testid="reader-highlight"]');
+        return Boolean(mark && mark.getClientRects().length > 0 && mark.textContent === "结尾");
+      }),
+    );
     expect(await browser.$('[data-testid="reader-highlight"]').getText()).toBe("结尾");
 
     await browser.$('button[aria-label="搜索正文"]').click();

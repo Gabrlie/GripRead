@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [silent import and immersive reading implementation](plans/2026-09-23-import-reader-experience.md) is implemented and reviewed. It includes expiring import notices, per-book directory rules, faster directory generation, full-height reading, rearranged tools, and automatic turning. Concurrency and exit failures identified during review are fixed.
+The [complete TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) is in progress, starting with unified paragraph rendering. The prior [silent import and immersive reading implementation](plans/2026-09-23-import-reader-experience.md) is merged.
 
 ## Blockers
 

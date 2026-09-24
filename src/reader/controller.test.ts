@@ -634,6 +634,21 @@ describe("ReaderController", () => {
     expect(controller.getSnapshot().page).toMatchObject({ text: "abcdef", startOffset: 0 });
   });
 
+  it("keeps a pending seek when a layout reflow is requested before it runs", async () => {
+    const service = serviceFor({ book: "abcdefgh" }, { book: locatorFor("book", 6) });
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 8,
+    });
+    await controller.open("book");
+    expect(controller.getSnapshot().page?.startOffset).toBe(6);
+    const seek = controller.seekProgress(0);
+    const reflow = controller.reflow();
+    await expect(seek).resolves.toBeUndefined();
+    await expect(reflow).resolves.toBeUndefined();
+    expect(controller.getSnapshot().page?.startOffset).toBe(0);
+  });
+
   it("coalesces pending saves to the latest locator while an earlier save is slow", async () => {
     const firstSaveStarted = deferred<void>();
     const releaseFirstSave = deferred<void>();

@@ -1,5 +1,6 @@
 import { PageFlip } from "page-flip";
 import type { PageTurnEffect } from "../types/generated";
+import { renderReaderText } from "./render";
 import type {
   ReaderDisplayedPage,
   ReaderNavigationDirection,
@@ -416,10 +417,8 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     element.dataset.start = String(page.startOffset);
     element.dataset.end = String(page.endOffset);
     element.dataset.total = String(page.totalLength);
-    element.textContent = page.text;
+    renderReaderText(element, page.text, { continued: page.continued });
     element.style.pointerEvents = "none";
-    element.style.whiteSpace = "pre-wrap";
-    element.style.overflowWrap = "anywhere";
     return element;
   }
 }

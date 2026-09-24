@@ -1,6 +1,7 @@
 import type { ContentWindow, ReaderLocator, WindowDirection } from "../types/generated";
 import type { ReaderService } from "../services/contracts";
-import { isUtf16ScalarBoundary } from "./pagination";
+import { isUtf16ScalarBoundary, windowStartsMidLine } from "./pagination";
+import { continuesLine } from "./render";
 import type { ReaderMeasurer, ReaderPage } from "./pagination";
 import type {
   ReaderDisplayedPage,
@@ -180,8 +181,9 @@ export class ReaderController {
   private currentPageIndex = -1;
   private activeBookId: string | null = null;
 
-  /** Incremented by open/seek/reflow so stale service results cannot commit. */
+  /** Incremented by open and seeks so stale service results cannot commit. */
   private epoch = 0;
+  private reflowToken = 0;
   private disposed = false;
   private navigationTail: Promise<void> = Promise.resolve();
 
@@ -344,20 +346,28 @@ export class ReaderController {
   /** Re-measure from the current page's locator after a typography or viewport change. */
   public reflow(): Promise<void> {
     if (this.disposed) return Promise.reject(abortError());
-    const current = this.currentPage();
-    // ReaderView calls reflow while its initial open is still pending. It is
-    // safe to wait for the next ResizeObserver/font event in that case.
-    if (!current) return Promise.resolve();
-
-    const epoch = ++this.epoch;
-    const locator = { ...current.locator };
-    const bookId = this.activeBookId;
-    if (!bookId) return Promise.resolve();
+    // A reflow joins the navigation queue without superseding it: a pending
+    // seek or turn must still complete, and the reflow then re-measures from
+    // whatever page is current when it runs rather than when it was requested.
+    const epoch = this.epoch;
+    // Only a newer reflow supersedes this one; its layout is then obsolete.
+    const token = ++this.reflowToken;
+    const assertLatest = () => {
+      if (token !== this.reflowToken) throw abortError();
+    };
     return this.schedule(epoch, async () => {
+      assertLatest();
+      const current = this.currentPage();
+      const bookId = this.activeBookId;
+      // ReaderView calls reflow while its initial open is still pending. It is
+      // safe to wait for the next ResizeObserver/font event in that case.
+      if (!current || !bookId) return;
+      const locator = { ...current.locator };
       this.setLoading(true);
       this.adapter?.resize?.();
       const measured = await this.readAndMeasure(bookId, locator, "forward", epoch);
       this.assertCurrent(epoch);
+      assertLatest();
       this.windows = [measured];
       this.currentWindowIndex = 0;
       this.currentPageIndex = pageIndexAt(measured.pages, locator.offset);
@@ -782,6 +792,7 @@ function normalizePages(
   }
 
   const pages: ReaderDisplayedPage[] = [];
+  const windowContinued = windowStartsMidLine(window);
   let cursor = window.startOffset;
   for (const page of measured) {
     if (!page || typeof page.text !== "string") {
@@ -815,6 +826,7 @@ function normalizePages(
       hasAfter: page.endOffset < window.totalLength,
       totalLength: window.totalLength,
       locator,
+      continued: continuesLine(window.text, localStart, windowContinued),
     });
     cursor = page.endOffset;
   }

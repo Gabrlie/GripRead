@@ -24,6 +24,7 @@ function page(bookId: string, text: string, startOffset: number, totalLength: nu
       contextBefore: "",
       contextAfter: "",
     },
+    continued: false,
   } satisfies ReaderDisplayedPage;
 }
 

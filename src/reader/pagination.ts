@@ -1,4 +1,5 @@
 import type { ContentWindow, WindowDirection } from "../types/generated";
+import { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
 
 /** A page of already normalized content measured in UTF-16 code units. */
 export interface ReaderPage {
@@ -128,13 +129,13 @@ interface LayoutRect {
 }
 
 /**
- * Measures plain normalized text in an element that has the same typography,
+ * Measures normalized text, rendered as paragraphs, in an element that has the same typography,
  * width, and height as the reader page. The element should be kept mounted in
  * the WebView and hidden from assistive technology with CSS such as
  * `position:absolute; visibility:hidden; pointer-events:none`; `display:none`
  * cannot be measured by the browser.
  *
- * The class owns only the temporary text node and Range. It does not install
+ * The class owns only the temporary rendered paragraphs. It does not install
  * pointer handlers, so text selection in the visible reader remains intact.
  */
 export class DomReaderMeasurer implements ReaderMeasurer {
@@ -156,7 +157,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
    * direction is useful to callers that need to anchor a backward window at
    * its end; `measure` uses it internally.
    */
-  public fit(text: string, direction: WindowDirection = "forward"): number {
+  public fit(
+    text: string,
+    direction: WindowDirection = "forward",
+    continuedAt: (localStart: number) => boolean = () => false,
+  ): number {
     this.assertUsable();
     const boundaries = utf16Boundaries(text);
     if (boundaries.length <= 1) {
@@ -165,7 +170,8 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     // Measure each candidate as the complete text node that would be shown
     // on a page. Measuring a prefix/suffix inside the full window gives the
     // candidate a different line wrap and mishandles trailing line breaks.
-    const fits = (candidate: string): boolean => this.fitsText(candidate);
+    const fits = (candidate: string, localStart: number): boolean =>
+      this.fitsText(candidate, continuedAt(localStart));
 
     if (direction === "backward") {
       let low = 1;
@@ -174,7 +180,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
       while (low <= high) {
         const middle = Math.floor((low + high) / 2);
         const startOffset = boundaries[boundaries.length - 1 - middle];
-        if (fits(text.slice(startOffset))) {
+        if (fits(text.slice(startOffset), startOffset)) {
           best = middle;
           low = middle + 1;
         } else {
@@ -190,7 +196,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     let best = 0;
     while (low <= high) {
       const middle = Math.floor((low + high) / 2);
-      if (fits(text.slice(0, boundaries[middle]))) {
+      if (fits(text.slice(0, boundaries[middle]), 0)) {
         best = middle;
         low = middle + 1;
       } else {
@@ -213,11 +219,14 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     const text = contentWindow.text;
     const boundaries = utf16Boundaries(text);
     const pages: ReaderPage[] = [];
+    const windowContinued = windowStartsMidLine(contentWindow);
     if (direction === "backward") {
       let right = boundaries.length - 1;
       while (right > 0) {
         const remaining = text.slice(0, boundaries[right]);
-        const units = this.fit(remaining, "backward");
+        const units = this.fit(remaining, "backward", (local) =>
+          continuesLine(text, local, windowContinued),
+        );
         const target = boundaries[right] - units;
         const left = greatestBoundaryAtOrBefore(boundaries, target);
         if (left >= right) throw this.cannotFit();
@@ -238,7 +247,10 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     let left = 0;
     while (left < boundaries.length - 1) {
       const remaining = text.slice(boundaries[left]);
-      const units = this.fit(remaining, "forward");
+      const pageStart = boundaries[left];
+      const units = this.fit(remaining, "forward", () =>
+        continuesLine(text, pageStart, windowContinued),
+      );
       const target = boundaries[left] + units;
       const right = greatestBoundaryAtOrBefore(boundaries, target);
       if (right <= left) throw this.cannotFit();
@@ -271,13 +283,6 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     }
   }
 
-  private installText(text: string): Text {
-    this.element.replaceChildren();
-    const node = document.createTextNode(text);
-    this.element.append(node);
-    return node;
-  }
-
   private layoutRect(): LayoutRect {
     const elementRect = this.element.getBoundingClientRect();
     const height = this.element.clientHeight || elementRect.height;
@@ -300,29 +305,23 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     };
   }
 
-  private fitsText(text: string): boolean {
-    this.installText(text);
+  private fitsText(text: string, continued: boolean): boolean {
+    renderReaderText(this.element, text, { continued });
     const layout = this.layoutRect();
     const scrollHeight = this.element.scrollHeight;
     if (Number.isFinite(scrollHeight) && scrollHeight > 0) {
       if (scrollHeight > layout.height + this.epsilon) return false;
     }
-
-    const node = this.element.firstChild;
-    if (!(node instanceof Text)) {
-      throw new ReaderMeasurementError("reader measurement text node is unavailable");
-    }
-    const range = document.createRange();
-    range.setStart(node, 0);
-    range.setEnd(node, text.length);
-    const rects = Array.from(range.getClientRects());
-    if (rects.length === 0) {
+    // scrollHeight is rounded to integers; the last paragraph box gives the
+    // sub-pixel bottom, including any paragraph spacing before it.
+    const paragraphs = this.element.getElementsByClassName(READER_PARAGRAPH_CLASS);
+    const last = paragraphs[paragraphs.length - 1];
+    if (!last) return true;
+    const rect = last.getBoundingClientRect();
+    if (!Number.isFinite(rect.bottom) || rect.height <= 0) {
       throw new ReaderMeasurementError("browser did not return text layout rectangles");
     }
-    const top = Math.min(...rects.map((rect) => rect.top));
-    const bottom = Math.max(...rects.map((rect) => rect.bottom));
-    const rangeHeight = bottom - top;
-    return rangeHeight <= layout.height + this.epsilon && bottom <= layout.bottom + this.epsilon;
+    return rect.bottom <= layout.bottom + this.epsilon;
   }
 
   private cannotFit(): ReaderMeasurementError {
@@ -330,6 +329,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
       "reader page is too small to fit one Unicode scalar with the current typography",
     );
   }
+}
+
+/** A window starts mid-line when the text just before it is not a line feed. */
+export function windowStartsMidLine(contentWindow: ContentWindow): boolean {
+  return contentWindow.startOffset > 0 && !contentWindow.locator.contextBefore.endsWith("\n");
 }
 
 function greatestBoundaryAtOrBefore(boundaries: number[], target: number): number {

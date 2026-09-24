@@ -16,7 +16,15 @@ export class SettingsStore<T extends object = ReaderPreferences> {
   private loading: Promise<void> | null = null;
   private loadRevision = 0;
   private writeRevision = 0;
-  constructor(private service: PreferencePort<T>) {}
+  private delayTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * `saveDelayMs` coalesces rapid adjustments: the snapshot updates at once
+   * for preview, and the write starts after the value stops changing.
+   */
+  constructor(
+    private service: PreferencePort<T>,
+    private readonly saveDelayMs = 0,
+  ) {}
   getSnapshot = () => this.snapshot;
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -68,13 +76,27 @@ export class SettingsStore<T extends object = ReaderPreferences> {
     this.writeRevision++;
     this.pending = { ...this.snapshot.value, ...patch };
     this.update({ value: this.pending, saving: true, error: null });
-    this.startSave();
+    if (this.saveDelayMs <= 0) {
+      this.startSave();
+      return;
+    }
+    if (this.delayTimer !== null) clearTimeout(this.delayTimer);
+    this.delayTimer = setTimeout(() => {
+      this.delayTimer = null;
+      this.startSave();
+    }, this.saveDelayMs);
   };
+  private cancelDelay() {
+    if (this.delayTimer === null) return;
+    clearTimeout(this.delayTimer);
+    this.delayTimer = null;
+  }
   private startSave() {
+    this.cancelDelay();
     if (this.running) return;
     this.running = this.drain().finally(() => {
       this.running = null;
-      if (this.pending && !this.snapshot.error) this.startSave();
+      if (this.pending && !this.snapshot.error && this.delayTimer === null) this.startSave();
     });
   }
   private async drain() {
@@ -102,6 +124,7 @@ export class SettingsStore<T extends object = ReaderPreferences> {
   };
   flush = async () => {
     if (!this.snapshot.value) return;
+    this.cancelDelay();
     while (this.running || (this.pending && !this.snapshot.error)) {
       if (!this.running) this.startSave();
       const running = this.running;

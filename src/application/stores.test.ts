@@ -492,4 +492,48 @@ describe("durable settings", () => {
     expect(store.getSnapshot().value?.fontSize).toBe(24);
     expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 24 });
   });
+  it("previews immediately and coalesces delayed writes until adjustments stop", async () => {
+    vi.useFakeTimers();
+    try {
+      const save = vi.fn(async (value: ReaderPreferences) => value);
+      const store = new SettingsStore(
+        { getSettings: async () => preferences, saveSettings: save },
+        800,
+      );
+      await store.load();
+      store.set({ fontSize: 20 });
+      vi.advanceTimersByTime(500);
+      store.set({ fontSize: 21 });
+      expect(store.getSnapshot().value?.fontSize).toBe(21);
+      vi.advanceTimersByTime(700);
+      expect(save).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 21 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("flush writes a delayed value at once and reports failure for retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const save = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("locked"))
+        .mockImplementation(async (value: ReaderPreferences) => value);
+      const store = new SettingsStore(
+        { getSettings: async () => preferences, saveSettings: save },
+        800,
+      );
+      await store.load();
+      store.set({ lineHeight: 2.2 });
+      await expect(store.flush()).rejects.toThrow("locked");
+      store.set({ fontSize: 26 });
+      await store.flush();
+      expect(save).toHaveBeenLastCalledWith({ ...preferences, lineHeight: 2.2, fontSize: 26 });
+      expect(store.getSnapshot().error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

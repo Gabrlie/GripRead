@@ -8,6 +8,8 @@ export type ReaderNavigationDirection = "next" | "previous" | "open" | "seek" | 
 export interface ReaderDisplayedPage extends ReaderPage {
   totalLength: number;
   locator: ReaderLocator;
+  /** The page starts inside a line, so its first paragraph is not indented. */
+  continued: boolean;
 }
 
 export interface ReaderPresentationContext {

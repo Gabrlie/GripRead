@@ -296,6 +296,31 @@ describe("reader directory and search operation ownership", () => {
     expect(app.services.reader.saveTocRule).toHaveBeenCalledTimes(1);
   });
 
+  it("highlights an opened search match on the page", async () => {
+    const app = runtime();
+    const offset = text.indexOf("page", 10);
+    vi.mocked(app.services.reader.search).mockResolvedValue({
+      contentVersion: "v1",
+      matches: [
+        {
+          ordinal: 0,
+          locator: locator(offset),
+          excerpt: "Read a page",
+          matchStart: offset,
+          matchEnd: offset + 4,
+        },
+      ],
+      nextCursor: null,
+      hasMore: false,
+    });
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "搜索关键词" }), "page");
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(await screen.findByRole("button", { name: "Read a page" }));
+    expect((await screen.findByTestId("reader-highlight")).textContent).toBe("page");
+  });
+
   it("cancels a closed search and ignores its late results", async () => {
     const app = runtime();
     const searching = deferred<SearchResponse>();

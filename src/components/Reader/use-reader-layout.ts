@@ -1,0 +1,60 @@
+import { useLayoutEffect, type RefObject } from "react";
+import type { ReaderController } from "../../reader";
+
+/** Copy the page box size to the hidden measurement box. */
+export function syncMeasureBox(page: HTMLElement, measure: HTMLElement): void {
+  const rect = page.getBoundingClientRect();
+  Object.assign(measure.style, { width: `${rect.width}px`, height: `${rect.height}px` });
+}
+
+/**
+ * Coalesce every layout trigger (viewport resize, late font loading, and
+ * typography changes identified by `signature`) into one reflow per frame.
+ * The controller re-measures from the current text locator, never a page index.
+ */
+export function useReaderLayout(
+  controller: ReaderController | null,
+  pageBox: RefObject<HTMLElement | null>,
+  measureBox: RefObject<HTMLElement | null>,
+  signature: string,
+  beforeReflow: () => void,
+  run: (action: () => Promise<void>) => void,
+): void {
+  useLayoutEffect(() => {
+    if (!controller || !pageBox.current || !measureBox.current) return;
+    let frame = 0;
+    let fallback = 0;
+    let disposed = false;
+    const reflow = () => {
+      beforeReflow();
+      cancelAnimationFrame(frame);
+      window.clearTimeout(fallback);
+      let settled = false;
+      const measure = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(fallback);
+        if (disposed || !pageBox.current || !measureBox.current) return;
+        syncMeasureBox(pageBox.current, measureBox.current);
+        run(() => controller.reflow());
+      };
+      frame = requestAnimationFrame(measure);
+      // requestAnimationFrame is paused for hidden windows; still settle.
+      fallback = window.setTimeout(measure, 100);
+    };
+    const observer = new ResizeObserver(reflow);
+    observer.observe(pageBox.current);
+    document.fonts.addEventListener("loadingdone", reflow);
+    void document.fonts.ready.then(() => {
+      if (!disposed) reflow();
+    });
+    reflow();
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      window.clearTimeout(fallback);
+      observer.disconnect();
+      document.fonts.removeEventListener("loadingdone", reflow);
+    };
+  }, [beforeReflow, controller, measureBox, pageBox, run, signature]);
+}

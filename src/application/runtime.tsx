@@ -4,6 +4,8 @@ import type { AppServices } from "../services/contracts";
 import { LibraryStore } from "./library";
 import { ShelfStore } from "./shelf";
 import { SettingsStore } from "./settings";
+/** Reading adjustments preview immediately and persist after 800 ms of inactivity. */
+export const READER_SETTINGS_SAVE_DELAY_MS = 800;
 export class AppRuntime {
   readonly library: LibraryStore;
   readonly shelf: ShelfStore;
@@ -13,7 +15,7 @@ export class AppRuntime {
   constructor(readonly services: AppServices) {
     this.library = new LibraryStore(services.library);
     this.shelf = new ShelfStore(services.library, services.reader);
-    this.settings = new SettingsStore(services.settings);
+    this.settings = new SettingsStore(services.settings, READER_SETTINGS_SAVE_DELAY_MS);
     this.shelfPreferences = new SettingsStore({
       getSettings: services.settings.getShelfPreferences,
       saveSettings: services.settings.saveShelfPreferences,
