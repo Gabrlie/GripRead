@@ -6,12 +6,12 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [complete TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) is in progress, starting with unified paragraph rendering. The prior [silent import and immersive reading implementation](plans/2026-09-23-import-reader-experience.md) is merged.
+The [complete TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) is in progress. Batch 1 and its review repairs are done; the [Batch 2 plan](plans/2026-09-27-reader-batch-2.md) continues with shared contracts.
 
 ## Blockers
 
-`pnpm check` passes with 113 frontend and 64 Rust tests. The ordinary macOS build and all affected native phases pass, including 30 cases and expected crash/recovery behavior. Desktop and phone-sized renders were inspected. Manual source-reassociation picker evidence and other-platform acceptance remain pending.
+Native acceptance was not rerun after the Batch 1 review repairs. Manual source-reassociation picker evidence and other-platform acceptance remain pending.
 
 ## Next entry point
 
-Collect the remaining system-picker evidence before stage closeout; detailed import-stage and first-render profiling remain available follow-up work. Android and Windows checks, EPUB, source compatibility, RSS, WebDAV, and AIGC remain deferred.
+Follow Batch 2 from the shared contracts: chapter controls, double-page mode, bounded scrolling, effects and automatic reading, and integrated acceptance. Assets and full settings remain in later batches. EPUB, online sources, RSS, WebDAV, AIGC, and other-platform acceptance remain deferred.

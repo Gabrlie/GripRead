@@ -13,7 +13,7 @@ Typography preferences are global. The bottom progress row becomes previous chap
 Batches are executed and committed in order:
 
 1. Unified paragraph rendering and locator foundation: paragraph slices with UTF-16 positions, one renderer shared by the visible page, measurement box, and page-turn overlay, reflow from the text locator, reader view decomposition, and debounced preference saves (800 ms) with flush on panel close, leaving, and exit.
-2. Chapter ranges and reading modes: preface and whole-text fallbacks, chapter-relative progress and navigation, double-page spreads with a narrow-window single-page fallback below 900 px, bounded continuous scrolling, none/curl/slide/fade effects, and automatic reading by page, spread, or scroll speed.
+2. Chapter ranges and reading modes: preface and whole-text fallbacks, chapter-relative progress and navigation, double-page spreads with a narrow-window single-page fallback below 900 px, bounded continuous scrolling, none/curl/slide/fade effects, and automatic reading by page, spread, or scroll speed. The [Batch 2 execution plan](2026-09-27-reader-batch-2.md) includes the Batch 1 review repairs and the ordered delivery slices.
 3. Complete typography, margins, and backgrounds with managed font and image assets.
 4. Information bars, chapter title styling, chapter page counts, battery state, and toolbar styles.
 5. Integrated performance, native, and visual acceptance.
@@ -45,6 +45,10 @@ Review found that a layout reflow could supersede a pending seek; reflows now qu
 
 `pnpm check` passes (122 frontend, 64 Rust tests). `pnpm test:native` passes all phases on macOS. Desktop and phone-sized presentation captures match the previous layout.
 
+Subsequent review identified three regressions: overlapping highlights disappear on a following page when their local start is negative, an in-flight settings save can bypass a newer debounce interval, and Contents loses its mode selection on close. Review reran 122 frontend tests, TypeScript, and dependency checks successfully and independently reproduced the first two defects; native acceptance was not rerun.
+
+These are repaired: the page text clips a highlight to its visible slice, a write that finishes while a newer edit is still inside its inactivity delay leaves that edit to its timer (explicit flush still drains at once), and the reader view owns the Contents tab for the current book. Regression tests cover a match crossing a page boundary, a slow write followed by an edit with and without flush, and reopening Contents; each fails on the previous code. Frontend tests (126), both TypeScript projects, formatting, and dependency boundaries pass. The full `pnpm check`, Rust tests, and native acceptance were not rerun for these frontend-only repairs.
+
 ## Handoff
 
-In progress. The next entry point is batch 2 (chapter ranges and reading modes).
+In progress. The review repairs are complete; continue with the shared chapter and mode contracts in the [Batch 2 execution plan](2026-09-27-reader-batch-2.md) before implementing the new controls and layouts.
