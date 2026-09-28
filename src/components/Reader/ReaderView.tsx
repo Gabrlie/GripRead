@@ -31,6 +31,7 @@ import {
   EncodingPanel,
   MorePanel,
   SearchPanel,
+  type ContentsMode,
 } from "./panels/ToolPanels";
 
 const empty: ReaderSnapshot = {
@@ -91,6 +92,16 @@ export function ReaderView() {
   const [closing, setClosing] = useState(false);
   const preferences = settings.value;
   const bookId = activeBook?.book.id;
+  // Contents keeps its tab for the current book session only.
+  const [contentsChoice, setContentsChoice] = useState<{
+    bookId: string | undefined;
+    mode: ContentsMode;
+  }>({ bookId: undefined, mode: "auto" });
+  const contentsMode = contentsChoice.bookId === bookId ? contentsChoice.mode : "auto";
+  const setContentsMode = useCallback(
+    (mode: ContentsMode) => setContentsChoice({ bookId, mode }),
+    [bookId],
+  );
   const actions = useReaderActions(bookId);
   const { run, fail, sessionEpoch, failedAction, actionError } = actions;
   const search = useReaderSearch(bookId, runtime.services.reader, run);
@@ -503,6 +514,8 @@ export function ReaderView() {
           )}
           {panel === "contents" && (
             <ContentsPanel
+              mode={contentsMode}
+              onModeChange={setContentsMode}
               toc={tools.toc}
               toolsLoading={tools.loading}
               toolsError={tools.error}

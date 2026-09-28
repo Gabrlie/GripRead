@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReaderView } from "./ReaderView";
+import { paginateText } from "../../reader/pagination";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type {
@@ -319,6 +320,52 @@ describe("reader directory and search operation ownership", () => {
     await userEvent.keyboard("{Enter}");
     await userEvent.click(await screen.findByRole("button", { name: "Read a page" }));
     expect((await screen.findByTestId("reader-highlight")).textContent).toBe("page");
+  });
+
+  it("shows each page's part of a match that crosses a page boundary", async () => {
+    const app = runtime();
+    const boundary = paginateText(text, 0, 60)[0].endOffset;
+    const start = boundary - 3;
+    vi.mocked(app.services.reader.search).mockResolvedValue({
+      contentVersion: "v1",
+      matches: [
+        {
+          ordinal: 0,
+          locator: locator(start),
+          excerpt: "跨页结果",
+          matchStart: start,
+          matchEnd: boundary + 3,
+        },
+      ],
+      nextCursor: null,
+      hasMore: false,
+    });
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "搜索关键词" }), "page");
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(await screen.findByRole("button", { name: "跨页结果" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-highlight").textContent).toBe(text.slice(start, boundary)),
+    );
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).toBe(String(boundary)),
+    );
+    expect(screen.getByTestId("reader-highlight").textContent).toBe(
+      text.slice(boundary, boundary + 3),
+    );
+  });
+
+  it("keeps the Contents tab for the book after its panel closes", async () => {
+    const app = runtime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    await userEvent.click(screen.getByRole("tab", { name: "全文" }));
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    expect(screen.getByRole("tab", { name: "全文" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "从开头阅读" })).toBeTruthy();
   });
 
   it("cancels a closed search and ignores its late results", async () => {

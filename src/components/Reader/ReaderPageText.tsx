@@ -12,17 +12,22 @@ interface ReaderPageTextProps {
 /** Renders a measured page with the same paragraph renderer used for measurement. */
 export function ReaderPageText({ page, bookId, highlight }: ReaderPageTextProps) {
   const content = useRef<HTMLDivElement>(null);
-  const localHighlight =
-    highlight && highlight.end > page.startOffset && highlight.start < page.endOffset
-      ? { start: highlight.start - page.startOffset, end: highlight.end - page.startOffset }
-      : null;
-  const highlightStart = localHighlight?.start ?? -1;
-  const highlightEnd = localHighlight?.end ?? -1;
+  // A match may cross a page boundary; clip it to the visible slice so each
+  // page shows the part it contains.
+  const overlaps =
+    highlight !== null && highlight.end > page.startOffset && highlight.start < page.endOffset;
+  const highlightStart = overlaps ? Math.max(0, highlight.start - page.startOffset) : null;
+  const highlightEnd = overlaps
+    ? Math.min(page.text.length, highlight.end - page.startOffset)
+    : null;
   useLayoutEffect(() => {
     if (!content.current) return;
     renderReaderText(content.current, page.text, {
       continued: page.continued,
-      highlight: highlightStart < 0 ? null : { start: highlightStart, end: highlightEnd },
+      highlight:
+        highlightStart === null || highlightEnd === null
+          ? null
+          : { start: highlightStart, end: highlightEnd },
     });
   }, [page.text, page.continued, highlightStart, highlightEnd]);
   return (

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type {
   Bookmark,
   TocEntry,
@@ -9,6 +8,9 @@ import type {
 import { Button } from "../../ui/button";
 import type { ReaderSearch } from "../use-reader-search";
 import type { ReaderTools } from "../use-reader-tools";
+
+/** Contents shows recognized chapters or a whole-text entry. */
+export type ContentsMode = "auto" | "full";
 
 const selectClass =
   "w-full rounded-lg border border-surface-variant bg-surface-container px-3 py-2";
@@ -235,6 +237,9 @@ export function AutomaticPanel({
 }
 
 interface ContentsPanelProps {
+  /** Owned by the reader session so the choice survives closing the panel. */
+  mode: ContentsMode;
+  onModeChange: (mode: ContentsMode) => void;
   toc: TocEntry[];
   toolsLoading: boolean;
   toolsError: string | null;
@@ -243,13 +248,14 @@ interface ContentsPanelProps {
 }
 
 export function ContentsPanel({
+  mode,
+  onModeChange,
   toc,
   toolsLoading,
   toolsError,
   onSeek,
   onStart,
 }: ContentsPanelProps) {
-  const [mode, setMode] = useState<"auto" | "full">("auto");
   return (
     <div className="space-y-3">
       <div className="flex gap-2" role="tablist" aria-label="目录模式">
@@ -257,7 +263,7 @@ export function ContentsPanel({
           variant={mode === "auto" ? "secondary" : "ghost"}
           role="tab"
           aria-selected={mode === "auto"}
-          onClick={() => setMode("auto")}
+          onClick={() => onModeChange("auto")}
         >
           自动识别
         </Button>
@@ -265,7 +271,7 @@ export function ContentsPanel({
           variant={mode === "full" ? "secondary" : "ghost"}
           role="tab"
           aria-selected={mode === "full"}
-          onClick={() => setMode("full")}
+          onClick={() => onModeChange("full")}
         >
           全文
         </Button>

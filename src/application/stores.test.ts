@@ -536,4 +536,72 @@ describe("durable settings", () => {
       vi.useRealTimers();
     }
   });
+  it("waits for a new inactivity delay after a slow write completes", async () => {
+    vi.useFakeTimers();
+    try {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const save = vi
+        .fn()
+        .mockImplementationOnce(async (value: ReaderPreferences) => {
+          await gate;
+          return value;
+        })
+        .mockImplementation(async (value: ReaderPreferences) => value);
+      const store = new SettingsStore(
+        { getSettings: async () => preferences, saveSettings: save },
+        800,
+      );
+      await store.load();
+      store.set({ fontSize: 20 });
+      await vi.advanceTimersByTimeAsync(800);
+      expect(save).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(500);
+      store.set({ fontSize: 21 });
+      await vi.advanceTimersByTimeAsync(100);
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(store.getSnapshot().saving).toBe(true);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(save).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 21 });
+      expect(store.getSnapshot().saving).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("flush does not wait for the delay of an edit made during a slow write", async () => {
+    vi.useFakeTimers();
+    try {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const save = vi
+        .fn()
+        .mockImplementationOnce(async (value: ReaderPreferences) => {
+          await gate;
+          return value;
+        })
+        .mockImplementation(async (value: ReaderPreferences) => value);
+      const store = new SettingsStore(
+        { getSettings: async () => preferences, saveSettings: save },
+        800,
+      );
+      await store.load();
+      store.set({ fontSize: 20 });
+      await vi.advanceTimersByTimeAsync(800);
+      store.set({ fontSize: 21 });
+      const flushed = store.flush();
+      release();
+      await flushed;
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenLastCalledWith({ ...preferences, fontSize: 21 });
+      await vi.advanceTimersByTimeAsync(800);
+      expect(save).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

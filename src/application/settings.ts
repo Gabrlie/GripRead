@@ -17,6 +17,7 @@ export class SettingsStore<T extends object = ReaderPreferences> {
   private loadRevision = 0;
   private writeRevision = 0;
   private delayTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushing = 0;
   /**
    * `saveDelayMs` coalesces rapid adjustments: the snapshot updates at once
    * for preview, and the write starts after the value stops changing.
@@ -100,7 +101,9 @@ export class SettingsStore<T extends object = ReaderPreferences> {
     });
   }
   private async drain() {
-    while (this.pending) {
+    // An edit made during a slow write waits for its own inactivity delay
+    // unless an explicit flush is draining the queue.
+    while (this.pending && (this.flushing > 0 || this.delayTimer === null)) {
       const value = this.pending;
       this.pending = null;
       try {
@@ -112,7 +115,7 @@ export class SettingsStore<T extends object = ReaderPreferences> {
         return;
       }
     }
-    this.update({ saving: false, error: null });
+    if (!this.pending) this.update({ saving: false, error: null });
   }
   retry = () => {
     if (!this.pending) {
@@ -124,11 +127,16 @@ export class SettingsStore<T extends object = ReaderPreferences> {
   };
   flush = async () => {
     if (!this.snapshot.value) return;
-    this.cancelDelay();
-    while (this.running || (this.pending && !this.snapshot.error)) {
-      if (!this.running) this.startSave();
-      const running = this.running;
-      if (running) await running;
+    this.flushing++;
+    try {
+      this.cancelDelay();
+      while (this.running || (this.pending && !this.snapshot.error)) {
+        if (!this.running) this.startSave();
+        const running = this.running;
+        if (running) await running;
+      }
+    } finally {
+      this.flushing--;
     }
     if (this.snapshot.error) throw new Error(this.snapshot.error);
   };
