@@ -6,7 +6,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/dialog";
-import { AUTO_SCROLL_SPEED_MIN, AUTO_SCROLL_SPEED_MAX } from "../../../types/generated";
+import {
+  AUTO_SCROLL_SPEED_MIN,
+  AUTO_SCROLL_SPEED_MAX,
+  type AutoPageMode,
+} from "../../../types/generated";
 
 interface AutomaticPanelProps {
   onClose: () => void;
@@ -20,6 +24,9 @@ interface AutomaticPanelProps {
   onInterval: (seconds: number) => void;
   onStart: () => void;
   onPause: () => void;
+  /** Paginated reading: uncover the next page, or turn with the animation. */
+  mode?: AutoPageMode;
+  onMode?: (mode: AutoPageMode) => void;
 }
 
 /** Legado's AutoReadDialog: page interval or scroll speed, start and pause. */
@@ -35,6 +42,8 @@ export function AutomaticDialog({
   onInterval,
   onStart,
   onPause,
+  mode,
+  onMode,
 }: AutomaticPanelProps) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -61,6 +70,27 @@ export function AutomaticDialog({
               className="w-full accent-primary"
             />
           </label>
+          {!scroll && mode && onMode && (
+            <div role="radiogroup" aria-label="翻页方式" className="flex gap-2">
+              {(
+                [
+                  ["reveal", "覆盖"],
+                  ["turn", "翻页动画"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === value}
+                  onClick={() => onMode(value)}
+                  className={`flex-1 h-8 rounded-full text-xs border ${mode === value ? "bg-primary text-on-primary border-primary" : "border-surface-variant"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {running ? (
             <Button variant="outline" onClick={onPause}>
               {scroll ? "暂停自动滚动" : "暂停自动翻页"}

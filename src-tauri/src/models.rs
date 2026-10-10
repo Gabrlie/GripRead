@@ -400,6 +400,9 @@ pub struct SearchRequest {
     pub book_id: String,
     pub query: String,
     pub case_sensitive: bool,
+    /// Treat `query` as a regular expression matched within each line.
+    #[serde(default)]
+    pub regex: bool,
     pub cursor: Option<u64>,
     pub limit: u32,
     #[serde(default)]
@@ -623,6 +626,31 @@ pub struct StylePreset {
     pub text: String,
     pub night_background: String,
     pub night_text: String,
+    /// A managed `background` image drawn instead of the day colour.
+    #[serde(default)]
+    pub background_image: Option<String>,
+    #[serde(default)]
+    pub night_background_image: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenOrientation {
+    #[default]
+    Auto,
+    Portrait,
+    Landscape,
+}
+
+/// How automatic page turning advances paginated text (Legado 自动翻页).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoPageMode {
+    /// The next page is uncovered from the top, behind a moving line.
+    #[default]
+    Reveal,
+    /// The page turns with the selected animation at each interval.
+    Turn,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -712,6 +740,12 @@ pub struct ReadingStyle {
     pub volume_keys: bool,
     /// Row-major nine tap zones.
     pub tap_zones: Vec<TapAction>,
+    /// Screen brightness from 0 to 1 while reading; `None` follows the system.
+    pub brightness: Option<f64>,
+    pub orientation: ScreenOrientation,
+    /// The reading menu uses the page colours instead of the app theme.
+    pub menu_follows_page: bool,
+    pub auto_page_mode: AutoPageMode,
 }
 
 impl Default for ReadingStyle {
@@ -725,6 +759,8 @@ impl Default for ReadingStyle {
                     text: text.to_string(),
                     night_background: night_background.to_string(),
                     night_text: night_text.to_string(),
+                    background_image: None,
+                    night_background_image: None,
                 }
             };
         use TapAction::{Menu, Next, Previous};
@@ -783,6 +819,10 @@ impl Default for ReadingStyle {
             tap_zones: vec![
                 Previous, Previous, Next, Previous, Menu, Next, Previous, Next, Next,
             ],
+            brightness: None,
+            orientation: ScreenOrientation::Auto,
+            menu_follows_page: false,
+            auto_page_mode: AutoPageMode::Reveal,
         }
     }
 }
@@ -850,6 +890,9 @@ impl ReadingStyle {
         }
         if self.tap_zones.len() != 9 {
             return Err(AppError::invalid_argument("tap zones need nine actions"));
+        }
+        if let Some(brightness) = self.brightness {
+            range(brightness, 0.0, 1.0, "brightness")?;
         }
         Ok(())
     }

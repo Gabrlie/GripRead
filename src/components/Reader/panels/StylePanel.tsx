@@ -9,6 +9,7 @@ import type {
   TapAction,
 } from "../../../types/generated";
 import type { SettingsService } from "../../../services/contracts";
+import { useRuntime } from "../../../application/runtime";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
 import { Input } from "../../ui/input";
@@ -650,6 +651,38 @@ function MoreView({
       {toggle("音量键翻页", "音量减下一页，音量加上一页", style.volumeKeys, (volumeKeys) =>
         setStyle({ volumeKeys }),
       )}
+      {toggle(
+        "菜单跟随背景",
+        "阅读菜单使用当前样式的背景和文字颜色",
+        style.menuFollowsPage,
+        (menuFollowsPage) => setStyle({ menuFollowsPage }),
+      )}
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span>
+          屏幕方向
+          <span className="block text-[11px] text-secondary">只在阅读时生效</span>
+        </span>
+        <div role="radiogroup" aria-label="屏幕方向" className="flex gap-1">
+          {(
+            [
+              ["auto", "跟随系统"],
+              ["portrait", "竖屏"],
+              ["landscape", "横屏"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={style.orientation === value}
+              onClick={() => setStyle({ orientation: value })}
+              className={`h-7 px-2.5 rounded-full text-[11px] border ${style.orientation === value ? "bg-primary text-on-primary border-primary" : "border-surface-variant text-on-surface"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       <Section title="点击区域">
         <div className="grid grid-cols-3 gap-1.5">
           {style.tapZones.map((action, index) => (
@@ -715,15 +748,51 @@ function PresetEditor({
   setStyle: (patch: Partial<ReadingStyle>) => void;
   onDone: () => void;
 }) {
+  const runtime = useRuntime();
+  const [imageError, setImageError] = useState<string | null>(null);
   const preset = style.presets[index];
   if (!preset) return null;
+  /** Legado's 背景图片: an image replaces the colour behind the text. */
+  const image = (label: string, key: "backgroundImage" | "nightBackgroundImage") => (
+    <div className="flex items-center justify-between text-xs">
+      {label}
+      <span className="flex gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-[11px]"
+          onClick={() =>
+            void runtime.services.settings.pickBackgroundImage().then(
+              (asset) => {
+                setImageError(null);
+                if (asset) update({ [key]: asset.id });
+              },
+              (failure: unknown) => setImageError(String(failure)),
+            )
+          }
+        >
+          {preset[key] ? "更换" : "选择图片"}
+        </Button>
+        {preset[key] && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px]"
+            onClick={() => update({ [key]: null })}
+          >
+            移除
+          </Button>
+        )}
+      </span>
+    </div>
+  );
   const update = (patch: Partial<StylePreset>) =>
     setStyle({
       presets: style.presets.map((item, position) =>
         position === index ? { ...item, ...patch } : item,
       ),
     });
-  const color = (label: string, key: keyof Omit<StylePreset, "name">) => (
+  const color = (label: string, key: "background" | "text" | "nightBackground" | "nightText") => (
     <label className="flex items-center justify-between text-xs">
       {label}
       <input
@@ -760,9 +829,16 @@ function PresetEditor({
         />
       </label>
       {color("日间背景", "background")}
+      {image("日间背景图", "backgroundImage")}
       {color("日间文字", "text")}
       {color("夜间背景", "nightBackground")}
+      {image("夜间背景图", "nightBackgroundImage")}
       {color("夜间文字", "nightText")}
+      {imageError && (
+        <p role="alert" className="text-xs text-error break-words">
+          {imageError}
+        </p>
+      )}
       <div className="flex justify-between gap-2 pt-1">
         <Button
           variant="outline"

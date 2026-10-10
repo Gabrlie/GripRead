@@ -51,6 +51,9 @@ vi.mock("../../reader", async () => {
         return false;
       }
       skipNextAnimation() {}
+      beginReveal() {}
+      setReveal() {}
+      endReveal() {}
       setEffect() {}
       setPages() {}
       present() {}

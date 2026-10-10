@@ -21,9 +21,9 @@ use commands::{
     start_import, start_txt_decode, test_txt_toc_rule, update_book, AppState,
 };
 use commands::{
-    add_reading_time, clear_book_cover, delete_reader_font, import_reader_font, list_reader_fonts,
-    list_txt_folder, move_book, read_reader_font, reading_stats, set_book_cover,
-    update_bookmark_note,
+    add_reading_time, clear_book_cover, delete_reader_font, import_reader_background,
+    import_reader_font, list_reader_fonts, list_txt_folder, move_book, read_reader_font,
+    reading_stats, set_book_cover, update_bookmark_note,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -154,7 +154,8 @@ pub fn run() {
             reading_stats,
             set_book_cover,
             clear_book_cover,
-            list_txt_folder
+            list_txt_folder,
+            import_reader_background
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

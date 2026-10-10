@@ -234,6 +234,8 @@ struct SearchParameters<'a> {
     content_version: &'a str,
     query: &'a str,
     case_sensitive: bool,
+    /// Treat `query` as a regular expression matched within each line.
+    regex: bool,
     cursor: u64,
     limit: u32,
 }
@@ -279,6 +281,7 @@ impl Storage {
         storage.apply_migrations()?;
         storage.recover_pending_imports()?;
         storage.recover_pending_txt_decodes()?;
+        storage.remove_unused_backgrounds()?;
         storage.remove_orphan_managed_files()?;
         storage.cleanup_staging_dir();
         Ok(storage)
@@ -2477,6 +2480,7 @@ impl Storage {
                 content_version: &context.record.asset.content_version,
                 query: &request.query,
                 case_sensitive: request.case_sensitive,
+                regex: request.regex,
                 cursor: request.cursor.unwrap_or(0),
                 limit,
             },
@@ -3447,8 +3451,44 @@ impl Storage {
         })
     }
 
+    pub fn import_reader_background(
+        &mut self,
+        source: &Path,
+        name: &str,
+    ) -> Result<ReaderAsset, AppError> {
+        self.import_reader_asset(source, name, "background")
+    }
+
+    /// Background images are referenced only by saved reading styles, which
+    /// are written after a debounce; unused images are therefore removed at
+    /// startup, never while an unsaved style may still name a new image.
+    fn remove_unused_backgrounds(&self) -> Result<(), AppError> {
+        let preferences = self.get_settings()?;
+        let used: HashSet<String> = preferences
+            .style
+            .presets
+            .iter()
+            .flat_map(|preset| [&preset.background_image, &preset.night_background_image])
+            .flatten()
+            .cloned()
+            .collect();
+        let ids: Vec<String> = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT id FROM reader_assets WHERE kind = 'background'")?;
+            let rows = statement
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for id in ids.into_iter().filter(|id| !used.contains(id)) {
+            self.delete_reader_asset(&id)?;
+        }
+        Ok(())
+    }
+
     /// Removes an asset record and its file; callers clear references first.
-    fn delete_reader_asset(&mut self, id: &str) -> Result<(), AppError> {
+    fn delete_reader_asset(&self, id: &str) -> Result<(), AppError> {
         let relative_path: Option<String> = self
             .conn
             .query_row(
@@ -4359,6 +4399,7 @@ fn search_text_stream(
         content_version,
         query,
         case_sensitive,
+        regex,
         cursor,
         limit,
     } = parameters;
@@ -4366,16 +4407,112 @@ fn search_text_stream(
         return Ok((Vec::new(), None, false));
     }
     let needle: Vec<char> = query.chars().collect();
-    if needle.is_empty() {
-        return Ok((Vec::new(), None, false));
-    }
+    // Regular expressions match within one line, as Legado searches by line;
+    // a line that exceeds the backtracking limit is skipped.
+    let pattern = if regex {
+        let source = if case_sensitive {
+            query.to_string()
+        } else {
+            format!("(?i){query}")
+        };
+        Some(fancy_regex::Regex::new(&source).map_err(|error| {
+            AppError::invalid_argument(format!("invalid regular expression: {error}"))
+        })?)
+    } else {
+        None
+    };
     let path = managed_path(&context.root, &context.record.relative_path, "books")?;
     let mut pending = Vec::new();
     let mut utf16_offset = 0_u64;
     let mut ring: Vec<(char, u64)> = Vec::with_capacity(needle.len());
+    let mut line = String::new();
+    let mut line_start = 0_u64;
     let mut seen = 0_u64;
     let mut matches = Vec::new();
     let mut byte_offset = 0_u64;
+    let build = |match_start: u64, match_end: u64, ordinal: u64| -> Result<SearchMatch, AppError> {
+        let start_boundary = boundary_for_offset(
+            &context.root,
+            &context.record.relative_path,
+            &verified.index,
+            match_start,
+            BoundaryMode::Exact,
+            &verified.fingerprint,
+        )?;
+        let excerpt_start = boundary_for_offset(
+            &context.root,
+            &context.record.relative_path,
+            &verified.index,
+            match_start.saturating_sub(32),
+            BoundaryMode::Floor,
+            &verified.fingerprint,
+        )?;
+        let excerpt_end = boundary_for_offset(
+            &context.root,
+            &context.record.relative_path,
+            &verified.index,
+            match_end
+                .saturating_add(32)
+                .min(verified.index.utf16_length),
+            BoundaryMode::Ceiling,
+            &verified.fingerprint,
+        )?;
+        let excerpt = read_range(
+            &context.root,
+            &context.record.relative_path,
+            excerpt_start.byte_offset,
+            excerpt_end.byte_offset,
+            &verified.fingerprint,
+        )?;
+        let mut locator = locator_for(
+            &context.root,
+            &context.record,
+            &verified.index,
+            match_start,
+            start_boundary.byte_offset,
+            &verified.fingerprint,
+        )?;
+        locator.book_id = book_id.to_string();
+        locator.content_version = content_version.to_string();
+        Ok(SearchMatch {
+            ordinal,
+            locator,
+            excerpt,
+            match_start,
+            match_end,
+        })
+    };
+    // Records one match; `Some` ends the search with a cursor for more.
+    let mut accept = |match_start: u64,
+                      match_end: u64,
+                      matches: &mut Vec<SearchMatch>|
+     -> Result<Option<u64>, AppError> {
+        if seen < cursor {
+            seen += 1;
+            return Ok(None);
+        }
+        if matches.len() >= limit as usize {
+            return Ok(Some(seen));
+        }
+        matches.push(build(match_start, match_end, seen)?);
+        seen += 1;
+        Ok(None)
+    };
+    let line_matches = |line: &str, line_start: u64| -> Vec<(u64, u64)> {
+        let Some(pattern) = &pattern else {
+            return Vec::new();
+        };
+        let units = |text: &str| text.encode_utf16().count() as u64;
+        pattern
+            .find_iter(line)
+            .map_while(Result::ok)
+            .filter(|found| found.start() < found.end())
+            .map(|found| {
+                let start = line_start + units(&line[..found.start()]);
+                (start, start + units(found.as_str()))
+            })
+            .collect()
+    };
     const CHUNK_BYTES: u64 = 64 * 1024;
     while byte_offset < verified.index.byte_length {
         if cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
@@ -4412,6 +4549,20 @@ fn search_text_stream(
         for character in text.chars() {
             let start_offset = utf16_offset;
             utf16_offset += character.len_utf16() as u64;
+            if pattern.is_some() {
+                if character != '\n' {
+                    line.push(character);
+                    continue;
+                }
+                for (start, end) in line_matches(&line, line_start) {
+                    if let Some(next) = accept(start, end, &mut matches)? {
+                        return Ok((matches, Some(next), true));
+                    }
+                }
+                line.clear();
+                line_start = utf16_offset;
+                continue;
+            }
             ring.push((character, start_offset));
             if ring.len() > needle.len() {
                 ring.remove(0);
@@ -4419,66 +4570,9 @@ fn search_text_stream(
             if ring.len() != needle.len() || !chars_match(&ring, &needle, case_sensitive) {
                 continue;
             }
-            let match_start = ring[0].1;
-            let match_end = utf16_offset;
-            if seen < cursor {
-                seen += 1;
-                continue;
+            if let Some(next) = accept(ring[0].1, utf16_offset, &mut matches)? {
+                return Ok((matches, Some(next), true));
             }
-            if matches.len() >= limit as usize {
-                return Ok((matches, Some(seen), true));
-            }
-            let start_boundary = boundary_for_offset(
-                &context.root,
-                &context.record.relative_path,
-                &verified.index,
-                match_start,
-                BoundaryMode::Exact,
-                &verified.fingerprint,
-            )?;
-            let excerpt_start = boundary_for_offset(
-                &context.root,
-                &context.record.relative_path,
-                &verified.index,
-                match_start.saturating_sub(32),
-                BoundaryMode::Floor,
-                &verified.fingerprint,
-            )?;
-            let excerpt_end = boundary_for_offset(
-                &context.root,
-                &context.record.relative_path,
-                &verified.index,
-                match_end
-                    .saturating_add(32)
-                    .min(verified.index.utf16_length),
-                BoundaryMode::Ceiling,
-                &verified.fingerprint,
-            )?;
-            let excerpt = read_range(
-                &context.root,
-                &context.record.relative_path,
-                excerpt_start.byte_offset,
-                excerpt_end.byte_offset,
-                &verified.fingerprint,
-            )?;
-            let mut locator = locator_for(
-                &context.root,
-                &context.record,
-                &verified.index,
-                match_start,
-                start_boundary.byte_offset,
-                &verified.fingerprint,
-            )?;
-            locator.book_id = book_id.to_string();
-            locator.content_version = content_version.to_string();
-            matches.push(SearchMatch {
-                ordinal: seen,
-                locator,
-                excerpt,
-                match_start,
-                match_end,
-            });
-            seen += 1;
         }
         pending = remainder;
     }
@@ -4487,6 +4581,11 @@ fn search_text_stream(
             ErrorCode::UnsupportedEncoding,
             "managed TXT asset ends with an incomplete UTF-8 sequence",
         ));
+    }
+    for (start, end) in line_matches(&line, line_start) {
+        if let Some(next) = accept(start, end, &mut matches)? {
+            return Ok((matches, Some(next), true));
+        }
     }
     Ok((matches, None, false))
 }
@@ -5849,6 +5948,7 @@ mod tests {
                 book_id: imported.book.id.clone(),
                 query: "中文".to_string(),
                 case_sensitive: true,
+                regex: false,
                 cursor: None,
                 limit: 10,
                 operation_id: None,
@@ -6290,6 +6390,51 @@ mod tests {
     }
 
     #[test]
+    fn regex_search_matches_within_lines_with_utf16_offsets() {
+        let root = TestRoot::new();
+        let text = "第一章 开始\n😀他说：“你好”。\nABC abc\n第二章 结束";
+        let source = write_source(&root.0, "regex.txt", text.as_bytes());
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let imported = import(&mut storage, &source, "regex");
+        let search = |query: &str, case_sensitive: bool| {
+            storage.search_book(&SearchRequest {
+                book_id: imported.book.id.clone(),
+                query: query.to_string(),
+                case_sensitive,
+                regex: true,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            })
+        };
+        let chapters = search("^第.章", true).unwrap();
+        assert_eq!(chapters.matches.len(), 2);
+        let last = &chapters.matches[1];
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        assert_eq!(
+            String::from_utf16(&utf16[last.match_start as usize..last.match_end as usize]).unwrap(),
+            "第二章"
+        );
+        let quote = search("“.+?”", true).unwrap();
+        assert_eq!(quote.matches.len(), 1);
+        assert_eq!(
+            String::from_utf16(
+                &utf16[quote.matches[0].match_start as usize..quote.matches[0].match_end as usize]
+            )
+            .unwrap(),
+            "“你好”"
+        );
+        assert_eq!(search("abc", true).unwrap().matches.len(), 1);
+        assert_eq!(search("abc", false).unwrap().matches.len(), 2);
+        // Matches never cross a line break.
+        assert!(search("开始.结束", true).unwrap().matches.is_empty());
+        assert_eq!(
+            search("(", true).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
     fn search_honors_cancellation_before_scanning_chunks() {
         let root = TestRoot::new();
         let source = write_source(
@@ -6308,6 +6453,7 @@ mod tests {
                 book_id: imported.book.id,
                 query: "needle".to_string(),
                 case_sensitive: true,
+                regex: false,
                 cursor: None,
                 limit: 10,
                 operation_id: None,
@@ -7543,6 +7689,28 @@ mod tests {
         assert_eq!(
             storage.book_info(&id).unwrap().intro.as_deref(),
             Some("自己写的简介")
+        );
+    }
+
+    #[test]
+    fn unused_background_images_are_removed_on_startup() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let png = write_source(&root.0, "bg.png", b"\x89PNG\r\n\x1a\nrest");
+        let (kept, dropped) = {
+            let mut storage = Storage::open(&app_root).unwrap();
+            let kept = storage.import_reader_background(&png, "bg.png").unwrap();
+            let dropped = storage.import_reader_background(&png, "bg.png").unwrap();
+            let mut preferences = storage.get_settings().unwrap();
+            preferences.style.presets[0].night_background_image = Some(kept.id.clone());
+            storage.save_settings(&preferences).unwrap();
+            (kept, dropped)
+        };
+        let storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.read_reader_font(&kept.id).unwrap().len(), 12);
+        assert_eq!(
+            storage.read_reader_font(&dropped.id).unwrap_err().code,
+            ErrorCode::NotFound
         );
     }
 

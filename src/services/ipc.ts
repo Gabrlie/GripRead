@@ -334,6 +334,17 @@ export const tauriServices: AppServices = {
       });
     },
     listFonts: () => invokeCommand<ReaderAsset[]>("list_reader_fonts"),
+    pickBackgroundImage: async () => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return null;
+      return invokeCommand<ReaderAsset>("import_reader_background", {
+        request: { path: selected } satisfies PathRequest,
+      });
+    },
     readFont: (id) =>
       invokeCommand<ArrayBuffer>("read_reader_font", {
         request: { id } satisfies ReaderAssetRequest,

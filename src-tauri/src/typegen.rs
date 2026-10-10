@@ -55,6 +55,8 @@ const IPC_TYPES: &[&str] = &[
     "ReaderAsset",
     "ReaderAssetRequest",
     "PathRequest",
+    "ScreenOrientation",
+    "AutoPageMode",
     "ShelfState",
     "ShelfPlacement",
     "MoveBookRequest",
@@ -163,6 +165,8 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ReaderAsset>(&config)?;
     export_all::<ReaderAssetRequest>(&config)?;
     export_all::<PathRequest>(&config)?;
+    export_all::<ScreenOrientation>(&config)?;
+    export_all::<AutoPageMode>(&config)?;
     export_all::<ShelfState>(&config)?;
     export_all::<ShelfPlacement>(&config)?;
     export_all::<MoveBookRequest>(&config)?;

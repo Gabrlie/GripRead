@@ -202,3 +202,48 @@ export function ReaderBottomBar({
     </div>
   );
 }
+
+/**
+ * Legado's brightness bar beside the reading menu: a vertical slider and a
+ * button that returns brightness to the system setting.
+ */
+export function ReaderBrightnessBar({
+  visible,
+  value,
+  onChange,
+}: {
+  visible: boolean;
+  /** 0–1, or `null` while following the system. */
+  value: number | null;
+  onChange: (value: number | null) => void;
+}) {
+  const following = value === null;
+  return (
+    <div
+      className={`fixed left-2 top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-2 rounded-full bg-surface/95 border border-surface-variant/40 shadow-sm px-1.5 py-2 transition-opacity duration-300 motion-reduce:transition-none ${visible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+      inert={!visible}
+    >
+      <button
+        type="button"
+        aria-label="亮度跟随系统"
+        aria-pressed={following}
+        className={`h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-semibold ${following ? "bg-primary text-on-primary" : "text-secondary hover:bg-surface-container"}`}
+        onClick={() => onChange(following ? 0.5 : null)}
+      >
+        A
+      </button>
+      <div className="h-40 py-1">
+        <Slider
+          aria-label="屏幕亮度"
+          orientation="vertical"
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round((value ?? 0.5) * 100)}
+          onValueChange={(next) => onChange((Array.isArray(next) ? next[0] : next) / 100)}
+        />
+      </div>
+      <Icon name="brightness" size={16} className="text-secondary" />
+    </div>
+  );
+}

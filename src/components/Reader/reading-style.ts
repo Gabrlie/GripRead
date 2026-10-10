@@ -28,6 +28,8 @@ export interface ReadingAppearance {
   root: CSSProperties;
   /** Typography shared by pages, the measurer, and overlays. */
   text: CSSProperties;
+  /** Theme colour overrides for the reading menu when it follows the page. */
+  menu: CSSProperties;
   /** Every value that changes pagination, for reflow. */
   signature: string;
 }
@@ -41,6 +43,7 @@ export function readingAppearance(
   preferences: ReaderPreferences | null,
   night: boolean,
   customFamily: string | null,
+  backgroundUrl: string | null = null,
 ): ReadingAppearance {
   const style = preferences?.style ?? DEFAULT_READING_STYLE;
   const preset = currentPreset(style);
@@ -60,7 +63,11 @@ export function readingAppearance(
     "--reader-title-align": style.titleMode === "center" ? "center" : "left",
     "--reader-margin-left": `${style.margins.left}px`,
     "--reader-margin-right": `${style.margins.right}px`,
+    "--reader-bg-image": backgroundUrl ? `url("${backgroundUrl}")` : "none",
   } as CSSProperties;
+  const background = night ? preset.nightBackground : preset.background;
+  const foreground = night ? preset.nightText : preset.text;
+  const menu = style.menuFollowsPage ? menuColours(background, foreground) : {};
   const text: CSSProperties = {
     fontSize: `${fontSize}px`,
     lineHeight,
@@ -86,5 +93,34 @@ export function readingAppearance(
     style.footer.visible,
     JSON.stringify([style.headerMargins, style.footerMargins, style.headerLine, style.footerLine]),
   ].join("|");
-  return { root, text, signature };
+  return { root, text, menu, signature };
+}
+
+function rgb(hex: string): [number, number, number] {
+  const value = hex.replace("#", "").slice(0, 6);
+  const number = Number.parseInt(value.padEnd(6, "0"), 16);
+  return [(number >> 16) & 255, (number >> 8) & 255, number & 255];
+}
+
+/**
+ * Legado's 菜单跟随背景: the reading menu takes the page colours. The theme's
+ * RGB tokens are redefined inside the menu, with containers mixed from the
+ * page and text colours.
+ */
+function menuColours(background: string, foreground: string): CSSProperties {
+  const page = rgb(background);
+  const ink = rgb(foreground);
+  const mix = (amount: number) =>
+    page.map((value, index) => Math.round(value + (ink[index] - value) * amount)).join(" ");
+  return {
+    "--color-surface-rgb": page.join(" "),
+    "--color-on-surface-rgb": ink.join(" "),
+    "--color-on-surface-variant-rgb": mix(0.75),
+    "--color-secondary-rgb": mix(0.7),
+    "--color-surface-container-low-rgb": mix(0.05),
+    "--color-surface-container-rgb": mix(0.09),
+    "--color-surface-container-high-rgb": mix(0.13),
+    "--color-surface-variant-rgb": mix(0.18),
+    "--color-outline-variant-rgb": mix(0.25),
+  } as CSSProperties;
 }

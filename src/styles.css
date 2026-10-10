@@ -630,6 +630,12 @@ html.shelf-hide-scrollbar body::-webkit-scrollbar,
   background-color: var(--reader-bg, var(--color-surface));
   color: var(--reader-fg, var(--color-on-surface));
 }
+/* A style's background image covers the whole reading screen and its turn copies. */
+.reader-screen {
+  background-image: var(--reader-bg-image, none);
+  background-size: cover;
+  background-position: center;
+}
 /* Chapter headings; the measurer marks the same lines, so pages fit them. */
 .reader-prose > .reader-paragraph[data-heading] {
   font-size: calc(var(--reader-title-scale, 1.25) * 1em);

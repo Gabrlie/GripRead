@@ -105,6 +105,8 @@ export interface SettingsService {
   /** Picks a font file and copies it into managed assets; `null` when cancelled. */
   pickAndImportFont(): Promise<ReaderAsset | null>;
   listFonts(): Promise<ReaderAsset[]>;
+  /** Picks an image for a reading style background; `null` when cancelled. */
+  pickBackgroundImage(): Promise<ReaderAsset | null>;
   readFont(id: string): Promise<ArrayBuffer>;
   /** Also clears the font from saved preferences when it was selected. */
   deleteFont(id: string): Promise<void>;

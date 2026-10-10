@@ -1661,3 +1661,19 @@ pub async fn list_txt_folder(
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, format!("folder worker stopped: {error}")))?
 }
+
+#[tauri::command]
+pub async fn import_reader_background(
+    request: crate::models::PathRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::ReaderAsset, AppError> {
+    let root = state.data_root.clone();
+    let operation_id = Uuid::new_v4().to_string();
+    with_storage(&state, move |storage| {
+        let (path, name, _staged) =
+            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
+        storage.import_reader_background(&path, &name)
+    })
+    .await
+}

@@ -7,4 +7,8 @@ export type StylePreset = { name: string,
 /**
  * CSS colours such as `#f6f2e9`.
  */
-background: string, text: string, nightBackground: string, nightText: string, };
+background: string, text: string, nightBackground: string, nightText: string, 
+/**
+ * A managed `background` image drawn instead of the day colour.
+ */
+backgroundImage: string | null, nightBackgroundImage: string | null, };

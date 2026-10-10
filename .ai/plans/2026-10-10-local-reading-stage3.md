@@ -24,6 +24,8 @@ Schema 11 drops all existing groups, adds a manual reading state and a cover to 
 
 N1: reader tests for margin taps and the spread rule; a tablet-size preview drag starting on the far margin turned the spread. N2: Rust tests for moves, single group membership, schema 11 migration from schema 5, 7, 8, and 9 databases, reading time validation and statistics, bookmark notes, cover signature checks and replacement, and editable introductions; frontend tests for the menu, reading-state tabs, detail page editing and moving, and reading time counting; phone screenshots of the shelf, the 更多 menu, the detail page, and reading records. `pnpm check` and Android clippy pass.
 
+N3: Rust tests for regex search (anchors, lazy quantifiers, case folding, no line crossing, invalid patterns) and startup removal of unused background images; frontend tests for selection-to-offset mapping across hidden indents, the reveal cycle in automatic turning, and the adapter keeping a reveal over navigation cancels; phone screenshots of the selection menu, the note dialog, 更多设置, the menu following the page colours, regex results, and a reveal in progress. Brightness, orientation, share, and the emptied WebView selection toolbar need device checks.
+
 ## Handoff
 
-In progress. N1 and N2 are implemented on the host; N3 and N4 follow.
+In progress. N1–N3 are implemented on the host; N4 follows.

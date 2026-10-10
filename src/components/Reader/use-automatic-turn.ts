@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+/** Legado's reveal: the next page is uncovered from the top over each interval. */
+export interface AutomaticReveal {
+  /** Covers the screen with the current page and turns underneath it. */
+  begin: () => void;
+  progress: (fraction: number) => void;
+  end: () => void;
+}
+
 interface AutomaticTurnOptions {
   intervalSeconds: number;
   canContinue: () => boolean;
   turn: () => Promise<void>;
   scroll?: { speed: number; advance: (pixels: number) => void };
+  reveal?: AutomaticReveal;
 }
 
 /** Runs one page turn at a time, including across pause/resume and interval changes. */
@@ -13,7 +22,10 @@ export function useAutomaticTurn({
   canContinue,
   turn,
   scroll,
+  reveal,
 }: AutomaticTurnOptions) {
+  const revealRef = useRef(reveal);
+  revealRef.current = reveal;
   const [session, setSession] = useState<number | null>(null);
   const generation = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -38,6 +50,7 @@ export function useAutomaticTurn({
     clearTimeout(timer.current);
     timer.current = undefined;
     cancelAnimationFrame(animationFrame.current);
+    revealRef.current?.end();
     setSession(null);
     return pendingTurn.current ?? Promise.resolve();
   }, []);
@@ -70,7 +83,58 @@ export function useAutomaticTurn({
       // A previous session may still be loading or animating its last page.
       await pendingTurn.current;
       if (!isCurrent()) return;
+      if (revealRef.current) {
+        void revealNextPage();
+        return;
+      }
       timer.current = setTimeout(() => void turnNextPage(), Math.max(1, intervalSeconds) * 1000);
+    };
+    // The page turns at once beneath a copy of the current page, which is
+    // then clipped away from the top over the interval.
+    const revealNextPage = async () => {
+      const current = revealRef.current;
+      if (!isCurrent() || !current) return;
+      if (document.visibilityState === "hidden" || !canContinueRef.current()) {
+        void pause();
+        return;
+      }
+      current.begin();
+      const operation = (async () => {
+        try {
+          await turnRef.current();
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      pendingTurn.current = operation.then(() => undefined);
+      const turned = await operation;
+      pendingTurn.current = null;
+      if (!isCurrent()) return;
+      if (!turned) {
+        current.end();
+        void pause();
+        return;
+      }
+      const duration = Math.max(1, intervalSeconds) * 1000;
+      let begin: number | null = null;
+      const frame = (time: number) => {
+        if (!isCurrent()) return;
+        if (document.visibilityState === "hidden" || !canContinueRef.current()) {
+          void pause();
+          return;
+        }
+        begin ??= time;
+        const fraction = Math.min(1, (time - begin) / duration);
+        current.progress(fraction);
+        if (fraction < 1) {
+          animationFrame.current = requestAnimationFrame(frame);
+          return;
+        }
+        current.end();
+        void schedule();
+      };
+      animationFrame.current = requestAnimationFrame(frame);
     };
     const turnNextPage = async () => {
       if (!isCurrent()) return;
@@ -108,7 +172,7 @@ export function useAutomaticTurn({
       window.removeEventListener("blur", pauseWhenUnavailable);
       document.removeEventListener("visibilitychange", pauseWhenUnavailable);
     };
-  }, [intervalSeconds, pause, session, Boolean(scroll)]);
+  }, [intervalSeconds, pause, session, Boolean(scroll), Boolean(reveal)]);
 
   return useMemo(() => ({ running: session !== null, start, pause }), [session, start, pause]);
 }

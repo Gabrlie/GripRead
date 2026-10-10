@@ -2,8 +2,10 @@ package com.gripread.reader
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.os.BatteryManager
 import android.os.Bundle
+import android.view.ActionMode
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -18,6 +20,7 @@ import org.json.JSONObject
 class MainActivity : TauriActivity() {
   @Volatile private var insets = "{\"top\":0,\"right\":0,\"bottom\":0,\"left\":0}"
   @Volatile private var volumeKeys = false
+  @Volatile private var customSelectionMenu = false
   private var webView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +72,16 @@ class MainActivity : TauriActivity() {
     return super.dispatchKeyEvent(event)
   }
 
+  /**
+   * While the reader shows its own selection menu (src/components/Reader),
+   * the WebView's floating copy/share toolbar is emptied so only that menu
+   * appears; the selection handles stay.
+   */
+  override fun onActionModeStarted(mode: ActionMode) {
+    super.onActionModeStarted(mode)
+    if (customSelectionMenu) mode.menu.clear()
+  }
+
   private inner class InsetsBridge {
     @JavascriptInterface
     fun get(): String = insets
@@ -96,6 +109,43 @@ class MainActivity : TauriActivity() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (hidden) controller.hide(WindowInsetsCompat.Type.systemBars())
         else controller.show(WindowInsetsCompat.Type.systemBars())
+      }
+    }
+
+    @JavascriptInterface
+    fun setSelectionMenu(enabled: Boolean) {
+      customSelectionMenu = enabled
+    }
+
+    /** Window brightness from 0 to 1, or a negative value to follow the system. */
+    @JavascriptInterface
+    fun setBrightness(value: Float) {
+      runOnUiThread {
+        val attributes = window.attributes
+        attributes.screenBrightness =
+          if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else value.coerceIn(0.01f, 1f)
+        window.attributes = attributes
+      }
+    }
+
+    /** `auto`, `portrait`, or `landscape` (sensor-based within each). */
+    @JavascriptInterface
+    fun setOrientation(orientation: String) {
+      runOnUiThread {
+        requestedOrientation = when (orientation) {
+          "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+          "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+          else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+      }
+    }
+
+    /** Opens the system share sheet with plain text. */
+    @JavascriptInterface
+    fun share(text: String) {
+      runOnUiThread {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+        startActivity(Intent.createChooser(send, null))
       }
     }
 

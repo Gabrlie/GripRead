@@ -40,13 +40,14 @@ export function ruleServiceMocks(): Pick<
   };
 }
 
-/** Font asset methods of the settings service with an empty font list. */
+/** Asset methods of the settings service with an empty font list. */
 export function fontServiceMocks(): Pick<
   SettingsService,
-  "pickAndImportFont" | "listFonts" | "readFont" | "deleteFont"
+  "pickAndImportFont" | "listFonts" | "readFont" | "deleteFont" | "pickBackgroundImage"
 > {
   return {
     pickAndImportFont: vi.fn(async () => null),
+    pickBackgroundImage: vi.fn(async () => null),
     listFonts: vi.fn(async () => []),
     readFont: vi.fn(async () => new ArrayBuffer(0)),
     deleteFont: vi.fn(async () => undefined),

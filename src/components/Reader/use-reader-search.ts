@@ -25,6 +25,8 @@ export function useReaderSearch(
   run: (action: () => Promise<void>) => void,
 ) {
   const [query, setQueryValue] = useState("");
+  /** Legado's 正则 option: the query is a regular expression within each line. */
+  const [regex, setRegexValue] = useState(false);
   const [matches, setMatches] = useState<SearchMatch[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -64,10 +66,17 @@ export function useReaderSearch(
     },
     [clearResults],
   );
+  const setRegex = useCallback(
+    (value: boolean) => {
+      clearResults();
+      setRegexValue(value);
+    },
+    [clearResults],
+  );
 
   const execute = useCallback(
-    (from: number | null) => {
-      if (!bookId || !query.trim()) return;
+    (from: number | null, text = query, asRegex = regex) => {
+      if (!bookId || !text.trim()) return;
       const requestId = ++request.current;
       const operationId = newSearchOperationId();
       if (operation.current) {
@@ -81,8 +90,9 @@ export function useReaderSearch(
         try {
           const result = await service.search({
             bookId,
-            query,
+            query: text,
             caseSensitive: true,
+            regex: asRegex,
             cursor: from,
             limit: PAGE_SIZE,
             operationId,
@@ -106,7 +116,7 @@ export function useReaderSearch(
         }
       });
     },
-    [bookId, query, run, service],
+    [bookId, query, regex, run, service],
   );
 
   const search = useCallback(() => {
@@ -118,6 +128,17 @@ export function useReaderSearch(
     execute(null);
   }, [bookId, execute, query]);
 
+  /** Searches for selected text right away (Legado's selection 搜索). */
+  const searchFor = useCallback(
+    (text: string) => {
+      clearResults();
+      setRegexValue(false);
+      setQueryValue(text);
+      execute(null, text, false);
+    },
+    [clearResults, execute],
+  );
+
   const loadMore = useCallback(() => {
     if (!hasMore || cursor === null || searching) return;
     execute(cursor);
@@ -126,6 +147,8 @@ export function useReaderSearch(
   return {
     query,
     setQuery,
+    regex,
+    setRegex,
     matches,
     hasMore,
     complete,
@@ -134,6 +157,7 @@ export function useReaderSearch(
     highlight,
     setHighlight,
     search,
+    searchFor,
     loadMore,
     cancel,
     clearResults,

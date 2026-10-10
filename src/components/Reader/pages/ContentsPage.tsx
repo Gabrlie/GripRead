@@ -27,6 +27,7 @@ interface ContentsPageProps {
   onSeek: (locator: ReaderLocator) => void;
   onOpenBookmark: (bookmark: Bookmark) => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
+  onEditBookmark: (bookmark: Bookmark) => void;
   onOpenRules: () => void;
   onToggleSplit: () => void;
   onClose: () => void;
@@ -57,6 +58,7 @@ export function ContentsPage({
   onSeek,
   onOpenBookmark,
   onDeleteBookmark,
+  onEditBookmark,
   onOpenRules,
   onToggleSplit,
   onClose,
@@ -283,7 +285,12 @@ export function ContentsPage({
           )}
           {tab === "bookmarks" &&
             bookmarks
-              .filter((bookmark) => !filter?.trim() || bookmark.excerpt.includes(filter.trim()))
+              .filter(
+                (bookmark) =>
+                  !filter?.trim() ||
+                  bookmark.excerpt.includes(filter.trim()) ||
+                  bookmark.note.includes(filter.trim()),
+              )
               .map((bookmark) => {
                 const stale = bookmark.contentVersion !== contentVersion;
                 return (
@@ -296,11 +303,25 @@ export function ContentsPage({
                       onClick={() => onOpenBookmark(bookmark)}
                     >
                       <p className="text-sm line-clamp-2">{bookmark.excerpt || "（空白位置）"}</p>
+                      {bookmark.note && (
+                        <p className="text-xs text-primary line-clamp-3 break-words">
+                          {bookmark.note}
+                        </p>
+                      )}
                       <p className="text-[11px] text-secondary">
                         {chapterTitleAt(toc, bookmark.locator.offset)}
                         {stale ? " · 旧正文版本" : ""}
                       </p>
                     </button>
+                    <Button
+                      aria-label="编辑书签备注"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-secondary shrink-0"
+                      onClick={() => onEditBookmark(bookmark)}
+                    >
+                      <Icon name="edit" size={15} />
+                    </Button>
                     <Button
                       aria-label="删除书签"
                       variant="ghost"
@@ -314,7 +335,9 @@ export function ContentsPage({
                 );
               })}
           {tab === "bookmarks" && bookmarks.length === 0 && !loading && (
-            <p className="m-4 text-sm text-secondary">还没有书签。阅读时在右上角 更多 中添加。</p>
+            <p className="m-4 text-sm text-secondary">
+              还没有书签。可以在右上角添加，或长按选中文字后添加。
+            </p>
           )}
         </div>
       </div>

@@ -228,6 +228,8 @@ export function rasterizePage(
   element: HTMLElement,
   origin: DOMRect,
   pixelRatio: number,
+  /** A loaded reading background image, drawn to cover the page like CSS `cover`. */
+  backgroundImage?: HTMLImageElement | null,
 ): HTMLCanvasElement {
   const document = element.ownerDocument;
   const canvas = document.createElement("canvas");
@@ -240,6 +242,21 @@ export function rasterizePage(
   const style = view?.getComputedStyle(element);
   context.fillStyle = opaque(style?.backgroundColor) ?? "#ffffff";
   context.fillRect(0, 0, origin.width, origin.height);
+  if (backgroundImage && backgroundImage.naturalWidth > 0) {
+    const scale = Math.max(
+      origin.width / backgroundImage.naturalWidth,
+      origin.height / backgroundImage.naturalHeight,
+    );
+    const width = backgroundImage.naturalWidth * scale;
+    const height = backgroundImage.naturalHeight * scale;
+    context.drawImage(
+      backgroundImage,
+      (origin.width - width) / 2,
+      (origin.height - height) / 2,
+      width,
+      height,
+    );
+  }
   context.textBaseline = "alphabetic";
   // Combined opacity of an element and its ancestors inside the copy.
   const alphas = new Map<Element, number>();

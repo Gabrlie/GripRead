@@ -59,6 +59,16 @@ import {
   ArrowUpDown,
   Minus,
   RotateCcw,
+  Share2,
+  SunDim,
+  Smartphone,
+  Image,
+  Play,
+  Pause,
+  Square,
+  Headphones,
+  Timer,
+  Replace,
 } from "lucide-react";
 const icons = {
   auto_stories: BookOpen,
@@ -124,6 +134,16 @@ const icons = {
   swap_vert: ArrowUpDown,
   remove: Minus,
   restart: RotateCcw,
+  share: Share2,
+  brightness: SunDim,
+  screen_rotation: Smartphone,
+  image: Image,
+  play: Play,
+  pause: Pause,
+  stop: Square,
+  headphones: Headphones,
+  timer: Timer,
+  find_replace: Replace,
 };
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, "fill"> {
   name: string;

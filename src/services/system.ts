@@ -6,6 +6,10 @@ interface SystemBridge {
   setVolumeKeys(enabled: boolean): void;
   setKeepScreenOn(enabled: boolean): void;
   setSystemBarsHidden(hidden: boolean): void;
+  setSelectionMenu(enabled: boolean): void;
+  setBrightness(value: number): void;
+  setOrientation(orientation: string): void;
+  share(text: string): void;
   battery(): number;
 }
 
@@ -19,6 +23,26 @@ export const system = {
   setVolumeKeys: (enabled: boolean) => bridge()?.setVolumeKeys(enabled),
   setKeepScreenOn: (enabled: boolean) => bridge()?.setKeepScreenOn(enabled),
   setSystemBarsHidden: (hidden: boolean) => bridge()?.setSystemBarsHidden(hidden),
+  /** Hides the WebView's own selection toolbar while the reader shows its menu. */
+  setSelectionMenu: (enabled: boolean) => bridge()?.setSelectionMenu(enabled),
+  /** Window brightness 0–1, or `null` to follow the system. */
+  setBrightness: (value: number | null) => bridge()?.setBrightness(value ?? -1),
+  setOrientation: (orientation: "auto" | "portrait" | "landscape") =>
+    bridge()?.setOrientation(orientation),
+  /** Shares text through the system sheet; elsewhere uses the Web Share API or copies it. */
+  share: async (text: string): Promise<"shared" | "copied"> => {
+    const native = bridge();
+    if (native) {
+      native.share(text);
+      return "shared";
+    }
+    if (navigator.share) {
+      await navigator.share({ text });
+      return "shared";
+    }
+    await copyText(text);
+    return "copied";
+  },
   /** Battery level 0–100, or `null` when unknown. */
   battery: (): number | null => {
     const level = bridge()?.battery();
@@ -34,3 +58,23 @@ export const system = {
     return () => window.removeEventListener("gripread-volume-key", handle);
   },
 };
+
+/** Copies text; falls back to a temporary selection where the Clipboard API is unavailable. */
+export async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // Insecure contexts and some WebViews have no asynchronous clipboard.
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.append(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  if (!copied) throw new Error("无法复制到剪贴板");
+}

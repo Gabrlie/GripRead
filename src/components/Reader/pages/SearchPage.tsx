@@ -21,17 +21,33 @@ function chapterAt(toc: TocEntry[], offset: number): string {
   return title;
 }
 
+/** The first occurrence of the query in an excerpt, as `[start, end)`. */
+function occurrence(excerpt: string, query: string, regex: boolean): [number, number] | null {
+  if (!query) return null;
+  if (!regex) {
+    const index = excerpt.indexOf(query);
+    return index < 0 ? null : [index, index + query.length];
+  }
+  try {
+    // JavaScript syntax covers the common expressions; others show unmarked.
+    const found = new RegExp(query, "u").exec(excerpt);
+    return found && found[0] ? [found.index, found.index + found[0].length] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Splits an excerpt around the first occurrence of the query for emphasis. */
-function emphasize(excerpt: string, query: string) {
-  const index = query ? excerpt.indexOf(query) : -1;
-  if (index < 0) return <>{excerpt}</>;
+function emphasize(excerpt: string, query: string, regex: boolean) {
+  const range = occurrence(excerpt, query, regex);
+  if (!range) return <>{excerpt}</>;
   return (
     <>
-      {excerpt.slice(0, index)}
+      {excerpt.slice(0, range[0])}
       <mark className="bg-primary/15 text-primary rounded-sm px-0.5 font-medium">
-        {excerpt.slice(index, index + query.length)}
+        {excerpt.slice(range[0], range[1])}
       </mark>
-      {excerpt.slice(index + query.length)}
+      {excerpt.slice(range[1])}
     </>
   );
 }
@@ -77,6 +93,18 @@ export function SearchPage({ search, toc, totalLength, onOpenMatch, onClose }: S
             value={search.query}
             onChange={(event) => search.setQuery(event.target.value)}
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="正则表达式"
+            aria-pressed={search.regex}
+            title="正则表达式"
+            className={`h-9 w-9 rounded-full shrink-0 ${search.regex ? "text-primary bg-primary/10" : "text-secondary"}`}
+            onClick={() => search.setRegex(!search.regex)}
+          >
+            <Icon name="regex" size={18} />
+          </Button>
           {search.searching ? (
             <Button type="button" variant="ghost" className="h-9 shrink-0" onClick={search.cancel}>
               停止
@@ -128,7 +156,7 @@ export function SearchPage({ search, toc, totalLength, onOpenMatch, onClose }: S
                 <span className="text-secondary tabular-nums shrink-0">{percent(match)}</span>
               </span>
               <span className="block text-sm leading-relaxed text-on-surface/90 break-words">
-                {emphasize(match.excerpt, search.query)}
+                {emphasize(match.excerpt, search.query, search.regex)}
               </span>
             </button>
           ))}

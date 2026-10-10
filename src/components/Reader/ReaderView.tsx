@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useReducedMotion } from "motion/react";
 import { useApp } from "../../context/AppContext";
-import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
+import { useImage, useLibrary, useRuntime, useSettings } from "../../application/runtime";
 import {
   ReaderController,
   DomReaderMeasurer,
@@ -22,6 +22,8 @@ import type { Bookmark, TxtEncoding } from "../../types/generated";
 import { Button } from "../ui/button";
 import { useAutomaticTurn } from "./use-automatic-turn";
 import { useReadingTime } from "./use-reading-time";
+import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
+import { BookmarkNoteDialog } from "./dialogs/BookmarkNoteDialog";
 import { useReaderActions } from "./use-reader-actions";
 import { canShowSpread, useReaderLayout, syncMeasureBox } from "./use-reader-layout";
 import { useReaderPanel, type ReaderPanel } from "./use-reader-panel";
@@ -31,10 +33,10 @@ import { ReaderPageText } from "./ReaderPageText";
 import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
 import type { GestureHandlers, TapZones } from "../../reader/gestures";
-import { readingAppearance, useNight } from "./reading-style";
+import { currentPreset, readingAppearance, useNight } from "./reading-style";
 import { ReaderInfoBar } from "./ReaderInfoBar";
-import { system } from "../../services/system";
-import { ReaderBottomBar, ReaderTopBar } from "./ReaderToolbar";
+import { copyText, system } from "../../services/system";
+import { ReaderBottomBar, ReaderBrightnessBar, ReaderTopBar } from "./ReaderToolbar";
 import { StylePanel } from "./panels/StylePanel";
 import { ContentsPage } from "./pages/ContentsPage";
 import { SearchPage, SearchResultBar } from "./pages/SearchPage";
@@ -143,10 +145,25 @@ export function ReaderView() {
       cancelled = true;
     };
   }, [fontAssetId, runtime.fonts]);
+  // A style's background image for the current day or night variant; turns
+  // draw the loaded image into their page copies.
+  const preset = style ? currentPreset(style) : null;
+  const backgroundUrl = useImage(
+    (night ? preset?.nightBackgroundImage : preset?.backgroundImage) ?? null,
+  );
+  const backgroundImage = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    backgroundImage.current = null;
+    if (!backgroundUrl) return;
+    const image = new Image();
+    image.onload = () => (backgroundImage.current = image);
+    image.src = backgroundUrl;
+  }, [backgroundUrl]);
   const appearance = readingAppearance(
     preferences,
     night,
     customFont && customFont.id === fontAssetId ? customFont.family : null,
+    backgroundUrl ?? null,
   );
   // Legado keeps the screen on and can hide the system bars while reading.
   const keepScreenOn = style?.keepScreenOn ?? true;
@@ -157,6 +174,22 @@ export function ReaderView() {
     system.setKeepScreenOn(true);
     return () => system.setKeepScreenOn(false);
   }, [bookId, keepScreenOn]);
+  // Legado's brightness and screen orientation apply only while reading.
+  const brightness = style?.brightness ?? null;
+  const orientation = style?.orientation ?? "auto";
+  useEffect(() => {
+    if (!bookId) return;
+    system.setBrightness(brightness);
+  }, [bookId, brightness]);
+  useEffect(() => {
+    if (!bookId) return;
+    return () => system.setBrightness(null);
+  }, [bookId]);
+  useEffect(() => {
+    if (!bookId || orientation === "auto") return;
+    system.setOrientation(orientation);
+    return () => system.setOrientation("auto");
+  }, [bookId, orientation]);
   const { cancel: cancelSearch } = search;
   const onPanelClose = useCallback(
     (closed: ReaderPanel) => {
@@ -196,6 +229,17 @@ export function ReaderView() {
       );
     },
     turn: () => controller?.next() ?? Promise.resolve(),
+    reveal:
+      effectiveMode !== "scroll" && (style?.autoPageMode ?? "reveal") === "reveal"
+        ? {
+            begin: () => {
+              adapter.current?.beginReveal();
+              adapter.current?.skipNextAnimation();
+            },
+            progress: (fraction) => adapter.current?.setReveal(fraction),
+            end: () => adapter.current?.endReveal(),
+          }
+        : undefined,
   });
   const pauseAutomatic = automaticTurn.pause;
   const openPanel = useCallback(
@@ -274,6 +318,73 @@ export function ReaderView() {
     state.page,
   ]);
 
+  /** A bookmark being added from selected text, or a bookmark whose note is edited. */
+  const [noteDraft, setNoteDraft] = useState<
+    { excerpt: string; offset: number } | { excerpt: string; bookmark: Bookmark } | null
+  >(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  const saveNote = useCallback(
+    async (note: string) => {
+      const draft = noteDraft;
+      const window = state.contentWindow;
+      if (!draft || !bookId) return;
+      if ("bookmark" in draft) {
+        await runtime.services.reader.updateBookmarkNote(draft.bookmark.id, note);
+        setBookmarks((current) =>
+          current.map((item) => (item.id === draft.bookmark.id ? { ...item, note } : item)),
+        );
+        return;
+      }
+      if (!window) return;
+      const locator = await runtime.services.reader.resolveOffset({
+        bookId,
+        contentVersion: window.contentVersion,
+        resourceId: window.resourceId,
+        offset: draft.offset,
+      });
+      const created = await runtime.services.reader.addBookmark({
+        bookId,
+        locator,
+        excerpt: safeExcerpt(draft.excerpt),
+        note,
+      });
+      setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setNotice("已添加书签");
+    },
+    [bookId, noteDraft, runtime.services.reader, setBookmarks, state.contentWindow],
+  );
+  const selectionActions = useMemo<SelectionActions>(
+    () => ({
+      copy: (selection) =>
+        void copyText(selection.text).then(
+          () => setNotice("已复制"),
+          () => setNotice("复制失败"),
+        ),
+      bookmark: (selection) => setNoteDraft({ excerpt: selection.text, offset: selection.start }),
+      search: (selection) => {
+        openPanel("search");
+        search.searchFor(selection.text);
+      },
+      share: (selection) =>
+        void system.share(selection.text).then(
+          (result) => result === "copied" && setNotice("已复制，可粘贴分享"),
+          () => undefined,
+        ),
+    }),
+    [openPanel, search],
+  );
+  // The reader's selection menu replaces the WebView's own toolbar.
+  useEffect(() => {
+    if (!bookId) return;
+    system.setSelectionMenu(true);
+    return () => system.setSelectionMenu(false);
+  }, [bookId]);
+
   const { clearResults } = search;
   const changeEncoding = useCallback(
     (encoding: TxtEncoding) => {
@@ -316,7 +427,8 @@ export function ReaderView() {
       effect: preferences.pageTurnEffect,
       reducedMotion: Boolean(reducedMotion),
       pageClassName: "reader-prose reader-text reader-paper",
-      screenClassName: "reader-paper",
+      screenClassName: "reader-paper reader-screen",
+      backgroundImage: () => backgroundImage.current,
       pageBox: () => pageBox.current,
       gestureBox: () => gestureBox.current,
     });
@@ -555,7 +667,7 @@ export function ReaderView() {
 
   return (
     <div
-      className="fixed inset-0 z-50 reader-paper flex flex-col"
+      className="fixed inset-0 z-50 reader-paper reader-screen flex flex-col"
       style={appearance.root}
       data-title-mode={style?.titleMode ?? "left"}
       data-reader-effect={reducedMotion ? "instant" : preferences?.pageTurnEffect}
@@ -567,17 +679,20 @@ export function ReaderView() {
       data-chapter-end={state.chapter?.end}
       inert={closing}
     >
-      <ReaderTopBar
-        visible={controls && !previewing}
-        title={activeBook.book.title}
-        subtitle={state.chapter?.title ?? "全文"}
-        closing={closing}
-        onBack={() => void close()}
-        onOpenPanel={openPanel}
-        canBookmark={Boolean(page) && !closing}
-        onAddBookmark={addBookmark}
-        onRefreshDirectory={reloadTools}
-      />
+      {/* The menu's theme tokens follow the page when the style asks for it. */}
+      <div className="contents" style={appearance.menu}>
+        <ReaderTopBar
+          visible={controls && !previewing}
+          title={activeBook.book.title}
+          subtitle={state.chapter?.title ?? "全文"}
+          closing={closing}
+          onBack={() => void close()}
+          onOpenPanel={openPanel}
+          canBookmark={Boolean(page) && !closing}
+          onAddBookmark={addBookmark}
+          onRefreshDirectory={reloadTools}
+        />
+      </div>
       <ReaderSurface
         double={effectiveMode === "double"}
         scroll={effectiveMode === "scroll"}
@@ -701,33 +816,46 @@ export function ReaderView() {
           {state.positionWarning}
         </div>
       )}
-      <ReaderBottomBar
-        visible={controls && searchIndex === null && !previewing}
-        previous={{
-          disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
-          onClick: () => {
+      <div className="contents" style={appearance.menu}>
+        {system.available() && (
+          <ReaderBrightnessBar
+            visible={controls && panel === null && searchIndex === null && !previewing}
+            value={brightness}
+            onChange={(value) =>
+              style && settingsStore.set({ style: { ...style, brightness: value } })
+            }
+          />
+        )}
+      </div>
+      <div className="contents" style={appearance.menu}>
+        <ReaderBottomBar
+          visible={controls && searchIndex === null && !previewing}
+          previous={{
+            disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
+            onClick: () => {
+              void pauseAutomatic();
+              if (controller) run(() => controller.seekChapter("previous"));
+            },
+          }}
+          next={{
+            disabled: !state.chapter || state.chapter === state.chapters.at(-1) || closing,
+            onClick: () => {
+              void pauseAutomatic();
+              if (controller) run(() => controller.seekChapter("next"));
+            },
+          }}
+          progress={state.chapterProgress}
+          progressDisabled={!state.chapter}
+          onProgressDraft={() => void pauseAutomatic()}
+          onProgressCommit={(target) => {
             void pauseAutomatic();
-            if (controller) run(() => controller.seekChapter("previous"));
-          },
-        }}
-        next={{
-          disabled: !state.chapter || state.chapter === state.chapters.at(-1) || closing,
-          onClick: () => {
-            void pauseAutomatic();
-            if (controller) run(() => controller.seekChapter("next"));
-          },
-        }}
-        progress={state.chapterProgress}
-        progressDisabled={!state.chapter}
-        onProgressDraft={() => void pauseAutomatic()}
-        onProgressCommit={(target) => {
-          void pauseAutomatic();
-          if (controller) run(() => controller.seekChapterProgress(target / 100));
-        }}
-        onOpenPanel={openPanel}
-        night={night}
-        onToggleNight={() => settingsStore.set({ theme: night ? "light" : "dark" })}
-      />
+            if (controller) run(() => controller.seekChapterProgress(target / 100));
+          }}
+          onOpenPanel={openPanel}
+          night={night}
+          onToggleNight={() => settingsStore.set({ theme: night ? "light" : "dark" })}
+        />
+      </div>
       {searchIndex !== null && panel === null && (
         <SearchResultBar
           index={searchIndex}
@@ -772,6 +900,7 @@ export function ReaderView() {
             }
             seekTo(bookmark.locator);
           }}
+          onEditBookmark={(bookmark) => setNoteDraft({ excerpt: bookmark.excerpt, bookmark })}
           onDeleteBookmark={(bookmark) =>
             run(async () => {
               await runtime.services.reader.deleteBookmark({ bookmarkId: bookmark.id });
@@ -787,6 +916,24 @@ export function ReaderView() {
           }
           onClose={closePanel}
         />
+      )}
+      <SelectionMenu enabled={panel === null && !closing} actions={selectionActions} />
+      {noteDraft && (
+        <BookmarkNoteDialog
+          excerpt={noteDraft.excerpt}
+          note={"bookmark" in noteDraft ? noteDraft.bookmark.note : ""}
+          editing={"bookmark" in noteDraft}
+          onSave={saveNote}
+          onClose={() => setNoteDraft(null)}
+        />
+      )}
+      {notice && (
+        <div
+          role="status"
+          className="fixed bottom-[calc(5rem+var(--safe-bottom))] left-1/2 -translate-x-1/2 z-[60] rounded-full bg-inverse-surface text-inverse-on-surface text-xs px-4 py-2 shadow-md"
+        >
+          {notice}
+        </div>
       )}
       {panel === "search" && (
         <SearchPage
@@ -847,6 +994,10 @@ export function ReaderView() {
           running={automaticTurn.running}
           canStart={canStartAutomatic}
           onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
+          mode={style?.autoPageMode ?? "reveal"}
+          onMode={(autoPageMode) =>
+            style && settingsStore.set({ style: { ...style, autoPageMode } })
+          }
           onPause={() => void pauseAutomatic()}
           onStart={() => {
             closePanel();

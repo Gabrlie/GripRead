@@ -198,3 +198,35 @@ describe("automatic page turning", () => {
     expect(turn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("automatic reveal", () => {
+  it("turns under a cover, uncovers it over the interval, and ends it on pause", async () => {
+    vi.useFakeTimers();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    const turn = vi.fn(async () => undefined);
+    const reveal = { begin: vi.fn(), progress: vi.fn(), end: vi.fn() };
+    const { result } = renderHook(() =>
+      useAutomaticTurn({ intervalSeconds: 2, canContinue: () => true, turn, reveal }),
+    );
+    await act(async () => result.current.start());
+    await act(async () => undefined);
+    expect(reveal.begin).toHaveBeenCalledOnce();
+    expect(turn).toHaveBeenCalledOnce();
+    await act(async () => frames.shift()?.(0));
+    await act(async () => frames.shift()?.(1000));
+    expect(reveal.progress).toHaveBeenLastCalledWith(0.5);
+    await act(async () => frames.shift()?.(2000));
+    expect(reveal.progress).toHaveBeenLastCalledWith(1);
+    expect(reveal.end).toHaveBeenCalled();
+    await act(async () => undefined);
+    expect(turn).toHaveBeenCalledTimes(2);
+    await act(async () => void result.current.pause());
+    expect(reveal.end).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+});

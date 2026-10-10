@@ -268,19 +268,22 @@ export function previewServices(): AppServices {
         if (index >= 0) bookmarks.splice(index, 1);
       },
       search: async (request) => {
+        // The preview approximates the Rust search: JavaScript regular
+        // expressions within one line, or plain text.
+        const pattern = request.regex
+          ? new RegExp(request.query, "gu")
+          : new RegExp(request.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gu");
         const matches = [];
-        let from = request.cursor ?? 0;
-        while (matches.length < request.limit) {
-          const at = TEXT.indexOf(request.query, from);
-          if (at < 0) break;
+        for (const found of TEXT.matchAll(pattern)) {
+          if (matches.length >= request.limit || found[0].includes("\n")) break;
+          const at = found.index ?? 0;
           matches.push({
             ordinal: matches.length,
             locator: contextFor(at),
-            excerpt: TEXT.slice(Math.max(0, at - 12), at + request.query.length + 12),
+            excerpt: TEXT.slice(Math.max(0, at - 12), at + found[0].length + 12),
             matchStart: at,
-            matchEnd: at + request.query.length,
+            matchEnd: at + found[0].length,
           });
-          from = at + request.query.length;
         }
         return { contentVersion: VERSION, matches, nextCursor: null, hasMore: false };
       },
@@ -293,6 +296,7 @@ export function previewServices(): AppServices {
       saveSettings: async (next) => (preferences = next),
       pickAndImportFont: async () => null,
       listFonts: async () => [],
+      pickBackgroundImage: async () => null,
       readFont: unsupported,
       deleteFont: unsupported,
     },
