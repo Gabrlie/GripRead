@@ -1,6 +1,6 @@
 # Complete TXT reader modes and reading settings
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
@@ -51,4 +51,4 @@ These are repaired: the page text clips a highlight to its visible slice, a writ
 
 ## Handoff
 
-In progress. Batches 1 and 2 are delivered. The [Batch 2 record](2026-09-27-reader-batch-2.md#verification) contains chapter/mode behavior, persistence and WebKit fixes, native/visual evidence, and remaining manual checks. The next implementation entry point is Batch 3: complete typography, margins, backgrounds, and managed assets. Schema 9 and the broader preference migration have not started.
+Closed after Batch 2. Batches 1 and 2 are delivered; the [Batch 2 record](2026-09-27-reader-batch-2.md#verification) contains chapter/mode behavior, persistence and WebKit fixes, and native/visual evidence. On 2026-10-10 the user replaced the PixNovel reference with legado-with-MD3 tag `3.26.7`, so Batches 3–5 are superseded by the Legado-style reader rework rather than delivered here. The proposed [preferences and assets decision](../notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md) will be revised for that rework.

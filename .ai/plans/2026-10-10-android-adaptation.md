@@ -1,10 +1,10 @@
 # Android adaptation
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
-Make the existing local TXT reading journey run as an Android application: build a debug APK on a Linux host, import TXT from the system document picker, read in every delivered mode, keep positions and settings when the app is paused or killed, and handle the system back action. Behavior belongs to [Library](../subsystems/library.md), [Reader](../subsystems/reader.md), and [interaction design](../design/interaction.md). This task precedes Batch 3 of the [TXT reader task](2026-09-24-txt-reader-modes-and-settings.md).
+Make the existing local TXT reading journey run as an Android application: build a debug APK on a Linux host, import TXT from the system document picker, read in every delivered mode, keep positions and settings when the app is paused or killed, and handle the system back action. Behavior belongs to [Library](../subsystems/library.md), [Reader](../subsystems/reader.md), and [interaction design](../design/interaction.md). It preceded the planned Legado-style rework of local reading.
 
 ## Scope
 
@@ -37,6 +37,8 @@ Repairs in `55223ca` and `0714fbb`: dependency optimization and sampled encoding
 
 The same device review asked to rebuild the reader around Legado 3.26.7 (contents, directory rules, search, encoding, reading styles, author and introduction parsing); that is a separate task.
 
+Device results for `17ba26e` and its repairs (user-provided): imports of a 6 MB TXT are fast; tab pages and the reader respect the status and gesture bars; curl no longer stutters or locks the reader when the toolbar opens mid-turn. Scroll mode briefly lost its single-page text column because `.reader-prose` resets padding on its own element; the column now wraps the text while the position indicator stays at the screen edge. Horizontal swipes still do not turn pages on the device, page dragging is not interactive, and the middle column has no page-turn tap zones.
+
 ## Handoff
 
-In progress. The Android project, staged document-URI import, hidden-time saves, and back navigation are implemented. Next entry point: confirm the repaired build on the device, then complete this task.
+Completed. The Android project builds on Linux and the local TXT journey runs on a device: document-picker import, all reading modes, pause-time saves, back navigation, native insets, the canvas curl, and import performance. The [decision note](../notes/implemented/2026-10-10-android-document-import.md) records the platform choices. Swipe turning, interactive page dragging, and Legado's nine-zone tap layout move to the page-turn work of the Legado-style reader rework, as the user requested.

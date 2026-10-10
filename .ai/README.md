@@ -29,7 +29,7 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 - [TXT directory rules and automatic page turning](notes/implemented/2026-09-23-txt-directory-rules-and-auto-turn.md) records schema 8 per-book heading rules, cache identity, single-pass TOC construction, and the automatic-turn interval.
 - [Reader preferences v2 and managed display assets](notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md) proposes nested preferences and schema 9 asset storage.
 - [Chapter navigation and shared reading-mode state](notes/implemented/2026-09-27-reader-navigation-and-modes.md) records bounded chapter seeks and one locator/persistence owner for pages, spreads, and scrolling.
-- [Android document import and mobile lifecycle](notes/proposed/2026-10-10-android-document-import.md) proposes staged document-URI import, pause-time saves, and back navigation.
+- [Android document import and mobile lifecycle](notes/implemented/2026-10-10-android-document-import.md) records staged document-URI import, pause-time saves, back navigation, and native insets.
 - [Reading-first extension boundaries](notes/proposed/2026-09-17-reading-first-extensions.md) records the approved direction for deferred integrations.
 
 Add decision links here only when they guide current work. Source modules should own their local README and any additional instructions when the corresponding code exists.

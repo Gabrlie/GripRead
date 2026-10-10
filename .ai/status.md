@@ -2,16 +2,16 @@
 
 ## Current stage
 
-M0 remains in progress. The local TXT/library slice includes import recovery, encoding correction, TOC, search, bookmarks, shelf management, durable reading positions, and Batch 2 reading modes; wider M1 remains planned.
+M0 remains in progress. The local TXT/library slice includes import recovery, encoding correction, TOC, search, bookmarks, shelf management, durable reading positions, and single/double/scroll reading modes, and it runs on Android; wider M1 remains planned.
 
 ## Active task
 
-The [Android adaptation task](plans/2026-10-10-android-adaptation.md) is in progress: Android project, document-URI import, pause-time saves, and back navigation, built on a Linux host. The [TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) resumes with Batch 3 afterwards.
+None is in progress. The [Android adaptation task](plans/2026-10-10-android-adaptation.md) is complete. Local reading will next be rebuilt after legado-with-MD3 tag `3.26.7` (its functions and layout, GripRead's styling); this supersedes Batches 3–5 of the [TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md).
 
 ## Blockers
 
-There is no hardware-accelerated emulator on the Linux host; Android acceptance depends on device evidence from installed debug APKs. macOS native acceptance cannot run on this host.
+The Linux host has no hardware-accelerated emulator; Android acceptance uses device evidence from installed debug APKs. macOS native acceptance cannot run on this host.
 
 ## Next entry point
 
-Collect device results for the first debug APK and fix observed Android defects. Then plan Batch 3 typography, margins, backgrounds, and managed assets.
+Write the decision note and task for the Legado TXT table-of-contents engine (rule table, volumes, preface and introduction, author parsing; schema 9), then the reader menu, contents and search pages, page turning with swipe, drag, and nine tap zones, and reading styles with font import.
