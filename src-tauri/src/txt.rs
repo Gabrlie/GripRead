@@ -38,7 +38,11 @@ pub fn detect_and_decode(input: &[u8], requested: TxtEncoding) -> Result<Decoded
         ));
     }
     Ok(DecodedTxt {
-        text: normalize_line_endings(&text),
+        text: if text.contains('\r') {
+            normalize_line_endings(&text)
+        } else {
+            text
+        },
         detected: detected.unwrap_or_else(|| effective.clone()),
         // Keep the user's choice separate from the encoding used by this
         // particular automatic detection pass. This lets the reader display
@@ -70,9 +74,16 @@ fn strip_bom_for<'a>(input: &'a [u8], encoding: &TxtEncoding) -> &'a [u8] {
     }
 }
 
+/// Bytes sampled for legacy encoding detection. Novels are long runs of the
+/// same script, so a prefix decides as well as the whole file at a fraction of
+/// the cost (Legado samples 512000 bytes). Decoding still covers every byte,
+/// and replacement characters anywhere still reject an automatic guess.
+const DETECTION_SAMPLE_BYTES: usize = 512 * 1024;
+
 fn detect_legacy(input: &[u8]) -> TxtEncoding {
     let mut detector = chardetng::EncodingDetector::new();
-    detector.feed(input, true);
+    let sample = &input[..input.len().min(DETECTION_SAMPLE_BYTES)];
+    detector.feed(sample, sample.len() == input.len());
     let encoding = detector.guess(None, true);
     match encoding.name().to_ascii_uppercase().as_str() {
         "GBK" | "GB2312" | "GB_2312-80" => TxtEncoding::Gbk,
@@ -130,30 +141,16 @@ pub fn decode_and_normalize(input: &[u8]) -> Result<String, AppError> {
 /// Convert CRLF and lone CR line endings to LF without changing other text.
 pub fn normalize_line_endings(text: &str) -> String {
     let mut normalized = String::with_capacity(text.len());
-    let mut pending_cr = false;
-
-    for character in text.chars() {
-        if pending_cr {
-            if character == '\n' {
-                normalized.push('\n');
-                pending_cr = false;
-                continue;
-            }
-            normalized.push('\n');
-            pending_cr = false;
-        }
-
-        if character == '\r' {
-            pending_cr = true;
-        } else {
-            normalized.push(character);
-        }
-    }
-
-    if pending_cr {
+    let mut rest = text;
+    while let Some(position) = rest.find('\r') {
+        normalized.push_str(&rest[..position]);
         normalized.push('\n');
+        rest = &rest[position + 1..];
+        if let Some(after_lf) = rest.strip_prefix('\n') {
+            rest = after_lf;
+        }
     }
-
+    normalized.push_str(rest);
     normalized
 }
 
@@ -211,6 +208,20 @@ mod tests {
             "a\nb\nc\n"
         );
         assert_eq!(normalize_line_endings("a\r\r\nb"), "a\n\nb");
+    }
+
+    #[test]
+    fn detects_legacy_encoding_from_a_prefix_and_decodes_every_byte() {
+        let text = "第一章 开始\r\n少年望着云海。\r\n".repeat(40_000) + "结尾";
+        let (gbk, _, _) = encoding_rs::GBK.encode(&text);
+        assert!(gbk.len() > DETECTION_SAMPLE_BYTES);
+        let decoded = detect_and_decode(&gbk, TxtEncoding::Auto).unwrap();
+        assert!(matches!(
+            decoded.detected,
+            TxtEncoding::Gbk | TxtEncoding::Gb18030
+        ));
+        assert!(decoded.text.ends_with("少年望着云海。\n结尾"));
+        assert!(!decoded.text.contains('\r'));
     }
 
     #[test]

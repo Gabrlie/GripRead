@@ -4866,6 +4866,50 @@ mod tests {
             .unwrap()
     }
 
+    /// Prints import phase timings for a 6 MiB novel. Run with
+    /// `cargo test import_timing -- --ignored --nocapture` (add `--release`
+    /// to compare optimized dependencies).
+    #[test]
+    #[ignore]
+    fn import_timing() {
+        use std::time::Instant;
+        let mut text = String::new();
+        let mut chapter = 1;
+        while text.len() < 6 * 1024 * 1024 {
+            text.push_str(&format!("第{chapter}章 风起云涌\r\n"));
+            for _ in 0..40 {
+                text.push_str("　　少年站在山门之前，望着云海翻腾，心中暗暗发誓，此生定要踏上那九天之巅。Hello 😀\r\n");
+            }
+            chapter += 1;
+        }
+        let (gbk, _, _) = encoding_rs::GBK.encode(&text);
+        for (name, bytes) in [
+            ("utf8", text.as_bytes().to_vec()),
+            ("gbk", gbk.into_owned()),
+        ] {
+            let root = TestRoot::new();
+            let source = write_source(&root.0, &format!("{name}.txt"), &bytes);
+            let started = Instant::now();
+            let decoded = detect_and_decode(&bytes, TxtEncoding::Auto).unwrap();
+            let decode = started.elapsed();
+            let hashed = Instant::now();
+            let _ = Sha256::digest(decoded.text.as_bytes());
+            let _ = Sha256::digest(&bytes);
+            let hash = hashed.elapsed();
+            let indexed = Instant::now();
+            let _ = build_sparse_index(&decoded.text);
+            let index = indexed.elapsed();
+            let mut storage = Storage::open(&root.0.join("data")).unwrap();
+            let imported = Instant::now();
+            import(&mut storage, &source, name);
+            let total = imported.elapsed();
+            eprintln!(
+                "{name} {} bytes: decode {decode:?}, hash {hash:?}, index {index:?}, full import {total:?}",
+                bytes.len()
+            );
+        }
+    }
+
     #[test]
     fn exact_reader_offsets_floor_surrogates_and_validate_identity() {
         let root = TestRoot::new();
