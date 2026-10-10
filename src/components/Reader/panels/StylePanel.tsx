@@ -23,6 +23,8 @@ import {
 } from "../../ui/dialog";
 
 interface StylePanelProps {
+  /** True while a view needs the page unobstructed, such as margins. */
+  onPreview?: (previewing: boolean) => void;
   preferences: ReaderPreferences | null;
   night: boolean;
   onChange: (patch: Partial<ReaderPreferences>) => void;
@@ -152,8 +154,19 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * and colour presets, with sub-views for text, margins, header and footer,
  * titles, preset editing, and more settings. Changes preview immediately.
  */
-export function StylePanel({ preferences, night, onChange, fonts, onClose }: StylePanelProps) {
+export function StylePanel({
+  preferences,
+  night,
+  onChange,
+  fonts,
+  onClose,
+  onPreview,
+}: StylePanelProps) {
   const [view, setView] = useState<View>("main");
+  useEffect(() => {
+    onPreview?.(view === "margins");
+    return () => onPreview?.(false);
+  }, [view, onPreview]);
   if (!preferences) return null;
   const style = preferences.style;
   const setStyle = (patch: Partial<ReadingStyle>) => onChange({ style: { ...style, ...patch } });
@@ -779,8 +792,9 @@ const SIDES = [
 ] as const;
 
 /**
- * Legado's PaddingConfigDialog as a centred dialog: body, header, and footer
- * margins, and the divider lines between them.
+ * Legado's PaddingConfigDialog as a small centred dialog over a live page:
+ * no blur, the reading menu hidden, and one area (body, header, or footer)
+ * at a time with its divider line.
  */
 function MarginsDialog({
   style,
@@ -791,61 +805,55 @@ function MarginsDialog({
   setStyle: (patch: Partial<ReadingStyle>) => void;
   onBack: () => void;
 }) {
-  const group = (
-    title: string,
-    key: "margins" | "headerMargins" | "footerMargins",
-    max: number,
-  ) => (
-    <Section title={title}>
-      <div className="space-y-2">
-        {SIDES.map(([side, label]) => (
-          <Range
-            key={side}
-            label={`${label}边距`}
-            min={0}
-            max={max}
-            step={1}
-            value={style[key][side]}
-            format={(value) => `${value}`}
-            onChange={(value) => setStyle({ [key]: { ...style[key], [side]: value } })}
-          />
-        ))}
-      </div>
-    </Section>
-  );
+  const [area, setArea] = useState<"margins" | "headerMargins" | "footerMargins">("margins");
+  const line =
+    area === "headerMargins" ? "headerLine" : area === "footerMargins" ? "footerLine" : null;
   return (
     <Dialog open onOpenChange={(open) => !open && onBack()}>
-      <DialogContent className="grid-cols-1 bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-sm max-h-[78dvh] overflow-y-auto p-4 gap-4">
+      <DialogContent
+        overlayClassName="bg-transparent backdrop-blur-none"
+        className="grid-cols-1 bg-surface border border-surface-variant/50 rounded-2xl w-[min(18rem,calc(100%-2rem))] sm:max-w-xs p-3.5 gap-2.5 shadow-xl"
+      >
         <DialogHeader>
           <DialogTitle className="text-sm">边距</DialogTitle>
-          <DialogDescription className="text-[11px]">
-            正文、页眉、页脚分别设置，单位为像素。
+          <DialogDescription className="sr-only">
+            调整时页面会实时显示效果，单位为像素。
           </DialogDescription>
         </DialogHeader>
-        {group("正文", "margins", 80)}
-        {group("页眉", "headerMargins", 60)}
-        {group("页脚", "footerMargins", 60)}
-        <Section title="分隔线">
+        <Choice
+          label="边距区域"
+          value={area}
+          options={[
+            ["margins", "正文"],
+            ["headerMargins", "页眉"],
+            ["footerMargins", "页脚"],
+          ]}
+          onChange={setArea}
+        />
+        <div className="space-y-1.5">
+          {SIDES.map(([side, label]) => (
+            <Range
+              key={side}
+              label={label}
+              min={0}
+              max={area === "margins" ? 80 : 60}
+              step={1}
+              value={style[area][side]}
+              format={(value) => `${value}`}
+              onChange={(value) => setStyle({ [area]: { ...style[area], [side]: value } })}
+            />
+          ))}
+        </div>
+        {line && (
           <label className="flex items-center justify-between text-xs">
-            显示页眉分隔线
+            显示分隔线
             <Switch
-              aria-label="显示页眉分隔线"
-              checked={style.headerLine}
-              onCheckedChange={(headerLine) => setStyle({ headerLine })}
+              aria-label={area === "headerMargins" ? "显示页眉分隔线" : "显示页脚分隔线"}
+              checked={style[line]}
+              onCheckedChange={(value) => setStyle({ [line]: value })}
             />
           </label>
-          <label className="flex items-center justify-between text-xs">
-            显示页脚分隔线
-            <Switch
-              aria-label="显示页脚分隔线"
-              checked={style.footerLine}
-              onCheckedChange={(footerLine) => setStyle({ footerLine })}
-            />
-          </label>
-        </Section>
-        <Button variant="outline" size="sm" onClick={onBack}>
-          完成
-        </Button>
+        )}
       </DialogContent>
     </Dialog>
   );

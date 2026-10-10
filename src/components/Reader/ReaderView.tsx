@@ -78,6 +78,8 @@ export function ReaderView() {
     controller?.getSnapshot ?? (() => empty),
   );
   const [controls, setControls] = useState(false);
+  /** The margin dialog previews on an unobstructed page, so the menu hides. */
+  const [previewing, setPreviewing] = useState(false);
   const [closing, setClosing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const preferences = settings.value;
@@ -555,7 +557,7 @@ export function ReaderView() {
       inert={closing}
     >
       <ReaderTopBar
-        visible={controls}
+        visible={controls && !previewing}
         title={activeBook.book.title}
         subtitle={state.chapter?.title ?? "全文"}
         closing={closing}
@@ -688,7 +690,7 @@ export function ReaderView() {
         </div>
       )}
       <ReaderBottomBar
-        visible={controls && searchIndex === null}
+        visible={controls && searchIndex === null && !previewing}
         previous={{
           disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
           onClick: () => {
@@ -733,6 +735,7 @@ export function ReaderView() {
           night={night}
           onChange={settingsStore.set}
           fonts={runtime.services.settings}
+          onPreview={setPreviewing}
           onClose={closePanel}
         />
       )}
