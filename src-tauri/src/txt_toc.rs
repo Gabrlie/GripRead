@@ -177,15 +177,19 @@ pub fn build_toc(
                         false,
                         rule.split_long_chapters,
                     );
-                    intro = Some(shorten(preface.trim(), INTRO_CHARS));
+                    intro = Some(shorten(&clean_intro(preface), INTRO_CHARS));
                 }
             }
             for (index, (start, end, title)) in headings.iter().enumerate() {
                 let next = headings
                     .get(index + 1)
                     .map_or(text.len(), |heading| heading.0);
-                // Legado: a heading without body text before the next one is a volume.
-                let volume = index + 1 < headings.len() && text[*end..next].trim().is_empty();
+                // Legado: a heading without body text before the next one is a
+                // volume; it must also be named like one, or an empty chapter
+                // (such as a repeated heading) would become a volume.
+                let volume = index + 1 < headings.len()
+                    && text[*end..next].trim().is_empty()
+                    && looks_like_volume(title);
                 let title = if title.is_empty() {
                     "无标题章节".to_string()
                 } else {
@@ -293,6 +297,19 @@ impl<'a> Builder<'a> {
     }
 }
 
+/// Volume titles: 第一卷, 卷三, 上部, 第二部, Volume 1, Book 2, and similar.
+fn looks_like_volume(title: &str) -> bool {
+    static VOLUME: OnceLock<PlainRegex> = OnceLock::new();
+    VOLUME
+        .get_or_init(|| {
+            PlainRegex::new(
+                r"(?i)^\s*(?:第\s*[\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+\s*[卷部篇册集]|[卷册]\s*[\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+|[上中下终][卷部篇册]|volume\s*\d|vol\.?\s*\d|book\s*\d|part\s*\d)",
+            )
+            .expect("valid")
+        })
+        .is_match(title)
+}
+
 /// Collapses a matched heading to one trimmed line.
 fn clean_title(raw: &str) -> String {
     let line = raw
@@ -301,6 +318,21 @@ fn clean_title(raw: &str) -> String {
         .unwrap_or("");
     let title = line.trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}');
     title.chars().take(MAX_TITLE_CHARS).collect()
+}
+
+/// The preface without a leading label such as 简介： or 内容简介.
+fn clean_intro(preface: &str) -> String {
+    static LABEL: OnceLock<PlainRegex> = OnceLock::new();
+    LABEL
+        .get_or_init(|| {
+            PlainRegex::new(
+                r"^\s*(?:【\s*)?(?:内容简介|作品简介|简介|文案|内容提要)\s*(?:】)?[:：]?\s*",
+            )
+            .expect("valid")
+        })
+        .replace(preface.trim(), "")
+        .trim()
+        .to_string()
 }
 
 fn shorten(text: &str, limit: usize) -> String {
@@ -325,11 +357,13 @@ pub struct NameAuthor {
 
 pub fn parse_name_author(file_stem: &str) -> NameAuthor {
     static PATTERNS: OnceLock<Vec<PlainRegex>> = OnceLock::new();
+    // Legado's patterns, widened so 作者 may be followed by any common
+    // separator (：: _ - or spaces), as in 《书名》（校对版全本） 作者_某某.
     let patterns = PATTERNS.get_or_init(|| {
         [
-            r"(.*?)《([^《》]+)》.*?作者：(.*)",
+            r"(.*?)《([^《》]+)》.*?作\s*者[:：_\-—\s]*(.*)",
             r"(.*?)《([^《》]+)》(.*)",
-            r"(^)(.+) 作者：(.+)$",
+            r"(^)(.+?)\s*作\s*者[:：_\-—\s]+(.+)$",
             r"(^)(.+) by (.+)$",
         ]
         .iter()
@@ -371,13 +405,20 @@ fn format_name(name: &str) -> String {
         .to_string()
 }
 
-/// `BookHelp.formatBookAuthor` with Legado's `authorRegex`.
-fn format_author(author: &str) -> Option<String> {
+/// `BookHelp.formatBookAuthor` with Legado's `authorRegex`, also dropping
+/// bracketed notes such as （校对版全本） and separators around 作者.
+pub fn format_author(author: &str) -> Option<String> {
     static AUTHOR: OnceLock<PlainRegex> = OnceLock::new();
+    static NOTES: OnceLock<PlainRegex> = OnceLock::new();
+    let without_notes = NOTES
+        .get_or_init(|| PlainRegex::new(r"[（(【\[［][^）)】\]］]*[）)】\]］]").expect("valid"))
+        .replace_all(author, " ");
     let author = AUTHOR
-        .get_or_init(|| PlainRegex::new(r"^\s*作\s*者[:：\s]+|\s+著").expect("valid"))
-        .replace_all(author, "")
-        .trim()
+        .get_or_init(|| {
+            PlainRegex::new(r"^[\s:：_\-—]*作\s*者[:：_\-—\s]*|\s+著\s*$").expect("valid")
+        })
+        .replace_all(without_notes.trim(), "")
+        .trim_matches(|c: char| c.is_whitespace() || ":：_-—".contains(c))
         .to_string();
     (!author.is_empty()).then_some(author)
 }
@@ -445,6 +486,8 @@ mod tests {
         let volumes: Vec<bool> = build.entries.iter().map(|entry| entry.volume).collect();
         assert_eq!(volumes, [false, true, false, false, true, false]);
         assert_eq!(build.intro.as_deref(), Some("这是一本书的简介。"));
+        assert_eq!(clean_intro("内容简介：\n　　少年求道。"), "少年求道。");
+        assert_eq!(clean_intro("【简介】山河远行"), "山河远行");
         assert_eq!(build.rule_id.as_deref(), Some("legado-1"));
         let starts: Vec<u64> = build
             .entries
@@ -458,6 +501,29 @@ mod tests {
         assert!(starts.windows(2).all(|pair| pair[0] < pair[1]));
         let total: u64 = build.entries.iter().map(|entry| entry.length).sum();
         assert_eq!(total, text.encode_utf16().count() as u64);
+    }
+
+    #[test]
+    fn empty_chapters_are_not_volumes_unless_named_like_one() {
+        let text = "第一章 重复\n第一章 重复\n内容\n第一卷 开端\n第二章 继续\n内容\n";
+        let build = build_toc(text, "b", "v", &auto()).unwrap();
+        let volumes: Vec<(&str, bool)> = build
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.volume))
+            .collect();
+        assert_eq!(
+            volumes,
+            [
+                ("第一章 重复", false),
+                ("第一章 重复", false),
+                ("第一卷 开端", true),
+                ("第二章 继续", false)
+            ]
+        );
+        assert!(looks_like_volume("卷三 风云"));
+        assert!(looks_like_volume("Volume 2"));
+        assert!(!looks_like_volume("第三章 卷土重来"));
     }
 
     #[test]
@@ -548,6 +614,14 @@ mod tests {
                 Some("烽火戏诸侯"),
             ),
             ("三体", "三体", None),
+            (
+                "《超神建模师》（校对版全本） 作者_零下十九度",
+                "超神建模师",
+                Some("零下十九度"),
+            ),
+            ("《剑来》 作者:烽火戏诸侯", "剑来", Some("烽火戏诸侯")),
+            ("《大奉打更人》（精校版）", "大奉打更人", None),
+            ("全职高手 作者_蝴蝶蓝", "全职高手", Some("蝴蝶蓝")),
         ];
         for (stem, name, author) in cases {
             let parsed = parse_name_author(stem);

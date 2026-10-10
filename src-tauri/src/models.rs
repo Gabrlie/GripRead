@@ -605,6 +605,12 @@ pub struct ReadingStyle {
     /// Chapter heading size relative to the body text.
     pub title_scale: f64,
     pub margins: Margins,
+    /// Space around the header and footer text (Legado PaddingConfig).
+    pub header_margins: Margins,
+    pub footer_margins: Margins,
+    /// Divider lines between the body and the header or footer.
+    pub header_line: bool,
+    pub footer_line: bool,
     pub header: InfoBar,
     pub footer: InfoBar,
     /// A managed font from `reader_assets`, overriding `font_family`.
@@ -652,6 +658,20 @@ impl Default for ReadingStyle {
                 left: 20.0,
                 right: 20.0,
             },
+            header_margins: Margins {
+                top: 4.0,
+                bottom: 0.0,
+                left: 20.0,
+                right: 20.0,
+            },
+            footer_margins: Margins {
+                top: 0.0,
+                bottom: 6.0,
+                left: 20.0,
+                right: 20.0,
+            },
+            header_line: false,
+            footer_line: false,
             header: InfoBar {
                 visible: true,
                 left: InfoSlot::ChapterTitle,
@@ -721,13 +741,10 @@ impl ReadingStyle {
         range(self.letter_spacing, -0.1, 0.5, "letter_spacing")?;
         range(self.paragraph_spacing, 0.0, 3.0, "paragraph_spacing")?;
         range(self.title_scale, 1.0, 2.5, "title_scale")?;
-        for (value, name) in [
-            (self.margins.top, "margins.top"),
-            (self.margins.bottom, "margins.bottom"),
-            (self.margins.left, "margins.left"),
-            (self.margins.right, "margins.right"),
-        ] {
-            range(value, 0.0, 120.0, name)?;
+        for margins in [&self.margins, &self.header_margins, &self.footer_margins] {
+            for value in [margins.top, margins.bottom, margins.left, margins.right] {
+                range(value, 0.0, 120.0, "margins")?;
+            }
         }
         if self.indent > 4 {
             return Err(AppError::invalid_argument(

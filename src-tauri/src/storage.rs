@@ -29,7 +29,7 @@ use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -660,6 +660,34 @@ impl Storage {
             migrate_to_legado_toc_rules(&tx)?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (9, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        // Schema 10: authors parsed before 作者 separators and edition notes
+        // were understood keep only the author's name. No table changes.
+        if current < 10 {
+            let tx = self.conn.transaction()?;
+            let authors: Vec<(String, String)> = {
+                let mut statement =
+                    tx.prepare("SELECT id, author FROM books WHERE author IS NOT NULL")?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            for (id, author) in authors {
+                let cleaned = crate::txt_toc::format_author(&author);
+                if cleaned.as_deref() != Some(author.as_str()) {
+                    tx.execute(
+                        "UPDATE books SET author = ?2 WHERE id = ?1",
+                        params![id, cleaned],
+                    )?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (10, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1941,14 +1969,20 @@ impl Storage {
             params![book_id, record.asset.id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let source_byte_length: Option<i64> = self
+        // The retained original file gives the size the reader imported.
+        let source_path: Option<String> = self
             .conn
             .query_row(
-                "SELECT source_byte_length FROM txt_assets WHERE asset_id = ?1",
+                "SELECT source_relative_path FROM txt_assets WHERE asset_id = ?1",
                 params![record.asset.id],
                 |row| row.get(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten();
+        let source_byte_length = source_path
+            .and_then(|path| managed_path(&self.root, &path, "sources").ok())
+            .and_then(|path| fs::metadata(path).ok())
+            .map(|metadata| metadata.len() as i64);
         let chapter_count = entries_json
             .and_then(|json| serde_json::from_str::<TocBuild>(&json).ok())
             .map(|build| build.entries.len() as u64);
@@ -5042,8 +5076,11 @@ fn encoding_name(encoding: &TxtEncoding) -> &'static str {
     }
 }
 
+/// Bumped when the chapter algorithm changes, so cached directories rebuild.
+const TOC_ALGORITHM: u32 = 2;
+
 fn toc_rule_identity(rule: &TocBuildRule) -> Result<String, AppError> {
-    Ok(serde_json::to_string(rule)?)
+    Ok(format!("v{TOC_ALGORITHM}:{}", serde_json::to_string(rule)?))
 }
 
 fn parse_encoding(value: String) -> TxtEncoding {
@@ -5452,7 +5489,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
     }
 
     #[test]
@@ -6489,6 +6526,32 @@ mod tests {
     }
 
     #[test]
+    fn schema_ten_keeps_only_the_author_name() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let id = {
+            let mut storage = Storage::open(&app_root).unwrap();
+            let source = write_source(&root.0, "a.txt", "第一章 开始\n内容\n".as_bytes());
+            let id = import(&mut storage, &source, "a").book.id;
+            storage
+                .conn
+                .execute_batch(
+                    "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
+                     DELETE FROM schema_migrations WHERE version >= 10;",
+                )
+                .unwrap();
+            id
+        };
+        let storage = Storage::open(&app_root).unwrap();
+        assert_eq!(
+            storage.get_book(&id).unwrap().author.as_deref(),
+            Some("零下十九度")
+        );
+        let info = storage.book_info(&id).unwrap();
+        assert_eq!(info.source_byte_length, "第一章 开始\n内容\n".len() as u64);
+    }
+
+    #[test]
     fn rule_tables_reorder_toggle_import_and_export() {
         let root = TestRoot::new();
         let mut storage = Storage::open(&root.0.join("data")).unwrap();
@@ -7437,7 +7500,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            9
+            10
         );
         assert_eq!(reopened.get_book(&imported.book.id).unwrap(), imported.book);
         assert_eq!(
