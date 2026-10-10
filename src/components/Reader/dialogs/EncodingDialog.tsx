@@ -29,7 +29,7 @@ const CHOICES: { encoding: TxtEncoding; label: string; note?: string }[] = [
   { encoding: "utf16_be", label: "UTF-16BE" },
 ];
 
-const NAMES: Record<TxtEncoding, string> = {
+export const ENCODING_NAMES: Record<TxtEncoding, string> = {
   auto: "自动识别",
   utf8: "UTF-8",
   gbk: "GBK",
@@ -58,7 +58,7 @@ export function EncodingDialog({
           <DialogTitle>设置编码</DialogTitle>
           <DialogDescription>
             {encodingInfo
-              ? `识别结果：${NAMES[encodingInfo.detected]}。重新解码只在本机进行。`
+              ? `识别结果：${ENCODING_NAMES[encodingInfo.detected]}。重新解码只在本机进行。`
               : "正在读取编码信息…"}
           </DialogDescription>
         </DialogHeader>

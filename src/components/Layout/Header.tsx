@@ -8,6 +8,14 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 
+export interface HeaderMenuItem {
+  icon: string;
+  label: string;
+  onSelect: () => void;
+  /** A short state shown at the end of the row, such as the current layout. */
+  detail?: string;
+}
+
 interface HeaderProps {
   title: string;
   subtitle?: string;
@@ -17,16 +25,8 @@ interface HeaderProps {
   onSearchClick?: () => void;
   searchDisabled?: boolean;
   onMoreClick?: () => void;
-  onUpdateToc?: () => void;
-  onAddLocal?: () => void;
-  onRemoteBooks?: () => void;
-  onToggleLayout?: () => void;
-  layoutMode?: "list" | "grid";
-  onCacheManage?: () => void;
-  onGroupManage?: () => void;
-  onBookManage?: () => void;
-  onRemovedBooks?: () => void;
-  onSort?: () => void;
+  /** Rows of the 更多 menu; without them the button calls `onMoreClick`. */
+  menuItems?: HeaderMenuItem[];
 }
 
 export function Header({
@@ -38,29 +38,8 @@ export function Header({
   onSearchClick,
   searchDisabled = false,
   onMoreClick,
-  onUpdateToc,
-  onAddLocal,
-  onRemoteBooks,
-  onToggleLayout,
-  layoutMode,
-  onCacheManage,
-  onGroupManage,
-  onBookManage,
-  onRemovedBooks,
-  onSort,
+  menuItems,
 }: HeaderProps) {
-  const hasShelfOptions = Boolean(
-    onUpdateToc ||
-    onAddLocal ||
-    onRemoteBooks ||
-    onToggleLayout ||
-    onCacheManage ||
-    onGroupManage ||
-    onSort ||
-    onBookManage ||
-    onRemovedBooks,
-  );
-
   const content = (
     <div className="h-14 px-margin-mobile md:px-8 flex items-center justify-between w-full">
       {/* Left Title, Subtitle, and Reading Time */}
@@ -104,7 +83,7 @@ export function Header({
         )}
 
         {/* 更多按钮：使用下拉菜单组件 (DropdownMenu) */}
-        {hasShelfOptions ? (
+        {menuItems?.length ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               className="w-10 h-10 rounded-full flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container/60 transition-colors cursor-pointer outline-none"
@@ -112,90 +91,22 @@ export function Header({
             >
               <Icon name="more_horiz" size={20} />
             </DropdownMenuTrigger>
-
             <DropdownMenuContent align="end" sideOffset={6} className="w-48">
-              <DropdownMenuItem
-                disabled={!onUpdateToc}
-                onClick={onUpdateToc}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl cursor-pointer hover:bg-surface-container/60 focus:bg-surface-container/60 transition-colors"
-              >
-                <Icon name="sync" size={16} className="text-primary" />
-                <span>刷新书架</span>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem
-                disabled={!onAddLocal}
-                onClick={onAddLocal}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl cursor-pointer hover:bg-surface-container/60 focus:bg-surface-container/60 transition-colors"
-              >
-                <Icon name="folder_open" size={16} className="text-primary" />
-                <span>添加本地</span>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem
-                disabled={!onRemoteBooks}
-                onClick={onRemoteBooks}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl transition-colors"
-              >
-                <Icon name="cloud" size={16} className="text-primary" />
-                <span>远程书籍</span>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem
-                disabled={!onToggleLayout}
-                onClick={onToggleLayout}
-                className="flex items-center justify-between px-3 py-2 text-xs font-medium text-on-surface rounded-xl cursor-pointer hover:bg-surface-container/60 focus:bg-surface-container/60 transition-colors"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Icon
-                    name={layoutMode === "grid" ? "view_list" : "grid_view"}
-                    size={16}
-                    className="text-primary"
-                  />
-                  <span>书架布局</span>
-                </div>
-                {layoutMode && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-secondary font-medium ml-2 select-none">
-                    {layoutMode === "grid" ? "网格" : "列表"}
-                  </span>
-                )}
-              </DropdownMenuItem>
-
-              <DropdownMenuItem
-                disabled={!onCacheManage}
-                onClick={onCacheManage}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl transition-colors"
-              >
-                <Icon name="pie_chart" size={16} className="text-primary" />
-                <span>书籍缓存</span>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem
-                disabled={!onGroupManage}
-                onClick={onGroupManage}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl transition-colors"
-              >
-                <Icon name="label" size={16} className="text-primary" />
-                <span>分组管理</span>
-              </DropdownMenuItem>
-              {onSort && (
-                <DropdownMenuItem onClick={onSort}>
-                  <Icon name="view_list" size={16} className="text-primary" />
-                  <span>书架排序</span>
+              {menuItems.map((item) => (
+                <DropdownMenuItem
+                  key={item.label}
+                  onClick={item.onSelect}
+                  className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-on-surface rounded-xl cursor-pointer hover:bg-surface-container/60 focus:bg-surface-container/60 transition-colors"
+                >
+                  <Icon name={item.icon} size={16} className="text-primary" />
+                  <span className="flex-1">{item.label}</span>
+                  {item.detail && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-secondary font-medium select-none">
+                      {item.detail}
+                    </span>
+                  )}
                 </DropdownMenuItem>
-              )}
-              {onBookManage && (
-                <DropdownMenuItem onClick={onBookManage}>
-                  <Icon name="auto_stories" size={16} className="text-primary" />
-                  <span>书籍管理</span>
-                </DropdownMenuItem>
-              )}
-              {onRemovedBooks && (
-                <DropdownMenuItem onClick={onRemovedBooks}>
-                  <Icon name="folder_open" size={16} className="text-primary" />
-                  <span>已移出书籍</span>
-                </DropdownMenuItem>
-              )}
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : onMoreClick ? (

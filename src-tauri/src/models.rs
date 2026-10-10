@@ -207,13 +207,6 @@ pub struct GroupRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SetBookGroupsRequest {
-    pub book_id: String,
-    pub group_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct TxtEncodingRequest {
     pub book_id: String,
     pub encoding: TxtEncoding,
@@ -367,6 +360,7 @@ pub struct BookInfo {
     pub intro: Option<String>,
     pub source_byte_length: u64,
     pub chapter_count: Option<u64>,
+    pub reading_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -377,6 +371,9 @@ pub struct Bookmark {
     pub content_version: String,
     pub locator: ReaderLocator,
     pub excerpt: String,
+    /// The reader's own note (Legado 书签备注).
+    #[serde(default)]
+    pub note: String,
     pub created_at: i64,
 }
 
@@ -386,6 +383,9 @@ pub struct BookmarkRequest {
     pub book_id: String,
     pub locator: ReaderLocator,
     pub excerpt: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -456,6 +456,98 @@ pub struct LibraryBook {
     pub txt_encoding: Option<TxtEncodingInfo>,
     pub last_read_at: Option<i64>,
     pub removed_at: Option<i64>,
+    /// A reading state the reader chose by moving the book; `None` lets the
+    /// shelf derive it from progress.
+    pub shelf_state: Option<ShelfState>,
+    pub cover_asset_id: Option<String>,
+}
+
+/// The shelf's automatic groups, which a book can also be moved into by hand.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShelfState {
+    Reading,
+    Unread,
+    Finished,
+}
+
+/// Where a book is moved on the shelf: back to automatic grouping, a reading
+/// state, or one user group (a book is in at most one).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
+pub enum ShelfPlacement {
+    Automatic,
+    State(ShelfState),
+    Group(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveBookRequest {
+    pub book_id: String,
+    pub placement: ShelfPlacement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingTimeRequest {
+    pub book_id: String,
+    /// The reader's local calendar day, `YYYY-MM-DD`.
+    pub day: String,
+    pub seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookReadingTime {
+    pub book_id: String,
+    pub seconds: u64,
+    pub last_day: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingStats {
+    pub total_seconds: u64,
+    pub today_seconds: u64,
+    /// Days with reading, most recent first, up to 30.
+    pub days: Vec<DayReadingTime>,
+    pub books: Vec<BookReadingTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DayReadingTime {
+    pub day: String,
+    pub seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingStatsRequest {
+    pub today: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookCoverRequest {
+    pub book_id: String,
+    pub path: String,
+}
+
+/// A file found by a folder import.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedFile {
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkNoteRequest {
+    pub bookmark_id: String,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -833,6 +925,10 @@ pub struct UpdateBookRequest {
     pub book_id: String,
     pub title: String,
     pub author: Option<String>,
+    /// A new introduction; absent leaves it unchanged and empty clears it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub intro: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]

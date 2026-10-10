@@ -18,7 +18,14 @@ const library = (): LibraryService => ({
   createGroup: vi.fn(),
   renameGroup: vi.fn(),
   deleteGroup: vi.fn(),
-  setBookGroups: vi.fn(),
+  moveBook: vi.fn(async () => undefined),
+  pickTxtFiles: vi.fn(async () => []),
+  pickTxtFolder: vi.fn(async () => []),
+  pickBookCover: vi.fn(async () => false),
+  clearBookCover: vi.fn(async () => undefined),
+  readAsset: vi.fn(async () => new ArrayBuffer(0)),
+  addReadingTime: vi.fn(async () => undefined),
+  readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
   listRemovedBooks: vi.fn(async () => []),
   updateBook: vi.fn(),
   removeBook: vi.fn(),
@@ -69,6 +76,8 @@ const book = (
   txtEncoding: null,
   lastReadAt,
   removedAt: null,
+  shelfState: null,
+  coverAssetId: null,
 });
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {

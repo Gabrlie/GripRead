@@ -23,13 +23,16 @@ use crate::models::{
     ResolveOffsetRequest, SearchMatch, SearchRequest, SearchResponse, TxtDecodeState, TxtEncoding,
     TxtEncodingInfo, TxtTocRule, WindowDirection,
 };
-use crate::models::{ShelfPreferences, UpdateBookRequest};
+use crate::models::{
+    BookReadingTime, DayReadingTime, ReadingStats, ShelfPlacement, ShelfPreferences, ShelfState,
+    UpdateBookRequest,
+};
 use crate::txt::detect_and_decode;
 use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -688,6 +691,47 @@ impl Storage {
             }
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (10, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        // Schema 11: reading-state shelf groups replace the seeded genre
+        // groups (all existing groups are removed, as the reader chose);
+        // manual reading states, covers, bookmark notes, reading time, and
+        // image assets.
+        if current < 11 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "DELETE FROM book_groups;
+                 DELETE FROM library_groups;
+                 ALTER TABLE books ADD COLUMN shelf_state TEXT
+                    CHECK(shelf_state IN ('reading', 'unread', 'finished'));
+                 ALTER TABLE books ADD COLUMN cover_asset_id TEXT;
+                 ALTER TABLE bookmarks ADD COLUMN note TEXT NOT NULL DEFAULT '';
+                 CREATE TABLE reading_time (
+                    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    day TEXT NOT NULL,
+                    seconds INTEGER NOT NULL CHECK(seconds >= 0),
+                    PRIMARY KEY(book_id, day)
+                 );
+                 CREATE TABLE reader_assets_v11 (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('font', 'cover', 'background')),
+                    name TEXT NOT NULL,
+                    relative_path TEXT NOT NULL UNIQUE,
+                    byte_length INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                 );
+                 INSERT INTO reader_assets_v11
+                    SELECT id, kind, name, relative_path, byte_length, created_at FROM reader_assets;
+                 DROP TABLE reader_assets;
+                 ALTER TABLE reader_assets_v11 RENAME TO reader_assets;
+                 UPDATE shelf_preferences SET preferences_json =
+                    json_set(preferences_json, '$.groupId', 'all');",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1494,7 +1538,9 @@ impl Storage {
         Ok(())
     }
 
-    pub fn set_book_groups(&mut self, book_id: &str, group_ids: &[String]) -> Result<(), AppError> {
+    /// Moves a book to automatic grouping, a reading state, or one user
+    /// group. A manual placement stays until the book is moved again.
+    pub fn move_book(&mut self, book_id: &str, placement: &ShelfPlacement) -> Result<(), AppError> {
         let tx = self.conn.transaction()?;
         let book_exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM books WHERE id = ?1)",
@@ -1504,8 +1550,7 @@ impl Storage {
         if !book_exists {
             return Err(AppError::new(ErrorCode::NotFound, "book was not found"));
         }
-        let unique_ids: HashSet<&String> = group_ids.iter().collect();
-        for group_id in &unique_ids {
+        if let ShelfPlacement::Group(group_id) = placement {
             let group_exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
                 params![group_id],
@@ -1522,7 +1567,15 @@ impl Storage {
             "DELETE FROM book_groups WHERE book_id = ?1",
             params![book_id],
         )?;
-        for group_id in unique_ids {
+        let state = match placement {
+            ShelfPlacement::State(state) => Some(shelf_state_name(*state)),
+            _ => None,
+        };
+        tx.execute(
+            "UPDATE books SET shelf_state = ?2 WHERE id = ?1",
+            params![book_id, state],
+        )?;
+        if let ShelfPlacement::Group(group_id) = placement {
             tx.execute(
                 "INSERT INTO book_groups(book_id, group_id) VALUES (?1, ?2)",
                 params![book_id, group_id],
@@ -1530,6 +1583,131 @@ impl Storage {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn update_bookmark_note(&mut self, bookmark_id: &str, note: &str) -> Result<(), AppError> {
+        if note.chars().count() > 2000 {
+            return Err(AppError::invalid_argument(
+                "bookmark notes allow 2000 characters",
+            ));
+        }
+        let changed = self.conn.execute(
+            "UPDATE bookmarks SET note = ?2 WHERE id = ?1",
+            params![bookmark_id, note.trim()],
+        )?;
+        if changed == 0 {
+            return Err(AppError::new(ErrorCode::NotFound, "bookmark was not found"));
+        }
+        Ok(())
+    }
+
+    /// Adds reading time for a local calendar day.
+    pub fn add_reading_time(
+        &mut self,
+        book_id: &str,
+        day: &str,
+        seconds: u32,
+    ) -> Result<(), AppError> {
+        let valid_day = day.len() == 10
+            && day.chars().enumerate().all(|(index, character)| {
+                if index == 4 || index == 7 {
+                    character == '-'
+                } else {
+                    character.is_ascii_digit()
+                }
+            });
+        if !valid_day || seconds == 0 || seconds > 3600 {
+            return Err(AppError::invalid_argument(
+                "reading time needs a YYYY-MM-DD day and 1 to 3600 seconds",
+            ));
+        }
+        self.get_book(book_id)?;
+        self.conn.execute(
+            "INSERT INTO reading_time(book_id, day, seconds) VALUES (?1, ?2, ?3)
+             ON CONFLICT(book_id, day) DO UPDATE SET seconds = seconds + excluded.seconds",
+            params![book_id, day, seconds],
+        )?;
+        Ok(())
+    }
+
+    pub fn reading_stats(&self, today: &str) -> Result<ReadingStats, AppError> {
+        let (total, today_seconds): (i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(SUM(seconds), 0), COALESCE(SUM(CASE WHEN day = ?1 THEN seconds END), 0)
+             FROM reading_time",
+            params![today],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let mut days = self.conn.prepare(
+            "SELECT day, SUM(seconds) FROM reading_time GROUP BY day ORDER BY day DESC LIMIT 30",
+        )?;
+        let days = days
+            .query_map([], |row| {
+                Ok(DayReadingTime {
+                    day: row.get(0)?,
+                    seconds: row.get::<_, i64>(1)?.max(0) as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut books = self.conn.prepare(
+            "SELECT book_id, SUM(seconds), MAX(day) FROM reading_time
+             GROUP BY book_id ORDER BY MAX(day) DESC, SUM(seconds) DESC",
+        )?;
+        let books = books
+            .query_map([], |row| {
+                Ok(BookReadingTime {
+                    book_id: row.get(0)?,
+                    seconds: row.get::<_, i64>(1)?.max(0) as u64,
+                    last_day: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ReadingStats {
+            total_seconds: total.max(0) as u64,
+            today_seconds: today_seconds.max(0) as u64,
+            days,
+            books,
+        })
+    }
+
+    /// Stores an image as the book's cover, replacing and removing any previous one.
+    pub fn set_book_cover(
+        &mut self,
+        book_id: &str,
+        source: &Path,
+        name: &str,
+    ) -> Result<ReaderAsset, AppError> {
+        self.get_book(book_id)?;
+        let previous = self.book_cover(book_id)?;
+        let asset = self.import_reader_asset(source, name, "cover")?;
+        self.conn.execute(
+            "UPDATE books SET cover_asset_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![book_id, asset.id, now_millis()],
+        )?;
+        if let Some(previous) = previous {
+            self.delete_reader_asset(&previous)?;
+        }
+        Ok(asset)
+    }
+
+    pub fn clear_book_cover(&mut self, book_id: &str) -> Result<(), AppError> {
+        self.get_book(book_id)?;
+        let previous = self.book_cover(book_id)?;
+        self.conn.execute(
+            "UPDATE books SET cover_asset_id = NULL WHERE id = ?1",
+            params![book_id],
+        )?;
+        if let Some(previous) = previous {
+            self.delete_reader_asset(&previous)?;
+        }
+        Ok(())
+    }
+
+    fn book_cover(&self, book_id: &str) -> Result<Option<String>, AppError> {
+        Ok(self.conn.query_row(
+            "SELECT cover_asset_id FROM books WHERE id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )?)
     }
 
     fn validate_group_name(&self, name: &str, except_id: Option<&str>) -> Result<String, AppError> {
@@ -1557,7 +1735,8 @@ impl Storage {
         let mut statement = self.conn.prepare(
             "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
                     a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
-                    a.relative_path, a.created_at, p.updated_at, r.removed_at
+                    a.relative_path, a.created_at, p.updated_at, r.removed_at,
+                    b.shelf_state, b.cover_asset_id
              FROM books b JOIN book_assets a ON a.book_id = b.id
              LEFT JOIN reading_positions p ON p.book_id = b.id
              LEFT JOIN shelf_removals r ON r.book_id = b.id
@@ -1580,35 +1759,41 @@ impl Storage {
                     record,
                     row.get::<_, Option<i64>>(14)?,
                     row.get::<_, Option<i64>>(15)?,
+                    row.get::<_, Option<String>>(16)?,
+                    row.get::<_, Option<String>>(17)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(book, mut record, last_read_at, removed_at)| {
-                let path = managed_path(&self.root, &record.relative_path, "books")?;
-                record.asset.availability = if is_regular_file(&path) {
-                    AssetAvailability::Ready
-                } else {
-                    AssetAvailability::Missing
-                };
-                let locator = self.saved_position(&book.id)?;
-                let total_length = if record.asset.availability == AssetAvailability::Ready {
-                    self.trusted_content_length(&record)?
-                } else {
-                    None
-                };
-                let txt_encoding = self.txt_encoding_for_asset(&record.asset.id)?;
-                Ok(LibraryBook {
-                    book,
-                    asset: record.asset,
-                    locator,
-                    total_length,
-                    txt_encoding,
-                    last_read_at,
-                    removed_at,
-                })
-            })
+            .map(
+                |(book, mut record, last_read_at, removed_at, shelf_state, cover_asset_id)| {
+                    let path = managed_path(&self.root, &record.relative_path, "books")?;
+                    record.asset.availability = if is_regular_file(&path) {
+                        AssetAvailability::Ready
+                    } else {
+                        AssetAvailability::Missing
+                    };
+                    let locator = self.saved_position(&book.id)?;
+                    let total_length = if record.asset.availability == AssetAvailability::Ready {
+                        self.trusted_content_length(&record)?
+                    } else {
+                        None
+                    };
+                    let txt_encoding = self.txt_encoding_for_asset(&record.asset.id)?;
+                    Ok(LibraryBook {
+                        book,
+                        asset: record.asset,
+                        locator,
+                        total_length,
+                        txt_encoding,
+                        last_read_at,
+                        removed_at,
+                        shelf_state: shelf_state.as_deref().and_then(parse_shelf_state),
+                        cover_asset_id,
+                    })
+                },
+            )
             .collect()
     }
 
@@ -1986,9 +2171,15 @@ impl Storage {
         let chapter_count = entries_json
             .and_then(|json| serde_json::from_str::<TocBuild>(&json).ok())
             .map(|build| build.entries.len() as u64);
+        let reading_seconds: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(seconds), 0) FROM reading_time WHERE book_id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )?;
         Ok(BookInfo {
             book_id: book_id.to_string(),
-            intro,
+            reading_seconds: reading_seconds.max(0) as u64,
+            intro: intro.filter(|intro| !intro.is_empty()),
             source_byte_length: source_byte_length
                 .map_or(record.asset.byte_length, |length| length.max(0) as u64),
             chapter_count,
@@ -2123,7 +2314,7 @@ impl Storage {
 
     pub fn list_bookmarks(&self, book_id: &str) -> Result<Vec<Bookmark>, AppError> {
         let mut statement = self.conn.prepare(
-            "SELECT id, book_id, content_version, locator_json, excerpt, created_at
+            "SELECT id, book_id, content_version, locator_json, excerpt, created_at, note
              FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC, id ASC",
         )?;
         let result = statement
@@ -2143,6 +2334,7 @@ impl Storage {
                     locator,
                     excerpt: row.get(4)?,
                     created_at: row.get(5)?,
+                    note: row.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -2190,12 +2382,19 @@ impl Storage {
             content_version: request.locator.content_version.clone(),
             locator: request.locator.clone(),
             excerpt: request.excerpt.clone(),
+            note: request.note.clone().unwrap_or_default(),
             created_at: now_millis(),
         };
+        if bookmark.note.chars().count() > 2000 {
+            return Err(AppError::invalid_argument(
+                "bookmark notes allow 2000 characters",
+            ));
+        }
         self.conn.execute(
-            "INSERT INTO bookmarks(id, book_id, content_version, offset, locator_json, excerpt, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(book_id, content_version, offset) DO NOTHING",
+            "INSERT INTO bookmarks(id, book_id, content_version, offset, locator_json, excerpt, created_at, note)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(book_id, content_version, offset) DO UPDATE SET
+                note = CASE WHEN excluded.note = '' THEN bookmarks.note ELSE excluded.note END",
             params![
                 bookmark.id,
                 bookmark.book_id,
@@ -2203,12 +2402,13 @@ impl Storage {
                 bookmark.locator.offset as i64,
                 serde_json::to_string(&bookmark.locator)?,
                 bookmark.excerpt,
-                bookmark.created_at
+                bookmark.created_at,
+                bookmark.note
             ],
         )?;
         self.conn
             .query_row(
-                "SELECT id, book_id, content_version, locator_json, excerpt, created_at
+                "SELECT id, book_id, content_version, locator_json, excerpt, created_at, note
                  FROM bookmarks WHERE book_id = ?1 AND content_version = ?2 AND offset = ?3",
                 params![
                     request.book_id,
@@ -2231,6 +2431,7 @@ impl Storage {
                         locator,
                         excerpt: row.get(4)?,
                         created_at: row.get(5)?,
+                        note: row.get(6)?,
                     })
                 },
             )
@@ -2998,10 +3199,29 @@ impl Storage {
             ));
         }
         self.get_book(&request.book_id)?;
-        self.conn.execute(
+        if request
+            .intro
+            .as_ref()
+            .is_some_and(|intro| intro.chars().count() > 5000)
+        {
+            return Err(AppError::invalid_argument(
+                "introductions allow 5000 characters",
+            ));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
             params![title, author, now_millis(), request.book_id],
         )?;
+        if let Some(intro) = request.intro.as_deref() {
+            let intro = intro.trim();
+            tx.execute(
+                "UPDATE books SET intro = ?2 WHERE id = ?1",
+                // An empty intro is kept, so chapter detection does not refill it.
+                params![request.book_id, intro],
+            )?;
+        }
+        tx.commit()?;
         self.get_book(&request.book_id)
     }
     pub fn remove_book(&self, book_id: &str) -> Result<(), AppError> {
@@ -3109,17 +3329,40 @@ impl Storage {
         source: &Path,
         name: &str,
     ) -> Result<ReaderAsset, AppError> {
+        self.import_reader_asset(source, name, "font")
+    }
+
+    /// Copies a font (`font`) or an image (`cover`, `background`) into
+    /// managed `assets/<kind>s` after checking its file signature.
+    pub fn import_reader_asset(
+        &mut self,
+        source: &Path,
+        name: &str,
+        kind: &str,
+    ) -> Result<ReaderAsset, AppError> {
         let bytes = fs::read(source)?;
-        let extension = font_extension(&bytes).ok_or_else(|| {
-            AppError::invalid_argument("the file is not a TrueType, OpenType, or WOFF font")
-        })?;
-        if bytes.len() > 64 * 1024 * 1024 {
-            return Err(AppError::invalid_argument(
+        let (extension, limit, label) = match kind {
+            "font" => (
+                font_extension(&bytes).ok_or_else(|| {
+                    AppError::invalid_argument("the file is not a TrueType, OpenType, or WOFF font")
+                })?,
+                64 * 1024 * 1024,
                 "fonts larger than 64 MB are not supported",
-            ));
+            ),
+            "cover" | "background" => (
+                image_extension(&bytes).ok_or_else(|| {
+                    AppError::invalid_argument("the file is not a PNG, JPEG, WebP, or GIF image")
+                })?,
+                20 * 1024 * 1024,
+                "images larger than 20 MB are not supported",
+            ),
+            _ => return Err(AppError::invalid_argument("unknown asset kind")),
+        };
+        if bytes.len() > limit {
+            return Err(AppError::invalid_argument(label));
         }
         let id = Uuid::new_v4().to_string();
-        let relative_path = format!("assets/fonts/{id}.{extension}");
+        let relative_path = format!("assets/{kind}s/{id}.{extension}");
         let path = managed_path(&self.root, &relative_path, "assets")?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -3128,7 +3371,7 @@ impl Storage {
             .file_stem()
             .map(|stem| stem.to_string_lossy().trim().to_string())
             .filter(|stem| !stem.is_empty())
-            .unwrap_or_else(|| "导入字体".to_string());
+            .unwrap_or_else(|| "导入文件".to_string());
         let stage = path.with_extension("part");
         let mut file = OpenOptions::new()
             .write(true)
@@ -3149,13 +3392,14 @@ impl Storage {
         };
         if let Err(error) = self.conn.execute(
             "INSERT INTO reader_assets(id, kind, name, relative_path, byte_length, created_at)
-             VALUES (?1, 'font', ?2, ?3, ?4, ?5)",
+             VALUES (?1, ?6, ?2, ?3, ?4, ?5)",
             params![
                 asset.id,
                 asset.name,
                 relative_path,
                 asset.byte_length as i64,
-                asset.created_at
+                asset.created_at,
+                kind
             ],
         ) {
             let _ = fs::remove_file(&path);
@@ -3182,24 +3426,47 @@ impl Storage {
         Ok(fonts)
     }
 
+    /// Bytes of any managed asset: fonts, covers, and backgrounds.
     pub fn read_reader_font(&self, id: &str) -> Result<Vec<u8>, AppError> {
         let relative_path: String = self
             .conn
             .query_row(
-                "SELECT relative_path FROM reader_assets WHERE id = ?1 AND kind = 'font'",
+                "SELECT relative_path FROM reader_assets WHERE id = ?1",
                 params![id],
                 |row| row.get(0),
             )
             .optional()?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "font was not found"))?;
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "asset was not found"))?;
         let path = managed_path(&self.root, &relative_path, "assets")?;
         fs::read(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::new(ErrorCode::AssetMissing, "font file is missing")
+                AppError::new(ErrorCode::AssetMissing, "asset file is missing")
             } else {
                 error.into()
             }
         })
+    }
+
+    /// Removes an asset record and its file; callers clear references first.
+    fn delete_reader_asset(&mut self, id: &str) -> Result<(), AppError> {
+        let relative_path: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT relative_path FROM reader_assets WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(relative_path) = relative_path else {
+            return Ok(());
+        };
+        self.conn
+            .execute("DELETE FROM reader_assets WHERE id = ?1", params![id])?;
+        let path = managed_path(&self.root, &relative_path, "assets")?;
+        match fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
     }
 
     /// Deletes a font and, in the same transaction, clears any preference
@@ -5046,6 +5313,38 @@ fn txt_decode_journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtD
     })
 }
 
+fn shelf_state_name(state: ShelfState) -> &'static str {
+    match state {
+        ShelfState::Reading => "reading",
+        ShelfState::Unread => "unread",
+        ShelfState::Finished => "finished",
+    }
+}
+
+fn parse_shelf_state(value: &str) -> Option<ShelfState> {
+    match value {
+        "reading" => Some(ShelfState::Reading),
+        "unread" => Some(ShelfState::Unread),
+        "finished" => Some(ShelfState::Finished),
+        _ => None,
+    }
+}
+
+/// The extension for an image file identified by its signature.
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF8") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 /// The extension for a font file identified by its signature.
 fn font_extension(bytes: &[u8]) -> Option<&'static str> {
     match bytes.get(..4)? {
@@ -5489,7 +5788,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
     }
 
     #[test]
@@ -5541,6 +5840,7 @@ mod tests {
                 book_id: imported.book.id.clone(),
                 locator: locator.clone(),
                 excerpt: "开头".to_string(),
+                note: None,
             })
             .unwrap();
         assert_eq!(storage.list_bookmarks(&imported.book.id).unwrap().len(), 1);
@@ -6309,6 +6609,7 @@ mod tests {
                 book_id: imported.book.id.clone(),
                 locator: position.clone(),
                 excerpt: "第一章".to_string(),
+                note: None,
             })
             .unwrap();
         let rule = storage
@@ -6407,7 +6708,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -6537,6 +6838,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
+                     DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -7102,25 +7404,42 @@ mod tests {
             .read_content_window(&imported.book.id, None, 64)
             .unwrap();
         storage.save_position(&window.locator).unwrap();
-        let template = storage.list_groups().unwrap();
-        assert_eq!(template.len(), 7);
-        assert!(template.iter().all(|group| group.book_ids.is_empty()));
-        assert_eq!(template[0].name, "玄幻修真");
+        // Reading states are the default groups; no genre groups are seeded.
+        assert!(storage.list_groups().unwrap().is_empty());
         let group = storage.create_group("  我的阅读  ").unwrap();
         assert_eq!(group.name, "我的阅读");
+        let other = storage.create_group("其他").unwrap();
         storage
-            .set_book_groups(
-                &imported.book.id,
-                &[group.id.clone(), template[0].id.clone(), group.id.clone()],
-            )
+            .move_book(&imported.book.id, &ShelfPlacement::Group(other.id.clone()))
             .unwrap();
+        storage
+            .move_book(&imported.book.id, &ShelfPlacement::Group(group.id.clone()))
+            .unwrap();
+        // A book belongs to one group at a time.
         let renamed = storage.rename_group(&group.id, "最近阅读").unwrap();
         assert_eq!(renamed.book_ids, vec![imported.book.id.clone()]);
+        assert!(storage.list_groups().unwrap()[1].book_ids.is_empty());
         drop(storage);
-        let storage = Storage::open(&app_root).unwrap();
-        assert_eq!(storage.list_groups().unwrap().last(), Some(&renamed));
+        let mut storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.list_groups().unwrap().first(), Some(&renamed));
+        storage
+            .move_book(
+                &imported.book.id,
+                &ShelfPlacement::State(ShelfState::Finished),
+            )
+            .unwrap();
+        assert!(storage.list_groups().unwrap()[0].book_ids.is_empty());
+        let shelf = storage.list_shelf_books(false).unwrap();
+        assert_eq!(shelf[0].shelf_state, Some(ShelfState::Finished));
+        storage
+            .move_book(&imported.book.id, &ShelfPlacement::Group(group.id.clone()))
+            .unwrap();
+        assert_eq!(
+            storage.list_shelf_books(false).unwrap()[0].shelf_state,
+            None
+        );
+        // Deleting the group returns the book to automatic grouping.
         storage.delete_group(&group.id).unwrap();
-        storage.delete_group(&template[0].id).unwrap();
         assert_eq!(storage.list_books().unwrap(), vec![imported.book.clone()]);
         assert_eq!(
             storage.saved_position(&imported.book.id).unwrap(),
@@ -7134,11 +7453,97 @@ mod tests {
             window.text
         );
         let remaining = storage.list_groups().unwrap();
-        assert_eq!(remaining.len(), 6);
+        assert_eq!(remaining.len(), 1);
         assert!(remaining.iter().all(|group| group.book_ids.is_empty()));
-        drop(storage);
-        let reopened = Storage::open(&app_root).unwrap();
-        assert_eq!(reopened.list_groups().unwrap(), remaining);
+        assert_eq!(
+            storage.list_shelf_books(false).unwrap()[0].shelf_state,
+            None
+        );
+    }
+
+    #[test]
+    fn reading_time_notes_and_covers_are_stored() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "time.txt", "第一章\n正文".as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "time");
+        let id = imported.book.id.clone();
+        storage.add_reading_time(&id, "2026-10-09", 90).unwrap();
+        storage.add_reading_time(&id, "2026-10-10", 30).unwrap();
+        storage.add_reading_time(&id, "2026-10-10", 30).unwrap();
+        for bad in [("2026-1-10", 30), ("2026-10-10", 0), ("2026-10-10", 4000)] {
+            assert_eq!(
+                storage
+                    .add_reading_time(&id, bad.0, bad.1)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidArgument
+            );
+        }
+        let stats = storage.reading_stats("2026-10-10").unwrap();
+        assert_eq!((stats.total_seconds, stats.today_seconds), (150, 60));
+        assert_eq!(stats.days[0].day, "2026-10-10");
+        assert_eq!(stats.books[0].seconds, 150);
+        assert_eq!(storage.book_info(&id).unwrap().reading_seconds, 150);
+
+        let locator = storage.read_content_window(&id, None, 16).unwrap().locator;
+        let request = BookmarkRequest {
+            book_id: id.clone(),
+            locator,
+            excerpt: "正文".into(),
+            note: Some("想法".into()),
+        };
+        let bookmark = storage.add_bookmark(&request).unwrap();
+        assert_eq!(bookmark.note, "想法");
+        storage
+            .update_bookmark_note(&bookmark.id, " 新想法 ")
+            .unwrap();
+        assert_eq!(storage.list_bookmarks(&id).unwrap()[0].note, "新想法");
+        assert_eq!(
+            storage
+                .update_bookmark_note("absent", "x")
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+
+        let not_image = write_source(&root.0, "cover.png", b"plain text");
+        assert_eq!(
+            storage
+                .set_book_cover(&id, &not_image, "cover.png")
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        let png = write_source(&root.0, "cover.png", b"\x89PNG\r\n\x1a\nrest");
+        let first = storage.set_book_cover(&id, &png, "cover.png").unwrap();
+        let second = storage.set_book_cover(&id, &png, "cover.png").unwrap();
+        assert_eq!(storage.read_reader_font(&second.id).unwrap().len(), 12);
+        assert_eq!(
+            storage.read_reader_font(&first.id).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        let shelf = storage.list_shelf_books(false).unwrap();
+        assert_eq!(shelf[0].cover_asset_id.as_deref(), Some(second.id.as_str()));
+        storage.clear_book_cover(&id).unwrap();
+        assert_eq!(
+            storage.list_shelf_books(false).unwrap()[0].cover_asset_id,
+            None
+        );
+        assert!(storage.list_reader_fonts().unwrap().is_empty());
+
+        let intro = UpdateBookRequest {
+            book_id: id.clone(),
+            title: "time".into(),
+            author: None,
+            intro: Some("  自己写的简介  ".into()),
+        };
+        storage.update_book(&intro).unwrap();
+        assert_eq!(
+            storage.book_info(&id).unwrap().intro.as_deref(),
+            Some("自己写的简介")
+        );
     }
 
     #[test]
@@ -7148,6 +7553,7 @@ mod tests {
         let mut storage = Storage::open(&root.0.join("data")).unwrap();
         let imported = import(&mut storage, &source, "membership");
         let group = storage.create_group("自定义").unwrap();
+        storage.create_group("已有分组").unwrap();
         assert_eq!(
             storage.create_group("  ").unwrap_err().code,
             ErrorCode::InvalidArgument
@@ -7158,7 +7564,7 @@ mod tests {
         );
         assert_eq!(
             storage
-                .rename_group(&group.id, "玄幻修真")
+                .rename_group(&group.id, "已有分组")
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -7172,25 +7578,27 @@ mod tests {
             ErrorCode::NotFound
         );
         storage
-            .set_book_groups(&imported.book.id, std::slice::from_ref(&group.id))
+            .move_book(&imported.book.id, &ShelfPlacement::Group(group.id.clone()))
             .unwrap();
         let before = storage.list_groups().unwrap();
         assert_eq!(
             storage
-                .set_book_groups(&imported.book.id, &[group.id.clone(), "absent".to_string()])
+                .move_book(&imported.book.id, &ShelfPlacement::Group("absent".into()))
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
         );
         assert_eq!(
             storage
-                .set_book_groups("absent", std::slice::from_ref(&group.id))
+                .move_book("absent", &ShelfPlacement::Group(group.id.clone()))
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
         );
         assert_eq!(storage.list_groups().unwrap(), before);
-        storage.set_book_groups(&imported.book.id, &[]).unwrap();
+        storage
+            .move_book(&imported.book.id, &ShelfPlacement::Automatic)
+            .unwrap();
         assert!(storage
             .list_groups()
             .unwrap()
@@ -7215,11 +7623,12 @@ mod tests {
                 book_id: first.book.id.clone(),
                 locator: loc.clone(),
                 excerpt: "chapter one".into(),
+                note: None,
             })
             .unwrap();
-        let group = storage.list_groups().unwrap().remove(0);
+        let group = storage.create_group("Saved").unwrap();
         storage
-            .set_book_groups(&first.book.id, std::slice::from_ref(&group.id))
+            .move_book(&first.book.id, &ShelfPlacement::Group(group.id.clone()))
             .unwrap();
         let prefs = ShelfPreferences {
             layout: crate::models::ShelfLayout::Grid,
@@ -7232,6 +7641,7 @@ mod tests {
                 book_id: first.book.id.clone(),
                 title: "  Revised title  ".into(),
                 author: Some(" Writer ".into()),
+                intro: None,
             })
             .unwrap();
         assert_eq!(edited.content_version, first.book.content_version);
@@ -7241,7 +7651,8 @@ mod tests {
             .update_book(&UpdateBookRequest {
                 book_id: first.book.id.clone(),
                 title: " ".into(),
-                author: None
+                author: None,
+                intro: None,
             })
             .is_err());
         storage.remove_book(&first.book.id).unwrap();
@@ -7327,6 +7738,7 @@ mod tests {
                 book_id: first.book.id.clone(),
                 locator: loc,
                 excerpt: "AB".into(),
+                note: None,
             })
             .unwrap();
         storage
@@ -7418,7 +7830,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -7429,12 +7841,8 @@ mod tests {
             Some(locator)
         );
         assert_eq!(reopened.get_settings().unwrap(), saved_settings);
-        assert_eq!(reopened.list_groups().unwrap().len(), 7);
-        assert!(reopened
-            .list_groups()
-            .unwrap()
-            .iter()
-            .all(|group| group.book_ids.is_empty()));
+        // Schema 6 seeds genre groups; schema 11 removes every old group.
+        assert!(reopened.list_groups().unwrap().is_empty());
     }
 
     #[test]
@@ -7452,11 +7860,12 @@ mod tests {
                 book_id: imported.book.id.clone(),
                 locator: position.clone(),
                 excerpt: "Chapter 2".to_string(),
+                note: None,
             })
             .unwrap();
         let group = storage.create_group("Saved group").unwrap();
         storage
-            .set_book_groups(&imported.book.id, std::slice::from_ref(&group.id))
+            .move_book(&imported.book.id, &ShelfPlacement::Group(group.id.clone()))
             .unwrap();
         let groups = storage.list_groups().unwrap();
         let preferences = ReaderPreferences {
@@ -7489,7 +7898,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(
@@ -7500,7 +7909,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            10
+            CURRENT_SCHEMA_VERSION
         );
         assert_eq!(reopened.get_book(&imported.book.id).unwrap(), imported.book);
         assert_eq!(
@@ -7511,7 +7920,13 @@ mod tests {
             reopened.list_bookmarks(&imported.book.id).unwrap(),
             [bookmark]
         );
-        assert_eq!(reopened.list_groups().unwrap(), groups);
+        // Schema 11 replaces groups with reading states, as the reader chose.
+        assert!(!groups.is_empty());
+        assert!(reopened.list_groups().unwrap().is_empty());
+        assert_eq!(
+            reopened.list_shelf_books(false).unwrap()[0].shelf_state,
+            None
+        );
         assert_eq!(reopened.get_settings().unwrap(), preferences);
         assert_eq!(reopened.list_toc(&imported.book.id).unwrap().entries, toc);
         let mut updated = preferences.clone();

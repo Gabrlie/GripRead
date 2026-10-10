@@ -1,6 +1,6 @@
 # Legado-style local reading
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
@@ -34,6 +34,8 @@ M4 and M5: Rust tests for font import, signature validation, orphan safety, dele
 
 Device results for `1145942` (user-provided): volumes and finger-following turns work well. Defects: authors kept 作者_ separators and bracketed edition notes; book information failed because it queried a missing column; repeated empty chapters became volumes; turns moved only the page area; the 界面 sheet floated instead of spanning the screen; preset swatches were clipped with a scrollbar; margins needed Legado's header/footer options in a centred dialog; the rule dialog was too tall; buttons kept hover or focus highlights after Back. Repairs: widened author parsing with a schema 10 clean-up, the size read from the retained source, volume titles required for volumes with a TOC cache algorithm version, full-screen turn copies including the header and footer, a bottom sheet, a centred margin dialog with header/footer margins and divider lines, a shorter rule dialog, hover only where a pointer can hover, and no focus ring after Back. A preview check also found that the controller's pre-navigation cancel dropped the pending drag; drags now survive it.
 
+Final device round (user-provided, `99607da`): every reported defect was confirmed fixed after the margin dialog was made smaller, unblurred, and shown without the reading menu; the work was merged to `main`.
+
 ## Handoff
 
-In progress. M0–M5 are implemented on the host. Next: build the Android APK and collect device results.
+Completed and merged. The follow-up stage is the [local reading stage 3 task](2026-10-10-local-reading-stage3.md).

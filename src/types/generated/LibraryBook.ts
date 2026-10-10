@@ -2,6 +2,12 @@
 import type { Book } from "./Book";
 import type { BookAsset } from "./BookAsset";
 import type { ReaderLocator } from "./ReaderLocator";
+import type { ShelfState } from "./ShelfState";
 import type { TxtEncodingInfo } from "./TxtEncodingInfo";
 
-export type LibraryBook = { book: Book, asset: BookAsset, locator: ReaderLocator | null, totalLength: number | null, txtEncoding: TxtEncodingInfo | null, lastReadAt: number | null, removedAt: number | null, };
+export type LibraryBook = { book: Book, asset: BookAsset, locator: ReaderLocator | null, totalLength: number | null, txtEncoding: TxtEncodingInfo | null, lastReadAt: number | null, removedAt: number | null, 
+/**
+ * A reading state the reader chose by moving the book; `None` lets the
+ * shelf derive it from progress.
+ */
+shelfState: ShelfState | null, coverAssetId: string | null, };

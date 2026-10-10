@@ -55,6 +55,17 @@ const IPC_TYPES: &[&str] = &[
     "ReaderAsset",
     "ReaderAssetRequest",
     "PathRequest",
+    "ShelfState",
+    "ShelfPlacement",
+    "MoveBookRequest",
+    "ReadingTimeRequest",
+    "BookReadingTime",
+    "ReadingStats",
+    "DayReadingTime",
+    "ReadingStatsRequest",
+    "BookCoverRequest",
+    "PickedFile",
+    "BookmarkNoteRequest",
     "Bookmark",
     "BookmarkRequest",
     "BookmarkIdRequest",
@@ -69,7 +80,6 @@ const IPC_TYPES: &[&str] = &[
     "CreateGroupRequest",
     "RenameGroupRequest",
     "GroupRequest",
-    "SetBookGroupsRequest",
     "ThemeMode",
     "PaperTone",
     "ReaderFont",
@@ -153,6 +163,17 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ReaderAsset>(&config)?;
     export_all::<ReaderAssetRequest>(&config)?;
     export_all::<PathRequest>(&config)?;
+    export_all::<ShelfState>(&config)?;
+    export_all::<ShelfPlacement>(&config)?;
+    export_all::<MoveBookRequest>(&config)?;
+    export_all::<ReadingTimeRequest>(&config)?;
+    export_all::<BookReadingTime>(&config)?;
+    export_all::<ReadingStats>(&config)?;
+    export_all::<DayReadingTime>(&config)?;
+    export_all::<ReadingStatsRequest>(&config)?;
+    export_all::<BookCoverRequest>(&config)?;
+    export_all::<PickedFile>(&config)?;
+    export_all::<BookmarkNoteRequest>(&config)?;
     export_all::<Bookmark>(&config)?;
     export_all::<BookmarkRequest>(&config)?;
     export_all::<BookmarkIdRequest>(&config)?;
@@ -167,7 +188,6 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<CreateGroupRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;
-    export_all::<SetBookGroupsRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;
     export_all::<PaperTone>(&config)?;
     export_all::<ReaderFont>(&config)?;

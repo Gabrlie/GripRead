@@ -235,6 +235,71 @@ fn open_document<R: Runtime>(
     ))
 }
 
+/// Lists `.txt` files in a folder and its subfolders (three levels), sorted by name.
+#[cfg(not(target_os = "android"))]
+pub fn list_txt_folder<R: Runtime>(
+    _app: &AppHandle<R>,
+    path: &str,
+) -> Result<Vec<crate::models::PickedFile>, AppError> {
+    fn walk(
+        dir: &std::path::Path,
+        depth: usize,
+        found: &mut Vec<crate::models::PickedFile>,
+    ) -> Result<(), AppError> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if kind.is_dir() && depth < 3 {
+                walk(&entry.path(), depth + 1, found)?;
+            } else if kind.is_file() && name.to_ascii_lowercase().ends_with(".txt") {
+                found.push(crate::models::PickedFile {
+                    path: entry.path().to_string_lossy().to_string(),
+                    name,
+                });
+            }
+            if found.len() >= 1000 {
+                break;
+            }
+        }
+        Ok(())
+    }
+    let root = std::path::Path::new(path);
+    if !root.is_dir() {
+        return Err(AppError::new(
+            ErrorCode::InvalidPath,
+            "the folder was not found",
+        ));
+    }
+    let mut found = Vec::new();
+    walk(root, 0, &mut found)?;
+    found.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(found)
+}
+
+/// Runs the system folder picker and lists the `.txt` documents in the tree;
+/// an empty list means the picker was closed.
+#[cfg(target_os = "android")]
+pub fn list_txt_folder<R: Runtime>(
+    app: &AppHandle<R>,
+    _path: &str,
+) -> Result<Vec<crate::models::PickedFile>, AppError> {
+    use tauri::Manager;
+    #[derive(serde::Deserialize)]
+    struct Response {
+        files: Vec<crate::models::PickedFile>,
+    }
+    let plugin = app.state::<DocumentPlugin<R>>();
+    let response: Response = plugin
+        .0
+        .run_mobile_plugin("pickFolder", serde_json::json!({}))
+        .map_err(|error| AppError::new(ErrorCode::FileNotFound, error.to_string()))?;
+    Ok(response.files)
+}
+
 #[cfg(target_os = "android")]
 struct DocumentPlugin<R: Runtime>(tauri::plugin::PluginHandle<R>);
 

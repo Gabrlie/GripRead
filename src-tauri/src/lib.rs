@@ -17,10 +17,14 @@ use commands::{
     list_removed_books, list_toc, list_txt_toc_rules, order_txt_toc_rules, read_content_window,
     reassociate_txt_source, remove_book, rename_group, resolve_reader_locator,
     resolve_reader_offset, restore_book, save_book_toc_settings, save_reader_locator,
-    save_settings, save_shelf_preferences, save_txt_toc_rule, search_book, set_book_groups,
-    set_txt_encoding, start_import, start_txt_decode, test_txt_toc_rule, update_book, AppState,
+    save_settings, save_shelf_preferences, save_txt_toc_rule, search_book, set_txt_encoding,
+    start_import, start_txt_decode, test_txt_toc_rule, update_book, AppState,
 };
-use commands::{delete_reader_font, import_reader_font, list_reader_fonts, read_reader_font};
+use commands::{
+    add_reading_time, clear_book_cover, delete_reader_font, import_reader_font, list_reader_fonts,
+    list_txt_folder, move_book, read_reader_font, reading_stats, set_book_cover,
+    update_bookmark_note,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 
@@ -104,7 +108,7 @@ pub fn run() {
             create_group,
             rename_group,
             delete_group,
-            set_book_groups,
+            move_book,
             get_txt_encoding,
             reassociate_txt_source,
             start_txt_decode,
@@ -144,7 +148,13 @@ pub fn run() {
             import_reader_font,
             list_reader_fonts,
             read_reader_font,
-            delete_reader_font
+            delete_reader_font,
+            update_bookmark_note,
+            add_reading_time,
+            reading_stats,
+            set_book_cover,
+            clear_book_cover,
+            list_txt_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

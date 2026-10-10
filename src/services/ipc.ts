@@ -15,7 +15,14 @@ import type {
   CreateGroupRequest,
   RenameGroupRequest,
   GroupRequest,
-  SetBookGroupsRequest,
+  MoveBookRequest,
+  ShelfPlacement,
+  PickedFile,
+  BookCoverRequest,
+  ReadingTimeRequest,
+  ReadingStats,
+  ReadingStatsRequest,
+  BookmarkNoteRequest,
   ReaderPreferences,
   ReadContentRequest,
   StartImportRequest,
@@ -166,9 +173,53 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("delete_group", {
         request: { id } satisfies GroupRequest,
       }),
-    setBookGroups: (bookId, groupIds) =>
-      invokeCommand<void>("set_book_groups", {
-        request: { bookId, groupIds } satisfies SetBookGroupsRequest,
+    moveBook: (bookId, placement: ShelfPlacement) =>
+      invokeCommand<void>("move_book", {
+        request: { bookId, placement } satisfies MoveBookRequest,
+      }),
+    pickTxtFiles: async () => {
+      const selected = await open({
+        multiple: true,
+        directory: false,
+        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
+      });
+      if (selected === null) return [];
+      return Array.isArray(selected) ? selected : [selected];
+    },
+    pickTxtFolder: async () => {
+      // Android lists the folder inside the system picker (DocumentPlugin.kt).
+      const android = /Android/i.test(navigator.userAgent);
+      const folder = android ? "" : await open({ multiple: false, directory: true });
+      if (folder === null || Array.isArray(folder)) return [];
+      return invokeCommand<PickedFile[]>("list_txt_folder", {
+        request: { path: folder } satisfies PathRequest,
+      });
+    },
+    pickBookCover: async (bookId) => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return false;
+      await invokeCommand<ReaderAsset>("set_book_cover", {
+        request: { bookId, path: selected } satisfies BookCoverRequest,
+      });
+      return true;
+    },
+    clearBookCover: (bookId) =>
+      invokeCommand<void>("clear_book_cover", { request: { bookId } satisfies BookRequest }),
+    readAsset: (id) =>
+      invokeCommand<ArrayBuffer>("read_reader_font", {
+        request: { id } satisfies ReaderAssetRequest,
+      }),
+    addReadingTime: (bookId, day, seconds) =>
+      invokeCommand<void>("add_reading_time", {
+        request: { bookId, day, seconds } satisfies ReadingTimeRequest,
+      }),
+    readingStats: (today) =>
+      invokeCommand<ReadingStats>("reading_stats", {
+        request: { today } satisfies ReadingStatsRequest,
       }),
     onImportProgress: (listener) =>
       listen<ImportStatus>("import-progress", (event) => listener(event.payload)),
@@ -249,6 +300,10 @@ export const tauriServices: AppServices = {
     listBookmarks: (bookId) => invokeCommand<Bookmark[]>("list_bookmarks", { request: { bookId } }),
     addBookmark: (request) => invokeCommand<Bookmark>("add_bookmark", { request }),
     deleteBookmark: (request) => invokeCommand<void>("delete_bookmark", { request }),
+    updateBookmarkNote: (bookmarkId, note) =>
+      invokeCommand<void>("update_bookmark_note", {
+        request: { bookmarkId, note } satisfies BookmarkNoteRequest,
+      }),
     search: (request) => invokeCommand<SearchResponse>("search_book", { request }),
     cancelSearch: (operationId) =>
       invokeCommand<CancelResult>("cancel_search", {

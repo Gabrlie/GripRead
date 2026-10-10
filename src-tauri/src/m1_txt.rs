@@ -105,6 +105,7 @@ pub fn make_bookmark(
         content_version: content_version.to_string(),
         locator,
         excerpt,
+        note: String::new(),
         created_at,
     }
 }

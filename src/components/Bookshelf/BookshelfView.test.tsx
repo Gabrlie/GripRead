@@ -42,6 +42,8 @@ const entry: LibraryBook = {
   txtEncoding: null,
   lastReadAt: null,
   removedAt: null,
+  shelfState: null,
+  coverAssetId: null,
 };
 function runtime(books: LibraryBook[] = []) {
   return new AppRuntime({
@@ -50,7 +52,14 @@ function runtime(books: LibraryBook[] = []) {
       createGroup: vi.fn(),
       renameGroup: vi.fn(),
       deleteGroup: vi.fn(),
-      setBookGroups: vi.fn(),
+      moveBook: vi.fn(async () => undefined),
+      pickTxtFiles: vi.fn(async () => []),
+      pickTxtFolder: vi.fn(async () => []),
+      pickBookCover: vi.fn(async () => false),
+      clearBookCover: vi.fn(async () => undefined),
+      readAsset: vi.fn(async () => new ArrayBuffer(0)),
+      addReadingTime: vi.fn(async () => undefined),
+      readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
       listRemovedBooks: vi.fn(async () => []),
       updateBook: vi.fn(),
       removeBook: vi.fn(),
@@ -65,7 +74,13 @@ function runtime(books: LibraryBook[] = []) {
       getTxtDecodeStatus: vi.fn(),
       cancelTxtDecode: vi.fn(async () => ({ requested: true })),
       onTxtDecodeProgress: vi.fn(async () => () => {}),
-      getBookInfo: vi.fn(),
+      getBookInfo: vi.fn(async (bookId: string) => ({
+        bookId,
+        intro: null,
+        sourceByteLength: 10,
+        chapterCount: null,
+        readingSeconds: 0,
+      })),
       getTxtEncoding: vi.fn(),
       pickAndReassociateTxt: vi.fn(async () => null),
       reassociateTxtSource: vi.fn(),
@@ -81,6 +96,7 @@ function runtime(books: LibraryBook[] = []) {
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),
+      updateBookmarkNote: vi.fn(async () => undefined),
       search: vi.fn(),
       cancelSearch: vi.fn(),
     },
@@ -115,14 +131,15 @@ describe("real library presentation", () => {
     expect(screen.getByText("从一本本地小说开始")).toBeTruthy();
     expect(screen.queryByText("宿命之环")).toBeNull();
     await userEvent.click(screen.getByTestId("import-button"));
-    expect(app.services.library.pickAndImportTxt).toHaveBeenCalledTimes(1);
+    expect(app.services.library.pickTxtFiles).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByLabelText("关闭导入提示")).toBeNull();
   });
   it("imports silently and opens optional progress from the import entry", async () => {
     vi.useFakeTimers();
     const app = runtime();
-    vi.mocked(app.services.library.pickAndImportTxt).mockResolvedValue({ operationId: "active" });
+    vi.mocked(app.services.library.pickTxtFiles).mockResolvedValue(["/books/a.txt"]);
+    vi.mocked(app.services.library.startImport).mockResolvedValue({ operationId: "active" });
     vi.mocked(app.services.library.getImportStatus).mockResolvedValue({
       operationId: "active",
       phase: "reading",
@@ -138,7 +155,7 @@ describe("real library presentation", () => {
     expect(screen.getByRole("button", { name: "查看导入进度" }).textContent).toContain("50%");
     await act(async () => fireEvent.click(screen.getByTestId("import-button")));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(app.services.library.pickAndImportTxt).toHaveBeenCalledTimes(1);
+    expect(app.services.library.startImport).toHaveBeenCalledTimes(1);
     await act(async () => fireEvent.click(screen.getAllByRole("button", { name: "关闭" })[0]));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(app.library.getSnapshot().importing).toBe(true);
@@ -155,9 +172,12 @@ describe("real library presentation", () => {
       result: null,
       error: { code: "unsupported_encoding", message: "无法识别文本编码" },
     };
-    vi.mocked(app.services.library.pickAndImportTxt)
-      .mockResolvedValueOnce({ operationId: "failed" })
-      .mockResolvedValueOnce({ operationId: "retried" });
+    vi.mocked(app.services.library.pickTxtFiles).mockResolvedValue(["/books/a.txt"]);
+    vi.mocked(app.services.library.startImport).mockResolvedValueOnce({ operationId: "failed" });
+    // Retrying with an encoding picks the file again.
+    vi.mocked(app.services.library.pickAndImportTxt).mockResolvedValueOnce({
+      operationId: "retried",
+    });
     vi.mocked(app.services.library.getImportStatus)
       .mockResolvedValueOnce(failed)
       .mockResolvedValueOnce({
@@ -239,6 +259,7 @@ describe("real library presentation", () => {
       bookId: entry.book.id,
       intro: "前言里的一段简介。",
       sourceByteLength: 4096,
+      readingSeconds: 0,
       chapterCount: 12,
     });
     await app.library.refresh();
@@ -267,7 +288,12 @@ describe("real library presentation", () => {
     await app.library.refresh();
     view(app);
     await waitFor(() => expect(app.shelf.getSnapshot().loading).toBe(false));
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim())).toEqual(["全部"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim())).toEqual([
+      "全部",
+      "在读",
+      "未读",
+      "读完",
+    ]);
     expect(document.querySelector('img[src^="https:"]')).toBeNull();
     expect(screen.queryByText("今日 42 分钟")).toBeNull();
   });
@@ -330,20 +356,28 @@ describe("real library presentation", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "更多选项" }));
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "书籍管理" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("menuitem", { name: "书籍管理" }));
+    // Books are managed from their detail page.
+    fireEvent.contextMenu(screen.getByTestId("library-book-real-book"));
+    await userEvent.click(await screen.findByRole("button", { name: "编辑书籍信息" }));
     const title = screen.getByRole("textbox", { name: "书名" });
     await userEvent.clear(title);
     await userEvent.type(title, "已编辑");
-    await userEvent.click(screen.getByRole("button", { name: "保存信息" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(app.services.library.updateBook).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: entry.book.id, title: "已编辑" }),
       ),
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "移出书架" }));
+    await userEvent.click(screen.getByRole("radio", { name: "读完" }));
+    await waitFor(() =>
+      expect(app.services.library.moveBook).toHaveBeenCalledWith(entry.book.id, {
+        kind: "state",
+        value: "finished",
+      }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /移出书架/ }));
     await waitFor(() =>
       expect(app.services.library.removeBook).toHaveBeenCalledWith(entry.book.id),
     );

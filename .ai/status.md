@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [Legado-style local reading task](plans/2026-10-10-legado-local-reading.md) is in progress: local reading is rebuilt after legado-with-MD3 tag `3.26.7` and delivered as one Android build.
+The [local reading stage 3 task](plans/2026-10-10-local-reading-stage3.md) is in progress: device fixes, the reading-state bookshelf, reading polish, replace rules, 简繁 conversion, and read-aloud, delivered as one Android build.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-All milestones are implemented on the host. Build the Android debug APK and collect device results; the macOS native suite was updated but needs a run on macOS.
+N1 and N2 are implemented on the host; continue with N3. The macOS native suite needs a run on macOS.

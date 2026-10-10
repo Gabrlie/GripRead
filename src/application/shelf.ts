@@ -1,4 +1,10 @@
-import type { LibraryBook, LibraryGroup, TocEntry } from "../types/generated";
+import type {
+  LibraryBook,
+  LibraryGroup,
+  ShelfPlacement,
+  ShelfState,
+  TocEntry,
+} from "../types/generated";
 import type { LibraryService, ReaderService } from "../services/contracts";
 
 function errorCode(error: unknown): string | undefined {
@@ -41,8 +47,50 @@ export function chapterLabels(book: LibraryBook, entries: TocEntry[]): ShelfChap
     latest: currentEntries.at(-1)?.title ?? "全文",
   };
 }
+/** The shelf's built-in groups: every book, then the three reading states. */
+export const READING_GROUPS: { id: "all" | ShelfState; name: string }[] = [
+  { id: "all", name: "全部" },
+  { id: "reading", name: "在读" },
+  { id: "unread", name: "未读" },
+  { id: "finished", name: "读完" },
+];
+
+/**
+ * The reading state derived from progress: unread without a position,
+ * finished once the position reaches the last chapter (or 99% of a book
+ * without chapters), reading otherwise.
+ */
+export function automaticState(book: LibraryBook, entries: TocEntry[] | null): ShelfState {
+  const saved = book.locator;
+  if (!saved || saved.contentVersion !== book.book.contentVersion)
+    return saved ? "reading" : "unread";
+  const current = (entries ?? []).filter(
+    (entry) => entry.locator.contentVersion === book.book.contentVersion,
+  );
+  const last = current.at(-1);
+  if (current.length > 1 && last && saved.offset >= last.locator.offset) return "finished";
+  const total = book.totalLength ?? 0;
+  if (total > 0 && saved.offset / total >= 0.99) return "finished";
+  return "reading";
+}
+
+/**
+ * The one shelf group a book is shown in besides 全部: its user group, a
+ * reading state the reader chose by moving it, or its automatic state.
+ */
+export function shelfGroupOf(
+  book: LibraryBook,
+  groups: LibraryGroup[],
+  automatic: ShelfState,
+): string {
+  const group = groups.find((item) => item.bookIds.includes(book.book.id));
+  return group?.id ?? book.shelfState ?? automatic;
+}
+
 interface ShelfSnapshot {
   groups: LibraryGroup[];
+  /** Reading states derived from progress, by book id. */
+  automatic: Record<string, ShelfState>;
   chapters: Record<string, ShelfChapterLabels>;
   chapterErrors: Record<string, string>;
   loading: boolean;
@@ -53,6 +101,7 @@ interface ShelfSnapshot {
 export class ShelfStore {
   private snapshot: ShelfSnapshot = {
     groups: [],
+    automatic: {},
     chapters: {},
     chapterErrors: {},
     loading: true,
@@ -70,6 +119,8 @@ export class ShelfStore {
   constructor(
     private library: LibraryService,
     private reader: ReaderService,
+    /** Reloads the book list after a move changes a book's reading state. */
+    private booksChanged: () => Promise<void> = async () => undefined,
   ) {}
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -206,6 +257,7 @@ export class ShelfStore {
     if (revision !== this.chapterRevision) return;
     const chapters: ShelfSnapshot["chapters"] = {};
     const chapterErrors: ShelfSnapshot["chapterErrors"] = {};
+    const automatic: ShelfSnapshot["automatic"] = {};
     const cache: typeof this.chapterCache = new Map();
     for (const { book, entries, error } of results) {
       const id = book.book.id;
@@ -216,6 +268,7 @@ export class ShelfStore {
           ? previous
           : undefined;
       if (known) cache.set(id, known);
+      automatic[id] = automaticState(book, known?.entries ?? null);
       if (error !== null) chapterErrors[id] = error;
       chapters[id] = known
         ? chapterLabels(book, known.entries)
@@ -229,7 +282,7 @@ export class ShelfStore {
           };
     }
     this.chapterCache = cache;
-    this.update({ chapters, chapterErrors });
+    this.update({ chapters, chapterErrors, automatic });
   }
   create = (name: string) => {
     const trimmed = name.trim();
@@ -246,6 +299,10 @@ export class ShelfStore {
   rename = (id: string, name: string) =>
     this.change(`group:${id}:rename`, () => this.library.renameGroup(id, name));
   remove = (id: string) => this.change(`group:${id}:remove`, () => this.library.deleteGroup(id));
-  setBookGroups = (bookId: string, groupIds: string[]) =>
-    this.change(`book:${bookId}:groups`, () => this.library.setBookGroups(bookId, groupIds));
+  /** A manual move holds until the book is moved again; automatic restores derivation. */
+  move = (bookId: string, placement: ShelfPlacement) =>
+    this.change(`book:${bookId}:groups`, async () => {
+      await this.library.moveBook(bookId, placement);
+      await this.booksChanged();
+    });
 }

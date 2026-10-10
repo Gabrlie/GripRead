@@ -50,9 +50,9 @@ describe("native service boundary", () => {
       request: { id: "group", name: "已重命名" },
     });
     invokeMock.mockResolvedValueOnce(undefined);
-    await tauriServices.library.setBookGroups("book", ["group"]);
-    expect(invokeMock).toHaveBeenLastCalledWith("set_book_groups", {
-      request: { bookId: "book", groupIds: ["group"] },
+    await tauriServices.library.moveBook("book", { kind: "group", value: "group" });
+    expect(invokeMock).toHaveBeenLastCalledWith("move_book", {
+      request: { bookId: "book", placement: { kind: "group", value: "group" } },
     });
     invokeMock.mockResolvedValueOnce(undefined);
     await tauriServices.library.deleteGroup("group");
@@ -60,7 +60,9 @@ describe("native service boundary", () => {
   });
   it("reports rejected group membership changes instead of pretending they persisted", async () => {
     invokeMock.mockRejectedValueOnce({ code: "not_found", message: "library group was not found" });
-    await expect(tauriServices.library.setBookGroups("book", ["absent"])).rejects.toMatchObject({
+    await expect(
+      tauriServices.library.moveBook("book", { kind: "group", value: "absent" }),
+    ).rejects.toMatchObject({
       code: "not_found",
     });
   });

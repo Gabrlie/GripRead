@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import type { ShelfPreferences } from "../types/generated";
 import type { AppServices } from "../services/contracts";
 import { LibraryStore } from "./library";
@@ -6,6 +6,7 @@ import { ShelfStore } from "./shelf";
 import { SettingsStore } from "./settings";
 import { ReaderPositions } from "../reader/positions";
 import { FontLoader } from "./fonts";
+import { ImageLoader } from "./images";
 /** Reading adjustments preview immediately and persist after 800 ms of inactivity. */
 export const READER_SETTINGS_SAVE_DELAY_MS = 800;
 export class AppRuntime {
@@ -15,6 +16,7 @@ export class AppRuntime {
   readonly positions: ReaderPositions;
   readonly shelfPreferences: SettingsStore<ShelfPreferences>;
   readonly fonts: FontLoader;
+  readonly images: ImageLoader;
   readerFlush: (() => Promise<void>) | null = null;
   private readerWrites = new Map<() => Promise<void>, Promise<void>>();
   private failedReaderWrites = new Set<() => Promise<void>>();
@@ -55,10 +57,11 @@ export class AppRuntime {
   };
   constructor(readonly services: AppServices) {
     this.library = new LibraryStore(services.library);
-    this.shelf = new ShelfStore(services.library, services.reader);
+    this.shelf = new ShelfStore(services.library, services.reader, () => this.library.refresh());
     this.settings = new SettingsStore(services.settings, READER_SETTINGS_SAVE_DELAY_MS);
     this.positions = new ReaderPositions(services.reader);
     this.fonts = new FontLoader(services.settings);
+    this.images = new ImageLoader(services.library);
     this.shelfPreferences = new SettingsStore({
       getSettings: services.settings.getShelfPreferences,
       saveSettings: services.settings.saveShelfPreferences,
@@ -113,4 +116,22 @@ export function useShelf() {
 export function useShelfPreferences() {
   const store = useRuntime().shelfPreferences;
   return { state: useSyncExternalStore(store.subscribe, store.getSnapshot), store };
+}
+
+/** The object URL of a managed image, or `undefined` while it loads or fails. */
+export function useImage(id: string | null | undefined): string | undefined {
+  const runtime = useRuntime();
+  const [loaded, setLoaded] = useState<{ id: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    runtime.images.load(id).then(
+      (url) => !cancelled && setLoaded({ id, url }),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [id, runtime.images]);
+  return id && loaded?.id === id ? loaded.url : undefined;
 }

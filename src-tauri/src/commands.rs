@@ -15,8 +15,8 @@ use crate::models::{
     LibraryGroup, OrderTxtTocRulesRequest, ReadContentRequest, ReaderLocator, ReaderPreferences,
     RenameGroupRequest, ResolveLocatorRequest, ResolveOffsetRequest, SaveBookTocSettingsRequest,
     SaveLocatorRequest, SaveSettingsRequest, SaveTxtTocRuleRequest, SearchRequest, SearchResponse,
-    SetBookGroupsRequest, StartImportRequest, TestTxtTocRuleRequest, TocListing, TxtDecodeStatus,
-    TxtDecodeTask, TxtEncoding, TxtEncodingInfo, TxtEncodingRequest, TxtSourceRequest, TxtTocRule,
+    StartImportRequest, TestTxtTocRuleRequest, TocListing, TxtDecodeStatus, TxtDecodeTask,
+    TxtEncoding, TxtEncodingInfo, TxtEncodingRequest, TxtSourceRequest, TxtTocRule,
     TxtTocRuleIdRequest,
 };
 use crate::storage::{
@@ -473,27 +473,6 @@ pub async fn delete_group(
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
             .delete_group(&request.id)
-    })
-    .await
-    .map_err(|error| {
-        AppError::new(
-            ErrorCode::Io,
-            format!("library group worker stopped: {error}"),
-        )
-    })?
-}
-
-#[tauri::command]
-pub async fn set_book_groups(
-    request: SetBookGroupsRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
-        storage
-            .lock()
-            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-            .set_book_groups(&request.book_id, &request.group_ids)
     })
     .await
     .map_err(|error| {
@@ -1599,4 +1578,86 @@ mod tests {
         );
         assert!(builds.lock().unwrap().is_empty());
     }
+}
+
+#[tauri::command]
+pub async fn move_book(
+    request: crate::models::MoveBookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.move_book(&request.book_id, &request.placement)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_bookmark_note(
+    request: crate::models::BookmarkNoteRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.update_bookmark_note(&request.bookmark_id, &request.note)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn add_reading_time(
+    request: crate::models::ReadingTimeRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.add_reading_time(&request.book_id, &request.day, request.seconds)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn reading_stats(
+    request: crate::models::ReadingStatsRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::ReadingStats, AppError> {
+    with_storage(&state, move |storage| storage.reading_stats(&request.today)).await
+}
+
+#[tauri::command]
+pub async fn set_book_cover(
+    request: crate::models::BookCoverRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::ReaderAsset, AppError> {
+    let root = state.data_root.clone();
+    let operation_id = Uuid::new_v4().to_string();
+    with_storage(&state, move |storage| {
+        let (path, name, _staged) =
+            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
+        storage.set_book_cover(&request.book_id, &path, &name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_book_cover(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.clear_book_cover(&request.book_id)
+    })
+    .await
+}
+
+/// TXT files in a folder for batch import: on Android the system folder
+/// picker runs here and `path` is ignored; elsewhere `path` is the folder.
+#[tauri::command]
+pub async fn list_txt_folder(
+    request: crate::models::PathRequest,
+    app: AppHandle,
+) -> Result<Vec<crate::models::PickedFile>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::documents::list_txt_folder(&app, &request.path)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("folder worker stopped: {error}")))?
 }

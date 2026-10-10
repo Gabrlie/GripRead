@@ -6,9 +6,9 @@ import {
   type PointerEvent,
 } from "react";
 import { useApp } from "../../context/AppContext";
-import { useLibrary, useShelf, useShelfPreferences } from "../../application/runtime";
+import { useLibrary, useRuntime, useShelf, useShelfPreferences } from "../../application/runtime";
 import type { LibraryBook } from "../../types/generated";
-import type { ShelfChapterLabels } from "../../application/shelf";
+import { READING_GROUPS, shelfGroupOf, type ShelfChapterLabels } from "../../application/shelf";
 import { Header } from "../Layout/Header";
 import { Icon } from "../ui/Icon";
 import { Card, CardContent } from "../ui/card";
@@ -16,15 +16,17 @@ import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { LibraryManager } from "./LibraryManager";
-import { BookInfoSheet } from "./BookInfoSheet";
+import { BookDetailPage } from "./BookDetailPage";
+import { ReadingRecordsPage } from "./ReadingRecordsPage";
+import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
+import { BookCover } from "./BookCover";
 
 type ShelfBook = {
   entry: LibraryBook;
   title: string;
   author: string;
-  coverUrl?: string;
   lastReadChapter: string;
   latestChapter: string;
   missing: boolean;
@@ -34,24 +36,41 @@ export function BookshelfView() {
   const { state, store } = useLibrary();
   const { state: groupState, store: groupStore } = useShelf();
   const preferences = useShelfPreferences();
-  const [manager, setManager] = useState<"manage" | "removed" | "sort" | null>(null);
+  const [manager, setManager] = useState<"removed" | "sort" | null>(null);
   const [infoBook, setInfoBook] = useState<LibraryBook | null>(null);
+  const [records, setRecords] = useState(false);
+  const runtime = useRuntime();
+  const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    runtime.services.library.readingStats(localDay()).then(
+      (stats) => !cancelled && setTodaySeconds(stats.todaySeconds),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime.services.library, state.books]);
   const [isSearching, setIsSearching] = useState(Boolean(shelf.query));
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const tabsListRef = useRef<HTMLDivElement>(null);
   const groups = [
-    { id: "all", label: "全部" },
+    ...READING_GROUPS.map((group) => ({ id: group.id as string, label: group.name })),
     ...groupState.groups.map((group) => ({ id: group.id, label: group.name })),
   ];
-  const selectedGroup = groupState.groups.find((group) => group.id === shelf.groupId);
-  const selectedGroupId = selectedGroup?.id ?? shelf.groupId ?? "all";
-  const selectedBooks = selectedGroup ? new Set(selectedGroup.bookIds) : null;
+  const selectedGroup = groups.find((group) => group.id === shelf.groupId);
+  const selectedGroupId = selectedGroup?.id ?? "all";
   const layoutMode = shelf.layout;
   const searchQuery = shelf.query;
   const filteredBooks: ShelfBook[] = orderBooks(state.books, shelf.sort)
     .filter(
       (entry) =>
-        (!selectedBooks || selectedBooks.has(entry.book.id)) &&
+        (selectedGroupId === "all" ||
+          shelfGroupOf(
+            entry,
+            groupState.groups,
+            groupState.automatic[entry.book.id] ?? (entry.locator ? "reading" : "unread"),
+          ) === selectedGroupId) &&
         `${entry.book.title} ${entry.book.author ?? ""}`
           .toLocaleLowerCase()
           .includes(searchQuery.trim().toLocaleLowerCase()),
@@ -79,7 +98,7 @@ export function BookshelfView() {
       store.requestImportDetails();
       return;
     }
-    void store.importTxt();
+    void store.importFiles();
   };
   const handleUpdateToc = () => void store.refresh();
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });
@@ -206,17 +225,29 @@ export function BookshelfView() {
         <Header
           title="书架"
           subtitle="BOOKSHELF"
-          readingTime="— 分钟"
+          readingTime={todaySeconds === null ? undefined : formatDuration(todaySeconds)}
           standalone={false}
           onSearchClick={() => setIsSearching((prev) => !prev)}
-          onUpdateToc={handleUpdateToc}
-          onAddLocal={handleAddLocal}
-          onToggleLayout={handleToggleLayout}
-          layoutMode={layoutMode}
-          onGroupManage={() => setIsGroupModalOpen(true)}
-          onSort={() => setManager("sort")}
-          onBookManage={() => setManager("manage")}
-          onRemovedBooks={() => setManager("removed")}
+          menuItems={[
+            { icon: "add", label: "添加本地", onSelect: handleAddLocal },
+            {
+              icon: "folder_open",
+              label: "导入文件夹",
+              onSelect: () =>
+                state.importing ? store.requestImportDetails() : void store.importFolder(),
+            },
+            { icon: "sync", label: "刷新书架", onSelect: handleUpdateToc },
+            {
+              icon: layoutMode === "grid" ? "view_list" : "grid_view",
+              label: "书架布局",
+              detail: layoutMode === "grid" ? "网格" : "列表",
+              onSelect: handleToggleLayout,
+            },
+            { icon: "swap_vert", label: "书架排序", onSelect: () => setManager("sort") },
+            { icon: "label", label: "分组管理", onSelect: () => setIsGroupModalOpen(true) },
+            { icon: "schedule", label: "阅读记录", onSelect: () => setRecords(true) },
+            { icon: "delete", label: "已移出书籍", onSelect: () => setManager("removed") },
+          ]}
         />
 
         {/* Row 2: Category Tabs Bar (流畅左右滑动，支持鼠标滚轮/触摸横向滚动，极简下划线滑块) */}
@@ -419,13 +450,22 @@ export function BookshelfView() {
 
       <LibraryManager mode={manager} onClose={() => setManager(null)} />
       {infoBook && (
-        <BookInfoSheet
+        <BookDetailPage
           book={state.books.find((entry) => entry.book.id === infoBook.book.id) ?? infoBook}
-          onOpen={() => {
+          onOpen={(page) => {
             setInfoBook(null);
-            openReader(infoBook);
+            openReader(infoBook, page);
           }}
           onClose={() => setInfoBook(null)}
+        />
+      )}
+      {records && (
+        <ReadingRecordsPage
+          onClose={() => setRecords(false)}
+          onOpenBook={(book) => {
+            setRecords(false);
+            setInfoBook(book);
+          }}
         />
       )}
       <GroupManager open={isGroupModalOpen} onOpenChange={setIsGroupModalOpen} />
@@ -499,7 +539,7 @@ function BookCardList({
       <CardContent className="p-0 flex gap-3.5 items-center">
         {/* Book Cover: Fixed 4:3 (portrait) aspect ratio, no hover scale, no corner badge */}
         <div className="relative w-20 aspect-[3/4] shrink-0 rounded-lg overflow-hidden bg-surface-container-high shadow-xs">
-          <BookCover title={book.title} coverUrl={book.coverUrl} />
+          <BookCover title={book.title} assetId={book.entry.coverAssetId} />
         </div>
 
         {/* Right Content: Strictly 4 lines with identical, uniform spacing */}
@@ -557,90 +597,12 @@ function BookCardGrid({
       className="flex flex-col cursor-pointer transition-colors text-left"
     >
       <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-surface-container-high shadow-xs mb-1.5">
-        <BookCover title={book.title} coverUrl={book.coverUrl} />
+        <BookCover title={book.title} assetId={book.entry.coverAssetId} />
       </div>
       <h3 className="font-title-editorial text-xs font-semibold text-on-surface truncate">
         {book.title}
       </h3>
       <p className="text-[11px] text-secondary truncate mt-0.5">{book.author}</p>
-    </div>
-  );
-}
-
-const LOCAL_COVER_PALETTES = [
-  {
-    bg: "bg-gradient-to-br from-[#8b3a2b] via-[#6d2517] to-[#451209]",
-    badge: "text-[#fcd8d0]",
-    text: "text-[#ffede9]",
-  }, // 朱砂熟赭
-  {
-    bg: "bg-gradient-to-br from-[#1e4d3a] via-[#143829] to-[#0a2016]",
-    badge: "text-[#c8eedc]",
-    text: "text-[#e8f8f0]",
-  }, // 竹青碧玉
-  {
-    bg: "bg-gradient-to-br from-[#244263] via-[#182f48] to-[#0c1a29]",
-    badge: "text-[#cfe2f8]",
-    text: "text-[#eef5fc]",
-  }, // 砚墨霁蓝
-  {
-    bg: "bg-gradient-to-br from-[#855323] via-[#633a12] to-[#3a1f06]",
-    badge: "text-[#fde4c8]",
-    text: "text-[#fef4ea]",
-  }, // 暖茶琥珀
-  {
-    bg: "bg-gradient-to-br from-[#53315e] via-[#3d2047] to-[#25102d]",
-    badge: "text-[#ebd4f5]",
-    text: "text-[#f8f0fc]",
-  }, // 绛紫云锦
-  {
-    bg: "bg-gradient-to-br from-[#3b474e] via-[#2a343a] to-[#161c20]",
-    badge: "text-[#d7e3ea]",
-    text: "text-[#f0f5f8]",
-  }, // 金石苍青
-];
-
-function getCoverTheme(title: string) {
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) {
-    hash = (hash * 31 + title.charCodeAt(i)) & 0xffffffff;
-  }
-  return LOCAL_COVER_PALETTES[Math.abs(hash) % LOCAL_COVER_PALETTES.length];
-}
-
-function BookCover({ title, coverUrl }: { title: string; coverUrl?: string }) {
-  const [hasError, setHasError] = useState(false);
-  if (coverUrl && !hasError) {
-    return (
-      <img
-        src={coverUrl}
-        alt={title}
-        className="w-full h-full object-cover"
-        loading="lazy"
-        onError={() => setHasError(true)}
-      />
-    );
-  }
-  const theme = getCoverTheme(title);
-  const cleanTitle = title.replace(/^《|》$/g, "").trim();
-  return (
-    <div
-      aria-hidden="true"
-      className={`w-full h-full flex flex-col justify-between p-2 sm:p-2.5 ${theme.bg} shadow-inner select-none relative overflow-hidden border-l-2 border-white/20`}
-    >
-      <div className="flex items-center justify-between w-full opacity-85">
-        <Icon name="auto_stories" size={14} className={theme.badge} />
-        <span className={`text-[9px] font-mono font-semibold tracking-wider ${theme.badge}`}>
-          TXT
-        </span>
-      </div>
-      <div className="flex flex-col gap-0.5 mt-auto">
-        <span
-          className={`text-[10px] sm:text-[11px] font-title-editorial font-semibold line-clamp-3 leading-snug tracking-tight ${theme.text}`}
-        >
-          {cleanTitle}
-        </span>
-      </div>
     </div>
   );
 }

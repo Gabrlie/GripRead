@@ -7,4 +7,4 @@ export type BookInfo = { bookId: string,
 /**
  * Text before the first chapter, when the book has one.
  */
-intro: string | null, sourceByteLength: number, chapterCount: number | null, };
+intro: string | null, sourceByteLength: number, chapterCount: number | null, readingSeconds: number, };

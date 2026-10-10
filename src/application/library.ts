@@ -22,6 +22,8 @@ export interface LibrarySnapshot {
   error: string | null;
   job: ImportStatus | null;
   importing: boolean;
+  /** Progress of a several-file or folder import, while it runs. */
+  batch: { total: number; done: number; failed: number } | null;
   importError: string | null;
   importOutcome: ImportOutcome | null;
   importNotice: ImportNotice | null;
@@ -81,6 +83,7 @@ export class LibraryStore {
     error: null,
     job: null,
     importing: false,
+    batch: null,
     importError: null,
     importOutcome: null,
     importNotice: null,
@@ -107,6 +110,9 @@ export class LibraryStore {
   private decodeTimer: ReturnType<typeof setTimeout> | undefined;
   private decodeWaiter:
     { resolve: (value: TxtEncodingInfo) => void; reject: (error: unknown) => void } | undefined;
+  /** Resolves when the current single import reaches a terminal state. */
+  private settle: (() => void) | undefined;
+  private batchCancelled = false;
   constructor(private service: LibraryService) {}
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -331,6 +337,59 @@ export class LibraryStore {
       if (this.snapshot.lastRemoved?.id === id) this.update({ lastRemoved: null });
     });
   dismissUndo = () => this.update({ lastRemoved: null });
+  /** Picks several TXT files and imports them one after another. */
+  importFiles = async () => {
+    if (this.snapshot.importing || this.snapshot.batch) return;
+    try {
+      const paths = await this.service.pickTxtFiles();
+      if (paths.length === 1) return this.importTxt(paths[0]);
+      await this.importBatch(paths);
+    } catch (error) {
+      this.update({ importError: String(error) });
+      this.showImportNotice("failed", "导入失败", 8_000);
+    }
+  };
+  /** Picks a folder and imports every TXT file in it. */
+  importFolder = async () => {
+    if (this.snapshot.importing || this.snapshot.batch) return;
+    try {
+      const files = await this.service.pickTxtFolder();
+      if (!files.length) return;
+      await this.importBatch(files.map((file) => file.path));
+    } catch (error) {
+      this.update({ importError: String(error) });
+      this.showImportNotice("failed", "文件夹读取失败", 8_000);
+    }
+  };
+  importBatch = async (paths: string[]) => {
+    if (!paths.length || this.snapshot.batch) return;
+    this.batchCancelled = false;
+    let done = 0;
+    let failed = 0;
+    this.update({ batch: { total: paths.length, done, failed } });
+    for (const path of paths) {
+      if (this.batchCancelled) break;
+      const finished = new Promise<void>((resolve) => (this.settle = resolve));
+      await this.importTxt(path);
+      if (!this.snapshot.importing) this.finishSettle();
+      await finished;
+      done += 1;
+      if (this.snapshot.importOutcome?.phase !== "completed") failed += 1;
+      this.update({ batch: { total: paths.length, done, failed } });
+    }
+    this.update({ batch: null });
+    const imported = done - failed;
+    this.showImportNotice(
+      failed ? "failed" : "completed",
+      failed ? `已导入 ${imported} 本，${failed} 本失败` : `已导入 ${imported} 本`,
+      failed ? 8_000 : 3_000,
+    );
+  };
+  private finishSettle() {
+    const settle = this.settle;
+    this.settle = undefined;
+    settle?.();
+  }
   importTxt = async (path?: string, encoding?: TxtEncoding) => {
     if (this.snapshot.importing) return;
     const attempt = ++this.importAttempt;
@@ -372,6 +431,7 @@ export class LibraryStore {
     }
   };
   cancel = async () => {
+    this.batchCancelled = true;
     const id = this.operationId;
     if (!id || !this.snapshot.importing) return;
     try {
@@ -431,6 +491,7 @@ export class LibraryStore {
       this.completed.add(status.operationId);
       clearTimeout(this.timer);
       this.showImportNotice("failed", "导入失败", 8_000);
+      this.finishSettle();
       return;
     }
     this.update({
@@ -469,6 +530,7 @@ export class LibraryStore {
         void this.refresh();
         void this.loadRemoved();
       }
+      this.finishSettle();
     }
   }
   private async poll(generation: number) {

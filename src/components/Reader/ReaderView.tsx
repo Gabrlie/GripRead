@@ -21,6 +21,7 @@ import type { ReaderSnapshot } from "../../reader";
 import type { Bookmark, TxtEncoding } from "../../types/generated";
 import { Button } from "../ui/button";
 import { useAutomaticTurn } from "./use-automatic-turn";
+import { useReadingTime } from "./use-reading-time";
 import { useReaderActions } from "./use-reader-actions";
 import { canShowSpread, useReaderLayout, syncMeasureBox } from "./use-reader-layout";
 import { useReaderPanel, type ReaderPanel } from "./use-reader-panel";
@@ -60,7 +61,7 @@ function safeExcerpt(text: string, maxUnits = 160): string {
 }
 
 export function ReaderView() {
-  const { activeBook, closeReader } = useApp();
+  const { activeBook, closeReader, takeReaderPage } = useApp();
   const runtime = useRuntime();
   const { state: libraryState } = useLibrary();
   const { state: settings, store: settingsStore } = useSettings();
@@ -205,6 +206,11 @@ export function ReaderView() {
     },
     [openPanelState, pauseAutomatic],
   );
+  useReadingTime(bookId, runtime.services.library, automaticTurn.running);
+  // The book detail page can open the reader on its contents.
+  useEffect(() => {
+    if (takeReaderPage() === "contents") openPanel("contents");
+  }, [openPanel, takeReaderPage]);
   const turn = useCallback(
     (direction: "next" | "previous", point?: { x: number; y: number }) => {
       void pauseAutomatic();

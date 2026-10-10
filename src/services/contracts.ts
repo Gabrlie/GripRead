@@ -28,6 +28,9 @@ import type {
   TxtDecodeTask,
   TxtEncoding,
   ResolveOffsetRequest,
+  ShelfPlacement,
+  ReadingStats,
+  PickedFile,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -45,7 +48,20 @@ export interface LibraryService {
   createGroup(name: string): Promise<LibraryGroup>;
   renameGroup(id: string, name: string): Promise<LibraryGroup>;
   deleteGroup(id: string): Promise<void>;
-  setBookGroups(bookId: string, groupIds: string[]): Promise<void>;
+  /** Moves a book to automatic grouping, a reading state, or one user group. */
+  moveBook(bookId: string, placement: ShelfPlacement): Promise<void>;
+  /** Picks TXT files (several at once); an empty list when cancelled. */
+  pickTxtFiles(): Promise<string[]>;
+  /** Picks a folder and lists the TXT files in it; an empty list when cancelled. */
+  pickTxtFolder(): Promise<PickedFile[]>;
+  /** Picks an image as the book's cover; `false` when cancelled. */
+  pickBookCover(bookId: string): Promise<boolean>;
+  clearBookCover(bookId: string): Promise<void>;
+  /** Bytes of a managed image or font asset. */
+  readAsset(id: string): Promise<ArrayBuffer>;
+  /** Adds reading time to a local calendar day (`YYYY-MM-DD`). */
+  addReadingTime(bookId: string, day: string, seconds: number): Promise<void>;
+  readingStats(today: string): Promise<ReadingStats>;
   onImportProgress(listener: (status: ImportStatus) => void): Promise<Unsubscribe>;
   getTxtEncoding(bookId: string): Promise<TxtEncodingInfo>;
   pickAndReassociateTxt(bookId: string): Promise<TxtEncodingInfo | null>;
@@ -77,6 +93,7 @@ export interface ReaderService {
   listBookmarks(bookId: string): Promise<Bookmark[]>;
   addBookmark(request: BookmarkRequest): Promise<Bookmark>;
   deleteBookmark(request: BookmarkIdRequest): Promise<void>;
+  updateBookmarkNote(bookmarkId: string, note: string): Promise<void>;
   search(request: SearchRequest): Promise<SearchResponse>;
   cancelSearch(operationId: string): Promise<CancelResult>;
 }

@@ -36,7 +36,7 @@ export function GroupManager({
             分组管理
           </DialogTitle>
           <DialogDescription className="text-secondary text-xs text-left">
-            管理书架分组与其中的书籍，分组不会改变书籍正文。
+            在读、未读、读完会按进度自动分组；这里管理你自己的分组。
           </DialogDescription>
         </DialogHeader>
         {state.error && (
@@ -82,35 +82,7 @@ export function GroupManager({
                 保存
               </Button>
             </form>
-            <div className="max-h-56 overflow-auto space-y-1.5" aria-label="分组书籍">
-              {library.books.length === 0 && (
-                <p className="text-secondary py-3">导入书籍后可在这里加入分组。</p>
-              )}
-              {library.books.map((book) => (
-                <label
-                  key={book.book.id}
-                  className="flex items-center justify-between gap-3 py-2 px-2 rounded-lg bg-surface-container"
-                >
-                  <span className="truncate">{book.book.title}</span>
-                  <input
-                    aria-label={`将 ${book.book.title} 加入 ${selected.name}`}
-                    type="checkbox"
-                    checked={selected.bookIds.includes(book.book.id)}
-                    disabled={state.saving}
-                    onChange={(event) => {
-                      const ids = state.groups
-                        .filter(
-                          (group) =>
-                            group.id !== selected.id && group.bookIds.includes(book.book.id),
-                        )
-                        .map((group) => group.id);
-                      if (event.target.checked) ids.push(selected.id);
-                      run(() => store.setBookGroups(book.book.id, ids));
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
+            <p className="text-secondary">在书籍详情页可以把书移入或移出这个分组。</p>
             <Button
               variant="outline"
               size="sm"
@@ -124,7 +96,7 @@ export function GroupManager({
                 })
               }
             >
-              删除分组（保留书籍）
+              删除分组（书籍回到自动分组）
             </Button>
           </div>
         ) : (

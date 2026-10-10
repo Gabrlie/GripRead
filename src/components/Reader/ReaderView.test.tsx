@@ -23,6 +23,7 @@ import { DEFAULT_READING_STYLE } from "../../types/generated";
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
   closeReader: vi.fn(),
+  takeReaderPage: vi.fn(() => null),
   reducedMotion: false,
 }));
 vi.mock("../../context/AppContext", () => ({ useApp: () => navigation }));
@@ -113,6 +114,8 @@ const entry: LibraryBook = {
   txtEncoding: null,
   lastReadAt: null,
   removedAt: null,
+  shelfState: null,
+  coverAssetId: null,
 };
 
 function deferred<T>() {
@@ -132,7 +135,14 @@ function runtime() {
       createGroup: vi.fn(),
       renameGroup: vi.fn(),
       deleteGroup: vi.fn(),
-      setBookGroups: vi.fn(),
+      moveBook: vi.fn(async () => undefined),
+      pickTxtFiles: vi.fn(async () => []),
+      pickTxtFolder: vi.fn(async () => []),
+      pickBookCover: vi.fn(async () => false),
+      clearBookCover: vi.fn(async () => undefined),
+      readAsset: vi.fn(async () => new ArrayBuffer(0)),
+      addReadingTime: vi.fn(async () => undefined),
+      readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
       listRemovedBooks: vi.fn(async () => []),
       updateBook: vi.fn(),
       removeBook: vi.fn(),
@@ -182,6 +192,7 @@ function runtime() {
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),
+      updateBookmarkNote: vi.fn(async () => undefined),
       search: vi.fn(),
       cancelSearch: vi.fn(async () => ({ requested: true })),
     },
@@ -333,6 +344,7 @@ describe("reader directory and search operation ownership", () => {
         contentVersion: "v1",
         locator: locator(at),
         excerpt: "书签摘录",
+        note: "",
         createdAt: 1,
       },
     ]);

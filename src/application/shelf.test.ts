@@ -45,6 +45,8 @@ const entry: LibraryBook = {
   txtEncoding: null,
   lastReadAt: null,
   removedAt: null,
+  shelfState: null,
+  coverAssetId: null,
 };
 const chapters: TocEntry[] = [
   tocEntry(0, "第一章", entry.locator!),
@@ -59,7 +61,14 @@ function setup() {
     createGroup: vi.fn(async () => created),
     renameGroup: vi.fn(async (id, name) => ({ id, name, bookIds: [] })),
     deleteGroup: vi.fn(async () => {}),
-    setBookGroups: vi.fn(async () => {}),
+    moveBook: vi.fn(async () => undefined),
+    pickTxtFiles: vi.fn(async () => []),
+    pickTxtFolder: vi.fn(async () => []),
+    pickBookCover: vi.fn(async () => false),
+    clearBookCover: vi.fn(async () => undefined),
+    readAsset: vi.fn(async () => new ArrayBuffer(0)),
+    addReadingTime: vi.fn(async () => undefined),
+    readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
     listRemovedBooks: vi.fn(async () => []),
     updateBook: vi.fn(),
     removeBook: vi.fn(),
@@ -90,6 +99,7 @@ function setup() {
     listBookmarks: vi.fn(),
     addBookmark: vi.fn(),
     deleteBookmark: vi.fn(),
+    updateBookmarkNote: vi.fn(async () => undefined),
     search: vi.fn(),
     cancelSearch: vi.fn(),
   };

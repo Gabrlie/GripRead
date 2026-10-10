@@ -88,6 +88,7 @@ function serviceFor(
       throw new Error("not implemented in controller fixture");
     },
     async deleteBookmark() {},
+    async updateBookmarkNote() {},
     async search() {
       return { contentVersion: "", matches: [], nextCursor: null, hasMore: false };
     },

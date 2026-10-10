@@ -12,6 +12,7 @@ import type {
   ReaderLocator,
   ReaderPreferences,
   ShelfPreferences,
+  ShelfState,
   TocEntry,
   TxtTocRule,
 } from "../types/generated";
@@ -114,6 +115,8 @@ export function previewServices(): AppServices {
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
   let position: ReaderLocator | null = contextFor(ENTRIES[3].locator.offset);
   let settings: BookTocSettings = { ruleId: null, splitLongChapters: false };
+  let shelfState: ShelfState | null = null;
+  let readingSeconds = 1260;
   const bookmarks: Bookmark[] = [
     {
       id: "mark-1",
@@ -121,6 +124,7 @@ export function previewServices(): AppServices {
       contentVersion: VERSION,
       locator: contextFor(ENTRIES[5].locator.offset + 40),
       excerpt: "云海在脚下翻涌，远处的钟声一下一下敲在心上。",
+      note: "",
       createdAt: Date.now(),
     },
   ];
@@ -148,6 +152,8 @@ export function previewServices(): AppServices {
     txtEncoding: { detected: "utf8", selected: "auto", state: "clean", canChange: true },
     lastReadAt: Date.now(),
     removedAt: null,
+    shelfState,
+    coverAssetId: null,
   });
   const window = (start: number, end: number): ContentWindow => ({
     bookId: BOOK_ID,
@@ -177,7 +183,27 @@ export function previewServices(): AppServices {
       createGroup: unsupported,
       renameGroup: unsupported,
       deleteGroup: unsupported,
-      setBookGroups: unsupported,
+      moveBook: async (_bookId, placement) => {
+        shelfState = placement.kind === "state" ? placement.value : null;
+      },
+      pickTxtFiles: async () => [],
+      pickTxtFolder: async () => [],
+      pickBookCover: async () => false,
+      clearBookCover: async () => undefined,
+      readAsset: unsupported,
+      addReadingTime: async (_bookId, _day, seconds) => {
+        readingSeconds += seconds;
+      },
+      readingStats: async (today) => ({
+        totalSeconds: readingSeconds + 5400,
+        todaySeconds: readingSeconds,
+        days: [
+          { day: today, seconds: readingSeconds },
+          { day: "2026-10-09", seconds: 3600 },
+          { day: "2026-10-08", seconds: 1800 },
+        ],
+        books: [{ bookId: BOOK_ID, seconds: readingSeconds + 5400, lastDay: today }],
+      }),
       onImportProgress: async () => () => undefined,
       getTxtEncoding: async () => book().txtEncoding!,
       pickAndReassociateTxt: async () => null,
@@ -191,6 +217,7 @@ export function previewServices(): AppServices {
         intro: "《云海问道》是一部关于少年求道、山河远行的长篇小说。",
         sourceByteLength: TEXT.length * 3,
         chapterCount: ENTRIES.length,
+        readingSeconds: readingSeconds + 5400,
       }),
     },
     reader: {
@@ -227,9 +254,14 @@ export function previewServices(): AppServices {
           contentVersion: VERSION,
           createdAt: Date.now(),
           ...request,
+          note: request.note ?? "",
         };
         bookmarks.unshift(created);
         return created;
+      },
+      updateBookmarkNote: async (bookmarkId, note) => {
+        const mark = bookmarks.find((item) => item.id === bookmarkId);
+        if (mark) mark.note = note;
       },
       deleteBookmark: async (request) => {
         const index = bookmarks.findIndex((bookmark) => bookmark.id === request.bookmarkId);
