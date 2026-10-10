@@ -1,0 +1,38 @@
+# Android adaptation
+
+Status: in-progress
+
+## Outcome
+
+Make the existing local TXT reading journey run as an Android application: build a debug APK on a Linux host, import TXT from the system document picker, read in every delivered mode, keep positions and settings when the app is paused or killed, and handle the system back action. Behavior belongs to [Library](../subsystems/library.md), [Reader](../subsystems/reader.md), and [interaction design](../design/interaction.md). This task precedes Batch 3 of the [TXT reader task](2026-09-24-txt-reader-modes-and-settings.md).
+
+## Scope
+
+Included: Android project generation and mobile entry point, Linux host toolchain documentation, document-picker import and source reassociation, pause-time persistence, back-button navigation, viewport/safe-area and touch defects observed on a device, and the owning documentation.
+
+Excluded: Batch 3 and later reader settings, EPUB, online sources, RSS, sync, release signing and store packaging, iOS, and Windows. macOS behavior must stay unchanged. Allowed areas are `src-tauri` (including `gen/android`), `src/services`, `src/application`, `src/context`, `src/App.tsx`, `index.html`, `vite.config.ts`, reader and layout components only for observed Android defects, generated bindings, `scripts`, and owning `.ai` documentation.
+
+## Interfaces
+
+Import and reassociation requests keep their wire shape; `path` may be a filesystem path or an Android `content://` document URI. On Android, the Rust command layer copies the document into an operation-owned staging file named after the document display name, passes that file to the existing storage preparation, and removes the staging directory on every terminal outcome. Storage remains path-based and unaware of URIs. The application flushes its existing ordered writers when the document becomes hidden. The system back action is routed through existing navigation and panel state.
+
+## Acceptance criteria
+
+- `pnpm check` passes on Linux; `pnpm tauri android build --debug --apk --target aarch64` produces an installable APK.
+- On a device, UTF-8 and GBK TXT import from Files and Downloads with the document's own title; cancelling the picker creates no task; a failed or cancelled import leaves no staged file or readable partial book.
+- Paging by tap and swipe, page effects, and scroll mode work; toolbars toggle on a center tap.
+- Backgrounding the app and then killing it reopens the book at the same passage with the latest settings.
+- Back closes an open panel, then leaves the reader, then follows the previous tab or exits; it never discards pending writes.
+- Content is not hidden behind status or gesture bars in portrait or landscape, light or dark.
+
+## Verification
+
+Host: Ubuntu 24.04 without KVM, so no emulator. Device acceptance is manual: the user installs the debug APK and reports results, which are recorded here as user-provided evidence. `pnpm test:native` requires macOS and is not run on this host.
+
+Linux baseline before changes (Ubuntu 24.04, Rust 1.99, Node 24, pnpm 11.5.2): formatting, documentation, generated bindings, boundaries, and both TypeScript projects passed; the original 136 frontend tests passed; 66 Rust tests, `cargo fmt --check`, and clippy with `-D warnings` passed. The frontend build ran afterwards with this task's changes.
+
+After the first slice, on the same host: `pnpm check` passes with 139 frontend tests (new hidden-flush and back-button cases) and 69 Rust tests (new document staging cases); clippy with `-D warnings` also passes for `aarch64-linux-android`. `pnpm tauri android build --debug --apk --target aarch64` succeeds (arm64-v8a, minSdk 24, about 50 MB without Rust debug info). Device results: pending.
+
+## Handoff
+
+In progress. The Android project, staged document-URI import, hidden-time saves, and back navigation are implemented. Next entry point: record device results for the first debug APK and fix observed defects, especially safe-area insets under edge-to-edge display.
