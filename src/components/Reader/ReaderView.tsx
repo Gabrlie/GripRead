@@ -443,7 +443,7 @@ export function ReaderView() {
         onTurn={turn}
         onToggleControls={() => setControls((value) => !value)}
       >
-        {state.scroll && controller ? (
+        {state.scroll && state.scroll.totalLength > 0 && controller ? (
           <ReaderScrollText
             key={state.scrollRevision}
             window={state.scroll}
