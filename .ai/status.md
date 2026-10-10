@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Chapter rules, the reading menu, Contents, and Search are done. Continue with page turning and gestures, then reading styles, fonts, information bars, and book information.
+All milestones are implemented on the host. Build the Android debug APK and collect device results; the macOS native suite was updated but needs a run on macOS.

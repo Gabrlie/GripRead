@@ -625,6 +625,23 @@ html.shelf-hide-scrollbar body::-webkit-scrollbar,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Reading colours come from the selected style preset (reading-style.ts). */
+.reader-paper {
+  background-color: var(--reader-bg, var(--color-surface));
+  color: var(--reader-fg, var(--color-on-surface));
+}
+/* Chapter headings; the measurer marks the same lines, so pages fit them. */
+.reader-prose > .reader-paragraph[data-heading] {
+  font-size: calc(var(--reader-title-scale, 1.25) * 1em);
+  font-weight: 600;
+  text-indent: 0;
+  text-align: var(--reader-title-align, left);
+  margin-bottom: 0.5em;
+}
+[data-title-mode="hidden"] .reader-prose > .reader-paragraph[data-heading] {
+  display: none;
+}
+
 /* Scroll reading hides the native bar; ReaderScrollText shows its own indicator. */
 .reader-scroll {
   scrollbar-width: none;

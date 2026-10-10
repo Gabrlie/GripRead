@@ -2,6 +2,7 @@ import { animate, type AnimationPlaybackControls } from "motion";
 import type { PageTurnEffect } from "../types/generated";
 import { curlGeometry, drawCurl, rasterizePage, type Point } from "./curl";
 import { renderReaderText } from "./render";
+import { NO_HEADINGS, type HeadingIndex } from "./headings";
 import type {
   ReaderDisplayedPage,
   ReaderNavigationDirection,
@@ -70,6 +71,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   /** Where the reader touched to start the next turn, in host coordinates. */
   private aimPoint: Point | null = null;
   private drag: Drag | null = null;
+  private headings: HeadingIndex = NO_HEADINGS;
   private cancelled = false;
   private skipNext = false;
 
@@ -110,6 +112,11 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   public setEffect(effect: PageTurnEffect): void {
     if (this.effect !== effect) this.cancel();
     this.effect = effect;
+  }
+
+  /** Overlay copies mark chapter headings like the visible page. */
+  public setHeadings(headings: HeadingIndex): void {
+    this.headings = headings;
   }
 
   /** Records the touch that starts the next turn; curl lifts the nearer corner. */
@@ -512,7 +519,10 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     element.dataset.start = String(page.startOffset);
     element.dataset.end = String(page.endOffset);
     element.dataset.total = String(page.totalLength);
-    renderReaderText(element, page.text, { continued: page.continued });
+    renderReaderText(element, page.text, {
+      continued: page.continued,
+      headings: this.headings.local(page.startOffset, page.endOffset),
+    });
     element.style.pointerEvents = "none";
     return element;
   }

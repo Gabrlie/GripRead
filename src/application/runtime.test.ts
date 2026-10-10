@@ -7,7 +7,8 @@ import type {
 } from "../services/contracts";
 import type { Book, LibraryGroup, ReaderPreferences, ShelfPreferences } from "../types/generated";
 import { AppRuntime } from "./runtime";
-import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
+import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../test/toc";
+import { DEFAULT_READING_STYLE } from "../types/generated";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -72,6 +73,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
       autoPageSeconds: 8,
       readingMode: "single",
       autoScrollSpeed: 40,
+      style: DEFAULT_READING_STYLE,
     })),
     saveSettings: vi.fn(async (value) => value),
     getShelfPreferences: vi.fn(async (): Promise<ShelfPreferences> => ({
@@ -80,6 +82,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
       groupId: "all",
     })),
     saveShelfPreferences: vi.fn(async (value) => value),
+    ...fontServiceMocks(),
   };
   return { library, reader, settings };
 }

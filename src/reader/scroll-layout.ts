@@ -20,7 +20,9 @@ function scalarRect(paragraph: HTMLElement, offset: number): DOMRect {
   const range = paragraph.ownerDocument.createRange();
   range.setStart(start.node, start.offset);
   range.setEnd(end.node, end.offset);
-  return range.getBoundingClientRect();
+  const rect = range.getBoundingClientRect();
+  // Hidden leading spaces have no box; use their paragraph's position.
+  return rect.width === 0 && rect.height === 0 ? paragraph.getBoundingClientRect() : rect;
 }
 
 export function rectAtOffset(root: HTMLElement, localOffset: number): DOMRect | null {

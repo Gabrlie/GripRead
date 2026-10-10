@@ -8,6 +8,7 @@ import type {
   LibraryBook,
   ReaderPreferences,
 } from "../types/generated";
+import { DEFAULT_READING_STYLE } from "../types/generated";
 const library = (): LibraryService => ({
   pickAndImportTxt: vi.fn(async () => null),
   startImport: vi.fn(async () => ({ operationId: "op" })),
@@ -44,6 +45,7 @@ const preferences: ReaderPreferences = {
   autoPageSeconds: 8,
   readingMode: "single",
   autoScrollSpeed: 40,
+  style: DEFAULT_READING_STYLE,
 };
 const book = (
   id: string,

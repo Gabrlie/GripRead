@@ -23,6 +23,7 @@ import type {
   SearchRequest,
   SearchResponse,
   TxtTocRule,
+  ReaderAsset,
   TxtDecodeStatus,
   TxtDecodeTask,
   TxtEncoding,
@@ -84,6 +85,12 @@ export interface SettingsService {
   saveShelfPreferences(preferences: ShelfPreferences): Promise<ShelfPreferences>;
   getSettings(): Promise<ReaderPreferences>;
   saveSettings(settings: ReaderPreferences): Promise<ReaderPreferences>;
+  /** Picks a font file and copies it into managed assets; `null` when cancelled. */
+  pickAndImportFont(): Promise<ReaderAsset | null>;
+  listFonts(): Promise<ReaderAsset[]>;
+  readFont(id: string): Promise<ArrayBuffer>;
+  /** Also clears the font from saved preferences when it was selected. */
+  deleteFont(id: string): Promise<void>;
 }
 export interface AppServices {
   library: LibraryService;

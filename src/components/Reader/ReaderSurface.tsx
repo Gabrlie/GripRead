@@ -26,6 +26,10 @@ interface ReaderSurfaceProps {
   onInteract: () => void;
   gestures: GestureHandlers;
   zones?: TapZones;
+  /** Body margins in CSS px (Legado PaddingConfig). */
+  margins?: { top: number; bottom: number; left: number; right: number };
+  header?: ReactNode;
+  footer?: ReactNode;
   children: ReactNode;
   double?: boolean;
   scroll?: boolean;
@@ -45,6 +49,9 @@ export function ReaderSurface({
   onInteract,
   gestures,
   zones,
+  margins = { top: 8, bottom: 8, left: 20, right: 20 },
+  header,
+  footer,
   children,
   double = false,
   scroll = false,
@@ -81,45 +88,57 @@ export function ReaderSurface({
     <div
       // Scroll mode spans the full width so its position indicator sits at the
       // screen edge; ReaderScrollText applies the text column itself.
-      className={`absolute inset-0 w-full ${scroll ? "" : `${double ? "max-w-6xl" : "max-w-2xl"} mx-auto px-5 sm:px-8 md:px-12`} pt-safe pb-safe overflow-hidden`}
+      className={`absolute inset-0 w-full ${scroll ? "" : `${double ? "max-w-6xl" : "max-w-2xl"} mx-auto`} pt-safe pb-safe overflow-hidden flex flex-col`}
     >
+      {header}
       <div
-        ref={pageBox}
-        data-testid="reader-surface"
-        className="relative h-full min-h-0 w-full"
-        // Paginated pages handle every touch themselves; scroll mode keeps
-        // native vertical panning.
-        style={{ ...style, touchAction: scroll ? "pan-y" : "none" }}
-        onPointerDown={(event) => {
-          onInteract();
-          if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
-          if (event.pointerType === "mouse" && event.button !== 0) return;
-          // Keep receiving moves even when the finger leaves the text node.
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          tracker.current?.down(local(event));
+        className="flex-1 min-h-0"
+        style={{
+          paddingTop: margins.top,
+          paddingBottom: margins.bottom,
+          paddingLeft: scroll ? 0 : margins.left,
+          paddingRight: scroll ? 0 : margins.right,
         }}
-        onPointerMove={(event) => {
-          if (!event.isPrimary) return;
-          const wasDragging = tracker.current?.dragging;
-          tracker.current?.move(local(event));
-          // A drag that started over text must not leave a selection behind.
-          if (!wasDragging && tracker.current?.dragging) window.getSelection()?.removeAllRanges();
-        }}
-        onPointerUp={(event) => {
-          if (!event.isPrimary) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
-        }}
-        onPointerCancel={() => tracker.current?.cancel()}
       >
-        {children}
         <div
-          ref={animationBox}
-          data-testid="reader-animation"
-          aria-hidden="true"
-          className="absolute inset-0 pointer-events-none overflow-hidden"
-        />
+          ref={pageBox}
+          data-testid="reader-surface"
+          className="relative h-full min-h-0 w-full"
+          // Paginated pages handle every touch themselves; scroll mode keeps
+          // native vertical panning.
+          style={{ ...style, touchAction: scroll ? "pan-y" : "none" }}
+          onPointerDown={(event) => {
+            onInteract();
+            if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
+            if (event.pointerType === "mouse" && event.button !== 0) return;
+            // Keep receiving moves even when the finger leaves the text node.
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            tracker.current?.down(local(event));
+          }}
+          onPointerMove={(event) => {
+            if (!event.isPrimary) return;
+            const wasDragging = tracker.current?.dragging;
+            tracker.current?.move(local(event));
+            // A drag that started over text must not leave a selection behind.
+            if (!wasDragging && tracker.current?.dragging) window.getSelection()?.removeAllRanges();
+          }}
+          onPointerUp={(event) => {
+            if (!event.isPrimary) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
+          }}
+          onPointerCancel={() => tracker.current?.cancel()}
+        >
+          {children}
+          <div
+            ref={animationBox}
+            data-testid="reader-animation"
+            aria-hidden="true"
+            className="absolute inset-0 pointer-events-none overflow-hidden"
+          />
+        </div>
       </div>
+      {footer}
     </div>
   );
 }

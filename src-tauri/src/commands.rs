@@ -930,6 +930,50 @@ pub async fn save_book_toc_settings(
 }
 
 #[tauri::command]
+pub async fn import_reader_font(
+    request: crate::models::PathRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::ReaderAsset, AppError> {
+    let root = state.data_root.clone();
+    let operation_id = Uuid::new_v4().to_string();
+    with_storage(&state, move |storage| {
+        let (path, name, _staged) =
+            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
+        storage.import_reader_font(&path, &name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_reader_fonts(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::ReaderAsset>, AppError> {
+    with_storage(&state, |storage| storage.list_reader_fonts()).await
+}
+
+/// Font bytes as a raw IPC response, so the page can load them with FontFace.
+#[tauri::command]
+pub async fn read_reader_font(
+    request: crate::models::ReaderAssetRequest,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response, AppError> {
+    let bytes = with_storage(&state, move |storage| storage.read_reader_font(&request.id)).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn delete_reader_font(
+    request: crate::models::ReaderAssetRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.delete_reader_font(&request.id)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn get_book_info(
     request: BookRequest,
     state: State<'_, AppState>,

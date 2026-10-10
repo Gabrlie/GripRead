@@ -5,6 +5,7 @@ import { LibraryStore } from "./library";
 import { ShelfStore } from "./shelf";
 import { SettingsStore } from "./settings";
 import { ReaderPositions } from "../reader/positions";
+import { FontLoader } from "./fonts";
 /** Reading adjustments preview immediately and persist after 800 ms of inactivity. */
 export const READER_SETTINGS_SAVE_DELAY_MS = 800;
 export class AppRuntime {
@@ -13,6 +14,7 @@ export class AppRuntime {
   readonly settings: SettingsStore;
   readonly positions: ReaderPositions;
   readonly shelfPreferences: SettingsStore<ShelfPreferences>;
+  readonly fonts: FontLoader;
   readerFlush: (() => Promise<void>) | null = null;
   private readerWrites = new Map<() => Promise<void>, Promise<void>>();
   private failedReaderWrites = new Set<() => Promise<void>>();
@@ -56,6 +58,7 @@ export class AppRuntime {
     this.shelf = new ShelfStore(services.library, services.reader);
     this.settings = new SettingsStore(services.settings, READER_SETTINGS_SAVE_DELAY_MS);
     this.positions = new ReaderPositions(services.reader);
+    this.fonts = new FontLoader(services.settings);
     this.shelfPreferences = new SettingsStore({
       getSettings: services.settings.getShelfPreferences,
       saveSettings: services.settings.saveShelfPreferences,

@@ -69,10 +69,54 @@ pub fn resolve_source<R: Runtime>(
     Ok((staged.path().to_path_buf(), Some(staged)))
 }
 
+/// Resolves a picked file of any kind, keeping its display name and
+/// extension; used for reading fonts.
+pub fn resolve_named_source<R: Runtime>(
+    app: &AppHandle<R>,
+    data_root: &Path,
+    source: &str,
+    operation_id: &str,
+) -> Result<(PathBuf, String, Option<StagedDocument>), AppError> {
+    if !is_document_uri(source) {
+        let path = PathBuf::from(source);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Ok((path, name, None));
+    }
+    let (file, name) = open_document(app, source)?;
+    let name = sanitize_component(name.as_deref().unwrap_or("")).unwrap_or_else(|| "file".into());
+    let staged = stage_named(
+        data_root,
+        operation_id,
+        &name,
+        file,
+        &AtomicBool::new(false),
+    )?;
+    Ok((staged.path().to_path_buf(), name, Some(staged)))
+}
+
 pub fn stage_document(
     data_root: &Path,
     operation_id: &str,
     display_name: Option<&str>,
+    source: impl Read,
+    cancel: &AtomicBool,
+) -> Result<StagedDocument, AppError> {
+    stage_named(
+        data_root,
+        operation_id,
+        &staged_file_name(display_name),
+        source,
+        cancel,
+    )
+}
+
+fn stage_named(
+    data_root: &Path,
+    operation_id: &str,
+    file_name: &str,
     mut source: impl Read,
     cancel: &AtomicBool,
 ) -> Result<StagedDocument, AppError> {
@@ -82,7 +126,7 @@ pub fn stage_document(
     let directory = data_root.join(STAGING_DIRECTORY).join(operation_id);
     fs::create_dir_all(&directory)?;
     let staged = StagedDocument {
-        path: directory.join(staged_file_name(display_name)),
+        path: directory.join(file_name),
         directory,
     };
     let mut target = File::create(&staged.path)?;
@@ -104,6 +148,21 @@ pub fn stage_document(
     }
     target.sync_all()?;
     Ok(staged)
+}
+
+/// A display name made safe as one path component, or `None` when nothing is left.
+fn sanitize_component(name: &str) -> Option<String> {
+    let name: String = name
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | '\0' => '_',
+            character if character.is_control() => '_',
+            character => character,
+        })
+        .collect();
+    let name = name.trim().trim_start_matches('.').trim();
+    let name: String = name.chars().take(160).collect();
+    (!name.is_empty()).then_some(name)
 }
 
 /// Keeps the display name as one path component with a `.txt` extension.

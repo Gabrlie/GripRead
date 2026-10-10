@@ -28,6 +28,10 @@ Per milestone: `pnpm check` on Linux and clippy for `aarch64-linux-android`; pre
 
 M1 and M2: 80 Rust tests (rule families, preface and volumes, size and long splitting, scoring, name/author parsing, schema 8 migration, rule table operations) and 140 frontend tests pass; phone screenshots of the menu, Contents, bookmarks, rule dialog, encoding dialog, Search, and the result bar were inspected in light and dark.
 
+M3: gesture tracker tests (tap zones, slop, direction, backward release, held presses, scroll mode), drag-follow adapter tests, and reader tests for tap zones, menu dismissal, and swipes that start on text; frame rendering of curl, slide, and cover was checked in headless Chromium.
+
+M4 and M5: Rust tests for font import, signature validation, orphan safety, deletion clearing preferences, and loading preferences saved before reading styles; render tests for hidden leading spaces; a shelf test for book information. Phone screenshots of the styled page (day and night), the 界面 panel and each sub-view, preset editing, and book information were inspected.
+
 ## Handoff
 
-In progress. Next: M3 page turning and gestures.
+In progress. M0–M5 are implemented on the host. Next: build the Android APK and collect device results.

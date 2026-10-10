@@ -1,6 +1,7 @@
 import {
   useState,
   useEffect,
+  useMemo,
   useRef,
   useLayoutEffect,
   useCallback,
@@ -12,6 +13,7 @@ import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
 import {
   ReaderController,
   DomReaderMeasurer,
+  HeadingIndex,
   PageTurnAdapter,
   emptyReaderSnapshot,
 } from "../../reader";
@@ -27,10 +29,12 @@ import { useReaderTools } from "./use-reader-tools";
 import { ReaderPageText } from "./ReaderPageText";
 import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
-import type { GestureHandlers } from "../../reader/gestures";
+import type { GestureHandlers, TapZones } from "../../reader/gestures";
+import { readingAppearance, useNight } from "./reading-style";
+import { ReaderInfoBar } from "./ReaderInfoBar";
 import { system } from "../../services/system";
 import { ReaderBottomBar, ReaderTopBar } from "./ReaderToolbar";
-import { SettingsPanel } from "./panels/SettingsPanel";
+import { StylePanel } from "./panels/StylePanel";
 import { ContentsPage } from "./pages/ContentsPage";
 import { SearchPage, SearchResultBar } from "./pages/SearchPage";
 import { TocRuleDialog } from "./dialogs/TocRuleDialog";
@@ -67,6 +71,7 @@ export function ReaderView() {
   const scrollBox = useRef<HTMLDivElement>(null);
   const synchronizeScroll = useRef<(() => void) | null>(null);
   const adapter = useRef<PageTurnAdapter | null>(null);
+  const measurer = useRef<DomReaderMeasurer | null>(null);
   const [controller, setController] = useState<ReaderController | null>(null);
   const state = useSyncExternalStore(
     controller?.subscribe ?? noopSubscribe,
@@ -95,6 +100,56 @@ export function ReaderView() {
   const panelRef = useRef<ReaderPanel | null>(null);
   const tools = useReaderTools(activeBook, runtime, actions);
   const { flushDirectory } = tools;
+  // Chapter headings mark the same lines for measuring and every renderer.
+  const headings = useMemo(
+    () => new HeadingIndex(tools.toc.map((entry) => entry.locator.offset)),
+    [tools.toc],
+  );
+  const headingsRef = useRef(headings);
+  headingsRef.current = headings;
+  useLayoutEffect(() => {
+    measurer.current?.setHeadings(headings);
+    adapter.current?.setHeadings(headings);
+  }, [headings]);
+  const night = useNight(preferences);
+  const style = preferences?.style;
+  const fontAssetId = style?.fontAssetId ?? null;
+  const [customFont, setCustomFont] = useState<{ id: string; family: string } | null>(null);
+  const [fontError, setFontError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fontAssetId) {
+      setFontError(null);
+      return;
+    }
+    let cancelled = false;
+    runtime.fonts.load(fontAssetId).then(
+      (family) => {
+        if (cancelled) return;
+        setCustomFont({ id: fontAssetId, family });
+        setFontError(null);
+      },
+      (error: unknown) => {
+        if (!cancelled) setFontError(`字体无法使用，已改用默认字体：${String(error)}`);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [fontAssetId, runtime.fonts]);
+  const appearance = readingAppearance(
+    preferences,
+    night,
+    customFont && customFont.id === fontAssetId ? customFont.family : null,
+  );
+  // Legado keeps the screen on and can hide the system bars while reading.
+  const keepScreenOn = style?.keepScreenOn ?? true;
+  const hideBars = style?.hideSystemBars ?? false;
+  const volumeKeys = style?.volumeKeys ?? true;
+  useEffect(() => {
+    if (!bookId || !keepScreenOn) return;
+    system.setKeepScreenOn(true);
+    return () => system.setKeepScreenOn(false);
+  }, [bookId, keepScreenOn]);
   const { cancel: cancelSearch } = search;
   const onPanelClose = useCallback(
     (closed: ReaderPanel) => {
@@ -248,11 +303,15 @@ export function ReaderView() {
     const presentation = new PageTurnAdapter(animationBox.current, {
       effect: preferences.pageTurnEffect,
       reducedMotion: Boolean(reducedMotion),
-      pageClassName: "reader-prose reader-text bg-surface text-on-surface",
+      pageClassName: "reader-prose reader-text reader-paper",
     });
     adapter.current = presentation;
+    const measuring = new DomReaderMeasurer(measureBox.current);
+    measuring.setHeadings(headingsRef.current);
+    presentation.setHeadings(headingsRef.current);
+    measurer.current = measuring;
     const reader = new ReaderController(runtime.services.reader, {
-      measurer: new DomReaderMeasurer(measureBox.current),
+      measurer: measuring,
       maxUnits: 8192,
       reducedMotion: Boolean(reducedMotion),
       adapter: presentation,
@@ -312,11 +371,7 @@ export function ReaderView() {
     document.addEventListener("selectionchange", pauseForSelection);
     return () => document.removeEventListener("selectionchange", pauseForSelection);
   }, [automaticTurn.running, pauseAutomatic]);
-  const layoutSignature = [
-    preferences?.fontSize,
-    preferences?.lineHeight,
-    preferences?.fontFamily,
-  ].join("|");
+  const layoutSignature = `${appearance.signature}|${headings.signature()}`;
   const pauseForLayout = useCallback(() => void pauseAutomatic(), [pauseAutomatic]);
   useReaderLayout(
     controller,
@@ -369,7 +424,7 @@ export function ReaderView() {
   const turnRef = useRef(turn);
   turnRef.current = turn;
   useEffect(() => {
-    if (!bookId) return;
+    if (!bookId || !volumeKeys) return;
     system.setVolumeKeys(true);
     const unsubscribe = system.onVolumeKey((direction) => {
       if (panelRef.current === null) turnRef.current(direction);
@@ -378,7 +433,16 @@ export function ReaderView() {
       unsubscribe();
       system.setVolumeKeys(false);
     };
-  }, [bookId]);
+  }, [bookId, volumeKeys]);
+  // Hidden system bars return with the reading menu.
+  useEffect(() => {
+    if (!bookId || !hideBars) return;
+    system.setSystemBarsHidden(!controls);
+  }, [bookId, hideBars, controls]);
+  useEffect(() => {
+    if (!bookId || !hideBars) return;
+    return () => system.setSystemBarsHidden(false);
+  }, [bookId, hideBars]);
 
   /** The direction of a swipe for effects that turn only on release. */
   const swipe = useRef<"next" | "previous" | null>(null);
@@ -446,18 +510,13 @@ export function ReaderView() {
   const progress =
     page && page.totalLength ? Math.floor((page.startOffset / page.totalLength) * 100) : 0;
   const totalLength = state.contentWindow?.totalLength ?? activeBook.totalLength ?? 0;
-  const night =
-    preferences?.theme === "dark" ||
-    (preferences?.theme === "system" &&
-      window.matchMedia?.("(prefers-color-scheme: dark)").matches);
-  const typeStyle = {
-    fontSize: `${preferences?.fontSize ?? 18}px`,
-    lineHeight: preferences?.lineHeight ?? 1.8,
-    fontFamily:
-      preferences?.fontFamily === "sans"
-        ? "system-ui, sans-serif"
-        : '"Literata Variable", "Noto Serif SC Variable", serif',
+  const info = {
+    bookTitle: activeBook.book.title,
+    chapterTitle: state.chapter?.title ?? "",
+    chapterProgress: state.chapterProgress,
+    bookProgress: page && page.totalLength ? (page.endOffset / page.totalLength) * 100 : 0,
   };
+  const typeStyle = appearance.text;
   const seekTo = (locator: Bookmark["locator"]) => {
     closePanel();
     setControls(false);
@@ -481,7 +540,9 @@ export function ReaderView() {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-surface text-on-surface flex flex-col"
+      className="fixed inset-0 z-50 reader-paper flex flex-col"
+      style={appearance.root}
+      data-title-mode={style?.titleMode ?? "left"}
       data-reader-effect={reducedMotion ? "instant" : preferences?.pageTurnEffect}
       data-reader-mode={state.mode}
       data-reader-position={page?.startOffset}
@@ -511,6 +572,28 @@ export function ReaderView() {
         acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}
         onInteract={() => void pauseAutomatic()}
         gestures={gestures}
+        zones={style?.tapZones as TapZones | undefined}
+        margins={style?.margins}
+        header={
+          style && effectiveMode !== "scroll" ? (
+            <ReaderInfoBar
+              bar={style.header}
+              values={info}
+              margin={style.margins}
+              position="header"
+            />
+          ) : undefined
+        }
+        footer={
+          style && effectiveMode !== "scroll" ? (
+            <ReaderInfoBar
+              bar={style.footer}
+              values={info}
+              margin={style.margins}
+              position="footer"
+            />
+          ) : undefined
+        }
       >
         {state.scroll && state.scroll.totalLength > 0 && controller ? (
           <ReaderScrollText
@@ -520,6 +603,7 @@ export function ReaderView() {
             viewport={scrollBox}
             synchronize={synchronizeScroll}
             highlight={search.highlight}
+            headings={headings}
             onInteract={() => void pauseAutomatic()}
             onUserScroll={() => {
               if (panelRef.current === null) setControls(false);
@@ -535,6 +619,7 @@ export function ReaderView() {
                   page={visible}
                   bookId={state.bookId}
                   highlight={search.highlight}
+                  headings={headings}
                 />
               ))}
             </div>
@@ -555,6 +640,14 @@ export function ReaderView() {
         aria-hidden="true"
         style={typeStyle}
       />
+      {fontError && !state.error && panel === null && (
+        <div
+          role="status"
+          className="fixed bottom-40 left-4 right-4 z-30 rounded-xl px-4 py-2 bg-error-container text-error text-xs break-words"
+        >
+          {fontError}
+        </div>
+      )}
       {(state.error || state.saveError || actionError || settings.error) && panel === null && (
         <div
           role="alert"
@@ -631,9 +724,11 @@ export function ReaderView() {
         />
       )}
       {panel === "style" && (
-        <SettingsPanel
+        <StylePanel
           preferences={preferences}
+          night={night}
           onChange={settingsStore.set}
+          fonts={runtime.services.settings}
           onClose={closePanel}
         />
       )}

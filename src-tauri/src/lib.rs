@@ -20,6 +20,7 @@ use commands::{
     save_settings, save_shelf_preferences, save_txt_toc_rule, search_book, set_book_groups,
     set_txt_encoding, start_import, start_txt_decode, test_txt_toc_rule, update_book, AppState,
 };
+use commands::{delete_reader_font, import_reader_font, list_reader_fonts, read_reader_font};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 
@@ -139,7 +140,11 @@ pub fn run() {
             export_txt_toc_rules,
             test_txt_toc_rule,
             save_book_toc_settings,
-            get_book_info
+            get_book_info,
+            import_reader_font,
+            list_reader_fonts,
+            read_reader_font,
+            delete_reader_font
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

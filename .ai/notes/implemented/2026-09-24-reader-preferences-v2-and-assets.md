@@ -1,29 +1,21 @@
 # Reader preferences v2 and managed display assets
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
-Reader preferences hold only theme, paper tone, font size, line height, font family, page effect, and automatic interval. The requested reading modes and PixNovel-equivalent settings need nested typography, margin, information, and background data, plus imported fonts and background images that must outlive restarts without mixing with book content caches.
+Reading preferences covered only theme, paper tone, font size, line height, a font family, the page effect, reading mode, and automatic-turn timing. Legado-style reading needs colour presets with day and night variants, finer typography, margins, header and footer information, chapter title styling, platform controls, configurable tap zones, and imported fonts, without losing existing saved preferences.
 
-## Proposal
+## Decision
 
-Extend the single `reader_preferences` JSON record with defaulted nested fields so old records deserialize with their existing values. Values are validated against bounds declared once in Rust and exported to the frontend through generated bindings. Old out-of-range line heights are clamped during migration rather than rejected.
+Keep the single `reader_preferences` JSON record and add one nested `style` object with serde defaults, so records saved before it load with Legado-derived defaults. `style` holds Legado 3.26.7's six colour presets (each with day and night background and text), the selected preset, letter and paragraph spacing, indent, body weight, title mode and scale, body margins, header and footer slots (time, battery, chapter or book title, chapter or book progress), an optional managed font, keep-screen-on, hidden system bars, volume-key paging, and nine tap-zone actions. Bounds and colour formats are validated in Rust; the defaults are declared once in Rust and exported to the page as `DEFAULT_READING_STYLE` in the generated bindings. Night follows the application theme, and the menu's day/night toggle changes that theme; the reader no longer has its own theme setting.
 
-Deliver this incrementally. [Batch 2](../../plans/2026-09-27-reader-batch-2.md) adds defaulted reading mode and automatic scroll speed to the current record and extends page effects with slide/fade. Preserve existing fields and the serialized `instant`/`curl` values; absent mode defaults to single-page. Responsive fallback and automatic running state are transient. The broader nested typography/margin/information migration belongs to later batches and must not reset existing values or silently hide malformed records.
-
-Schema 9 adds `reader_assets` metadata for fonts and background images stored under the managed `assets/` directory, and user background definitions. Orphan cleanup includes these references. Deleting an asset updates any preference that references it in the same operation. Assets are display-only and never participate in book identity or content versions.
-
-Keep schema 8 during the additive Batch 2 settings change; create schema 9 only with the asset tables in Batch 3. These are distinct compatibility steps and require their own old-record tests.
+Schema 9 (see the [chapter rules decision](2026-10-10-legado-txt-chapter-rules.md)) adds `reader_assets`. Imported fonts are recognised by their TrueType, OpenType, collection, or WOFF signature, copied into managed `assets/fonts`, and delivered to the page as raw bytes over IPC, where a `FontFace` registers them. Deleting a font clears it from saved preferences in the same transaction. Startup removes files under `assets/` that no record references. Assets never affect book identity or content versions.
 
 ## Alternatives considered
 
-Storing assets as base64 inside preference JSON would make every setting save rewrite large blobs. Keeping PixNovel's configuration-file ranges would create a second, manually synchronized source of bounds. Storing assets beside book caches would expose them to cache cleanup.
+Separate preference tables per feature would have needed a migration for every later setting and split one user choice across records. Background images, as Legado offers, were deferred: they need cropping, memory limits on Android WebView, and rasterization rules for page turns. Serving fonts through the Tauri asset protocol would have required widening its filesystem scope; raw IPC bytes keep access limited to recorded assets.
 
-## Acceptance criteria
+## Consequences
 
-Schema 8 data (books, content versions, directory rules, bookmarks, positions, preferences) survives migration. Old preferences keep size, line height, font, theme, and page effect. Asset import rejects unsupported formats; deleting a referenced asset leaves a valid preference.
-
-## Risks
-
-Nested preference growth increases save size; saves are debounced. A font that loads in the import check can still fail in WebKit later; loading failures keep the current font and report the error.
+Old preference JSON keeps its values and gains the defaults; invalid values are rejected rather than reset. Typography, margins, information bars, and title styling are part of the pagination signature, so changing them re-measures from the current locator. Chapter headings are marked identically for measuring, visible pages, scrolling, and page-turn overlays. A font the browser cannot decode leaves the previous font in use and reports the failure.

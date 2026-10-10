@@ -17,7 +17,8 @@ import type {
   BookTocSettings,
   TxtTocRule,
 } from "../../types/generated";
-import { ruleServiceMocks, tocEntry, tocListing } from "../../test/toc";
+import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
+import { DEFAULT_READING_STYLE } from "../../types/generated";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -34,10 +35,12 @@ vi.mock("../../reader", async () => {
       measure(window: ContentWindow) {
         return reader.paginateText(window.text, window.startOffset, 60);
       }
+      setHeadings() {}
       dispose() {}
     },
     PageTurnAdapter: class {
       followsDrag = false;
+      setHeadings() {}
       aim() {}
       beginDrag() {}
       updateDrag() {}
@@ -194,6 +197,7 @@ function runtime() {
         autoPageSeconds: 8,
         readingMode: "single" as const,
         autoScrollSpeed: 40,
+        style: DEFAULT_READING_STYLE,
       })),
       saveSettings: vi.fn(async (value) => value),
       getShelfPreferences: vi.fn(async () => ({
@@ -202,6 +206,7 @@ function runtime() {
         groupId: "all",
       })),
       saveShelfPreferences: vi.fn(async (value) => value),
+      ...fontServiceMocks(),
     },
   } satisfies AppServices);
 }

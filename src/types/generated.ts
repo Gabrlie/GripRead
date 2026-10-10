@@ -4,6 +4,9 @@
 export const AUTO_SCROLL_SPEED_MIN = 5;
 export const AUTO_SCROLL_SPEED_MAX = 200;
 
+import type { ReadingStyle } from "./generated/ReadingStyle";
+export const DEFAULT_READING_STYLE: ReadingStyle = {"presets":[{"name":"微信读书","background":"#c0edc6","text":"#0b0b0b","nightBackground":"#000000","nightText":"#adadad"},{"name":"纸白","background":"#ffffff","text":"#000000","nightBackground":"#000000","nightText":"#ffffff"},{"name":"羊皮纸","background":"#ddc090","text":"#3e3422","nightBackground":"#3c3f43","nightText":"#dcdfe1"},{"name":"豆沙绿","background":"#c2d8aa","text":"#596c44","nightBackground":"#3c3f43","nightText":"#88c16f"},{"name":"淡紫","background":"#dbb8e2","text":"#68516c","nightBackground":"#3c3f43","nightText":"#f6aeae"},{"name":"天青","background":"#abcee0","text":"#3d4c54","nightBackground":"#3c3f43","nightText":"#90bff5"}],"selected":0,"letterSpacing":0.0,"paragraphSpacing":0.4,"indent":2,"fontWeight":400,"titleMode":"left","titleScale":1.25,"margins":{"top":8.0,"bottom":8.0,"left":20.0,"right":20.0},"header":{"visible":true,"left":"chapter_title","middle":"none","right":"time"},"footer":{"visible":true,"left":"battery","middle":"none","right":"chapter_progress"},"fontAssetId":null,"keepScreenOn":true,"hideSystemBars":false,"volumeKeys":true,"tapZones":["previous","previous","next","previous","menu","next","previous","next","next"]};
+
 export type { AppError } from "./generated/AppError";
 export type { AssetAvailability } from "./generated/AssetAvailability";
 export type { AssetKind } from "./generated/AssetKind";
@@ -40,6 +43,16 @@ export type { OrderTxtTocRulesRequest } from "./generated/OrderTxtTocRulesReques
 export type { ImportTxtTocRulesRequest } from "./generated/ImportTxtTocRulesRequest";
 export type { TestTxtTocRuleRequest } from "./generated/TestTxtTocRuleRequest";
 export type { BookInfo } from "./generated/BookInfo";
+export type { StylePreset } from "./generated/StylePreset";
+export type { TitleMode } from "./generated/TitleMode";
+export type { InfoSlot } from "./generated/InfoSlot";
+export type { InfoBar } from "./generated/InfoBar";
+export type { Margins } from "./generated/Margins";
+export type { TapAction } from "./generated/TapAction";
+export type { ReadingStyle } from "./generated/ReadingStyle";
+export type { ReaderAsset } from "./generated/ReaderAsset";
+export type { ReaderAssetRequest } from "./generated/ReaderAssetRequest";
+export type { PathRequest } from "./generated/PathRequest";
 export type { Bookmark } from "./generated/Bookmark";
 export type { BookmarkRequest } from "./generated/BookmarkRequest";
 export type { BookmarkIdRequest } from "./generated/BookmarkIdRequest";

@@ -38,7 +38,20 @@ export function renderReaderText(
       paragraph.dataset.textStart = String(lineStart);
       if (continued) paragraph.dataset.continued = "true";
       if (!continued && options.headings?.has(lineStart)) paragraph.dataset.heading = "true";
-      appendHighlighted(paragraph, text, lineStart, lineEnd, options.highlight ?? null);
+      // Like Legado, a paragraph's own leading spaces give way to the
+      // configured indent. They stay in the DOM, hidden, so offsets hold.
+      let bodyStart = lineStart;
+      if (!continued) {
+        const leading = /^[\s\u3000]+/u.exec(text.slice(lineStart, lineEnd))?.[0].length ?? 0;
+        if (leading > 0 && lineStart + leading < lineEnd) {
+          const spaces = document.createElement("span");
+          spaces.hidden = true;
+          spaces.textContent = text.slice(lineStart, lineStart + leading);
+          paragraph.append(spaces);
+          bodyStart = lineStart + leading;
+        }
+      }
+      appendHighlighted(paragraph, text, bodyStart, lineEnd, options.highlight ?? null);
       fragment.append(paragraph);
     } else if (!continued && !last) {
       // An empty line occupies one line box, matching pre-wrapped text.

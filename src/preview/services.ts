@@ -15,6 +15,7 @@ import type {
   TocEntry,
   TxtTocRule,
 } from "../types/generated";
+import { DEFAULT_READING_STYLE } from "../types/generated";
 
 const BOOK_ID = "preview-book";
 const VERSION = "preview-v1";
@@ -105,6 +106,7 @@ const PREFERENCES: ReaderPreferences = {
   autoPageSeconds: 8,
   readingMode: "single",
   autoScrollSpeed: 40,
+  style: DEFAULT_READING_STYLE,
 };
 
 export function previewServices(): AppServices {
@@ -257,6 +259,10 @@ export function previewServices(): AppServices {
       saveShelfPreferences: async (next) => (shelf = next),
       getSettings: async () => preferences,
       saveSettings: async (next) => (preferences = next),
+      pickAndImportFont: async () => null,
+      listFonts: async () => [],
+      readFont: unsupported,
+      deleteFont: unsupported,
     },
   };
 }

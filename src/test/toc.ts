@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { ReaderService } from "../services/contracts";
+import type { ReaderService, SettingsService } from "../services/contracts";
 import type { ReaderLocator, TocEntry, TocListing } from "../types/generated";
 
 /** A directory listing produced by automatic detection. */
@@ -37,5 +37,18 @@ export function ruleServiceMocks(): Pick<
     exportTxtTocRules: vi.fn(async () => "[]"),
     testTxtTocRule: vi.fn(async () => []),
     saveBookTocSettings: vi.fn(async (_bookId, settings) => settings),
+  };
+}
+
+/** Font asset methods of the settings service with an empty font list. */
+export function fontServiceMocks(): Pick<
+  SettingsService,
+  "pickAndImportFont" | "listFonts" | "readFont" | "deleteFont"
+> {
+  return {
+    pickAndImportFont: vi.fn(async () => null),
+    listFonts: vi.fn(async () => []),
+    readFont: vi.fn(async () => new ArrayBuffer(0)),
+    deleteFont: vi.fn(async () => undefined),
   };
 }

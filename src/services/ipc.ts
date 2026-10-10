@@ -50,6 +50,9 @@ import type {
   SearchRequest,
   SearchResponse,
   TxtTocRule,
+  ReaderAsset,
+  ReaderAssetRequest,
+  PathRequest,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -262,6 +265,27 @@ export const tauriServices: AppServices = {
     saveSettings: (settings) =>
       invokeCommand<ReaderPreferences>("save_settings", {
         request: { settings } satisfies SaveSettingsRequest,
+      }),
+    pickAndImportFont: async () => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "字体", extensions: ["ttf", "otf", "ttc", "woff", "woff2"] }],
+      });
+      if (selected === null) return null;
+      if (typeof selected !== "string") throw new Error("Expected one font file");
+      return invokeCommand<ReaderAsset>("import_reader_font", {
+        request: { path: selected } satisfies PathRequest,
+      });
+    },
+    listFonts: () => invokeCommand<ReaderAsset[]>("list_reader_fonts"),
+    readFont: (id) =>
+      invokeCommand<ArrayBuffer>("read_reader_font", {
+        request: { id } satisfies ReaderAssetRequest,
+      }),
+    deleteFont: (id) =>
+      invokeCommand<void>("delete_reader_font", {
+        request: { id } satisfies ReaderAssetRequest,
       }),
   },
 };

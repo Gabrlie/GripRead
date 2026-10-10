@@ -122,3 +122,20 @@ describe("DomReaderMeasurer with paragraph layout", () => {
     }
   });
 });
+
+describe("leading paragraph spaces", () => {
+  it("hides a paragraph's own leading spaces without changing its text", () => {
+    const root = document.createElement("div");
+    const text = "　　第一段\n  second\n　　\n续行";
+    renderReaderText(root, text, { continued: false });
+    expect(root.textContent).toBe(text);
+    const paragraphs = root.querySelectorAll("p");
+    expect(paragraphs[0].querySelector("span[hidden]")?.textContent).toBe("　　");
+    expect(paragraphs[1].querySelector("span[hidden]")?.textContent).toBe("  ");
+    // A line of only spaces keeps its line box.
+    expect(paragraphs[2].querySelector("span[hidden]")).toBeNull();
+    const continued = document.createElement("div");
+    renderReaderText(continued, "　　接上页", { continued: true });
+    expect(continued.querySelector("span[hidden]")).toBeNull();
+  });
+});

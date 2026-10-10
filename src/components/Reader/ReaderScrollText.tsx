@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { ContentWindow } from "../../types/generated";
-import type { ReaderController } from "../../reader";
+import type { HeadingIndex, ReaderController } from "../../reader";
 import { renderReaderText, continuesLine } from "../../reader";
 import { rectAtOffset, visibleOffsets } from "../../reader/scroll-layout";
 import { selectionActive } from "./ReaderSurface";
@@ -10,6 +10,7 @@ interface Props {
   controller: ReaderController;
   viewport: RefObject<HTMLDivElement | null>;
   highlight: { start: number; end: number } | null;
+  headings: HeadingIndex;
   onInteract: () => void;
   /** A drag or wheel movement; the overlay toolbars would otherwise cover text. */
   onUserScroll: () => void;
@@ -22,6 +23,7 @@ export function ReaderScrollText({
   controller,
   viewport,
   highlight,
+  headings,
   onInteract,
   onUserScroll,
   run,
@@ -87,6 +89,7 @@ export function ReaderScrollText({
       highlight: highlight
         ? { start: highlight.start - content.startOffset, end: highlight.end - content.startOffset }
         : null,
+      headings: headings.local(content.startOffset, content.endOffset),
     });
     previous.current = content;
     const target = controller.takeScrollTarget();
@@ -115,7 +118,7 @@ export function ReaderScrollText({
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => report.current());
     return () => cancelAnimationFrame(frame.current);
-  }, [content, controller, highlight?.start, highlight?.end, viewport]);
+  }, [content, controller, highlight?.start, highlight?.end, headings, viewport]);
   useLayoutEffect(() => {
     const box = viewport.current;
     if (!box) return;
@@ -167,7 +170,13 @@ export function ReaderScrollText({
         onTouchMove={onUserScroll}
       >
         {/* The single-page text column; .reader-prose resets padding on its own element. */}
-        <div className="max-w-2xl mx-auto px-5 sm:px-8 md:px-12">
+        <div
+          className="max-w-2xl mx-auto"
+          style={{
+            paddingLeft: "var(--reader-margin-left, 20px)",
+            paddingRight: "var(--reader-margin-right, 20px)",
+          }}
+        >
           <div
             ref={body}
             className="reader-prose reader-text"

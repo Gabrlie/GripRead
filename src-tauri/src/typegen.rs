@@ -45,6 +45,16 @@ const IPC_TYPES: &[&str] = &[
     "ImportTxtTocRulesRequest",
     "TestTxtTocRuleRequest",
     "BookInfo",
+    "StylePreset",
+    "TitleMode",
+    "InfoSlot",
+    "InfoBar",
+    "Margins",
+    "TapAction",
+    "ReadingStyle",
+    "ReaderAsset",
+    "ReaderAssetRequest",
+    "PathRequest",
     "Bookmark",
     "BookmarkRequest",
     "BookmarkIdRequest",
@@ -77,6 +87,11 @@ const IPC_TYPES: &[&str] = &[
 pub fn generated_types() -> Result<String, AppError> {
     let mut output = String::from(GENERATED_HEADER);
     output.push_str(&format!("export const AUTO_SCROLL_SPEED_MIN = {AUTO_SCROLL_SPEED_MIN};\nexport const AUTO_SCROLL_SPEED_MAX = {AUTO_SCROLL_SPEED_MAX};\n\n"));
+    // Reading-style defaults are declared once in Rust and shared with the page.
+    let style = serde_json::to_string(&ReadingStyle::default())?;
+    output.push_str(&format!(
+        "import type {{ ReadingStyle }} from \"./generated/ReadingStyle\";\nexport const DEFAULT_READING_STYLE: ReadingStyle = {style};\n\n"
+    ));
     for name in IPC_TYPES {
         output.push_str(&format!(
             "export type {{ {name} }} from \"./generated/{name}\";\n"
@@ -128,6 +143,16 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ImportTxtTocRulesRequest>(&config)?;
     export_all::<TestTxtTocRuleRequest>(&config)?;
     export_all::<BookInfo>(&config)?;
+    export_all::<StylePreset>(&config)?;
+    export_all::<TitleMode>(&config)?;
+    export_all::<InfoSlot>(&config)?;
+    export_all::<InfoBar>(&config)?;
+    export_all::<Margins>(&config)?;
+    export_all::<TapAction>(&config)?;
+    export_all::<ReadingStyle>(&config)?;
+    export_all::<ReaderAsset>(&config)?;
+    export_all::<ReaderAssetRequest>(&config)?;
+    export_all::<PathRequest>(&config)?;
     export_all::<Bookmark>(&config)?;
     export_all::<BookmarkRequest>(&config)?;
     export_all::<BookmarkIdRequest>(&config)?;

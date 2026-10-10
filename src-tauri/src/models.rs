@@ -335,6 +335,29 @@ pub struct TestTxtTocRuleRequest {
     pub sample: String,
 }
 
+/// A managed file used for display, such as an imported reading font.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderAsset {
+    pub id: String,
+    pub name: String,
+    pub byte_length: u64,
+    pub created_at: i64,
+}
+
+/// A picked file: a filesystem path or an Android document URI.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PathRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderAssetRequest {
+    pub id: String,
+}
+
 /// Book details beyond the shelf record.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -492,6 +515,235 @@ pub struct ReaderPreferences {
     pub reading_mode: ReaderMode,
     #[serde(default = "default_auto_scroll_speed")]
     pub auto_scroll_speed: u16,
+    /// Legado-style reading styles, layout, information bars, and controls.
+    /// Absent in records saved before it existed, which then get the defaults.
+    #[serde(default)]
+    pub style: ReadingStyle,
+}
+
+/// A reading colour scheme with day and night variants (Legado ReadBookConfig).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StylePreset {
+    pub name: String,
+    /// CSS colours such as `#f6f2e9`.
+    pub background: String,
+    pub text: String,
+    pub night_background: String,
+    pub night_text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleMode {
+    Left,
+    Center,
+    Hidden,
+}
+
+/// One position in the header or footer (Legado ReadTipConfig).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InfoSlot {
+    None,
+    Time,
+    Battery,
+    ChapterTitle,
+    BookTitle,
+    ChapterProgress,
+    BookProgress,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoBar {
+    pub visible: bool,
+    pub left: InfoSlot,
+    pub middle: InfoSlot,
+    pub right: InfoSlot,
+}
+
+/// Body margins in CSS pixels, inside the system bar insets.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Margins {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TapAction {
+    None,
+    Menu,
+    Next,
+    Previous,
+    NextChapter,
+    PreviousChapter,
+    Contents,
+    Search,
+    Bookmark,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReadingStyle {
+    pub presets: Vec<StylePreset>,
+    /// Index into `presets`.
+    pub selected: u32,
+    /// Extra space between characters, in em.
+    pub letter_spacing: f64,
+    /// Space between paragraphs, in em.
+    pub paragraph_spacing: f64,
+    /// First-line indent, in full-width characters.
+    pub indent: u8,
+    /// CSS font weight of the body text.
+    pub font_weight: u16,
+    pub title_mode: TitleMode,
+    /// Chapter heading size relative to the body text.
+    pub title_scale: f64,
+    pub margins: Margins,
+    pub header: InfoBar,
+    pub footer: InfoBar,
+    /// A managed font from `reader_assets`, overriding `font_family`.
+    pub font_asset_id: Option<String>,
+    pub keep_screen_on: bool,
+    pub hide_system_bars: bool,
+    pub volume_keys: bool,
+    /// Row-major nine tap zones.
+    pub tap_zones: Vec<TapAction>,
+}
+
+impl Default for ReadingStyle {
+    fn default() -> Self {
+        // Legado 3.26.7 `assets/defaultData/readConfig.json`.
+        let preset =
+            |name: &str, background: &str, text: &str, night_background: &str, night_text: &str| {
+                StylePreset {
+                    name: name.to_string(),
+                    background: background.to_string(),
+                    text: text.to_string(),
+                    night_background: night_background.to_string(),
+                    night_text: night_text.to_string(),
+                }
+            };
+        use TapAction::{Menu, Next, Previous};
+        Self {
+            presets: vec![
+                preset("微信读书", "#c0edc6", "#0b0b0b", "#000000", "#adadad"),
+                preset("纸白", "#ffffff", "#000000", "#000000", "#ffffff"),
+                preset("羊皮纸", "#ddc090", "#3e3422", "#3c3f43", "#dcdfe1"),
+                preset("豆沙绿", "#c2d8aa", "#596c44", "#3c3f43", "#88c16f"),
+                preset("淡紫", "#dbb8e2", "#68516c", "#3c3f43", "#f6aeae"),
+                preset("天青", "#abcee0", "#3d4c54", "#3c3f43", "#90bff5"),
+            ],
+            selected: 0,
+            letter_spacing: 0.0,
+            paragraph_spacing: 0.4,
+            indent: 2,
+            font_weight: 400,
+            title_mode: TitleMode::Left,
+            title_scale: 1.25,
+            margins: Margins {
+                top: 8.0,
+                bottom: 8.0,
+                left: 20.0,
+                right: 20.0,
+            },
+            header: InfoBar {
+                visible: true,
+                left: InfoSlot::ChapterTitle,
+                middle: InfoSlot::None,
+                right: InfoSlot::Time,
+            },
+            footer: InfoBar {
+                visible: true,
+                left: InfoSlot::Battery,
+                middle: InfoSlot::None,
+                right: InfoSlot::ChapterProgress,
+            },
+            font_asset_id: None,
+            keep_screen_on: true,
+            hide_system_bars: false,
+            volume_keys: true,
+            tap_zones: vec![
+                Previous, Previous, Next, Previous, Menu, Next, Previous, Next, Next,
+            ],
+        }
+    }
+}
+
+impl ReadingStyle {
+    fn validate(&self) -> Result<(), AppError> {
+        let range = |value: f64, low: f64, high: f64, name: &str| {
+            if value.is_finite() && (low..=high).contains(&value) {
+                Ok(())
+            } else {
+                Err(AppError::invalid_argument(format!(
+                    "{name} must be between {low} and {high}"
+                )))
+            }
+        };
+        if self.presets.is_empty() || self.presets.len() > 32 {
+            return Err(AppError::invalid_argument(
+                "reading styles need 1 to 32 presets",
+            ));
+        }
+        if self.selected as usize >= self.presets.len() {
+            return Err(AppError::invalid_argument(
+                "selected reading style does not exist",
+            ));
+        }
+        for preset in &self.presets {
+            if preset.name.trim().is_empty() || preset.name.chars().count() > 24 {
+                return Err(AppError::invalid_argument(
+                    "style names need 1 to 24 characters",
+                ));
+            }
+            for color in [
+                &preset.background,
+                &preset.text,
+                &preset.night_background,
+                &preset.night_text,
+            ] {
+                let hex = color.strip_prefix('#').unwrap_or("");
+                if !(hex.len() == 6 || hex.len() == 8)
+                    || !hex.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    return Err(AppError::invalid_argument(format!(
+                        "invalid colour {color}"
+                    )));
+                }
+            }
+        }
+        range(self.letter_spacing, -0.1, 0.5, "letter_spacing")?;
+        range(self.paragraph_spacing, 0.0, 3.0, "paragraph_spacing")?;
+        range(self.title_scale, 1.0, 2.5, "title_scale")?;
+        for (value, name) in [
+            (self.margins.top, "margins.top"),
+            (self.margins.bottom, "margins.bottom"),
+            (self.margins.left, "margins.left"),
+            (self.margins.right, "margins.right"),
+        ] {
+            range(value, 0.0, 120.0, name)?;
+        }
+        if self.indent > 4 {
+            return Err(AppError::invalid_argument(
+                "indent must be at most 4 characters",
+            ));
+        }
+        if !(100..=900).contains(&self.font_weight) {
+            return Err(AppError::invalid_argument(
+                "font_weight must be between 100 and 900",
+            ));
+        }
+        if self.tap_zones.len() != 9 {
+            return Err(AppError::invalid_argument("tap zones need nine actions"));
+        }
+        Ok(())
+    }
 }
 
 fn default_auto_scroll_speed() -> u16 {
@@ -518,6 +770,7 @@ impl Default for ReaderPreferences {
             auto_page_seconds: default_auto_page_seconds(),
             reading_mode: ReaderMode::Single,
             auto_scroll_speed: default_auto_scroll_speed(),
+            style: ReadingStyle::default(),
         }
     }
 }
@@ -547,7 +800,7 @@ impl ReaderPreferences {
                 "auto_scroll_speed must be between 5 and 200 CSS pixels per second",
             ));
         }
-        Ok(())
+        self.style.validate()
     }
 }
 

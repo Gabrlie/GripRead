@@ -12,6 +12,7 @@ export type { DomReaderMeasurerOptions, ReaderMeasurer, ReaderPage } from "./pag
 export { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
 export type { RenderTextOptions } from "./render";
 export { InstantReaderAdapter } from "./instant";
+export { HeadingIndex, NO_HEADINGS } from "./headings";
 export type { InstantReaderAdapterOptions } from "./instant";
 export { PageTurnAdapter } from "./page-turn";
 export type { PageTurnAdapterOptions } from "./page-turn";

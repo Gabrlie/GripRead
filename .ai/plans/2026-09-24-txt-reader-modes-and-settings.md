@@ -22,7 +22,7 @@ EPUB, online content, Android/Windows acceptance, and cross-platform release rem
 
 ## Interfaces
 
-`ReaderPreferences` gains reading mode, typography effects, sectional margins, information configuration, background references, and automatic scroll speed; Rust declarations and generated TypeScript change together, and old preference JSON keeps its existing values. The content window gains no new fields; paragraph boundaries are derived in the frontend from normalized LF text. All modes share `ReaderLocator`. Storage advances additively from schema 8 to schema 9 for asset metadata as recorded in the [proposed decision](../notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md). Fonts and backgrounds affect display only; typography, rule, and mode changes never re-import text or create a content version.
+`ReaderPreferences` gains reading mode, typography effects, sectional margins, information configuration, background references, and automatic scroll speed; Rust declarations and generated TypeScript change together, and old preference JSON keeps its existing values. The content window gains no new fields; paragraph boundaries are derived in the frontend from normalized LF text. All modes share `ReaderLocator`. Storage advances additively from schema 8 to schema 9 for asset metadata as recorded in the [proposed decision](../notes/implemented/2026-09-24-reader-preferences-v2-and-assets.md). Fonts and backgrounds affect display only; typography, rule, and mode changes never re-import text or create a content version.
 
 ## Acceptance criteria
 
@@ -51,4 +51,4 @@ These are repaired: the page text clips a highlight to its visible slice, a writ
 
 ## Handoff
 
-Closed after Batch 2. Batches 1 and 2 are delivered; the [Batch 2 record](2026-09-27-reader-batch-2.md#verification) contains chapter/mode behavior, persistence and WebKit fixes, and native/visual evidence. On 2026-10-10 the user replaced the PixNovel reference with legado-with-MD3 tag `3.26.7`, so Batches 3–5 are superseded by the Legado-style reader rework rather than delivered here. The proposed [preferences and assets decision](../notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md) will be revised for that rework.
+Closed after Batch 2. Batches 1 and 2 are delivered; the [Batch 2 record](2026-09-27-reader-batch-2.md#verification) contains chapter/mode behavior, persistence and WebKit fixes, and native/visual evidence. On 2026-10-10 the user replaced the PixNovel reference with legado-with-MD3 tag `3.26.7`, so Batches 3–5 are superseded by the Legado-style reader rework rather than delivered here. The [preferences and assets decision](../notes/implemented/2026-09-24-reader-preferences-v2-and-assets.md) was delivered by that rework.

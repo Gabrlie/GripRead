@@ -19,7 +19,7 @@ use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AssetAvailability, AssetKind, Book, BookAsset, BookInfo, BookTocSettings, Bookmark,
     BookmarkRequest, ContentWindow, ImportPhase, ImportResult, LibraryBook, LibraryGroup,
-    ReadContentRequest, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
+    ReadContentRequest, ReaderAsset, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
     ResolveOffsetRequest, SearchMatch, SearchRequest, SearchResponse, TxtDecodeState, TxtEncoding,
     TxtEncodingInfo, TxtTocRule, WindowDirection,
 };
@@ -3068,6 +3068,144 @@ impl Storage {
         Ok(preferences.clone())
     }
 
+    /// Copies a font into managed `assets/fonts` after checking its signature.
+    /// Assets never affect book identity or content versions.
+    pub fn import_reader_font(
+        &mut self,
+        source: &Path,
+        name: &str,
+    ) -> Result<ReaderAsset, AppError> {
+        let bytes = fs::read(source)?;
+        let extension = font_extension(&bytes).ok_or_else(|| {
+            AppError::invalid_argument("the file is not a TrueType, OpenType, or WOFF font")
+        })?;
+        if bytes.len() > 64 * 1024 * 1024 {
+            return Err(AppError::invalid_argument(
+                "fonts larger than 64 MB are not supported",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let relative_path = format!("assets/fonts/{id}.{extension}");
+        let path = managed_path(&self.root, &relative_path, "assets")?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let stem = Path::new(name)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().trim().to_string())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or_else(|| "导入字体".to_string());
+        let stage = path.with_extension("part");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&stage)?;
+        let written = file.write_all(&bytes).and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(error) = written {
+            let _ = fs::remove_file(&stage);
+            return Err(error.into());
+        }
+        fs::rename(&stage, &path)?;
+        let asset = ReaderAsset {
+            id,
+            name: stem.chars().take(64).collect(),
+            byte_length: bytes.len() as u64,
+            created_at: now_millis(),
+        };
+        if let Err(error) = self.conn.execute(
+            "INSERT INTO reader_assets(id, kind, name, relative_path, byte_length, created_at)
+             VALUES (?1, 'font', ?2, ?3, ?4, ?5)",
+            params![
+                asset.id,
+                asset.name,
+                relative_path,
+                asset.byte_length as i64,
+                asset.created_at
+            ],
+        ) {
+            let _ = fs::remove_file(&path);
+            return Err(error.into());
+        }
+        Ok(asset)
+    }
+
+    pub fn list_reader_fonts(&self) -> Result<Vec<ReaderAsset>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, byte_length, created_at FROM reader_assets
+             WHERE kind = 'font' ORDER BY created_at, id",
+        )?;
+        let fonts = statement
+            .query_map([], |row| {
+                Ok(ReaderAsset {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    byte_length: row.get::<_, i64>(2)?.max(0) as u64,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(fonts)
+    }
+
+    pub fn read_reader_font(&self, id: &str) -> Result<Vec<u8>, AppError> {
+        let relative_path: String = self
+            .conn
+            .query_row(
+                "SELECT relative_path FROM reader_assets WHERE id = ?1 AND kind = 'font'",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "font was not found"))?;
+        let path = managed_path(&self.root, &relative_path, "assets")?;
+        fs::read(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                AppError::new(ErrorCode::AssetMissing, "font file is missing")
+            } else {
+                error.into()
+            }
+        })
+    }
+
+    /// Deletes a font and, in the same transaction, clears any preference
+    /// that selected it, so saved preferences never name a missing font.
+    pub fn delete_reader_font(&mut self, id: &str) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        let relative_path: String = tx
+            .query_row(
+                "SELECT relative_path FROM reader_assets WHERE id = ?1 AND kind = 'font'",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "font was not found"))?;
+        let saved: Option<String> = tx
+            .query_row(
+                "SELECT preferences_json FROM reader_preferences WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(saved) = saved {
+            let mut preferences: ReaderPreferences = serde_json::from_str(&saved)?;
+            if preferences.style.font_asset_id.as_deref() == Some(id) {
+                preferences.style.font_asset_id = None;
+                tx.execute(
+                    "UPDATE reader_preferences SET preferences_json = ?1, updated_at = ?2 WHERE id = 1",
+                    params![serde_json::to_string(&preferences)?, now_millis()],
+                )?;
+            }
+        }
+        tx.execute("DELETE FROM reader_assets WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        let path = managed_path(&self.root, &relative_path, "assets")?;
+        match fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+
     fn asset_for_book(&self, book_id: &str) -> Result<AssetRecord, AppError> {
         self.conn
             .query_row(
@@ -3453,6 +3591,17 @@ impl Storage {
         remove_orphans_recursive(&books_root, &self.root, &referenced_books)?;
         let sources_root = self.root.join("sources");
         remove_orphans_recursive(&sources_root, &self.root, &referenced_sources)?;
+        // A font copied but not recorded (or a leftover .part) is unreachable.
+        let referenced_assets: HashSet<String> = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT relative_path FROM reader_assets")?;
+            let result = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?;
+            result
+        };
+        remove_orphans_recursive(&self.root.join("assets"), &self.root, &referenced_assets)?;
         Ok(())
     }
 
@@ -4863,6 +5012,18 @@ fn txt_decode_journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtD
     })
 }
 
+/// The extension for a font file identified by its signature.
+fn font_extension(bytes: &[u8]) -> Option<&'static str> {
+    match bytes.get(..4)? {
+        [0x00, 0x01, 0x00, 0x00] | b"true" => Some("ttf"),
+        b"OTTO" => Some("otf"),
+        b"ttcf" => Some("ttc"),
+        b"wOFF" => Some("woff"),
+        b"wOF2" => Some("woff2"),
+        _ => None,
+    }
+}
+
 fn title_from_path(path: &Path) -> String {
     path.file_stem()
         .map(|value| value.to_string_lossy().trim().to_string())
@@ -6262,6 +6423,68 @@ mod tests {
         assert_eq!(
             storage.book_toc_settings(&ids[0]).unwrap().0,
             BookTocSettings::default()
+        );
+    }
+
+    #[test]
+    fn reader_fonts_import_validate_and_clear_preferences_on_delete() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let fake = write_source(&root.0, "fake.ttf", b"not a font at all");
+        assert_eq!(
+            storage
+                .import_reader_font(&fake, "fake.ttf")
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        let mut bytes = vec![0x00, 0x01, 0x00, 0x00];
+        bytes.extend_from_slice(&[7; 64]);
+        let font = write_source(&root.0, "宋体.ttf", &bytes);
+        let asset = storage.import_reader_font(&font, "宋体.ttf").unwrap();
+        assert_eq!(asset.name, "宋体");
+        assert_eq!(
+            storage.list_reader_fonts().unwrap(),
+            std::slice::from_ref(&asset)
+        );
+        assert_eq!(storage.read_reader_font(&asset.id).unwrap(), bytes);
+        let mut preferences = ReaderPreferences::default();
+        preferences.style.font_asset_id = Some(asset.id.clone());
+        storage.save_settings(&preferences).unwrap();
+        drop(storage);
+        // Orphan cleanup on open keeps recorded fonts.
+        let mut storage = Storage::open(&app_root).unwrap();
+        assert_eq!(storage.read_reader_font(&asset.id).unwrap(), bytes);
+        storage.delete_reader_font(&asset.id).unwrap();
+        assert!(storage.list_reader_fonts().unwrap().is_empty());
+        assert_eq!(storage.get_settings().unwrap().style.font_asset_id, None);
+        assert_eq!(
+            storage.read_reader_font(&asset.id).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
+    fn preferences_saved_before_reading_styles_load_with_defaults() {
+        let root = TestRoot::new();
+        let storage = Storage::open(&root.0.join("data")).unwrap();
+        let mut legacy = serde_json::to_value(ReaderPreferences::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("style");
+        storage
+            .conn
+            .execute(
+                "INSERT INTO reader_preferences(id, preferences_json, updated_at) VALUES(1, ?1, 1)",
+                params![legacy.to_string()],
+            )
+            .unwrap();
+        let loaded = storage.get_settings().unwrap();
+        assert_eq!(loaded.style, crate::models::ReadingStyle::default());
+        let mut invalid = loaded.clone();
+        invalid.style.selected = 99;
+        assert_eq!(
+            storage.save_settings(&invalid).unwrap_err().code,
+            ErrorCode::InvalidArgument
         );
     }
 

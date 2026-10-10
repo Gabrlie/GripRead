@@ -1,16 +1,17 @@
 import { useLayoutEffect, useRef } from "react";
 import { renderReaderText } from "../../reader";
-import type { ReaderDisplayedPage } from "../../reader";
+import type { HeadingIndex, ReaderDisplayedPage } from "../../reader";
 
 interface ReaderPageTextProps {
   page: ReaderDisplayedPage;
   bookId: string | null;
   /** Absolute UTF-16 range to highlight. */
   highlight: { start: number; end: number } | null;
+  headings: HeadingIndex;
 }
 
 /** Renders a measured page with the same paragraph renderer used for measurement. */
-export function ReaderPageText({ page, bookId, highlight }: ReaderPageTextProps) {
+export function ReaderPageText({ page, bookId, highlight, headings }: ReaderPageTextProps) {
   const content = useRef<HTMLDivElement>(null);
   // A match may cross a page boundary; clip it to the visible slice so each
   // page shows the part it contains.
@@ -24,12 +25,21 @@ export function ReaderPageText({ page, bookId, highlight }: ReaderPageTextProps)
     if (!content.current) return;
     renderReaderText(content.current, page.text, {
       continued: page.continued,
+      headings: headings.local(page.startOffset, page.endOffset),
       highlight:
         highlightStart === null || highlightEnd === null
           ? null
           : { start: highlightStart, end: highlightEnd },
     });
-  }, [page.text, page.continued, highlightStart, highlightEnd]);
+  }, [
+    page.text,
+    page.continued,
+    page.startOffset,
+    page.endOffset,
+    headings,
+    highlightStart,
+    highlightEnd,
+  ]);
   return (
     <div
       ref={content}

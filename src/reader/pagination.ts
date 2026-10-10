@@ -1,5 +1,6 @@
 import type { ContentWindow, WindowDirection } from "../types/generated";
 import { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
+import { NO_HEADINGS, type HeadingIndex } from "./headings";
 
 /** A page of already normalized content measured in UTF-16 code units. */
 export interface ReaderPage {
@@ -141,6 +142,9 @@ interface LayoutRect {
 export class DomReaderMeasurer implements ReaderMeasurer {
   private readonly epsilon: number;
   private disposed = false;
+  private headings: HeadingIndex = NO_HEADINGS;
+  /** Absolute offset of the text being fitted, for heading lookup. */
+  private origin = 0;
 
   public constructor(
     private readonly element: HTMLElement,
@@ -150,6 +154,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     if (!Number.isFinite(this.epsilon) || this.epsilon < 0) {
       throw new RangeError("measurement epsilon must be a non-negative number");
     }
+  }
+
+  /** Chapter headings render larger; pages must be measured with them marked. */
+  public setHeadings(headings: HeadingIndex): void {
+    this.headings = headings;
   }
 
   /**
@@ -171,7 +180,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     // on a page. Measuring a prefix/suffix inside the full window gives the
     // candidate a different line wrap and mishandles trailing line breaks.
     const fits = (candidate: string, localStart: number): boolean =>
-      this.fitsText(candidate, continuedAt(localStart));
+      this.fitsText(candidate, continuedAt(localStart), this.origin + localStart);
 
     if (direction === "backward") {
       let low = 1;
@@ -224,6 +233,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
       let right = boundaries.length - 1;
       while (right > 0) {
         const remaining = text.slice(0, boundaries[right]);
+        this.origin = contentWindow.startOffset;
         const units = this.fit(remaining, "backward", (local) =>
           continuesLine(text, local, windowContinued),
         );
@@ -248,6 +258,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     while (left < boundaries.length - 1) {
       const remaining = text.slice(boundaries[left]);
       const pageStart = boundaries[left];
+      this.origin = contentWindow.startOffset + pageStart;
       const units = this.fit(remaining, "forward", () =>
         continuesLine(text, pageStart, windowContinued),
       );
@@ -305,8 +316,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     };
   }
 
-  private fitsText(text: string, continued: boolean): boolean {
-    renderReaderText(this.element, text, { continued });
+  private fitsText(text: string, continued: boolean, start: number): boolean {
+    renderReaderText(this.element, text, {
+      continued,
+      headings: this.headings.local(start, start + text.length),
+    });
     const layout = this.layoutRect();
     const scrollHeight = this.element.scrollHeight;
     if (Number.isFinite(scrollHeight) && scrollHeight > 0) {
