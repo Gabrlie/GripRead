@@ -11,7 +11,12 @@ import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
-import { listenForClose } from "./services/lifecycle";
+import {
+  dismissWithEscape,
+  flushWhenHidden,
+  listenForBack,
+  listenForClose,
+} from "./services/lifecycle";
 import {
   AppRuntime,
   RuntimeContext,
@@ -77,8 +82,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 }
 
+/** Open dialogs, drawers, and menus that close on Escape. */
+const OPEN_LAYER =
+  '[role="dialog"][data-open], [role="alertdialog"][data-open], [role="menu"][data-open]';
+
 function MainContent() {
-  const { activeTab, activeBook } = useApp();
+  const { activeTab, activeBook, setActiveTab } = useApp();
   const runtime = useRuntime();
   const positionError = useSyncExternalStore(
     runtime.positions.subscribe,
@@ -106,6 +115,45 @@ function MainContent() {
     void runtime.settings.load();
   }, [runtime]);
   useEffect(() => (settings.value ? applyTheme(settings.value) : undefined), [settings.value]);
+  const backState = useRef({ activeTab, activeBook, closePending });
+  backState.current = { activeTab, activeBook, closePending };
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    void listenForBack([
+      // An exit flush already owns the app; further presses are ignored.
+      () => backState.current.closePending,
+      () => {
+        if (!backState.current.activeBook && !document.querySelector(OPEN_LAYER)) return false;
+        // Dispatch from body: the reader ignores Escape aimed at a focused control.
+        dismissWithEscape(document.body);
+        return true;
+      },
+      () => {
+        if (backState.current.activeTab === "bookshelf") return false;
+        setActiveTab("bookshelf");
+        return true;
+      },
+    ])
+      .then((fn) => {
+        if (disposed) fn();
+        else cleanup = fn;
+      })
+      .catch((error) => console.error("Back button registration failed", error));
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [setActiveTab]);
+  useEffect(
+    () =>
+      flushWhenHidden(
+        () => runtime.flush(),
+        // Writers keep their own error and retry state for the visible notices.
+        (error) => console.error("Saving while hidden failed", error),
+      ),
+    [runtime],
+  );
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | undefined;

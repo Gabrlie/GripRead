@@ -1,4 +1,5 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
+import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -58,4 +59,40 @@ export async function listenForClose(
     unclose();
     throw error;
   }
+}
+
+/**
+ * Android pauses a hidden app and may kill it without a close or exit request,
+ * so ordered saves run when the document is hidden. Each writer retains its own
+ * failure and retry state; the callback only reports that this attempt failed.
+ */
+export function flushWhenHidden(flush: () => Promise<void>, onError: (error: unknown) => void) {
+  const hidden = () => {
+    if (document.visibilityState === "hidden") void flush().catch(onError);
+  };
+  document.addEventListener("visibilitychange", hidden);
+  return () => document.removeEventListener("visibilitychange", hidden);
+}
+
+/**
+ * Android back closes the topmost layer, then returns to the first tab, then
+ * asks Rust to exit through the same ordered-save handshake as native Quit.
+ * Each step returns whether it consumed the press.
+ */
+export async function listenForBack(steps: Array<() => boolean>) {
+  if (!isTauri() || !/Android/i.test(navigator.userAgent)) return () => undefined;
+  const listener = await onBackButtonPress(() => {
+    if (steps.some((step) => step())) return;
+    void invoke("request_exit").catch((error: unknown) =>
+      console.error("Exit request failed", error),
+    );
+  });
+  return () => void listener.unregister();
+}
+
+/** Dismisses an open dialog or the reader through its existing Escape handling. */
+export function dismissWithEscape(target: Element) {
+  return target.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
 }

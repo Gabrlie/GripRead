@@ -25,7 +25,7 @@ Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in t
 | RSS | Groups, subscriptions, articles, and article view through successive screens | Subscription, article list, and content columns; collapsible side panels |
 | Settings | Reading, Sources, Sync and Backup, Storage groups | Category navigation beside settings |
 
-Use shadcn/ui controls and accessible primitives. Phone actions normally use a Drawer; desktop uses a Dialog or side panel. Closing a panel restores focus and reading context rather than reopening the book.
+Use shadcn/ui controls and accessible primitives. Phone actions normally use a Drawer; desktop uses a Dialog or side panel. Closing a panel restores focus and reading context rather than reopening the book. The Android back action closes the topmost dialog or reader panel, then leaves the reader, then returns to Library, and finally exits after pending saves finish.
 
 ## Library and discovery
 

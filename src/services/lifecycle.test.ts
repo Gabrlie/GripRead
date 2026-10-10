@@ -1,16 +1,19 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 const fakes = vi.hoisted(() => ({
   onClose: vi.fn(),
   listen: vi.fn(),
   invoke: vi.fn(),
   destroy: vi.fn(),
+  onBack: vi.fn(),
 }));
+vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: fakes.onBack }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke: fakes.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: fakes.listen }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onCloseRequested: fakes.onClose, destroy: fakes.destroy }),
 }));
-import { listenForClose } from "./lifecycle";
+import { flushWhenHidden, listenForBack, listenForClose } from "./lifecycle";
 function deferred() {
   let resolve!: () => void;
   let reject!: (error: Error) => void;
@@ -156,5 +159,55 @@ describe("native exit persistence", () => {
     expect(flush).toHaveBeenCalledTimes(2);
     expect(fakes.destroy).toHaveBeenCalledTimes(2);
     expect(fakes.invoke).not.toHaveBeenCalled();
+  });
+});
+describe("hidden-document persistence", () => {
+  const setVisibility = (state: DocumentVisibilityState) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  it("flushes when hidden, reports failures, and stops after disposal", async () => {
+    const failure = new Error("position write failed");
+    const flush = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+    const error = vi.fn();
+    const dispose = flushWhenHidden(flush, error);
+    setVisibility("visible");
+    expect(flush).not.toHaveBeenCalled();
+    setVisibility("hidden");
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(failure));
+    setVisibility("hidden");
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(2));
+    expect(error).toHaveBeenCalledOnce();
+    dispose();
+    setVisibility("hidden");
+    expect(flush).toHaveBeenCalledTimes(2);
+    setVisibility("visible");
+  });
+});
+describe("Android back button", () => {
+  it("runs the first consuming step and otherwise requests the ordered exit", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 15)");
+    const unregister = vi.fn();
+    fakes.onBack.mockResolvedValue({ unregister });
+    fakes.invoke.mockResolvedValue(undefined);
+    let layerOpen = true;
+    const dismiss = vi.fn(() => layerOpen);
+    const home = vi.fn(() => false);
+    const dispose = await listenForBack([dismiss, home]);
+    const press = fakes.onBack.mock.calls[0][0];
+    press({ canGoBack: false });
+    expect(home).not.toHaveBeenCalled();
+    expect(fakes.invoke).not.toHaveBeenCalled();
+    layerOpen = false;
+    press({ canGoBack: false });
+    expect(home).toHaveBeenCalledOnce();
+    expect(fakes.invoke).toHaveBeenCalledWith("request_exit");
+    dispose();
+    expect(unregister).toHaveBeenCalledOnce();
+  });
+  it("does not register outside Android", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh)");
+    await listenForBack([]);
+    expect(fakes.onBack).not.toHaveBeenCalled();
   });
 });
