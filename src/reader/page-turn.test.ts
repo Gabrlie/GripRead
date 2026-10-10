@@ -38,7 +38,7 @@ function setup(effect: "curl" | "instant" = "curl") {
   let time = 0;
   const adapter = new PageTurnAdapter(host, {
     effect,
-    curlDuration: 100,
+    turnDuration: 100,
     requestFrame: (callback) => frames.push(callback),
     cancelFrame: () => undefined,
     now: () => time,
@@ -126,6 +126,42 @@ describe("PageTurnAdapter", () => {
     expect(host.querySelector("canvas")).not.toBeNull();
     tick(200);
     await back;
+    expect(host.querySelector("canvas")).toBeNull();
+    adapter.dispose();
+  });
+
+  it("follows a drag and reports a backward release", async () => {
+    const { host, adapter, tick, first, second, pages } = setup();
+    adapter.setPages(pages, 0);
+    await adapter.present(first, "open", context(pages, 0));
+    expect(adapter.followsDrag).toBe(true);
+    adapter.beginDrag({ x: 380, y: 600 });
+    adapter.hold();
+    adapter.setPages(pages, 1);
+    const turning = adapter.present(second, "next", context(pages, 1));
+    expect(host.querySelector("canvas")).not.toBeNull();
+    const drawsBefore = drawn.mock.calls.length;
+    adapter.updateDrag({ x: 250, y: 610 });
+    expect(drawn.mock.calls.length).toBeGreaterThan(drawsBefore);
+    adapter.endDrag(false);
+    tick(400);
+    await turning;
+    expect(host.querySelector("canvas")).toBeNull();
+    expect(adapter.takeCancelled()).toBe(true);
+    expect(adapter.takeCancelled()).toBe(false);
+
+    // A drag released before its turn starts settles as soon as it does.
+    adapter.beginDrag({ x: 380, y: 600 });
+    adapter.endDrag(true);
+    adapter.setPages(pages, 0);
+    const committed = adapter.present(first, "previous", context(pages, 0));
+    tick(400);
+    await committed;
+    expect(adapter.takeCancelled()).toBe(false);
+
+    adapter.skipNextAnimation();
+    adapter.setPages(pages, 1);
+    await adapter.present(second, "next", context(pages, 1));
     expect(host.querySelector("canvas")).toBeNull();
     adapter.dispose();
   });

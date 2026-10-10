@@ -463,6 +463,8 @@ pub enum PageTurnEffect {
     Curl,
     Slide,
     Fade,
+    /// Legado's 覆盖: the turning page slides over the next one.
+    Cover,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]

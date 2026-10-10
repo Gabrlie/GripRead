@@ -16,20 +16,31 @@ export interface PageTurnAdapterOptions {
   mount?: HTMLElement;
   /** Classes for overlay page copies; they must match the visible page. */
   pageClassName?: string;
-  /** Curl duration in milliseconds. */
-  curlDuration?: number;
+  /** Duration of a full-width turn in milliseconds (Legado: 300). */
+  turnDuration?: number;
   /** Frame scheduling, replaceable in tests. */
   requestFrame?: (callback: (time: number) => void) => number;
   cancelFrame?: (handle: number) => void;
   now?: () => number;
 }
 
+/** A finger-driven turn: the latest point and, once released, its outcome. */
+interface Drag {
+  start: Point;
+  point: Point;
+  release: boolean | null;
+  /** Redraws the running turn after the finger moves or lifts. */
+  wake: (() => void) | null;
+}
+
+type CanvasEffect = "curl" | "slide" | "cover";
+
 /**
  * Presents page turns over the React page, which stays the accessible and
- * selectable source of truth. Overlays are aria-hidden copies of the pages
- * involved: Motion animates slide and fade, and curl is drawn on a canvas
- * from rasterized pages (`curl.ts`), so no third-party DOM flipbook keeps
- * state between turns.
+ * selectable source of truth. Curl, slide, and cover draw two rasterized
+ * pages on a canvas, either animated or following a drag; fade animates an
+ * aria-hidden copy with Motion. No third-party flipbook keeps state between
+ * turns, so any cancellation settles at once.
  */
 export class PageTurnAdapter implements ReaderPresentationAdapter {
   private readonly host: HTMLElement;
@@ -58,6 +69,9 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   private held: HTMLElement | null = null;
   /** Where the reader touched to start the next turn, in host coordinates. */
   private aimPoint: Point | null = null;
+  private drag: Drag | null = null;
+  private cancelled = false;
+  private skipNext = false;
 
   public constructor(host: HTMLElement, options: PageTurnAdapterOptions = {}) {
     if (!host) throw new TypeError("PageTurnAdapter requires an overlay host");
@@ -103,6 +117,45 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.aimPoint = point;
   }
 
+  /** Whether the selected effect follows a dragging finger (curl, slide, cover). */
+  public get followsDrag(): boolean {
+    return (
+      !this.reducedMotion &&
+      (this.effect === "curl" || this.effect === "slide" || this.effect === "cover")
+    );
+  }
+
+  /** The next turn follows the finger from `start` until `endDrag`. */
+  public beginDrag(start: Point): void {
+    this.aimPoint = start;
+    this.drag = { start, point: start, release: null, wake: null };
+  }
+
+  public updateDrag(point: Point): void {
+    if (!this.drag) return;
+    this.drag.point = point;
+    this.drag.wake?.();
+  }
+
+  /** Completes the dragged turn, or animates back when `commit` is false. */
+  public endDrag(commit: boolean): void {
+    if (!this.drag) return;
+    this.drag.release = commit;
+    this.drag.wake?.();
+  }
+
+  /** Whether the last dragged turn was released backwards; reading clears it. */
+  public takeCancelled(): boolean {
+    const cancelled = this.cancelled;
+    this.cancelled = false;
+    return cancelled;
+  }
+
+  /** Presents the next turn instantly, as when undoing a cancelled drag. */
+  public skipNextAnimation(): void {
+    this.skipNext = true;
+  }
+
   public setPages(pages: readonly ReaderDisplayedPage[], currentIndex: number): void {
     if (this.disposed) return;
     this.stopAnimation();
@@ -131,7 +184,12 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     const target = page ?? this.pages[targetIndex];
     const aim = this.aimPoint;
     this.aimPoint = null;
+    // The drag stays live for updates until its turn ends.
+    const drag = this.drag;
+    const skip = this.skipNext;
+    this.skipNext = false;
     const instant =
+      skip ||
       this.reducedMotion ||
       context.reducedMotion ||
       this.effect === "instant" ||
@@ -146,18 +204,37 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     if (instant) {
       this.stopAnimation();
       this.releaseHold();
+      this.endDragTurn(drag);
       return;
     }
     const forward =
       direction === "next" || (direction !== "previous" && targetIndex >= this.previousIndex);
-    if (this.effect === "curl") await this.presentCurl(forward, aim);
-    else await this.presentMotion(forward);
+    if (this.effect === "fade") {
+      await this.presentFade();
+      return;
+    }
+    if (this.effect === "instant") return;
+    try {
+      await this.presentCanvas(this.effect, forward, aim, drag);
+    } finally {
+      this.endDragTurn(drag);
+    }
   }
 
   /** Ends any animation at once; the published page is already correct. */
   public cancel(): void {
+    this.drag = null;
     this.stopAnimation();
     this.releaseHold();
+  }
+
+  /** Forgets a drag whose turn never started, such as at the end of the book. */
+  public clearDrag(): void {
+    this.drag = null;
+  }
+
+  private endDragTurn(drag: Drag | null): void {
+    if (drag && this.drag === drag) this.drag = null;
   }
 
   public hold(): void {
@@ -186,7 +263,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     if (this.ownsMount && this.mount.parentNode) this.mount.remove();
   }
 
-  private async presentMotion(forward: boolean): Promise<void> {
+  private async presentFade(): Promise<void> {
     this.stopAnimation();
     const overlay = this.spreadElement(this.previousSpread);
     this.mount.append(overlay);
@@ -196,13 +273,24 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     const finished = this.finished();
     this.motion = animate(
       overlay,
-      this.effect === "fade" ? { opacity: [1, 0] } : { x: [0, forward ? "-100%" : "100%"] },
+      { opacity: [1, 0] },
       { duration: 0.2, ease: "easeOut", onComplete: () => this.stopAnimation() },
     );
     await finished;
   }
 
-  private async presentCurl(forward: boolean, aim: Point | null): Promise<void> {
+  /**
+   * Draws a turn on a canvas from two page rasters. `progress` 0 shows the
+   * outgoing page, 1 the incoming page; curl instead follows a touch point
+   * on its geometry. A drag maps the finger to either, and on release the
+   * turn runs to the end or back to the start at Legado's speed.
+   */
+  private async presentCanvas(
+    effect: CanvasEffect,
+    forward: boolean,
+    aim: Point | null,
+    drag: Drag | null,
+  ): Promise<void> {
     this.stopAnimation();
     const rect = this.host.getBoundingClientRect();
     const width = rect.width || this.host.clientWidth;
@@ -231,43 +319,129 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.mount.append(canvas);
     this.overlay = canvas;
     this.updateVisibility();
-    const background = outgoing.background;
-    // Legado lifts the corner nearest the touch; forward turns use the right edge.
-    const top = aim !== null && aim.y < height / 2;
+
+    // Curl lifts the corner nearest the touch; drags from the middle third
+    // stay level with an edge (Legado SimulationPageDelegate).
+    const origin = drag?.start ?? aim;
+    const top = forward && origin !== null && origin.y < height / 2;
     const corner = { x: width, y: top ? 0 : height };
-    const lifted = {
-      x: Math.min(width - 1, aim?.x ?? width * 0.95),
-      y: aim?.y ?? (top ? height * 0.05 : height * 0.95),
+    const level = (y: number) => {
+      if (!forward) return height;
+      if (origin && origin.y > height / 3 && origin.y < height / 2) return 0.1;
+      if (origin && origin.y >= height / 2 && origin.y < (height * 2) / 3) return height;
+      return y;
     };
+    const flat = { x: width - 1, y: corner.y };
     const away = { x: -width, y: corner.y };
-    // Backward turns lay the previous page down: the forward curl in reverse.
-    const [from, to] = forward ? [lifted, away] : [away, { x: width - 1, y: corner.y }];
+    const lifted = {
+      x: Math.min(width - 1, aim?.x ?? width * 0.9),
+      y: level(aim?.y ?? (top ? height * 0.05 : height * 0.9)),
+    };
+    // Touch points for curl at the start and end of a programmatic turn.
+    const curlFrom = forward ? lifted : away;
+    const curlTo = forward ? away : flat;
     const frame = forward
       ? { current: outgoing.canvas, next: incoming.canvas }
       : { current: incoming.canvas, next: outgoing.canvas };
-    const duration = Math.max(1, this.options.curlDuration ?? 450);
-    const finished = this.finished();
-    const started = this.now();
-    const draw = (time: number) => {
-      if (this.overlay !== canvas) return;
-      const progress = Math.min(1, (time - started) / duration);
-      const eased = 1 - (1 - progress) ** 3;
-      const touch = {
-        x: from.x + (to.x - from.x) * eased,
-        y: from.y + (to.y - from.y) * eased,
-      };
+
+    /** Fraction of the turn completed by a finger at `point`. */
+    const dragProgress = (point: Point) => {
+      const start = drag?.start ?? point;
+      const moved = forward ? start.x - point.x : point.x - start.x;
+      return Math.min(1, Math.max(0, moved / width));
+    };
+    const curlTouch = (progress: number) => ({
+      x: curlFrom.x + (curlTo.x - curlFrom.x) * progress,
+      y: curlFrom.y + (curlTo.y - curlFrom.y) * progress,
+    });
+    /** Curl touch point under the finger during a drag. */
+    const fingerTouch = (point: Point) =>
+      forward
+        ? { x: Math.min(width - 1, point.x), y: level(point.y) }
+        : curlTouch(dragProgress(point));
+
+    const draw = (progress: number, touch?: Point) => {
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      drawCurl(
-        context,
-        { ...frame, background, width, height },
-        curlGeometry(touch, corner, width),
-      );
+      context.clearRect(0, 0, width, height);
+      if (effect === "curl") {
+        drawCurl(
+          context,
+          { ...frame, background: outgoing.background, width, height },
+          curlGeometry(touch ?? curlTouch(progress), corner, width),
+        );
+      } else {
+        drawShift(
+          context,
+          effect,
+          forward,
+          progress,
+          outgoing.canvas,
+          incoming.canvas,
+          width,
+          height,
+        );
+      }
       // The canvas now shows the outgoing page; the held copy can go.
       this.releaseHold();
-      if (progress >= 1) this.stopAnimation();
-      else this.frame = this.requestFrame(draw);
     };
-    draw(started);
+
+    const finished = this.finished();
+    const duration = Math.max(1, this.options.turnDuration ?? 300);
+    const run = (
+      from: number,
+      to: number,
+      fromTouch?: Point,
+      toTouch?: Point,
+      done?: () => void,
+    ) => {
+      const started = this.now();
+      const span = Math.max(80, duration * Math.abs(to - from));
+      const step = (time: number) => {
+        if (this.overlay !== canvas) return;
+        const linear = Math.min(1, (time - started) / span);
+        // Programmatic turns decelerate; releasing a drag continues linearly.
+        const eased = drag ? linear : 1 - (1 - linear) ** 3;
+        const progress = from + (to - from) * eased;
+        const touch =
+          fromTouch && toTouch
+            ? {
+                x: fromTouch.x + (toTouch.x - fromTouch.x) * eased,
+                y: fromTouch.y + (toTouch.y - fromTouch.y) * eased,
+              }
+            : undefined;
+        draw(progress, touch);
+        if (linear >= 1) {
+          done?.();
+          this.stopAnimation();
+        } else this.frame = this.requestFrame(step);
+      };
+      step(started);
+    };
+
+    if (!drag) {
+      run(0, 1);
+      await finished;
+      return;
+    }
+    const settle = () => {
+      const commit = drag.release === true;
+      const from = dragProgress(drag.point);
+      const to = commit ? 1 : 0;
+      const target = effect === "curl" ? (commit ? curlTo : forward ? flat : away) : undefined;
+      run(from, to, effect === "curl" ? fingerTouch(drag.point) : undefined, target, () => {
+        if (!commit) this.cancelled = true;
+      });
+    };
+    drag.wake = () => {
+      if (this.overlay !== canvas) return;
+      if (drag.release !== null) {
+        drag.wake = null;
+        settle();
+        return;
+      }
+      draw(dragProgress(drag.point), effect === "curl" ? fingerTouch(drag.point) : undefined);
+    };
+    drag.wake();
     await finished;
   }
 
@@ -341,6 +515,44 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     renderReaderText(element, page.text, { continued: page.continued });
     element.style.pointerEvents = "none";
     return element;
+  }
+}
+
+/**
+ * Slide moves both pages together; cover moves only the upper page with a
+ * shadow on its trailing edge (Legado SlidePageDelegate, CoverPageDelegate).
+ */
+function drawShift(
+  context: CanvasRenderingContext2D,
+  effect: "slide" | "cover",
+  forward: boolean,
+  progress: number,
+  outgoing: CanvasImageSource,
+  incoming: CanvasImageSource,
+  width: number,
+  height: number,
+) {
+  const offset = progress * width;
+  if (effect === "slide") {
+    const outgoingX = forward ? -offset : offset;
+    context.drawImage(outgoing, outgoingX, 0, width, height);
+    context.drawImage(incoming, forward ? outgoingX + width : outgoingX - width, 0, width, height);
+    return;
+  }
+  // Cover: forward slides the outgoing page off the incoming one; backward
+  // slides the incoming page in over the outgoing one.
+  const [below, above, aboveX] = forward
+    ? [incoming, outgoing, -offset]
+    : [outgoing, incoming, offset - width];
+  context.drawImage(below, 0, 0, width, height);
+  context.drawImage(above, aboveX, 0, width, height);
+  const edge = aboveX + width;
+  if (edge > 0 && edge < width) {
+    const shadow = context.createLinearGradient(edge, 0, edge + 30, 0);
+    shadow.addColorStop(0, "rgba(17,17,17,0.4)");
+    shadow.addColorStop(1, "rgba(17,17,17,0)");
+    context.fillStyle = shadow;
+    context.fillRect(edge, 0, 30, height);
   }
 }
 

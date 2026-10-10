@@ -37,7 +37,16 @@ vi.mock("../../reader", async () => {
       dispose() {}
     },
     PageTurnAdapter: class {
+      followsDrag = false;
       aim() {}
+      beginDrag() {}
+      updateDrag() {}
+      endDrag() {}
+      clearDrag() {}
+      takeCancelled() {
+        return false;
+      }
+      skipNextAnimation() {}
       setEffect() {}
       setPages() {}
       present() {}
@@ -230,6 +239,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Taps the reading surface at a fraction of its size (jsdom has no layout). */
+function tapSurface(fractionX = 0.5, fractionY = 0.5) {
+  const surface = screen.getByTestId("reader-surface");
+  surface.getBoundingClientRect = () => new DOMRect(0, 0, 400, 800);
+  for (const type of ["pointerdown", "pointerup"]) {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      clientX: 400 * fractionX,
+      clientY: 800 * fractionY,
+    });
+    Object.defineProperty(event, "isPrimary", { value: true });
+    fireEvent(surface, event);
+  }
+}
+
 async function view(app: AppRuntime) {
   await app.settings.load();
   await app.library.refresh();
@@ -238,10 +262,9 @@ async function view(app: AppRuntime) {
       <ReaderView />
     </RuntimeContext.Provider>,
   );
-  const page = await screen.findByTestId("reader-page");
-  fireEvent(page, new MouseEvent("pointerdown", { bubbles: true, clientX: 200, clientY: 200 }));
-  fireEvent(page, new MouseEvent("pointerup", { bubbles: true, clientX: 200, clientY: 200 }));
+  await screen.findByTestId("reader-page");
   await waitFor(() => expect(screen.queryByText("正在读取书籍信息…")).toBeNull());
+  tapSurface();
 }
 
 describe("reader directory and search operation ownership", () => {
@@ -417,13 +440,50 @@ describe("reader directory and search operation ownership", () => {
     // The scroll view remounts once the opened window is published.
     const scroll = screen.getByTestId("reader-scroll");
     const header = screen.getByTestId("reader-close").closest("header")!;
-    fireEvent(scroll, new MouseEvent("pointerdown", { bubbles: true, clientX: 200, clientY: 200 }));
-    fireEvent(scroll, new MouseEvent("pointerup", { bubbles: true, clientX: 200, clientY: 200 }));
+    tapSurface();
     await waitFor(() => expect(header.hasAttribute("inert")).toBe(false));
     fireEvent.touchMove(scroll);
     await waitFor(() => expect(header.hasAttribute("inert")).toBe(true));
     await app.settings.flush();
     vi.unstubAllGlobals();
+  });
+
+  it("turns with Legado's tap zones and closes the menu on the next tap", async () => {
+    const app = runtime();
+    await view(app);
+    const header = screen.getByTestId("reader-close").closest("header")!;
+    expect(header.hasAttribute("inert")).toBe(false);
+    tapSurface(0.9, 0.5);
+    await waitFor(() => expect(header.hasAttribute("inert")).toBe(true));
+    expect(screen.getByTestId("reader-page").getAttribute("data-start")).toBe("0");
+    tapSurface(0.9, 0.5);
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).not.toBe("0"),
+    );
+    tapSurface(0.5, 0.15);
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).toBe("0"),
+    );
+  });
+
+  it("turns a page when a swipe starts on the text", async () => {
+    const app = runtime();
+    await view(app);
+    tapSurface();
+    const surface = screen.getByTestId("reader-surface");
+    const text = screen.getByTestId("reader-page").querySelector("p")!;
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 400 });
+      Object.defineProperty(event, "isPrimary", { value: true });
+      fireEvent(type === "pointerdown" ? text : surface, event);
+    };
+    pointer("pointerdown", 300);
+    pointer("pointermove", 260);
+    pointer("pointermove", 120);
+    pointer("pointerup", 100);
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).not.toBe("0"),
+    );
   });
 
   it("returns to the shelf immediately while a position save is still pending", async () => {

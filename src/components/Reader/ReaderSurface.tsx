@@ -1,4 +1,5 @@
-import { useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { PageGestureTracker, type GestureHandlers, type TapZones } from "../../reader/gestures";
 
 export function selectionActive(): boolean {
   return Boolean(window.getSelection()?.toString());
@@ -21,19 +22,20 @@ interface ReaderSurfaceProps {
   style: CSSProperties;
   /** False while a panel, exit, or other modal state owns input. */
   acceptsGestures: () => boolean;
+  /** Any touch on the page, used to pause automatic reading. */
   onInteract: () => void;
-  /** `point` is the touch position within the page box, when a touch turned the page. */
-  onTurn: (direction: "next" | "previous", point?: { x: number; y: number }) => void;
-  onToggleControls: () => void;
+  gestures: GestureHandlers;
+  zones?: TapZones;
   children: ReactNode;
   double?: boolean;
   scroll?: boolean;
 }
 
 /**
- * The reading surface and its gestures: side taps and horizontal swipes turn
- * pages, a center tap toggles controls, and vertical drags or text selection
- * never turn. The animation overlay is aria-hidden and pointer-transparent.
+ * The reading surface. A gesture tracker (`reader/gestures.ts`) turns pointer
+ * input into Legado's nine tap zones and finger-following page drags; text
+ * selection starts when a press is held without moving. The animation
+ * overlay is aria-hidden and pointer-transparent.
  */
 export function ReaderSurface({
   pageBox,
@@ -41,13 +43,40 @@ export function ReaderSurface({
   style,
   acceptsGestures,
   onInteract,
-  onTurn,
-  onToggleControls,
+  gestures,
+  zones,
   children,
   double = false,
   scroll = false,
 }: ReaderSurfaceProps) {
-  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const handlers = useRef(gestures);
+  handlers.current = gestures;
+  const tracker = useRef<PageGestureTracker | null>(null);
+  tracker.current ??= new PageGestureTracker({
+    tap: (...args) => handlers.current.tap(...args),
+    dragStart: (...args) => handlers.current.dragStart(...args),
+    dragMove: (...args) => handlers.current.dragMove(...args),
+    dragEnd: (...args) => handlers.current.dragEnd(...args),
+  });
+  tracker.current.configure({ zones, scroll });
+
+  // A page drag must keep the touch: stop the WebView from scrolling or
+  // extending a text selection while the finger moves (needs a non-passive
+  // listener, which React's synthetic touch events are not).
+  useEffect(() => {
+    const box = pageBox.current;
+    if (!box) return;
+    const guard = (event: TouchEvent) => {
+      if (tracker.current?.dragging && event.cancelable) event.preventDefault();
+    };
+    box.addEventListener("touchmove", guard, { passive: false });
+    return () => box.removeEventListener("touchmove", guard);
+  }, [pageBox]);
+
+  const local = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
   return (
     <div
       // Scroll mode spans the full width so its position indicator sits at the
@@ -56,47 +85,32 @@ export function ReaderSurface({
     >
       <div
         ref={pageBox}
+        data-testid="reader-surface"
         className="relative h-full min-h-0 w-full"
-        // Without this the WebView claims horizontal drags as panning and
-        // cancels the pointer, so page swipes never reach pointerup.
+        // Paginated pages handle every touch themselves; scroll mode keeps
+        // native vertical panning.
         style={{ ...style, touchAction: scroll ? "pan-y" : "none" }}
-        onPointerCancel={() => {
-          pointer.current = null;
-        }}
         onPointerDown={(event) => {
           onInteract();
-          pointer.current = { x: event.clientX, y: event.clientY };
+          if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
+          if (event.pointerType === "mouse" && event.button !== 0) return;
+          // Keep receiving moves even when the finger leaves the text node.
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          tracker.current?.down(local(event));
+        }}
+        onPointerMove={(event) => {
+          if (!event.isPrimary) return;
+          const wasDragging = tracker.current?.dragging;
+          tracker.current?.move(local(event));
+          // A drag that started over text must not leave a selection behind.
+          if (!wasDragging && tracker.current?.dragging) window.getSelection()?.removeAllRanges();
         }}
         onPointerUp={(event) => {
-          const start = pointer.current;
-          pointer.current = null;
-          if (!start || !acceptsGestures() || selectionActive() || interactiveTarget(event.target))
-            return;
-          const dx = event.clientX - start.x;
-          const dy = event.clientY - start.y;
-          if (Math.abs(dy) > 30) {
-            onInteract();
-            return;
-          }
-          if (Math.abs(dx) > 60) {
-            if (scroll) return;
-            onInteract();
-            const box = event.currentTarget.getBoundingClientRect();
-            onTurn(dx < 0 ? "next" : "previous", {
-              x: start.x - box.left,
-              y: start.y - box.top,
-            });
-            return;
-          }
-          if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
-          onInteract();
+          if (!event.isPrimary) return;
           const rect = event.currentTarget.getBoundingClientRect();
-          const fraction = (event.clientX - rect.left) / rect.width;
-          const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-          if (!scroll && fraction < 0.2) onTurn("previous", point);
-          else if (!scroll && fraction > 0.8) onTurn("next", point);
-          else onToggleControls();
+          tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
         }}
+        onPointerCancel={() => tracker.current?.cancel()}
       >
         {children}
         <div

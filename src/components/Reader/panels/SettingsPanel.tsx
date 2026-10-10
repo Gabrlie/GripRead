@@ -51,8 +51,8 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
             </div>
             <div className="space-y-2">
               <span className="text-secondary font-medium">翻页效果</span>
-              <div className="grid grid-cols-4 gap-2">
-                {(["instant", "curl", "slide", "fade"] as const).map((pageTurnEffect) => (
+              <div className="grid grid-cols-5 gap-1.5">
+                {(["cover", "slide", "curl", "fade", "instant"] as const).map((pageTurnEffect) => (
                   <Button
                     key={pageTurnEffect}
                     size="sm"
@@ -63,7 +63,15 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
                     aria-pressed={preferences.pageTurnEffect === pageTurnEffect}
                     onClick={() => onChange({ pageTurnEffect })}
                   >
-                    {{ instant: "无", curl: "仿真", slide: "滑动", fade: "淡入" }[pageTurnEffect]}
+                    {
+                      {
+                        cover: "覆盖",
+                        slide: "平移",
+                        curl: "仿真",
+                        fade: "淡入",
+                        instant: "无",
+                      }[pageTurnEffect]
+                    }
                   </Button>
                 ))}
               </div>

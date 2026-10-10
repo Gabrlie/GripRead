@@ -27,6 +27,8 @@ import { useReaderTools } from "./use-reader-tools";
 import { ReaderPageText } from "./ReaderPageText";
 import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
+import type { GestureHandlers } from "../../reader/gestures";
+import { system } from "../../services/system";
 import { ReaderBottomBar, ReaderTopBar } from "./ReaderToolbar";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { ContentsPage } from "./pages/ContentsPage";
@@ -363,6 +365,82 @@ export function ReaderView() {
     return () => window.removeEventListener("keydown", key, true);
   }, [panel, closePanel, closing, close, turn, controls]);
 
+  // Volume keys turn pages while a book is open (Legado 音量键翻页).
+  const turnRef = useRef(turn);
+  turnRef.current = turn;
+  useEffect(() => {
+    if (!bookId) return;
+    system.setVolumeKeys(true);
+    const unsubscribe = system.onVolumeKey((direction) => {
+      if (panelRef.current === null) turnRef.current(direction);
+    });
+    return () => {
+      unsubscribe();
+      system.setVolumeKeys(false);
+    };
+  }, [bookId]);
+
+  /** The direction of a swipe for effects that turn only on release. */
+  const swipe = useRef<"next" | "previous" | null>(null);
+  const gestures: GestureHandlers = {
+    tap: (action, point) => {
+      // Legado: with the menu open, a tap anywhere on the page closes it.
+      if (controls) {
+        setControls(false);
+        return;
+      }
+      if (action === "menu") setControls(true);
+      else if (action === "next" || action === "previous") turn(action, point);
+      else if (action === "next-chapter" || action === "previous-chapter") {
+        void pauseAutomatic();
+        if (controller)
+          run(() => controller.seekChapter(action === "next-chapter" ? "next" : "previous"));
+      } else if (action === "contents" || action === "search") openPanel(action);
+      else if (action === "bookmark") addBookmark();
+    },
+    dragStart: (direction, start) => {
+      if (controls) {
+        setControls(false);
+        return false;
+      }
+      const current = controller?.getSnapshot();
+      if (!controller || !current || current.loading) return false;
+      if (direction === "next" ? !current.hasAfter : !current.hasBefore) return false;
+      void pauseAutomatic();
+      const presentation = adapter.current;
+      if (!presentation?.followsDrag) {
+        swipe.current = direction;
+        return true;
+      }
+      presentation.beginDrag(start);
+      run(async () => {
+        try {
+          await (direction === "next" ? controller.next() : controller.previous());
+        } finally {
+          presentation.clearDrag();
+        }
+        // Released backwards: return to the page the drag started from.
+        if (presentation.takeCancelled()) {
+          presentation.skipNextAnimation();
+          await (direction === "next" ? controller.previous() : controller.next());
+        }
+      });
+      return true;
+    },
+    dragMove: (point) => {
+      if (!swipe.current) adapter.current?.updateDrag(point);
+    },
+    dragEnd: (commit, point) => {
+      const direction = swipe.current;
+      swipe.current = null;
+      if (direction) {
+        if (commit) turn(direction, point);
+        return;
+      }
+      adapter.current?.endDrag(commit);
+    },
+  };
+
   if (!activeBook) return null;
   const page = state.page;
   const progress =
@@ -432,8 +510,7 @@ export function ReaderView() {
         style={typeStyle}
         acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}
         onInteract={() => void pauseAutomatic()}
-        onTurn={turn}
-        onToggleControls={() => setControls((value) => !value)}
+        gestures={gestures}
       >
         {state.scroll && state.scroll.totalLength > 0 && controller ? (
           <ReaderScrollText

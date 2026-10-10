@@ -221,7 +221,7 @@ describe("native reading modes", () => {
     await refreshLibraryInUi(imported.book.id);
     await openBook(imported.book.id);
     await mode("双页");
-    for (const effect of ["仿真", "滑动", "淡入", "无"]) {
+    for (const effect of ["仿真", "平移", "覆盖", "淡入", "无"]) {
       await showReaderControls();
       await browser.$('button[aria-label="界面"]').click();
       await browser.$(`button=${effect}`).click();
