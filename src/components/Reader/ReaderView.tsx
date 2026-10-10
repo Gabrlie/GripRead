@@ -418,6 +418,8 @@ export function ReaderView() {
       data-reader-effect={reducedMotion ? "instant" : preferences?.pageTurnEffect}
       data-reader-mode={state.mode}
       data-reader-position={page?.startOffset}
+      data-reader-loading={state.loading ? "true" : "false"}
+      data-reader-automatic={automaticTurn.running ? "true" : "false"}
       data-chapter-start={state.chapter?.start}
       data-chapter-end={state.chapter?.end}
       inert={closing}

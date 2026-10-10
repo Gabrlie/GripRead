@@ -20,9 +20,10 @@ import type {
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
   closeReader: vi.fn(),
+  reducedMotion: false,
 }));
 vi.mock("../../context/AppContext", () => ({ useApp: () => navigation }));
-vi.mock("motion/react", () => ({ useReducedMotion: () => false }));
+vi.mock("motion/react", () => ({ useReducedMotion: () => navigation.reducedMotion }));
 vi.mock("../../reader", async () => {
   const reader = await vi.importActual<typeof import("../../reader")>("../../reader");
   return {
@@ -170,6 +171,7 @@ function runtime() {
 }
 
 beforeEach(() => {
+  navigation.reducedMotion = false;
   navigation.activeBook = entry;
   navigation.closeReader.mockClear();
   vi.stubGlobal(
@@ -382,6 +384,30 @@ describe("reader directory and search operation ownership", () => {
       gate.resolve(locator());
       await app.flush();
     });
+  });
+
+  it("uses instant presentation under reduced motion without replacing the selected effect", async () => {
+    const app = runtime();
+    await app.settings.load();
+    app.settings.set({ pageTurnEffect: "curl" });
+    navigation.reducedMotion = true;
+    await view(app);
+    expect(
+      screen
+        .getByTestId("reader-page")
+        .closest("[data-reader-effect]")
+        ?.getAttribute("data-reader-effect"),
+    ).toBe("instant");
+    expect(app.settings.getSnapshot().value?.pageTurnEffect).toBe("curl");
+    navigation.reducedMotion = false;
+    await act(async () => app.settings.set({ fontSize: 19 }));
+    expect(
+      screen
+        .getByTestId("reader-page")
+        .closest("[data-reader-effect]")
+        ?.getAttribute("data-reader-effect"),
+    ).toBe("curl");
+    await app.settings.flush();
   });
 
   it("cancels a closed search and ignores its late results", async () => {

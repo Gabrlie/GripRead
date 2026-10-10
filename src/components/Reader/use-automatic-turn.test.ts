@@ -26,7 +26,10 @@ afterEach(() => {
 
 describe("automatic page turning", () => {
   it("scrolls at the selected speed and discards elapsed background time", async () => {
-    const advancePixels = vi.fn();
+    let scrollTop = 0;
+    const advancePixels = vi.fn((pixels: number) => {
+      scrollTop = Math.floor(scrollTop + pixels);
+    });
     const { result } = renderHook(() =>
       useAutomaticTurn({
         intervalSeconds: 8,
@@ -42,6 +45,7 @@ describe("automatic page turning", () => {
     const distance = advancePixels.mock.calls.reduce((sum, [pixels]) => sum + Number(pixels), 0);
     expect(distance).toBeGreaterThan(35);
     expect(distance).toBeLessThanOrEqual(40);
+    expect(scrollTop).toBeGreaterThan(35);
     await act(() => window.dispatchEvent(new Event("blur")));
     const count = advancePixels.mock.calls.length;
     await advance(60_000);

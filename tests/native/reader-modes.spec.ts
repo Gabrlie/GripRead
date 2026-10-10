@@ -63,6 +63,14 @@ async function viewport() {
       end: Number(text?.dataset.end),
       text: text?.textContent ?? "",
       top: scroll?.scrollTop ?? 0,
+      automatic: root.dataset.readerAutomatic,
+      loading: root.dataset.readerLoading,
+      visible: document.visibilityState,
+      focused: document.hasFocus(),
+      selection: window.getSelection()?.toString(),
+      errors: Array.from(document.querySelectorAll('[role="alert"]')).map(
+        (node) => node.textContent,
+      ),
       pages: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="reader-page"]')).map(
         (page) => ({
           start: Number(page.dataset.start),
@@ -236,7 +244,16 @@ describe("native reading modes", () => {
     await mode("滚动");
     await showReaderControls();
     await browser.$('button[aria-label="自动翻页"]').click();
-    await browser.$("button=开始自动滚动").click();
+    await browser.waitUntil(async () =>
+      browser.execute(
+        () =>
+          document.fonts.status === "loaded" &&
+          document.querySelector('[data-reader-loading="false"]') !== null,
+      ),
+    );
+    const startAutomatic = await browser.$("button=开始自动滚动");
+    await startAutomatic.waitForEnabled();
+    await startAutomatic.click();
     const before = await viewport();
     await browser.waitUntil(async () => (await viewport()).anchor > before.anchor);
     await browser.execute(() =>

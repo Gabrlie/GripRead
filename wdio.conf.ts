@@ -57,5 +57,6 @@ export const config = {
   mochaOpts: {
     ui: "bdd",
     timeout: 180_000,
+    grep: process.env.GRIPREAD_NATIVE_GREP,
   },
 } satisfies Options.Testrunner & { capabilities: TauriCapabilities[] };

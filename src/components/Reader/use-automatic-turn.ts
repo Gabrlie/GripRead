@@ -48,16 +48,21 @@ export function useAutomaticTurn({
     const isCurrent = () => active && generation.current === session;
     const pauseWhenUnavailable = () => void pause();
     let previousFrame: number | null = null;
+    let fractionalPixels = 0;
     const scrollFrame = (time: number) => {
       if (!isCurrent()) return;
       if (document.visibilityState === "hidden" || !canContinueRef.current()) {
         void pause();
         return;
       }
-      if (previousFrame !== null)
-        scrollRef.current?.advance(
-          (Math.min(100, time - previousFrame) / 1000) * scrollRef.current.speed,
-        );
+      if (previousFrame !== null && scrollRef.current) {
+        // WebKit can round each scrollTop assignment to a whole CSS pixel.
+        // Carry sub-pixel movement across frames instead of losing it at low speeds.
+        fractionalPixels += (Math.min(100, time - previousFrame) / 1000) * scrollRef.current.speed;
+        const pixels = Math.floor(fractionalPixels);
+        fractionalPixels -= pixels;
+        if (pixels) scrollRef.current.advance(pixels);
+      }
       previousFrame = time;
       animationFrame.current = requestAnimationFrame(scrollFrame);
     };
