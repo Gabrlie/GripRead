@@ -28,8 +28,23 @@ export function ReaderScrollText({
   synchronize,
 }: Props) {
   const body = useRef<HTMLDivElement>(null);
+  const indicator = useRef<HTMLDivElement>(null);
+  const indicatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showPosition = (start: number) => {
+    const thumb = indicator.current;
+    if (!thumb || content.totalLength <= 0) return;
+    const ratio = Math.min(1, Math.max(0, start / content.totalLength));
+    thumb.style.top = `calc(${ratio} * (100% - 2.5rem))`;
+    thumb.style.opacity = "1";
+    if (indicatorTimer.current !== null) clearTimeout(indicatorTimer.current);
+    indicatorTimer.current = setTimeout(() => {
+      thumb.style.opacity = "0";
+    }, 900);
+  };
   const previous = useRef<ContentWindow | null>(null);
   const frame = useRef(0);
+  /** Only user-visible scrolling reveals the indicator, not re-renders. */
+  const scrolled = useRef(false);
   const report = useRef<() => void>(() => {});
   report.current = () => {
     if (!body.current || !viewport.current) return;
@@ -39,6 +54,8 @@ export function ReaderScrollText({
       content.startOffset + offsets.end,
     );
     const box = viewport.current;
+    if (scrolled.current) showPosition(content.startOffset + offsets.start);
+    scrolled.current = false;
     if (selectionActive() || controller.getSnapshot().error) return;
     // Preload within one viewport of either boundary; loading never replaces the visible page.
     const textHeight = body.current.getBoundingClientRect().height;
@@ -115,10 +132,14 @@ export function ReaderScrollText({
     };
     synchronize.current = sync;
     const onScroll = () => {
+      scrolled.current = true;
       cancelAnimationFrame(frame.current);
       frame.current = requestAnimationFrame(() => report.current());
     };
-    const observer = new ResizeObserver(onScroll);
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame.current);
+      frame.current = requestAnimationFrame(() => report.current());
+    });
     observer.observe(box);
     box.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("selectionchange", onScroll);
@@ -128,30 +149,40 @@ export function ReaderScrollText({
       box.removeEventListener("scroll", onScroll);
       document.removeEventListener("selectionchange", onScroll);
       cancelAnimationFrame(frame.current);
+      if (indicatorTimer.current !== null) clearTimeout(indicatorTimer.current);
     };
   }, [viewport, controller, synchronize]);
   return (
-    <div
-      ref={viewport}
-      data-testid="reader-scroll"
-      className="h-full overflow-y-auto overscroll-contain"
-      style={{ overflowAnchor: "none" }}
-      onWheel={() => {
-        onInteract();
-        onUserScroll();
-      }}
-      onTouchStart={onInteract}
-      onTouchMove={onUserScroll}
-    >
+    <div className="relative h-full">
       <div
-        ref={body}
-        className="reader-prose reader-text"
-        data-testid="reader-scroll-text"
-        data-start={content.startOffset}
-        data-end={content.endOffset}
-        data-total={content.totalLength}
+        ref={viewport}
+        data-testid="reader-scroll"
+        className="reader-scroll h-full overflow-y-auto overscroll-contain"
+        style={{ overflowAnchor: "none" }}
+        onWheel={() => {
+          onInteract();
+          onUserScroll();
+        }}
+        onTouchStart={onInteract}
+        onTouchMove={onUserScroll}
+      >
+        <div
+          ref={body}
+          className="reader-prose reader-text max-w-2xl mx-auto px-5 sm:px-8 md:px-12"
+          data-testid="reader-scroll-text"
+          data-start={content.startOffset}
+          data-end={content.endOffset}
+          data-total={content.totalLength}
+        />
+        {!content.hasAfter && <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />}
+      </div>
+      <div
+        ref={indicator}
+        aria-hidden="true"
+        data-testid="reader-scroll-position"
+        className="absolute right-0.5 w-1 h-10 rounded-full bg-on-surface/30 pointer-events-none transition-opacity duration-300"
+        style={{ top: 0, opacity: 0 }}
       />
-      {!content.hasAfter && <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />}
     </div>
   );
 }
