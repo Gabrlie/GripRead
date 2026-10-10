@@ -9,7 +9,7 @@ coverage/
 target/
 src-tauri/target/
 src-tauri/.tauri/
-src-tauri/gen/
+src-tauri/gen/schemas/
 src-tauri/bindings/
 
 # Local environment and credentials

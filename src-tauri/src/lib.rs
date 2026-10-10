@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod documents;
 pub mod error;
 pub mod m1_txt;
 pub mod models;
@@ -30,8 +31,17 @@ fn complete_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Starts the same ordered-save exit handshake as native Quit (Android back at the root).
+#[tauri::command]
+fn request_exit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(documents::init());
     #[cfg(feature = "native-test")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
@@ -111,6 +121,7 @@ pub fn run() {
             search_book,
             cancel_search,
             complete_exit,
+            request_exit,
             update_book,
             remove_book,
             restore_book,

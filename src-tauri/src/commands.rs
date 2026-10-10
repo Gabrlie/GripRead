@@ -125,6 +125,8 @@ impl AppState {
     pub fn new(data_dir: PathBuf) -> Result<Self, AppError> {
         let storage = Storage::open(&data_dir)?;
         let data_root = storage.root_path().to_path_buf();
+        // Storage now holds the exclusive data lock, so no other process owns these copies.
+        crate::documents::clear_staging(&data_root)?;
         Ok(Self {
             storage: Arc::new(Mutex::new(storage)),
             data_root,
@@ -174,7 +176,7 @@ pub async fn start_import(
     let storage = Arc::clone(&state.storage);
     let worker_operation_id = operation_id.clone();
     let worker_imports = Arc::clone(&imports);
-    let source = PathBuf::from(request.path);
+    let source = request.path;
     let requested_encoding = request.encoding.unwrap_or(TxtEncoding::Auto);
     let worker_app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -182,6 +184,15 @@ pub async fn start_import(
         let blocking_imports = Arc::clone(&worker_imports);
         let blocking_app = worker_app.clone();
         let blocking = tauri::async_runtime::spawn_blocking(move || {
+            // A staged document copy stays alive until this worker finishes,
+            // because commit still derives the title from the source path.
+            let (source, _staged) = crate::documents::resolve_source(
+                &blocking_app,
+                &data_root,
+                &source,
+                &blocking_operation_id,
+                &cancel,
+            )?;
             let mut prepared = Storage::prepare_import(
                 &data_root,
                 &source,
@@ -496,6 +507,7 @@ pub async fn get_txt_encoding(
 pub async fn reassociate_txt_source(
     request: TxtSourceRequest,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<TxtEncodingInfo, AppError> {
     if request.book_id.trim().is_empty() || request.path.trim().is_empty() {
         return Err(AppError::invalid_argument(
@@ -510,12 +522,15 @@ pub async fn reassociate_txt_source(
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
             .snapshot_txt_reassociation(&request.book_id)?;
-        let mut prepared = Storage::prepare_txt_reassociation(
+        let (source, _staged) = crate::documents::resolve_source(
+            &app,
             &root,
-            &snapshot,
-            &PathBuf::from(request.path),
+            &request.path,
             &operation_id,
+            &AtomicBool::new(false),
         )?;
+        let mut prepared =
+            Storage::prepare_txt_reassociation(&root, &snapshot, &source, &operation_id)?;
         Storage::verify_prepared_txt_reassociation(&root, &mut prepared)?;
         storage
             .lock()

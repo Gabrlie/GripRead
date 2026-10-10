@@ -14,9 +14,10 @@ pnpm check
 pnpm tauri dev
 pnpm tauri build --debug
 pnpm test:native
+pnpm tauri android build --debug --apk --target aarch64
 ```
 
-The supported path is UTF-8 TXT import, local reading, position persistence, and reading preferences. Deferred features are marked unavailable in the interface. `pnpm test:native` builds a dedicated macOS test application and runs the WebdriverIO embedded suite against an isolated data directory. Test plugins and test data-directory overrides are excluded from ordinary builds. See the [active repair](.ai/plans/2026-09-17-m0-repair.md) for acceptance evidence and remaining limitations.
+The supported path is UTF-8 TXT import, local reading, position persistence, and reading preferences. Deferred features are marked unavailable in the interface. Android builds need JDK 17 and the Android SDK and NDK; see [verification](.ai/engineering/testing.md). `pnpm test:native` builds a dedicated macOS test application and runs the WebdriverIO embedded suite against an isolated data directory. Test plugins and test data-directory overrides are excluded from ordinary builds. See the [active repair](.ai/plans/2026-09-17-m0-repair.md) for acceptance evidence and remaining limitations.
 
 Documentation checks require Node.js 22 or newer and no third-party packages:
 
