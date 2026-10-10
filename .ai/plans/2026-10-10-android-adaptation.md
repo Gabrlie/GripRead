@@ -31,8 +31,12 @@ Host: Ubuntu 24.04 without KVM, so no emulator. Device acceptance is manual: the
 
 Linux baseline before changes (Ubuntu 24.04, Rust 1.99, Node 24, pnpm 11.5.2): formatting, documentation, generated bindings, boundaries, and both TypeScript projects passed; the original 136 frontend tests passed; 66 Rust tests, `cargo fmt --check`, and clippy with `-D warnings` passed. The frontend build ran afterwards with this task's changes.
 
-After the first slice, on the same host: `pnpm check` passes with 139 frontend tests (new hidden-flush and back-button cases) and 69 Rust tests (new document staging cases); clippy with `-D warnings` also passes for `aarch64-linux-android`. `pnpm tauri android build --debug --apk --target aarch64` succeeds (arm64-v8a, minSdk 24, about 50 MB without Rust debug info). Device results: pending.
+After the first slice, on the same host: `pnpm check` passes with 139 frontend tests (new hidden-flush and back-button cases) and 69 Rust tests (new document staging cases); clippy with `-D warnings` also passes for `aarch64-linux-android`. `pnpm tauri android build --debug --apk --target aarch64` succeeds (arm64-v8a, minSdk 24, about 50 MB without Rust debug info). Device results for `c32c81a` (user-provided; device model and Android version not reported): import works and keeps the document title; the position and settings survive closing and reopening; status and gesture bars do not cover content; back closes dialogs but left the reader without first hiding its toolbars. Defects: scroll mode left text under the open top bar after scrolling back, a 6 MB TXT import took more than ten seconds, and the curl effect stuttered and flickered (slide and fade were smooth).
+
+Repairs in `55223ca` and `0714fbb`: dependency optimization and sampled encoding detection (6 MiB GBK fixture on the host: 12.0 s to 0.15 s; UTF-8: 0.66 s to 0.09 s), toolbar dismissal on scroll drags and before leaving, and a held outgoing page with a reused PageFlip instance. `pnpm check` passes with 141 frontend and 70 Rust tests. Device results for this build: pending.
+
+The same device review asked to rebuild the reader around Legado 3.26.7 (contents, directory rules, search, encoding, reading styles, author and introduction parsing); that is a separate task.
 
 ## Handoff
 
-In progress. The Android project, staged document-URI import, hidden-time saves, and back navigation are implemented. Next entry point: record device results for the first debug APK and fix observed defects, especially safe-area insets under edge-to-edge display.
+In progress. The Android project, staged document-URI import, hidden-time saves, and back navigation are implemented. Next entry point: confirm the repaired build on the device, then complete this task.
