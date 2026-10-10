@@ -363,7 +363,9 @@ export function ReaderView() {
         return;
       if (event.key === "Escape") {
         event.preventDefault();
-        void close();
+        // Like Android back in Legado: hide the reading menu before leaving.
+        if (controls) setControls(false);
+        else void close();
       } else if (["ArrowRight", "PageDown", " "].includes(event.key)) {
         event.preventDefault();
         turn("next");
@@ -374,7 +376,7 @@ export function ReaderView() {
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [panel, closePanel, closing, close, turn]);
+  }, [panel, closePanel, closing, close, turn, controls]);
 
   if (!activeBook) return null;
   const page = state.page;
@@ -452,6 +454,9 @@ export function ReaderView() {
             synchronize={synchronizeScroll}
             highlight={search.highlight}
             onInteract={() => void pauseAutomatic()}
+            onUserScroll={() => {
+              if (panelRef.current === null) setControls(false);
+            }}
             run={run}
           />
         ) : (

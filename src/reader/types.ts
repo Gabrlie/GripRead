@@ -39,6 +39,11 @@ export interface ReaderPresentationAdapter {
   /** Reset visual geometry after the host viewport changes. */
   resize?(): void;
   cancel?(): void;
+  /**
+   * Called synchronously before an animated turn publishes its new page, so
+   * the outgoing page stays visible until the animation draws its first frame.
+   */
+  hold?(): void;
   dispose?(): void;
 }
 

@@ -24,6 +24,8 @@ export interface StPageFlipLike {
   on?(event: string, handler: PageFlipEventHandler): unknown;
   off?(event: string, handler?: PageFlipEventHandler): unknown;
   getSettings?(): { flippingTime?: number };
+  /** The patched render loop, stopped while no turn is animating. */
+  getRender?(): { start?(): void; stop?(): void };
 }
 
 export interface StPageFlipAdapterOptions {
@@ -94,6 +96,9 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   private currentSpread: readonly ReaderDisplayedPage[] = [];
   private previousSpread: readonly ReaderDisplayedPage[] = [];
   private motion: AnimationPlaybackControls | null = null;
+  /** A static copy of the outgoing spread shown between publish and first frame. */
+  private held: HTMLElement | null = null;
+  private holdFrame = 0;
 
   public constructor(host: HTMLElement, options: StPageFlipAdapterOptions = {}) {
     if (!host) throw new TypeError("StPageFlipAdapter requires an overlay host");
@@ -175,6 +180,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
 
     if (instant) {
       this.cancelAnimation(true);
+      this.releaseHold();
       this.index = targetIndex;
       this.currentPage = target ?? null;
       this.hideOverlay();
@@ -210,7 +216,9 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     // built-in PageFlip was waiting for its asynchronous init event.
     if (this.disposed || flip !== this.pageFlip) return;
     const animation = this.waitForAnimation(flip);
+    flip.getRender?.()?.start?.();
     this.mount.style.visibility = "visible";
+    this.releaseHoldAfterFrame();
     if (forward) {
       if (flip.flipNext) {
         flip.flipNext("top");
@@ -235,13 +243,45 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     return this.pageFlip;
   }
 
+  /**
+   * Stops an animation without discarding the PageFlip instance, which is
+   * reused by the next turn; only an instance still waiting for init resets.
+   */
   public cancel(): void {
     this.cancelAnimation(true);
-    if (this.pageFlipReady) this.resetPageFlip();
+    this.releaseHold();
+    if (this.pageFlipInitCancel) this.resetPageFlip();
   }
 
-  private async presentMotion(forward: boolean): Promise<void> {
-    this.resetPageFlip();
+  public hold(): void {
+    if (this.disposed || this.reducedMotion || this.effect === "instant") return;
+    if (!this.currentSpread.length) return;
+    this.releaseHold();
+    const held = this.spreadElement(this.currentSpread);
+    held.style.zIndex = "1";
+    this.held = held;
+    this.mount.append(held);
+    this.mount.style.visibility = "visible";
+  }
+
+  private releaseHold(): void {
+    cancelAnimationFrame(this.holdFrame);
+    this.held?.remove();
+    this.held = null;
+  }
+
+  /** PageFlip draws on animation frames; uncover it once it has painted. */
+  private releaseHoldAfterFrame(): void {
+    const held = this.held;
+    if (!held) return;
+    this.holdFrame = requestAnimationFrame(() => {
+      this.holdFrame = requestAnimationFrame(() => {
+        if (this.held === held) this.releaseHold();
+      });
+    });
+  }
+
+  private spreadElement(pages: readonly ReaderDisplayedPage[]): HTMLElement {
     const overlay = this.mount.ownerDocument.createElement("div");
     overlay.className = this.options.pageClassName ?? "reader-prose";
     Object.assign(overlay.style, {
@@ -251,9 +291,16 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
       gridTemplateColumns: `repeat(${this.columns}, minmax(0, 1fr))`,
       gap: this.columns === 2 ? "32px" : "0",
     });
-    for (const page of this.previousSpread) overlay.append(this.createPageElement(page, false));
+    for (const page of pages) overlay.append(this.createPageElement(page, false));
+    return overlay;
+  }
+
+  private async presentMotion(forward: boolean): Promise<void> {
+    this.resetPageFlip();
+    const overlay = this.spreadElement(this.previousSpread);
     this.mount.append(overlay);
     this.mount.style.visibility = "visible";
+    this.releaseHold();
     const finished = new Promise<void>((resolve) => {
       this.animationResolve = resolve;
     });
@@ -278,6 +325,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     if (this.disposed) return;
     const wasAnimating = this.animationResolve !== null;
     this.cancelAnimation(wasAnimating);
+    this.releaseHold();
     if (!wasAnimating) this.resetPageFlip();
   }
 
@@ -285,6 +333,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     if (this.disposed) return;
     this.disposed = true;
     this.cancelAnimation(true);
+    this.releaseHold();
     this.pages = [];
     this.previousPage = null;
     this.currentPage = null;
@@ -379,6 +428,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
         this.animationResolve = null;
         this.animationOff?.();
         this.animationOff = null;
+        flip.getRender?.()?.stop?.();
         this.hideOverlay();
         resolve();
       };
@@ -387,7 +437,11 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
         flip.on("flip", onFlip);
         this.animationOff = () => flip.off?.("flip", onFlip);
       }
-      this.animationTimer = setTimeout(() => this.finishAnimation(token), this.animationDuration());
+      // The flip event normally ends the turn; the timer only bounds a lost event.
+      this.animationTimer = setTimeout(
+        () => this.finishAnimation(token),
+        this.animationDuration() + 250,
+      );
     });
   }
 
@@ -428,7 +482,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     this.geometry = null;
     this.loaded = false;
     this.pageFlipReady = null;
-    this.mount.replaceChildren();
+    this.mount.replaceChildren(...(this.held ? [this.held] : []));
   }
 
   private waitForPageFlipInit(flip: StPageFlipLike): Promise<void> | null {
@@ -456,7 +510,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   }
 
   private hideOverlay(): void {
-    this.mount.style.visibility = "hidden";
+    this.mount.style.visibility = this.held ? "visible" : "hidden";
   }
 
   private readGeometry(): Geometry {

@@ -11,6 +11,8 @@ interface Props {
   viewport: RefObject<HTMLDivElement | null>;
   highlight: { start: number; end: number } | null;
   onInteract: () => void;
+  /** A drag or wheel movement; the overlay toolbars would otherwise cover text. */
+  onUserScroll: () => void;
   run: (action: () => Promise<void>) => void;
   synchronize: RefObject<(() => void) | null>;
 }
@@ -21,6 +23,7 @@ export function ReaderScrollText({
   viewport,
   highlight,
   onInteract,
+  onUserScroll,
   run,
   synchronize,
 }: Props) {
@@ -133,8 +136,12 @@ export function ReaderScrollText({
       data-testid="reader-scroll"
       className="h-full overflow-y-auto overscroll-contain"
       style={{ overflowAnchor: "none" }}
-      onWheel={onInteract}
+      onWheel={() => {
+        onInteract();
+        onUserScroll();
+      }}
       onTouchStart={onInteract}
+      onTouchMove={onUserScroll}
     >
       <div
         ref={body}

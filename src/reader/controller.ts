@@ -886,6 +886,7 @@ export class ReaderController {
       loading: false,
       error: null,
     };
+    if (displayed && (direction === "next" || direction === "previous")) this.adapter?.hold?.();
     this.notify();
 
     // Saving starts before presentation so a slow page-curl animation cannot

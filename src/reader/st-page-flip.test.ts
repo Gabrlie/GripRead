@@ -128,6 +128,47 @@ describe("StPageFlipAdapter", () => {
     expect(mount.style.visibility).toBe("hidden");
     adapter.dispose();
   });
+  it("keeps the outgoing page over a published turn and reuses PageFlip after cancel", async () => {
+    const { host, mount } = hostForTest();
+    const flip = mockPageFlip();
+    const render = { start: vi.fn(), stop: vi.fn() };
+    flip.mock.getRender = () => render;
+    const adapter = new StPageFlipAdapter(host, {
+      pageFlip: flip.mock,
+      mount,
+      width: 100,
+      height: 100,
+      flippingTime: 40,
+    });
+    const first = page("book", "first page", 0, 20);
+    const second = page("book", "second page", 10, 20);
+    adapter.setPages([first, second], 0);
+    await adapter.present(first, "open", context([first, second], 0));
+
+    // The controller holds before React shows the second page and before setPages.
+    adapter.hold();
+    adapter.setPages([first, second], 1);
+    expect(mount.style.visibility).toBe("visible");
+    expect(mount.textContent).toContain("first page");
+
+    const turning = adapter.present(second, "next", context([first, second], 1));
+    expect(render.start).toHaveBeenCalledOnce();
+    flip.emit("flip");
+    await turning;
+    expect(render.stop).toHaveBeenCalledOnce();
+
+    // Cancelling between turns must not rebuild PageFlip for the next turn.
+    adapter.cancel();
+    expect(flip.destroy).not.toHaveBeenCalled();
+
+    adapter.hold();
+    adapter.setPages([first, second], 0);
+    await adapter.present(first, "seek", context([first, second], 0));
+    expect(mount.style.visibility).toBe("hidden");
+    expect(mount.textContent).not.toContain("second page");
+    adapter.dispose();
+  });
+
   it("clears the fallback timer when PageFlip reports an early flip", async () => {
     vi.useFakeTimers();
     const { host, mount } = hostForTest();

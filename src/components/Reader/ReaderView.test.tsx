@@ -362,6 +362,41 @@ describe("reader directory and search operation ownership", () => {
     );
   });
 
+  it("hides the overlay toolbars when the reader drags the scroll view", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    // jsdom has no layout; scroll position tracking only needs empty rectangles.
+    const rect = () => new DOMRect();
+    Range.prototype.getBoundingClientRect = rect;
+    Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+    const app = runtime();
+    await app.settings.load();
+    app.settings.set({ readingMode: "scroll" });
+    await app.library.refresh();
+    render(
+      <RuntimeContext.Provider value={app}>
+        <ReaderView />
+      </RuntimeContext.Provider>,
+    );
+    await screen.findByTestId("reader-scroll");
+    await waitFor(() => expect(screen.queryByText("正在读取书籍信息…")).toBeNull());
+    // The scroll view remounts once the opened window is published.
+    const scroll = screen.getByTestId("reader-scroll");
+    const header = screen.getByTestId("reader-close").closest("header")!;
+    fireEvent(scroll, new MouseEvent("pointerdown", { bubbles: true, clientX: 200, clientY: 200 }));
+    fireEvent(scroll, new MouseEvent("pointerup", { bubbles: true, clientX: 200, clientY: 200 }));
+    await waitFor(() => expect(header.hasAttribute("inert")).toBe(false));
+    fireEvent.touchMove(scroll);
+    await waitFor(() => expect(header.hasAttribute("inert")).toBe(true));
+    await app.settings.flush();
+    vi.unstubAllGlobals();
+  });
+
   it("keeps the Contents tab for the book after its panel closes", async () => {
     const app = runtime();
     await view(app);
