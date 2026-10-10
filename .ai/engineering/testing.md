@@ -17,6 +17,8 @@ The checker validates maintained root/.ai Markdown, required sections and status
 
 `pnpm test:native` uses WebdriverIO with the embedded Tauri driver in a dedicated test build. The native-test feature, frontend test mode, and capability override must be enabled together; ordinary builds exclude test plugins, fault injection, and test entry points. The runner uses isolated data and process lifetimes and must propagate build, assertion, crash, and timeout failures. A startup log line never establishes acceptance. The presentation phase records desktop/phone screenshots and geometry in ignored `.native-artifacts/`; set `GRIPREAD_PRESENTATION_MODE=baseline` with `GRIPREAD_NATIVE_PHASES=presentation` to capture a pre-change comparison. Verified captures also inspect deferred actions and glass alpha values. Compare the images directly; geometry assertions do not replace visual review.
 
+Use `GRIPREAD_NATIVE_PHASES` to select native phases and `GRIPREAD_NATIVE_GREP` to select individual Mocha cases while investigating a failure. Integrated acceptance omits the case filter. Builds share the frontend output directory, so run ordinary and native builds sequentially. Native interactions foreground the actual isolated test window when it becomes hidden; they do not spoof visibility or disable production animations.
+
 Use fixtures and observable outcomes for parsing, state, and service behavior. Exercise IPC changes through their real consumers. UI work also needs visual inspection, keyboard/touch checks, and reduced-motion behavior. Native/platform claims require evidence from the corresponding target, not an inference from a browser build or a different operating system.
 
 ## Selecting scope

@@ -1,6 +1,6 @@
 # TXT reader Batch 2: chapters and reading modes
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
@@ -46,10 +46,16 @@ Keep one accepted directory snapshot for chapter controls, Contents, and progres
 
 Use deterministic frontend tests for chapter intervals, navigation ownership, one-save-per-spread, bounded windows, and automatic-reading pause races. Rust tests exercise old JSON defaults, invalid new settings, version-checked offset resolution, surrogate boundaries, and unchanged schema 8 data. Real WebView tests establish column geometry, scroll anchoring, text selection, and native restart/exit behavior; jsdom cannot establish those layout claims.
 
-Run focused tests while developing each slice. At the integrated batch boundary, run `pnpm check`, `pnpm tauri build --debug`, and affected native phases using `GRIPREAD_NATIVE_PHASES=core,failures,restart,interaction,interaction-animated,presentation,m1-txt,reader-tools pnpm test:native`. Register a reader-modes native phase in the existing runner for the new journeys and run it as part of acceptance. Extend crash/recovery coverage if persistence or publication behavior changes. Compare desktop, narrow, and reduced-motion renders against the Batch 1 baseline, recording the intended chapter-row and mode-layout changes.
+`pnpm check` passes with 136 frontend and 66 Rust tests, including formatting, documentation, generated bindings, dependency boundaries, both TypeScript projects, Rust static checks, and the production frontend build. `pnpm tauri build --debug` passes on macOS.
 
-Planning validation passed `node scripts/check-docs.mjs` and all seven `node --test scripts/check-docs.test.mjs` cases. This planning update ran no application or native tests. The preceding Batch 1 review passed 122 frontend tests, TypeScript, and dependency-boundary checks and independently reproduced the highlight and debounce defects; it did not rerun native acceptance. Record actual implementation results here when work starts, including any checks not run.
+Native acceptance passes across isolated runs of core, failures, restart, instant/curl interaction, presentation, TXT tools, reader tools, reading modes, and crash recovery, including the expected injected publication crash. The new reader-modes phase covers chapter ends and restart, 899/900/901 px fallback, bidirectional long-paragraph recycling, large books, all spread effects, and automatic scroll pause. An initial run lost its embedded-driver connection; subsequent runs also exposed an occluded window with a suspended animation timeline. The harness now foregrounds its real test window before interactions/visible-layout reads. Assertions and production motion remain enabled; failed phases were rerun rather than counted as passes.
+
+Native review fixed a hidden LF becoming the saved visible anchor, which reopened a short final chapter in the previous chapter. It also exposed WebKit rounding away sub-pixel automatic-scroll steps; carrying the fractional distance across frames restores the selected speed. Frontend regression tests additionally cover odd chapter endings when moving backward and retrying a failed mode change without losing the passage.
+
+For already-imported 1, 10, and 50 MiB ASCII long-paragraph fixtures, first-page rendering plus switching to scroll took approximately 420, 810, and 2904 ms in the final native run. Each initially mounted 8192 UTF-16 units; sustained forward/backward recycling stayed within three windows. These measurements include service/UI/test-driver work with warm filesystem caches and exclude import latency. No full-book DOM is mounted.
+
+Desktop double-page, responsive single-page, desktop/narrow scroll, and existing reader-control captures were inspected. The intended visual changes are the chapter progress row and mode layouts; existing paper surfaces and overlay controls remain. Reduced-motion selection and cancellation are covered through reader-view and adapter tests; the macOS system preference was not manually toggled for a separate native screenshot. Other-platform acceptance and the existing source-picker evidence remain outside this batch.
 
 ## Handoff
 
-Slice 1 is implemented and verified with 126 frontend tests and both TypeScript projects. Continue independently with the shared contracts and ordered feature slices. Paginated screens contain only one chapter; scrolling remains continuous. Normal return to the shelf must not wait for animation or persistence: the application retains pending position/settings/directory writes, and reopening uses the latest session locator. Use existing engineering CLIs and patch tools. Batch 2 is complete only when all three modes and their chapter, persistence, and failure paths satisfy acceptance. Assets and full typography remain in later batches; the source-reassociation picker evidence gap remains separate.
+Batch 2 is delivered. Paginated screens contain only one chapter; scrolling remains continuous. Return to the shelf is immediate, accepted writes continue in the application, and reopening uses the latest locator. Schema 8 and existing preference/locator values remain compatible. The next feature entry point is Batch 3 (typography, margins, backgrounds, and assets) in the [parent task](2026-09-24-txt-reader-modes-and-settings.md); it has not started. Remaining manual/platform evidence is listed above.

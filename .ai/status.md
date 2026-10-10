@@ -6,12 +6,12 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [complete TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) is in progress. Batch 1 and its review repairs are done; the [Batch 2 plan](plans/2026-09-27-reader-batch-2.md) continues with shared contracts.
+The [complete TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md) remains in progress. [Batch 2](plans/2026-09-27-reader-batch-2.md) delivers chapter controls, single/double-page and scroll modes, effects, automatic reading, and application-owned position saves.
 
 ## Blockers
 
-Native acceptance was not rerun after the Batch 1 review repairs. Manual source-reassociation picker evidence and other-platform acceptance remain pending.
+Checks pass with 136 frontend and 66 Rust tests, the ordinary macOS build, and native phases across isolated runs. Desktop and narrow reader captures were inspected. Manual source-reassociation picker evidence, a native screenshot after toggling system reduced motion, and other-platform acceptance remain pending.
 
 ## Next entry point
 
-Follow Batch 2 from the shared contracts: chapter controls, double-page mode, bounded scrolling, effects and automatic reading, and integrated acceptance. Assets and full settings remain in later batches. EPUB, online sources, RSS, WebDAV, AIGC, and other-platform acceptance remain deferred.
+Plan Batch 3 typography, margins, backgrounds, and managed assets using the parent task and proposed preference/asset decision. It has not started. Information bars remain in Batch 4; EPUB, online sources, RSS, WebDAV, AIGC, and other-platform acceptance remain deferred.

@@ -51,4 +51,4 @@ These are repaired: the page text clips a highlight to its visible slice, a writ
 
 ## Handoff
 
-In progress. The review repairs are complete; continue with the shared chapter and mode contracts in the [Batch 2 execution plan](2026-09-27-reader-batch-2.md) before implementing the new controls and layouts.
+In progress. Batches 1 and 2 are delivered. The [Batch 2 record](2026-09-27-reader-batch-2.md#verification) contains chapter/mode behavior, persistence and WebKit fixes, native/visual evidence, and remaining manual checks. The next implementation entry point is Batch 3: complete typography, margins, backgrounds, and managed assets. Schema 9 and the broader preference migration have not started.
