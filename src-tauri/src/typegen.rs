@@ -55,6 +55,12 @@ const IPC_TYPES: &[&str] = &[
     "ReaderAsset",
     "ReaderAssetRequest",
     "PathRequest",
+    "ChineseConversion",
+    "ReplaceRule",
+    "SaveReplaceRuleRequest",
+    "ReplaceRuleIdsRequest",
+    "TestReplaceRuleRequest",
+    "BookReplaceRequest",
     "ScreenOrientation",
     "AutoPageMode",
     "ShelfState",
@@ -165,6 +171,12 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ReaderAsset>(&config)?;
     export_all::<ReaderAssetRequest>(&config)?;
     export_all::<PathRequest>(&config)?;
+    export_all::<ChineseConversion>(&config)?;
+    export_all::<ReplaceRule>(&config)?;
+    export_all::<SaveReplaceRuleRequest>(&config)?;
+    export_all::<ReplaceRuleIdsRequest>(&config)?;
+    export_all::<TestReplaceRuleRequest>(&config)?;
+    export_all::<BookReplaceRequest>(&config)?;
     export_all::<ScreenOrientation>(&config)?;
     export_all::<AutoPageMode>(&config)?;
     export_all::<ShelfState>(&config)?;

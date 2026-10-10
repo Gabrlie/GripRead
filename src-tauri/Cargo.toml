@@ -43,6 +43,7 @@ ts-rs = "12.0.1"
 thiserror = "2.0.20"
 uuid = { version = "1.24.1", features = ["v4", "serde"] }
 fancy-regex = "0.19.2"
+aho-corasick = "1.1.5"
 
 # Debug builds are installed on devices for acceptance. Optimize dependencies
 # (decoding, encoding detection, hashing, regex, SQLite) so imports and reads

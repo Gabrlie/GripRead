@@ -1375,6 +1375,7 @@ dependencies = [
 name = "gripread"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "chardetng",
  "encoding_rs",
  "fancy-regex",

@@ -546,11 +546,41 @@ pub async fn start_txt_decode(
     if request.book_id.trim().is_empty() {
         return Err(AppError::invalid_argument("book_id cannot be empty"));
     }
+    spawn_txt_decode(&state, app, request.book_id, Some(request.encoding))
+}
+
+/// Re-derives a book's text when its replace rules or Chinese conversion
+/// changed since it was produced, keeping the selected encoding. Returns the
+/// decode task, or `None` when the text is already current.
+#[tauri::command]
+pub async fn ensure_text_transforms(
+    request: BookRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Option<TxtDecodeTask>, AppError> {
+    let book_id = request.book_id.clone();
+    let pending = with_storage(&state, move |storage| {
+        storage.text_transform_pending(&book_id)
+    })
+    .await?;
+    if !pending {
+        return Ok(None);
+    }
+    spawn_txt_decode(&state, app, request.book_id, None).map(Some)
+}
+
+/// Starts the shared re-decode job; `requested` `None` keeps the encoding.
+fn spawn_txt_decode(
+    state: &State<'_, AppState>,
+    app: AppHandle,
+    book_id: String,
+    requested: Option<TxtEncoding>,
+) -> Result<TxtDecodeTask, AppError> {
     let operation_id = Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let initial = TxtDecodeStatus {
         operation_id: operation_id.clone(),
-        book_id: request.book_id.clone(),
+        book_id: book_id.clone(),
         phase: ImportPhase::Staging,
         bytes_read: 0,
         total_bytes: 0,
@@ -570,8 +600,6 @@ pub async fn start_txt_decode(
         );
     let storage = Arc::clone(&state.storage);
     let root = state.data_root.clone();
-    let book_id = request.book_id;
-    let requested = request.encoding;
     let worker_id = operation_id.clone();
     let worker_decodes = Arc::clone(&decodes);
     let worker_app = app.clone();
@@ -587,6 +615,7 @@ pub async fn start_txt_decode(
                     .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
                 storage.snapshot_txt_decode(&blocking_book)?
             };
+            let requested = requested.unwrap_or_else(|| snapshot.selected_encoding.clone());
             let prepared = Storage::prepare_txt_decode(
                 &root,
                 &snapshot,
@@ -1674,6 +1703,91 @@ pub async fn import_reader_background(
         let (path, name, _staged) =
             crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
         storage.import_reader_background(&path, &name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_replace_rules(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(&state, |storage| storage.list_replace_rules()).await
+}
+
+#[tauri::command]
+pub async fn save_replace_rule(
+    request: crate::models::SaveReplaceRuleRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::ReplaceRule, AppError> {
+    with_storage(&state, move |storage| {
+        storage.save_replace_rule(&request.rule)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_replace_rules(
+    request: crate::models::ReplaceRuleIdsRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.delete_replace_rules(&request.ids)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn order_replace_rules(
+    request: crate::models::ReplaceRuleIdsRequest,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(&state, move |storage| {
+        storage.order_replace_rules(&request.ids)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn import_replace_rules(
+    request: ImportTxtTocRulesRequest,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(&state, move |storage| {
+        storage.import_replace_rules(&request.json)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn export_replace_rules(state: State<'_, AppState>) -> Result<String, AppError> {
+    with_storage(&state, |storage| storage.export_replace_rules()).await
+}
+
+/// Applies one rule to sample text, for the rule editor.
+#[tauri::command]
+pub async fn test_replace_rule(
+    request: crate::models::TestReplaceRuleRequest,
+) -> Result<String, AppError> {
+    let rule = crate::transform::TransformRule {
+        pattern: request.rule.pattern,
+        replacement: request.rule.replacement,
+        regex: request.rule.is_regex,
+    };
+    crate::transform::validate_rule(&rule)?;
+    let transform = crate::transform::TextTransform {
+        rules: vec![rule],
+        chinese: crate::models::ChineseConversion::Off,
+    };
+    Ok(crate::transform::apply(&request.sample, &transform).0)
+}
+
+#[tauri::command]
+pub async fn set_book_replace_rules(
+    request: crate::models::BookReplaceRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.set_book_replace_rules(&request.book_id, request.enabled)
     })
     .await
 }

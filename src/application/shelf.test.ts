@@ -47,6 +47,7 @@ const entry: LibraryBook = {
   removedAt: null,
   shelfState: null,
   coverAssetId: null,
+  useReplaceRules: true,
 };
 const chapters: TocEntry[] = [
   tocEntry(0, "第一章", entry.locator!),
@@ -62,6 +63,8 @@ function setup() {
     renameGroup: vi.fn(async (id, name) => ({ id, name, bookIds: [] })),
     deleteGroup: vi.fn(async () => {}),
     moveBook: vi.fn(async () => undefined),
+    ensureTextTransforms: vi.fn(async () => null),
+    setBookReplaceRules: vi.fn(async () => undefined),
     pickTxtFiles: vi.fn(async () => []),
     pickTxtFolder: vi.fn(async () => []),
     pickBookCover: vi.fn(async () => false),
@@ -100,6 +103,13 @@ function setup() {
     addBookmark: vi.fn(),
     deleteBookmark: vi.fn(),
     updateBookmarkNote: vi.fn(async () => undefined),
+    listReplaceRules: vi.fn(async () => []),
+    saveReplaceRule: vi.fn(async (rule) => rule),
+    deleteReplaceRules: vi.fn(async () => undefined),
+    orderReplaceRules: vi.fn(async () => []),
+    importReplaceRules: vi.fn(async () => []),
+    exportReplaceRules: vi.fn(async () => "[]"),
+    testReplaceRule: vi.fn(async (_rule, sample: string) => sample),
     search: vi.fn(),
     cancelSearch: vi.fn(),
   };

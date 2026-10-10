@@ -36,6 +36,8 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     renameGroup: vi.fn(),
     deleteGroup: vi.fn(),
     moveBook: vi.fn(async () => undefined),
+    ensureTextTransforms: vi.fn(async () => null),
+    setBookReplaceRules: vi.fn(async () => undefined),
     pickTxtFiles: vi.fn(async () => []),
     pickTxtFolder: vi.fn(async () => []),
     pickBookCover: vi.fn(async () => false),
@@ -66,6 +68,13 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     addBookmark: vi.fn(),
     deleteBookmark: vi.fn(),
     updateBookmarkNote: vi.fn(async () => undefined),
+    listReplaceRules: vi.fn(async () => []),
+    saveReplaceRule: vi.fn(async (rule) => rule),
+    deleteReplaceRules: vi.fn(async () => undefined),
+    orderReplaceRules: vi.fn(async () => []),
+    importReplaceRules: vi.fn(async () => []),
+    exportReplaceRules: vi.fn(async () => "[]"),
+    testReplaceRule: vi.fn(async (_rule, sample: string) => sample),
     search: vi.fn(),
     cancelSearch: vi.fn(),
   };
@@ -173,6 +182,7 @@ describe("runtime durability flush", () => {
       removedAt: null,
       shelfState: null,
       coverAssetId: null,
+      useReplaceRules: true,
     });
     await expect(first).rejects.toThrow("metadata unavailable");
     await expect(second).rejects.toThrow("archive unavailable");

@@ -1,3 +1,4 @@
+import { copyText } from "../../../services/system";
 import { useState } from "react";
 import type { BookTocSettings, TxtTocRule } from "../../../types/generated";
 import { Button } from "../../ui/button";
@@ -282,7 +283,7 @@ function RuleList({
           disabled={busy}
           onClick={() =>
             report(
-              onExport().then((json) => navigator.clipboard.writeText(json)),
+              onExport().then(copyText),
               "全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。",
             )
           }

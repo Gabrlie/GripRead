@@ -119,6 +119,7 @@ const entry: LibraryBook = {
   removedAt: null,
   shelfState: null,
   coverAssetId: null,
+  useReplaceRules: true,
 };
 
 function deferred<T>() {
@@ -139,6 +140,8 @@ function runtime() {
       renameGroup: vi.fn(),
       deleteGroup: vi.fn(),
       moveBook: vi.fn(async () => undefined),
+      ensureTextTransforms: vi.fn(async () => null),
+      setBookReplaceRules: vi.fn(async () => undefined),
       pickTxtFiles: vi.fn(async () => []),
       pickTxtFolder: vi.fn(async () => []),
       pickBookCover: vi.fn(async () => false),
@@ -196,6 +199,13 @@ function runtime() {
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),
       updateBookmarkNote: vi.fn(async () => undefined),
+      listReplaceRules: vi.fn(async () => []),
+      saveReplaceRule: vi.fn(async (rule) => rule),
+      deleteReplaceRules: vi.fn(async () => undefined),
+      orderReplaceRules: vi.fn(async () => []),
+      importReplaceRules: vi.fn(async () => []),
+      exportReplaceRules: vi.fn(async () => "[]"),
+      testReplaceRule: vi.fn(async (_rule, sample: string) => sample),
       search: vi.fn(),
       cancelSearch: vi.fn(async () => ({ requested: true })),
     },

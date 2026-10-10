@@ -10,4 +10,8 @@ export type LibraryBook = { book: Book, asset: BookAsset, locator: ReaderLocator
  * A reading state the reader chose by moving the book; `None` lets the
  * shelf derive it from progress.
  */
-shelfState: ShelfState | null, coverAssetId: string | null, };
+shelfState: ShelfState | null, coverAssetId: string | null, 
+/**
+ * Legado's per-book 替换净化 switch.
+ */
+useReplaceRules: boolean, };

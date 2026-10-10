@@ -5,6 +5,8 @@ import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.os.BatteryManager
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.ActionMode
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -15,13 +17,17 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 class MainActivity : TauriActivity() {
   @Volatile private var insets = "{\"top\":0,\"right\":0,\"bottom\":0,\"left\":0}"
   @Volatile private var volumeKeys = false
   @Volatile private var customSelectionMenu = false
   private var webView: WebView? = null
+  private var tts: TextToSpeech? = null
+  @Volatile private var ttsReady = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -37,6 +43,7 @@ class MainActivity : TauriActivity() {
     this.webView = webView
     webView.addJavascriptInterface(InsetsBridge(), "GripReadInsets")
     webView.addJavascriptInterface(SystemBridge(), "GripReadSystem")
+    webView.addJavascriptInterface(SpeechBridge(), "GripReadTts")
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
       val bars = windowInsets.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
@@ -80,6 +87,92 @@ class MainActivity : TauriActivity() {
   override fun onActionModeStarted(mode: ActionMode) {
     super.onActionModeStarted(mode)
     if (customSelectionMenu) mode.menu.clear()
+  }
+
+  override fun onDestroy() {
+    tts?.shutdown()
+    tts = null
+    super.onDestroy()
+  }
+
+  private fun speechEvent(type: String, id: String) {
+    val detail = JSONObject().put("type", type).put("id", id).toString()
+    webView?.post {
+      webView?.evaluateJavascript(
+        "window.dispatchEvent(new CustomEvent('gripread-tts', { detail: $detail }))",
+        null,
+      )
+    }
+  }
+
+  /**
+   * Read-aloud for src/services/speech.ts. A batch of paragraphs is queued at
+   * once, so speech continues while the page is in the background; progress
+   * returns as `gripread-tts` events.
+   */
+  private inner class SpeechBridge {
+    private fun engine(): TextToSpeech {
+      tts?.let { return it }
+      val created = TextToSpeech(this@MainActivity) { status ->
+        ttsReady = status == TextToSpeech.SUCCESS
+        if (ttsReady) tts?.language = Locale.getDefault()
+        speechEvent(if (ttsReady) "ready" else "unavailable", "")
+      }
+      created.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String) = speechEvent("start", utteranceId)
+        override fun onDone(utteranceId: String) = speechEvent("done", utteranceId)
+        @Deprecated("Deprecated in Java")
+        override fun onError(utteranceId: String) = speechEvent("error", utteranceId)
+        override fun onError(utteranceId: String, errorCode: Int) = speechEvent("error", utteranceId)
+      })
+      tts = created
+      return created
+    }
+
+    /** Starts the engine; `ready` or `unavailable` follows as an event. */
+    @JavascriptInterface
+    fun prepare() {
+      runOnUiThread { engine() }
+    }
+
+    @JavascriptInterface
+    fun ready(): Boolean = ttsReady
+
+    /** `items`: a JSON array of `{ id, text }`; `flush` replaces the queue. */
+    @JavascriptInterface
+    fun speak(items: String, rate: Float, pitch: Float, voice: String, flush: Boolean) {
+      runOnUiThread {
+        val speech = engine()
+        if (!ttsReady) return@runOnUiThread
+        speech.setSpeechRate(rate)
+        speech.setPitch(pitch)
+        if (voice.isNotEmpty()) speech.voices?.firstOrNull { it.name == voice }?.let { speech.voice = it }
+        val list = JSONArray(items)
+        for (index in 0 until list.length()) {
+          val item = list.getJSONObject(index)
+          val mode = if (flush && index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+          speech.speak(item.getString("text"), mode, null, item.getString("id"))
+        }
+      }
+    }
+
+    @JavascriptInterface
+    fun stop() {
+      runOnUiThread { tts?.stop() }
+    }
+
+    /** Installed voices as a JSON array of `{ name, label }`. */
+    @JavascriptInterface
+    fun voices(): String {
+      val result = JSONArray()
+      if (!ttsReady) return result.toString()
+      tts?.voices?.sortedBy { it.name }?.forEach { voice ->
+        if (!voice.isNetworkConnectionRequired) {
+          result.put(JSONObject().put("name", voice.name).put("label", voice.locale.displayName + " · " + voice.name))
+        }
+      }
+      return result.toString()
+    }
   }
 
   private inner class InsetsBridge {

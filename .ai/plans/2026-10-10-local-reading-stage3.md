@@ -26,6 +26,8 @@ N1: reader tests for margin taps and the spread rule; a tablet-size preview drag
 
 N3: Rust tests for regex search (anchors, lazy quantifiers, case folding, no line crossing, invalid patterns) and startup removal of unused background images; frontend tests for selection-to-offset mapping across hidden indents, the reveal cycle in automatic turning, and the adapter keeping a reveal over navigation cancels; phone screenshots of the selection menu, the note dialog, 更多设置, the menu following the page colours, regex results, and a reveal in progress. Brightness, orientation, share, and the emptied WebView selection toolbar need device checks.
 
+N4: Rust tests for line-wise rules with Java replacement syntax and offset maps, invalid expressions, length-preserving conversion both ways, and an end-to-end transform (rules and conversion rewrite the text, position and bookmark relocate, reimport dedupes, rule scope, the per-book switch, rule export and import); frontend tests for read-aloud paragraphs, page following, batch refill, pause, resume, sleep timer, and end of book; phone screenshots of the More menu, the replace rule page and editor test, and the 朗读 sheet. TTS output and background speech need device checks.
+
 ## Handoff
 
-In progress. N1–N3 are implemented on the host; N4 follows.
+In progress. N1–N4 are implemented on the host; next is the Android debug APK and device results. The [text transforms decision](../notes/implemented/2026-10-10-text-transforms.md) records the N4 storage model.

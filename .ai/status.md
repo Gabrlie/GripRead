@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-N1–N3 are implemented on the host; continue with N4. The macOS native suite needs a run on macOS.
+N1–N4 are implemented on the host; build the Android APK and collect device results. The macOS native suite needs a run on macOS.

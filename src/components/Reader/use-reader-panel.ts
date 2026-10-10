@@ -4,7 +4,8 @@ import { useCallback, useRef, useState } from "react";
  * Reader tools, following Legado's read menu: full-screen Contents and Search
  * pages, the chapter rule and encoding dialogs, and the 界面 style sheet.
  */
-export type ReaderPanel = "contents" | "search" | "rules" | "encoding" | "style" | "automatic";
+export type ReaderPanel =
+  "contents" | "search" | "rules" | "encoding" | "style" | "automatic" | "replace" | "aloud";
 
 /** Accessible labels of the menu buttons that open each top-level panel. */
 export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
@@ -14,6 +15,8 @@ export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
   encoding: "设置编码",
   style: "界面",
   automatic: "自动翻页",
+  replace: "更多",
+  aloud: "朗读",
 };
 
 /**

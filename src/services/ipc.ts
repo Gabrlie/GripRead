@@ -23,6 +23,8 @@ import type {
   ReadingStats,
   ReadingStatsRequest,
   BookmarkNoteRequest,
+  ReplaceRule,
+  BookReplaceRequest,
   ReaderPreferences,
   ReadContentRequest,
   StartImportRequest,
@@ -217,6 +219,14 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("add_reading_time", {
         request: { bookId, day, seconds } satisfies ReadingTimeRequest,
       }),
+    ensureTextTransforms: (bookId) =>
+      invokeCommand<TxtDecodeTask | null>("ensure_text_transforms", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    setBookReplaceRules: (bookId, enabled) =>
+      invokeCommand<void>("set_book_replace_rules", {
+        request: { bookId, enabled } satisfies BookReplaceRequest,
+      }),
     readingStats: (today) =>
       invokeCommand<ReadingStats>("reading_stats", {
         request: { today } satisfies ReadingStatsRequest,
@@ -300,6 +310,17 @@ export const tauriServices: AppServices = {
     listBookmarks: (bookId) => invokeCommand<Bookmark[]>("list_bookmarks", { request: { bookId } }),
     addBookmark: (request) => invokeCommand<Bookmark>("add_bookmark", { request }),
     deleteBookmark: (request) => invokeCommand<void>("delete_bookmark", { request }),
+    listReplaceRules: () => invokeCommand<ReplaceRule[]>("list_replace_rules"),
+    saveReplaceRule: (rule) =>
+      invokeCommand<ReplaceRule>("save_replace_rule", { request: { rule } }),
+    deleteReplaceRules: (ids) => invokeCommand<void>("delete_replace_rules", { request: { ids } }),
+    orderReplaceRules: (ids) =>
+      invokeCommand<ReplaceRule[]>("order_replace_rules", { request: { ids } }),
+    importReplaceRules: (json) =>
+      invokeCommand<ReplaceRule[]>("import_replace_rules", { request: { json } }),
+    exportReplaceRules: () => invokeCommand<string>("export_replace_rules"),
+    testReplaceRule: (rule, sample) =>
+      invokeCommand<string>("test_replace_rule", { request: { rule, sample } }),
     updateBookmarkNote: (bookmarkId, note) =>
       invokeCommand<void>("update_bookmark_note", {
         request: { bookmarkId, note } satisfies BookmarkNoteRequest,

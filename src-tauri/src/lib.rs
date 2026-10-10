@@ -5,6 +5,7 @@ pub mod m1_txt;
 pub mod models;
 mod relocation;
 pub mod storage;
+mod transform;
 pub mod txt;
 pub mod txt_toc;
 pub mod typegen;
@@ -24,6 +25,11 @@ use commands::{
     add_reading_time, clear_book_cover, delete_reader_font, import_reader_background,
     import_reader_font, list_reader_fonts, list_txt_folder, move_book, read_reader_font,
     reading_stats, set_book_cover, update_bookmark_note,
+};
+use commands::{
+    delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
+    list_replace_rules, order_replace_rules, save_replace_rule, set_book_replace_rules,
+    test_replace_rule,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -155,7 +161,16 @@ pub fn run() {
             set_book_cover,
             clear_book_cover,
             list_txt_folder,
-            import_reader_background
+            import_reader_background,
+            ensure_text_transforms,
+            list_replace_rules,
+            save_replace_rule,
+            delete_replace_rules,
+            order_replace_rules,
+            import_replace_rules,
+            export_replace_rules,
+            test_replace_rule,
+            set_book_replace_rules
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

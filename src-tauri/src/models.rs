@@ -463,6 +463,8 @@ pub struct LibraryBook {
     /// shelf derive it from progress.
     pub shelf_state: Option<ShelfState>,
     pub cover_asset_id: Option<String>,
+    /// Legado's per-book 替换净化 switch.
+    pub use_replace_rules: bool,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -642,6 +644,60 @@ pub enum ScreenOrientation {
     Landscape,
 }
 
+/// Legado's 简繁转换, applied to the stored text when a book is decoded.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChineseConversion {
+    #[default]
+    Off,
+    ToTraditional,
+    ToSimplified,
+}
+
+/// A Legado replace rule (替换净化). Rules apply to every line of a book in
+/// `serial` order; `scope` lists book titles separated by `;` or `,`, and an
+/// empty scope applies to every book.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRule {
+    /// Empty when adding a rule.
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub pattern: String,
+    pub replacement: String,
+    pub is_regex: bool,
+    pub scope: String,
+    pub enabled: bool,
+    pub serial: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveReplaceRuleRequest {
+    pub rule: ReplaceRule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRuleIdsRequest {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TestReplaceRuleRequest {
+    pub rule: ReplaceRule,
+    pub sample: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookReplaceRequest {
+    pub book_id: String,
+    pub enabled: bool,
+}
+
 /// How automatic page turning advances paginated text (Legado 自动翻页).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -746,6 +802,12 @@ pub struct ReadingStyle {
     /// The reading menu uses the page colours instead of the app theme.
     pub menu_follows_page: bool,
     pub auto_page_mode: AutoPageMode,
+    pub chinese_conversion: ChineseConversion,
+    /// Read-aloud speed and pitch, where 1 is the engine's normal value.
+    pub speech_rate: f64,
+    pub speech_pitch: f64,
+    /// An installed system voice; `None` uses the engine default.
+    pub speech_voice: Option<String>,
 }
 
 impl Default for ReadingStyle {
@@ -823,6 +885,10 @@ impl Default for ReadingStyle {
             orientation: ScreenOrientation::Auto,
             menu_follows_page: false,
             auto_page_mode: AutoPageMode::Reveal,
+            chinese_conversion: ChineseConversion::Off,
+            speech_rate: 1.0,
+            speech_pitch: 1.0,
+            speech_voice: None,
         }
     }
 }
@@ -894,6 +960,8 @@ impl ReadingStyle {
         if let Some(brightness) = self.brightness {
             range(brightness, 0.0, 1.0, "brightness")?;
         }
+        range(self.speech_rate, 0.3, 3.0, "speech_rate")?;
+        range(self.speech_pitch, 0.5, 2.0, "speech_pitch")?;
         Ok(())
     }
 }

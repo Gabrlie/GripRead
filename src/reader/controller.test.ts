@@ -89,6 +89,25 @@ function serviceFor(
     },
     async deleteBookmark() {},
     async updateBookmarkNote() {},
+    async listReplaceRules() {
+      return [];
+    },
+    async saveReplaceRule(rule) {
+      return rule;
+    },
+    async deleteReplaceRules() {},
+    async orderReplaceRules() {
+      return [];
+    },
+    async importReplaceRules() {
+      return [];
+    },
+    async exportReplaceRules() {
+      return "[]";
+    },
+    async testReplaceRule(_rule, sample) {
+      return sample;
+    },
     async search() {
       return { contentVersion: "", matches: [], nextCursor: null, hasMore: false };
     },

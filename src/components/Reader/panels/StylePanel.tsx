@@ -368,6 +368,18 @@ function MainView({
           <p className="text-[11px] text-secondary">窄屏自动显示单页，展开后恢复双页。</p>
         )}
       </Section>
+      <Section title="简繁转换">
+        <Choice
+          label="简繁转换"
+          options={[
+            ["off", "不转换"],
+            ["to_simplified", "繁转简"],
+            ["to_traditional", "简转繁"],
+          ]}
+          value={style.chineseConversion}
+          onChange={(chineseConversion) => setStyle({ chineseConversion })}
+        />
+      </Section>
       <Section title={`背景样式（${night ? "夜间" : "日间"}，长按或点铅笔编辑）`}>
         <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
           {style.presets.map((preset, index) => (

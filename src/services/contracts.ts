@@ -31,6 +31,7 @@ import type {
   ShelfPlacement,
   ReadingStats,
   PickedFile,
+  ReplaceRule,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -71,6 +72,12 @@ export interface LibraryService {
   cancelTxtDecode(operationId: string): Promise<CancelResult>;
   onTxtDecodeProgress(listener: (status: TxtDecodeStatus) => void): Promise<Unsubscribe>;
   getBookInfo(bookId: string): Promise<BookInfo>;
+  /**
+   * Re-derives the book's text when its replace rules or Chinese conversion
+   * changed; `null` when the text is already current.
+   */
+  ensureTextTransforms(bookId: string): Promise<TxtDecodeTask | null>;
+  setBookReplaceRules(bookId: string, enabled: boolean): Promise<void>;
 }
 export interface ReaderService {
   readContentWindow(request: ReadContentRequest): Promise<ContentWindow>;
@@ -95,6 +102,15 @@ export interface ReaderService {
   deleteBookmark(request: BookmarkIdRequest): Promise<void>;
   updateBookmarkNote(bookmarkId: string, note: string): Promise<void>;
   search(request: SearchRequest): Promise<SearchResponse>;
+  /** Legado replace rules shared by all books, in application order. */
+  listReplaceRules(): Promise<ReplaceRule[]>;
+  /** Adds a rule when `id` is empty; otherwise updates it. */
+  saveReplaceRule(rule: ReplaceRule): Promise<ReplaceRule>;
+  deleteReplaceRules(ids: string[]): Promise<void>;
+  orderReplaceRules(ids: string[]): Promise<ReplaceRule[]>;
+  importReplaceRules(json: string): Promise<ReplaceRule[]>;
+  exportReplaceRules(): Promise<string>;
+  testReplaceRule(rule: ReplaceRule, sample: string): Promise<string>;
   cancelSearch(operationId: string): Promise<CancelResult>;
 }
 export interface SettingsService {

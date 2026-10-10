@@ -18,11 +18,21 @@ import {
   emptyReaderSnapshot,
 } from "../../reader";
 import type { ReaderSnapshot } from "../../reader";
-import type { Bookmark, TxtEncoding } from "../../types/generated";
+import type { Bookmark, TxtEncoding, TxtEncodingInfo } from "../../types/generated";
 import { Button } from "../ui/button";
 import { useAutomaticTurn } from "./use-automatic-turn";
 import { useReadingTime } from "./use-reading-time";
 import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
+import { ReplaceRulesPage } from "./pages/ReplaceRulesPage";
+import { Icon } from "../ui/Icon";
+import { ReadAloudDialog } from "./dialogs/ReadAloudDialog";
+import { ReadAloud, windowParagraphs, type ReadAloudSnapshot } from "../../reader/read-aloud";
+import { speechEngine } from "../../services/speech";
+
+const NO_SUBSCRIBE = () => () => undefined;
+const IDLE_SNAPSHOT: ReadAloudSnapshot = { state: "idle", current: null, stopsAt: null };
+const IDLE_ALOUD = () => IDLE_SNAPSHOT;
+const loadVoices = () => speechEngine().voices();
 import { BookmarkNoteDialog } from "./dialogs/BookmarkNoteDialog";
 import { useReaderActions } from "./use-reader-actions";
 import { canShowSpread, useReaderLayout, syncMeasureBox } from "./use-reader-layout";
@@ -250,7 +260,69 @@ export function ReaderView() {
     },
     [openPanelState, pauseAutomatic],
   );
-  useReadingTime(bookId, runtime.services.library, automaticTurn.running);
+  // Legado's 朗读: paragraphs from the visible page, following the reading.
+  const columnsRef = useRef(1);
+  columnsRef.current = effectiveMode === "double" ? 2 : 1;
+  const speechOptions = {
+    rate: style?.speechRate ?? 1,
+    pitch: style?.speechPitch ?? 1,
+    voice: style?.speechVoice ?? null,
+  };
+  const speechOptionsRef = useRef(speechOptions);
+  speechOptionsRef.current = speechOptions;
+  const readAloud = useMemo(() => {
+    if (!controller) return null;
+    const text = () => {
+      const snapshot = controller.getSnapshot();
+      return snapshot.mode === "scroll" ? snapshot.scroll : snapshot.contentWindow;
+    };
+    return new ReadAloud(
+      speechEngine(),
+      {
+        paragraphs: (offset, limit) => {
+          const window = text();
+          return window ? windowParagraphs(window.text, window.startOffset, offset, limit) : [];
+        },
+        pageStart: () => {
+          const snapshot = controller.getSnapshot();
+          return snapshot.page?.startOffset ?? snapshot.scroll?.startOffset ?? 0;
+        },
+        pageEnd: () => {
+          const snapshot = controller.getSnapshot();
+          // Scroll mode reads the loaded text without turning.
+          if (snapshot.mode === "scroll") return Number.POSITIVE_INFINITY;
+          const visible = snapshot.pages.slice(
+            snapshot.pageIndex,
+            snapshot.pageIndex + columnsRef.current,
+          );
+          return visible.at(-1)?.endOffset ?? snapshot.page?.endOffset ?? 0;
+        },
+        next: async () => {
+          const snapshot = controller.getSnapshot();
+          if (snapshot.mode === "scroll" || !snapshot.hasAfter) return false;
+          adapter.current?.skipNextAnimation();
+          await controller.next();
+          return true;
+        },
+        highlight: (range) => search.setHighlight(range),
+      },
+      speechOptionsRef.current,
+    );
+    // The search highlight setter is stable for the session.
+  }, [controller]);
+  useEffect(() => () => readAloud?.dispose(), [readAloud]);
+  useEffect(() => {
+    readAloud?.setOptions(speechOptions);
+  }, [readAloud, speechOptions.rate, speechOptions.pitch, speechOptions.voice]);
+  const aloud = useSyncExternalStore(
+    readAloud?.subscribe ?? NO_SUBSCRIBE,
+    readAloud?.getSnapshot ?? IDLE_ALOUD,
+  );
+  useReadingTime(
+    bookId,
+    runtime.services.library,
+    automaticTurn.running || aloud.state === "playing",
+  );
   // The book detail page can open the reader on its contents.
   useEffect(() => {
     if (takeReaderPage() === "contents") openPanel("contents");
@@ -386,17 +458,26 @@ export function ReaderView() {
   }, [bookId]);
 
   const { clearResults } = search;
-  const changeEncoding = useCallback(
-    (encoding: TxtEncoding) => {
+  /**
+   * Re-derives the book's text (a new encoding, or changed replace rules and
+   * Chinese conversion) and reopens it at the relocated position.
+   */
+  const redecode = useCallback(
+    (decode: (bookId: string) => Promise<TxtEncodingInfo | null>, quiet = false) => {
       if (!bookId || !controller || tools.savingSettings()) return;
       const epoch = sessionEpoch.current;
-      void pauseAutomatic();
-      setSearchIndex(null);
       run(async () => {
-        clearResults();
+        if (!quiet) {
+          void pauseAutomatic();
+          setSearchIndex(null);
+          clearResults();
+        }
         await controller.flush();
-        const next = await runtime.library.decodeTxt(bookId, encoding);
-        if (epoch !== sessionEpoch.current) return;
+        const next = await decode(bookId);
+        if (!next || epoch !== sessionEpoch.current) return;
+        void pauseAutomatic();
+        setSearchIndex(null);
+        clearResults();
         setEncodingInfo(next);
         runtime.positions.forget(bookId);
         await controller.open(bookId);
@@ -417,6 +498,53 @@ export function ReaderView() {
       setEncodingInfo,
       tools,
     ],
+  );
+  const changeEncoding = useCallback(
+    (encoding: TxtEncoding) => redecode((id) => runtime.library.decodeTxt(id, encoding)),
+    [redecode, runtime.library],
+  );
+  /** Applies replace rules and Chinese conversion when they changed. */
+  const applyTransforms = useCallback(
+    () =>
+      redecode(async (id) => {
+        // The conversion setting is read from saved preferences.
+        await runtime.settings.flush();
+        if (runtime.library.getSnapshot().decoding) return null;
+        return runtime.library.applyTextTransforms(id);
+      }, true),
+    [redecode, runtime],
+  );
+  const applyTransformsRef = useRef(applyTransforms);
+  applyTransformsRef.current = applyTransforms;
+  // A book opened after rules or the conversion changed gets them applied.
+  const transformsChecked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bookId || !controller || transformsChecked.current === bookId) return;
+    transformsChecked.current = bookId;
+    applyTransformsRef.current();
+  }, [bookId, controller]);
+  const chineseConversion = style?.chineseConversion ?? "off";
+  const appliedConversion = useRef(chineseConversion);
+  useEffect(() => {
+    if (appliedConversion.current === chineseConversion) return;
+    appliedConversion.current = chineseConversion;
+    applyTransformsRef.current();
+  }, [chineseConversion]);
+  const useReplaceRules =
+    libraryState.books.find((book) => book.book.id === bookId)?.useReplaceRules ??
+    activeBook?.useReplaceRules ??
+    true;
+  const replaceChanged = useRef(false);
+  const toggleBookReplace = useCallback(
+    (enabled: boolean) => {
+      if (!bookId) return;
+      run(async () => {
+        await runtime.services.library.setBookReplaceRules(bookId, enabled);
+        await runtime.library.refresh();
+        applyTransformsRef.current();
+      });
+    },
+    [bookId, run, runtime],
   );
 
   useLayoutEffect(() => {
@@ -691,6 +819,8 @@ export function ReaderView() {
           canBookmark={Boolean(page) && !closing}
           onAddBookmark={addBookmark}
           onRefreshDirectory={reloadTools}
+          replaceEnabled={useReplaceRules}
+          onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
         />
       </div>
       <ReaderSurface
@@ -934,6 +1064,68 @@ export function ReaderView() {
         >
           {notice}
         </div>
+      )}
+      {panel === "aloud" && readAloud && (
+        <ReadAloudDialog
+          snapshot={aloud}
+          available={readAloud.available()}
+          rate={speechOptions.rate}
+          pitch={speechOptions.pitch}
+          voice={speechOptions.voice}
+          loadVoices={loadVoices}
+          onPlay={() => {
+            void pauseAutomatic();
+            if (aloud.state === "paused") readAloud.resume();
+            else readAloud.start();
+          }}
+          onPause={() => readAloud.pause()}
+          onStop={() => readAloud.stop()}
+          onSkip={(step) => readAloud.skip(step)}
+          onTimer={(minutes) => readAloud.sleepAfter(minutes)}
+          onSettings={(patch) => style && settingsStore.set({ style: { ...style, ...patch } })}
+          onClose={closePanel}
+        />
+      )}
+      {aloud.state !== "idle" && panel !== "aloud" && readAloud && (
+        <div
+          data-reader-control=""
+          className="fixed z-30 right-3 bottom-[calc(1rem+var(--safe-bottom))] flex items-center gap-1 rounded-full bg-inverse-surface text-inverse-on-surface shadow-md pl-3 pr-1 py-1 text-xs"
+        >
+          <button type="button" className="py-1" onClick={() => openPanel("aloud")}>
+            {aloud.state === "playing" ? "朗读中" : "朗读已暂停"}
+          </button>
+          <button
+            type="button"
+            aria-label={aloud.state === "playing" ? "暂停朗读" : "继续朗读"}
+            className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/10"
+            onClick={() => (aloud.state === "playing" ? readAloud.pause() : readAloud.resume())}
+          >
+            <Icon name={aloud.state === "playing" ? "pause" : "play"} size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label="退出朗读"
+            className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/10"
+            onClick={() => readAloud.stop()}
+          >
+            <Icon name="stop" size={12} />
+          </button>
+        </div>
+      )}
+      {panel === "replace" && (
+        <ReplaceRulesPage
+          service={runtime.services.reader}
+          enabledForBook={useReplaceRules}
+          onToggleBook={toggleBookReplace}
+          onChanged={() => (replaceChanged.current = true)}
+          onClose={() => {
+            closePanel();
+            if (replaceChanged.current) {
+              replaceChanged.current = false;
+              applyTransformsRef.current();
+            }
+          }}
+        />
       )}
       {panel === "search" && (
         <SearchPage

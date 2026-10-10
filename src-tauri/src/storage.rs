@@ -24,15 +24,16 @@ use crate::models::{
     TxtEncodingInfo, TxtTocRule, WindowDirection,
 };
 use crate::models::{
-    BookReadingTime, DayReadingTime, ReadingStats, ShelfPlacement, ShelfPreferences, ShelfState,
-    UpdateBookRequest,
+    BookReadingTime, DayReadingTime, ReadingStats, ReplaceRule, ShelfPlacement, ShelfPreferences,
+    ShelfState, UpdateBookRequest,
 };
+use crate::transform::{self, TextTransform, TransformRule};
 use crate::txt::detect_and_decode;
 use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -82,6 +83,9 @@ pub(crate) struct TxtDecodeSnapshot {
     pub(crate) selected_encoding: TxtEncoding,
     position: Option<ReaderLocator>,
     bookmarks: Vec<Bookmark>,
+    /// The transform that produced the current text, and the one to apply.
+    pub(crate) applied: TextTransform,
+    pub(crate) target: TextTransform,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +113,7 @@ pub(crate) struct TxtReassociationSnapshot {
     pub(crate) target_relative_path: String,
     pub(crate) content_version: String,
     pub(crate) selected_encoding: TxtEncoding,
+    pub(crate) transform: TextTransform,
 }
 
 #[derive(Debug, Clone)]
@@ -135,7 +140,19 @@ pub(crate) struct ImportTargetSnapshot {
     fingerprint: Option<String>,
     source_sha256: Option<String>,
     selected_encoding: Option<TxtEncoding>,
+    transform: TextTransform,
 }
+
+/// Relative path, normalized hash, source hash, encoding, and transform.
+type ImportTargetRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+/// Source path, source hash, encoding, and transform of a TXT asset.
+type TxtSourceRow = (Option<String>, Option<String>, String, Option<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SparseIndex {
@@ -735,6 +752,34 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        // Schema 12: Legado replace rules and the text transform each book's
+        // managed text was produced with (NULL: the decoded text as is).
+        if current < 12 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE replace_rules (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    rule_group TEXT NOT NULL DEFAULT '',
+                    pattern TEXT NOT NULL,
+                    replacement TEXT NOT NULL,
+                    is_regex INTEGER NOT NULL CHECK(is_regex IN (0, 1)),
+                    scope TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+                    serial INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 ALTER TABLE txt_assets ADD COLUMN transform_json TEXT;
+                 ALTER TABLE books ADD COLUMN use_replace_rules INTEGER NOT NULL DEFAULT 1
+                    CHECK(use_replace_rules IN (0, 1));",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1400,10 +1445,11 @@ impl Storage {
         sha256: &str,
         source_sha256: &str,
     ) -> Result<Option<ImportTargetSnapshot>, AppError> {
-        let target: Option<(String, String, Option<String>, Option<String>)> = self
+        let target: Option<ImportTargetRow> = self
             .conn
             .query_row(
-                "SELECT a.relative_path, a.sha256, t.source_sha256, t.selected_encoding
+                "SELECT a.relative_path, a.sha256, t.source_sha256, t.selected_encoding,
+                        t.transform_json
                  FROM book_assets a
                  LEFT JOIN txt_assets t ON t.asset_id = a.id
                  WHERE a.sha256 = ?1 OR t.source_sha256 = ?2
@@ -1411,10 +1457,20 @@ impl Storage {
                           a.created_at ASC
                  LIMIT 1",
                 params![sha256, source_sha256],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some((relative_path, target_sha256, source_sha256, selected_encoding)) = target else {
+        let Some((relative_path, target_sha256, source_sha256, selected_encoding, transform_json)) =
+            target
+        else {
             return Ok(None);
         };
         let path = managed_path(&self.root, &relative_path, "books")?;
@@ -1432,6 +1488,7 @@ impl Storage {
             fingerprint,
             source_sha256,
             selected_encoding: selected_encoding.map(parse_encoding),
+            transform: TextTransform::from_stored(transform_json.as_deref()),
         }))
     }
 
@@ -1739,7 +1796,7 @@ impl Storage {
             "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
                     a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
                     a.relative_path, a.created_at, p.updated_at, r.removed_at,
-                    b.shelf_state, b.cover_asset_id
+                    b.shelf_state, b.cover_asset_id, b.use_replace_rules
              FROM books b JOIN book_assets a ON a.book_id = b.id
              LEFT JOIN reading_positions p ON p.book_id = b.id
              LEFT JOIN shelf_removals r ON r.book_id = b.id
@@ -1764,13 +1821,22 @@ impl Storage {
                     row.get::<_, Option<i64>>(15)?,
                     row.get::<_, Option<String>>(16)?,
                     row.get::<_, Option<String>>(17)?,
+                    row.get::<_, bool>(18)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
             .map(
-                |(book, mut record, last_read_at, removed_at, shelf_state, cover_asset_id)| {
+                |(
+                    book,
+                    mut record,
+                    last_read_at,
+                    removed_at,
+                    shelf_state,
+                    cover_asset_id,
+                    use_replace_rules,
+                )| {
                     let path = managed_path(&self.root, &record.relative_path, "books")?;
                     record.asset.availability = if is_regular_file(&path) {
                         AssetAvailability::Ready
@@ -1794,6 +1860,7 @@ impl Storage {
                         removed_at,
                         shelf_state: shelf_state.as_deref().and_then(parse_shelf_state),
                         cover_asset_id,
+                        use_replace_rules,
                     })
                 },
             )
@@ -2060,6 +2127,270 @@ impl Storage {
             })
             .collect();
         Ok(serde_json::to_string_pretty(&rules)?)
+    }
+
+    pub fn list_replace_rules(&self) -> Result<Vec<ReplaceRule>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, rule_group, pattern, replacement, is_regex, scope, enabled, serial
+             FROM replace_rules ORDER BY serial, rowid",
+        )?;
+        let rules = statement
+            .query_map([], |row| {
+                Ok(ReplaceRule {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    group: row.get(2)?,
+                    pattern: row.get(3)?,
+                    replacement: row.get(4)?,
+                    is_regex: row.get(5)?,
+                    scope: row.get(6)?,
+                    enabled: row.get(7)?,
+                    serial: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rules)
+    }
+
+    /// Adds a rule when `id` is empty, otherwise updates it.
+    pub fn save_replace_rule(&mut self, rule: &ReplaceRule) -> Result<ReplaceRule, AppError> {
+        let name = rule.name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(AppError::invalid_argument(
+                "replace rule names need 1 to 64 characters",
+            ));
+        }
+        if rule.pattern.chars().count() > 4000 || rule.replacement.chars().count() > 4000 {
+            return Err(AppError::invalid_argument(
+                "replace rule patterns allow 4000 characters",
+            ));
+        }
+        transform::validate_rule(&TransformRule {
+            pattern: rule.pattern.clone(),
+            replacement: rule.replacement.clone(),
+            regex: rule.is_regex,
+        })?;
+        let mut saved = ReplaceRule {
+            name: name.to_string(),
+            ..rule.clone()
+        };
+        if saved.id.is_empty() {
+            saved.id = Uuid::new_v4().to_string();
+            saved.serial = self.conn.query_row(
+                "SELECT COALESCE(MAX(serial), 0) + 1 FROM replace_rules",
+                [],
+                |row| row.get(0),
+            )?;
+        } else {
+            let exists: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM replace_rules WHERE id = ?1)",
+                params![saved.id],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(AppError::new(
+                    ErrorCode::NotFound,
+                    "replace rule was not found",
+                ));
+            }
+        }
+        self.conn.execute(
+            "INSERT INTO replace_rules(id, name, rule_group, pattern, replacement, is_regex,
+                scope, enabled, serial, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name,
+                rule_group = excluded.rule_group, pattern = excluded.pattern,
+                replacement = excluded.replacement, is_regex = excluded.is_regex,
+                scope = excluded.scope, enabled = excluded.enabled,
+                updated_at = excluded.updated_at",
+            params![
+                saved.id,
+                saved.name,
+                saved.group.trim(),
+                saved.pattern,
+                saved.replacement,
+                saved.is_regex,
+                saved.scope.trim(),
+                saved.enabled,
+                saved.serial,
+                now_millis()
+            ],
+        )?;
+        Ok(saved)
+    }
+
+    pub fn delete_replace_rules(&mut self, ids: &[String]) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        for id in ids {
+            tx.execute("DELETE FROM replace_rules WHERE id = ?1", params![id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Rewrites the order of every rule; `ids` must list each exactly once.
+    pub fn order_replace_rules(&mut self, ids: &[String]) -> Result<Vec<ReplaceRule>, AppError> {
+        let existing: HashSet<String> = self
+            .list_replace_rules()?
+            .into_iter()
+            .map(|rule| rule.id)
+            .collect();
+        let requested: HashSet<&String> = ids.iter().collect();
+        if requested.len() != ids.len()
+            || existing.len() != ids.len()
+            || !ids.iter().all(|id| existing.contains(id))
+        {
+            return Err(AppError::invalid_argument(
+                "the rule order must list every replace rule once",
+            ));
+        }
+        let tx = self.conn.transaction()?;
+        for (index, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE replace_rules SET serial = ?1 WHERE id = ?2",
+                params![index as i64 + 1, id],
+            )?;
+        }
+        tx.commit()?;
+        self.list_replace_rules()
+    }
+
+    /// Imports Legado replace rules (one object or an array); skips rules that
+    /// already exist with the same pattern and replacement, and rules whose
+    /// expressions do not compile.
+    pub fn import_replace_rules(&mut self, json: &str) -> Result<Vec<ReplaceRule>, AppError> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+            AppError::invalid_argument(format!("not a replace rule JSON file: {error}"))
+        })?;
+        let items = match value {
+            serde_json::Value::Array(items) => items,
+            item @ serde_json::Value::Object(_) => vec![item],
+            _ => return Err(AppError::invalid_argument("not a replace rule JSON file")),
+        };
+        let existing = self.list_replace_rules()?;
+        let mut imported: Vec<ReplaceRule> = Vec::new();
+        for item in items.iter().take(1000) {
+            let text = |key: &str| item.get(key).and_then(|value| value.as_str()).unwrap_or("");
+            let flag = |key: &str, default: bool| {
+                item.get(key)
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(default)
+            };
+            let pattern = text("pattern");
+            let replacement = text("replacement");
+            // Title-only rules have nothing to change in the stored text.
+            if pattern.is_empty() || !flag("scopeContent", true) {
+                continue;
+            }
+            if existing
+                .iter()
+                .chain(imported.iter())
+                .any(|rule| rule.pattern == pattern && rule.replacement == replacement)
+            {
+                continue;
+            }
+            let name = if text("name").trim().is_empty() {
+                pattern.chars().take(32).collect()
+            } else {
+                text("name").to_string()
+            };
+            let rule = ReplaceRule {
+                id: String::new(),
+                name,
+                group: text("group").to_string(),
+                pattern: pattern.to_string(),
+                replacement: replacement.to_string(),
+                is_regex: flag("isRegex", true),
+                scope: text("scope").to_string(),
+                enabled: flag("isEnabled", true),
+                serial: 0,
+            };
+            match self.save_replace_rule(&rule) {
+                Ok(saved) => imported.push(saved),
+                Err(error) if error.code == ErrorCode::InvalidArgument => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(imported)
+    }
+
+    /// Exports every rule in Legado's format.
+    pub fn export_replace_rules(&self) -> Result<String, AppError> {
+        let rules: Vec<_> = self
+            .list_replace_rules()?
+            .into_iter()
+            .map(|rule| {
+                serde_json::json!({
+                    "name": rule.name,
+                    "group": rule.group,
+                    "pattern": rule.pattern,
+                    "replacement": rule.replacement,
+                    "isRegex": rule.is_regex,
+                    "scope": rule.scope,
+                    "scopeTitle": false,
+                    "scopeContent": true,
+                    "isEnabled": rule.enabled,
+                    "order": rule.serial,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string_pretty(&rules)?)
+    }
+
+    pub fn set_book_replace_rules(&mut self, book_id: &str, enabled: bool) -> Result<(), AppError> {
+        self.get_book(book_id)?;
+        self.conn.execute(
+            "UPDATE books SET use_replace_rules = ?2 WHERE id = ?1",
+            params![book_id, enabled],
+        )?;
+        Ok(())
+    }
+
+    /// The transform a book's text should carry now: its enabled, in-scope
+    /// replace rules (unless the book turned them off) and the reading
+    /// style's Chinese conversion.
+    pub(crate) fn book_transform(&self, book_id: &str) -> Result<TextTransform, AppError> {
+        let (title, use_rules): (String, bool) = self.conn.query_row(
+            "SELECT title, use_replace_rules FROM books WHERE id = ?1",
+            params![book_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let rules = if use_rules {
+            self.list_replace_rules()?
+                .into_iter()
+                .filter(|rule| rule.enabled && rule_in_scope(&rule.scope, &title))
+                .map(|rule| TransformRule {
+                    pattern: rule.pattern,
+                    replacement: rule.replacement,
+                    regex: rule.is_regex,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(TextTransform {
+            rules,
+            chinese: self.get_settings()?.style.chinese_conversion,
+        })
+    }
+
+    /// Whether the managed text was produced with a different transform than
+    /// the book should carry now, so a re-decode must apply it.
+    pub fn text_transform_pending(&self, book_id: &str) -> Result<bool, AppError> {
+        let record = self.asset_for_book(book_id)?;
+        let stored: Option<(Option<String>, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT transform_json, source_relative_path FROM txt_assets WHERE asset_id = ?1",
+                params![record.asset.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((stored, Some(_source))) = stored else {
+            // Without retained source bytes the text cannot be re-derived.
+            return Ok(false);
+        };
+        Ok(TextTransform::from_stored(stored.as_deref()) != self.book_transform(book_id)?)
     }
 
     pub fn book_toc_settings(&self, book_id: &str) -> Result<(BookTocSettings, i64), AppError> {
@@ -2496,16 +2827,18 @@ impl Storage {
 
     pub(crate) fn snapshot_txt_decode(&self, book_id: &str) -> Result<TxtDecodeSnapshot, AppError> {
         let context = self.content_read_context(book_id)?;
-        let source: Option<(Option<String>, Option<String>, String)> = self
+        let source: Option<TxtSourceRow> = self
             .conn
             .query_row(
-                "SELECT source_relative_path, source_sha256, selected_encoding
+                "SELECT source_relative_path, source_sha256, selected_encoding, transform_json
                  FROM txt_assets WHERE asset_id = ?1",
                 params![context.record.asset.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((Some(source_relative_path), source_sha256, selected_encoding)) = source else {
+        let Some((Some(source_relative_path), source_sha256, selected_encoding, transform_json)) =
+            source
+        else {
             return Err(AppError::new(
                 ErrorCode::UnsupportedEncoding,
                 "this book has no retained source bytes",
@@ -2521,6 +2854,8 @@ impl Storage {
             selected_encoding: parse_encoding(selected_encoding),
             position: self.saved_position(book_id)?,
             bookmarks: self.list_bookmarks(book_id)?,
+            applied: TextTransform::from_stored(transform_json.as_deref()),
+            target: self.book_transform(book_id)?,
         })
     }
 
@@ -2529,17 +2864,17 @@ impl Storage {
         book_id: &str,
     ) -> Result<TxtReassociationSnapshot, AppError> {
         let context = self.content_read_context(book_id)?;
-        let source: (Option<String>, Option<String>, String) = self
+        let source: (Option<String>, Option<String>, String, Option<String>) = self
             .conn
             .query_row(
-                "SELECT source_relative_path, source_sha256, selected_encoding
+                "SELECT source_relative_path, source_sha256, selected_encoding, transform_json
                  FROM txt_assets WHERE asset_id = ?1",
                 params![context.record.asset.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?
-            .unwrap_or((None, None, "utf8".to_string()));
-        let (source_relative_path, source_sha256, selected_encoding) = source;
+            .unwrap_or((None, None, "utf8".to_string(), None));
+        let (source_relative_path, source_sha256, selected_encoding, transform_json) = source;
         let default_relative_path = format!("sources/{}.txt", context.record.asset.id);
         let target_relative_path = source_relative_path
             .clone()
@@ -2561,6 +2896,7 @@ impl Storage {
             target_relative_path,
             content_version: context.record.asset.content_version,
             selected_encoding: parse_encoding(selected_encoding),
+            transform: TextTransform::from_stored(transform_json.as_deref()),
         })
     }
 
@@ -2573,7 +2909,8 @@ impl Storage {
         let cancel = AtomicBool::new(false);
         let (bytes, _) = read_cancelable_file(source, &cancel, |_, _| {})?;
         let decoded = detect_and_decode(&bytes, snapshot.selected_encoding.clone())?;
-        let content_version = sha256_bytes(decoded.text.as_bytes());
+        let text = transform::apply(&decoded.text, &snapshot.transform).0;
+        let content_version = sha256_bytes(text.as_bytes());
         if content_version != snapshot.content_version {
             return Err(AppError::new(
                 ErrorCode::ContentVersionMismatch,
@@ -2770,10 +3107,15 @@ impl Storage {
             ));
         }
         report(ImportPhase::Normalizing, total_bytes, total_bytes);
-        let decoded = detect_and_decode(&bytes, requested)?;
+        let mut decoded = detect_and_decode(&bytes, requested)?;
         if cancel.load(Ordering::Acquire) {
             return Err(import_cancelled());
         }
+        // Positions map through the old transform back to decoded text, across
+        // decodings, then forward through the new transform.
+        let base_new = decoded.text.clone();
+        let (transformed, new_map) = transform::apply(&base_new, &snapshot.target);
+        decoded.text = transformed;
         let normalized_bytes = decoded.text.as_bytes();
         let content_version = sha256_bytes(normalized_bytes);
         let index_json = serde_json::to_string(&build_sparse_index(&decoded.text))?;
@@ -2795,20 +3137,30 @@ impl Storage {
         let mut relocated = Vec::new();
         if content_version != snapshot.content_version && !targets.is_empty() {
             if let Ok(old) = detect_and_decode(&bytes, snapshot.selected_encoding.clone()) {
-                if sha256_bytes(old.text.as_bytes()) == snapshot.content_version {
-                    let offsets: Vec<u64> =
-                        targets.iter().map(|(_, locator)| locator.offset).collect();
+                let (old_text, old_map) = transform::apply(&old.text, &snapshot.applied);
+                if sha256_bytes(old_text.as_bytes()) == snapshot.content_version {
+                    let offsets: Vec<u64> = targets
+                        .iter()
+                        .map(|(_, locator)| old_map.backward(locator.offset))
+                        .collect();
                     let mapped = crate::relocation::map_offsets(
                         &bytes,
                         snapshot.selected_encoding.clone(),
                         decoded.selected.clone(),
                         &old.text,
-                        &decoded.text,
+                        &base_new,
                         &offsets,
                         cancel,
                     )?;
                     let boundaries = crate::txt::utf16_boundaries(&decoded.text);
                     for ((id, locator), mapped_offset) in targets.into_iter().zip(mapped) {
+                        // Offsets inside a replaced line map proportionally;
+                        // land on the character boundary at or before them.
+                        let mapped_offset = mapped_offset.map(|offset| {
+                            let offset = new_map.forward(offset);
+                            let at = boundaries.partition_point(|(units, _)| *units <= offset);
+                            boundaries[at.saturating_sub(1)].0
+                        });
                         if let Some(offset) = mapped_offset {
                             if let Ok(index) =
                                 boundaries.binary_search_by_key(&offset, |(units, _)| *units)
@@ -2994,7 +3346,8 @@ impl Storage {
             )?;
             tx.execute(
                 "UPDATE txt_assets SET detected_encoding = ?1, selected_encoding = ?2,
-                    decode_state = ?3, source_sha256 = ?4, toc_json = NULL, updated_at = ?5
+                    decode_state = ?3, source_sha256 = ?4, toc_json = NULL, updated_at = ?5,
+                    transform_json = ?7
                  WHERE asset_id = ?6",
                 params![
                     encoding_name(&prepared.detected_encoding),
@@ -3002,7 +3355,8 @@ impl Storage {
                     decode_state_name(&prepared.decode_state),
                     prepared.source_sha256,
                     now_millis(),
-                    prepared.snapshot.asset_id
+                    prepared.snapshot.asset_id,
+                    prepared.snapshot.target.to_stored()?
                 ],
             )?;
             tx.execute(
@@ -3995,7 +4349,9 @@ pub(crate) fn prepare_import_for_target(
     }
     let raw_path = managed_path(root, &prepared.raw_stage_relative_path, "staging")?;
     let (bytes, _) = read_cancelable_file(&raw_path, cancel, |_, _| {})?;
-    let decoded = detect_and_decode(&bytes, selected.clone())?;
+    let mut decoded = detect_and_decode(&bytes, selected.clone())?;
+    // The committed text may carry replace rules or Chinese conversion.
+    decoded.text = transform::apply(&decoded.text, &target.transform).0;
     let sha256 = sha256_bytes(decoded.text.as_bytes());
     if sha256 != target.sha256 {
         return Err(AppError::new(
@@ -5412,6 +5768,16 @@ fn txt_decode_journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtD
     })
 }
 
+/// Legado scopes list book titles separated by `;`, `,`, or new lines.
+fn rule_in_scope(scope: &str, title: &str) -> bool {
+    let names: Vec<&str> = scope
+        .split([';', ',', '，', '；', '\n'])
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.is_empty() || names.iter().any(|name| title.contains(name))
+}
+
 fn shelf_state_name(state: ShelfState) -> &'static str {
     match state {
         ShelfState::Reading => "reading",
@@ -5887,7 +6253,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
     }
 
     #[test]
@@ -6854,7 +7220,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -6984,7 +7350,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -7715,6 +8081,124 @@ mod tests {
     }
 
     #[test]
+    fn replace_rules_and_chinese_conversion_rewrite_text_and_relocate_positions() {
+        let root = TestRoot::new();
+        let text = "第一章 开始\n广告：点击这里\n头发里的云\n第二章 结束\n后来门开了。";
+        let source = write_source(&root.0, "rules.txt", text.as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let imported = import(&mut storage, &source, "rules");
+        let id = imported.book.id.clone();
+        let locate = |storage: &Storage, needle: &str| {
+            let context = storage.content_read_context(&id).unwrap();
+            let verified = verify_content_context(&context).unwrap();
+            let text = read_verified_text(&context, &verified).unwrap();
+            let byte = text.find(needle).unwrap();
+            let offset = text[..byte].encode_utf16().count() as u64;
+            resolve_offset_from_context(
+                &ResolveOffsetRequest {
+                    book_id: id.clone(),
+                    content_version: context.record.asset.content_version.clone(),
+                    resource_id: context.record.asset.id.clone(),
+                    offset,
+                },
+                &context,
+                &verified,
+            )
+            .unwrap()
+        };
+        let position = locate(&storage, "后来");
+        storage.save_position(&position).unwrap();
+        storage
+            .add_bookmark(&BookmarkRequest {
+                book_id: id.clone(),
+                locator: locate(&storage, "头发"),
+                excerpt: "头发".into(),
+                note: None,
+            })
+            .unwrap();
+        assert!(!storage.text_transform_pending(&id).unwrap());
+        let rule = |pattern: &str, scope: &str| ReplaceRule {
+            id: String::new(),
+            name: pattern.into(),
+            group: String::new(),
+            pattern: pattern.into(),
+            replacement: String::new(),
+            is_regex: true,
+            scope: scope.into(),
+            enabled: true,
+            serial: 0,
+        };
+        storage.save_replace_rule(&rule("^广告.*$", "")).unwrap();
+        storage.save_replace_rule(&rule("结束", "别的书")).unwrap();
+        assert_eq!(
+            storage.save_replace_rule(&rule("(", "")).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let mut preferences = storage.get_settings().unwrap();
+        preferences.style.chinese_conversion = crate::models::ChineseConversion::ToTraditional;
+        storage.save_settings(&preferences).unwrap();
+        assert!(storage.text_transform_pending(&id).unwrap());
+        storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
+        assert!(!storage.text_transform_pending(&id).unwrap());
+        let window = storage.read_content_window(&id, None, 200).unwrap();
+        // The out-of-scope rule left 结束 alone; conversion keeps lengths.
+        assert_eq!(
+            window.text,
+            "第一章 開始\n\n頭髮裏的雲\n第二章 結束\n後來門開了。"
+        );
+        let saved = storage.saved_position(&id).unwrap().unwrap();
+        assert!(window
+            .text
+            .encode_utf16()
+            .skip(saved.offset as usize)
+            .take(2)
+            .eq("後來".encode_utf16()));
+        let mark = &storage.list_bookmarks(&id).unwrap()[0];
+        assert_eq!(mark.locator.content_version, window.content_version);
+        assert!(window
+            .text
+            .encode_utf16()
+            .skip(mark.locator.offset as usize)
+            .take(2)
+            .eq("頭髮".encode_utf16()));
+        // Reimporting the same file still finds the transformed book.
+        let again = import(&mut storage, &source, "again");
+        assert_eq!(again.book.id, id);
+        assert_eq!(
+            storage.read_content_window(&id, None, 200).unwrap().text,
+            window.text
+        );
+        // The book's own switch turns its rules off.
+        storage.set_book_replace_rules(&id, false).unwrap();
+        assert!(storage
+            .list_shelf_books(false)
+            .unwrap()
+            .iter()
+            .all(|book| !book.use_replace_rules));
+        assert!(storage.text_transform_pending(&id).unwrap());
+        storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
+        assert!(storage
+            .read_content_window(&id, None, 200)
+            .unwrap()
+            .text
+            .contains("廣告：點擊這裏"));
+        let exported = storage.export_replace_rules().unwrap();
+        storage
+            .delete_replace_rules(
+                &storage
+                    .list_replace_rules()
+                    .unwrap()
+                    .into_iter()
+                    .map(|rule| rule.id)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert_eq!(storage.import_replace_rules(&exported).unwrap().len(), 2);
+        assert!(storage.import_replace_rules(&exported).unwrap().is_empty());
+    }
+
+    #[test]
     fn group_validation_and_membership_failure_preserve_existing_groups() {
         let root = TestRoot::new();
         let source = write_source(&root.0, "membership.txt", b"membership");
@@ -7998,7 +8482,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -8066,7 +8550,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(

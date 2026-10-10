@@ -13,6 +13,7 @@ import type {
   ReaderPreferences,
   ShelfPreferences,
   ShelfState,
+  ReplaceRule,
   TocEntry,
   TxtTocRule,
 } from "../types/generated";
@@ -117,6 +118,19 @@ export function previewServices(): AppServices {
   let settings: BookTocSettings = { ruleId: null, splitLongChapters: false };
   let shelfState: ShelfState | null = null;
   let readingSeconds = 1260;
+  let replaceRules: ReplaceRule[] = [
+    {
+      id: "rule-ad",
+      name: "去除广告",
+      group: "净化",
+      pattern: "^.*(请收藏|最新章节).*$",
+      replacement: "",
+      isRegex: true,
+      scope: "",
+      enabled: true,
+      serial: 1,
+    },
+  ];
   const bookmarks: Bookmark[] = [
     {
       id: "mark-1",
@@ -154,6 +168,7 @@ export function previewServices(): AppServices {
     removedAt: null,
     shelfState,
     coverAssetId: null,
+    useReplaceRules: true,
   });
   const window = (start: number, end: number): ContentWindow => ({
     bookId: BOOK_ID,
@@ -194,6 +209,8 @@ export function previewServices(): AppServices {
       addReadingTime: async (_bookId, _day, seconds) => {
         readingSeconds += seconds;
       },
+      ensureTextTransforms: async () => null,
+      setBookReplaceRules: async () => undefined,
       readingStats: async (today) => ({
         totalSeconds: readingSeconds + 5400,
         todaySeconds: readingSeconds,
@@ -259,6 +276,27 @@ export function previewServices(): AppServices {
         bookmarks.unshift(created);
         return created;
       },
+      listReplaceRules: async () => replaceRules,
+      saveReplaceRule: async (rule) => {
+        const saved = { ...rule, id: rule.id || `rule-${Date.now()}` };
+        replaceRules = [...replaceRules.filter((item) => item.id !== saved.id), saved];
+        return saved;
+      },
+      deleteReplaceRules: async (ids) => {
+        replaceRules = replaceRules.filter((rule) => !ids.includes(rule.id));
+      },
+      orderReplaceRules: async (ids) =>
+        (replaceRules = ids.map((id) => replaceRules.find((rule) => rule.id === id)!)),
+      importReplaceRules: async () => [],
+      exportReplaceRules: async () => JSON.stringify(replaceRules),
+      testReplaceRule: async (rule, sample) =>
+        sample.replace(
+          new RegExp(
+            rule.isRegex ? rule.pattern : rule.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "gmu",
+          ),
+          rule.replacement,
+        ),
       updateBookmarkNote: async (bookmarkId, note) => {
         const mark = bookmarks.find((item) => item.id === bookmarkId);
         if (mark) mark.note = note;

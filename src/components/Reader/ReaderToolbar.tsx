@@ -24,6 +24,9 @@ interface ReaderTopBarProps {
   canBookmark: boolean;
   onAddBookmark: () => void;
   onRefreshDirectory: () => void;
+  /** Legado's per-book 替换净化 switch. */
+  replaceEnabled: boolean;
+  onToggleReplace: () => void;
 }
 
 /** Legado's read menu title bar: book and chapter, TXT tools, and More. */
@@ -37,6 +40,8 @@ export function ReaderTopBar({
   canBookmark,
   onAddBookmark,
   onRefreshDirectory,
+  replaceEnabled,
+  onToggleReplace,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -94,6 +99,14 @@ export function ReaderTopBar({
             <DropdownMenuItem onClick={() => onOpenPanel("style")}>
               <Icon name="swap_vert" size={15} />
               翻页动画
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onToggleReplace}>
+              <Icon name={replaceEnabled ? "check" : "find_replace"} size={15} />
+              替换净化{replaceEnabled ? "：开" : "：关"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onOpenPanel("replace")}>
+              <Icon name="find_replace" size={15} />
+              替换规则
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -194,6 +207,7 @@ export function ReaderBottomBar({
         <div className="flex items-center justify-around">
           {tool("搜索", "search", () => onOpenPanel("search"))}
           {tool("自动翻页", "schedule", () => onOpenPanel("automatic"))}
+          {tool("朗读", "headphones", () => onOpenPanel("aloud"))}
           {tool("目录", "list", () => onOpenPanel("contents"))}
           {tool("界面", "format_size", () => onOpenPanel("style"))}
           {tool(night ? "日间" : "夜间", night ? "light_mode" : "dark_mode", onToggleNight)}

@@ -19,6 +19,8 @@ const library = (): LibraryService => ({
   renameGroup: vi.fn(),
   deleteGroup: vi.fn(),
   moveBook: vi.fn(async () => undefined),
+  ensureTextTransforms: vi.fn(async () => null),
+  setBookReplaceRules: vi.fn(async () => undefined),
   pickTxtFiles: vi.fn(async () => []),
   pickTxtFolder: vi.fn(async () => []),
   pickBookCover: vi.fn(async () => false),
@@ -78,6 +80,7 @@ const book = (
   removedAt: null,
   shelfState: null,
   coverAssetId: null,
+  useReplaceRules: true,
 });
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {

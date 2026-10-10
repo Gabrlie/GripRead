@@ -1,4 +1,5 @@
 import type {
+  TxtDecodeTask,
   UpdateBookRequest,
   ShelfSort,
   ImportStatus,
@@ -109,7 +110,8 @@ export class LibraryStore {
   private decodeOperationId: string | null = null;
   private decodeTimer: ReturnType<typeof setTimeout> | undefined;
   private decodeWaiter:
-    { resolve: (value: TxtEncodingInfo) => void; reject: (error: unknown) => void } | undefined;
+    | { resolve: (value: TxtEncodingInfo | null) => void; reject: (error: unknown) => void }
+    | undefined;
   /** Resolves when the current single import reaches a terminal state. */
   private settle: (() => void) | undefined;
   private batchCancelled = false;
@@ -441,14 +443,31 @@ export class LibraryStore {
         this.update({ importError: String(error) });
     }
   };
-  decodeTxt = (bookId: string, encoding: TxtEncoding): Promise<TxtEncodingInfo> => {
+  decodeTxt = (bookId: string, encoding: TxtEncoding): Promise<TxtEncodingInfo> =>
+    this.runDecode(() =>
+      this.service.startTxtDecode({ bookId, encoding }),
+    ) as Promise<TxtEncodingInfo>;
+  /**
+   * Applies changed replace rules or Chinese conversion through the same
+   * re-decode job; resolves `null` when the book's text is already current.
+   */
+  applyTextTransforms = (bookId: string): Promise<TxtEncodingInfo | null> =>
+    this.runDecode(() => this.service.ensureTextTransforms(bookId));
+  private runDecode = (
+    start: () => Promise<TxtDecodeTask | null>,
+  ): Promise<TxtEncodingInfo | null> => {
     if (this.snapshot.decoding) return Promise.reject(new Error("TXT 编码转换正在进行"));
     this.update({ decoding: true, decodeError: null, decodeJob: null });
-    return new Promise<TxtEncodingInfo>((resolve, reject) => {
+    return new Promise<TxtEncodingInfo | null>((resolve, reject) => {
       this.decodeWaiter = { resolve, reject };
-      void this.service
-        .startTxtDecode({ bookId, encoding })
+      void start()
         .then((task) => {
+          if (!task) {
+            this.decodeWaiter = undefined;
+            this.update({ decoding: false });
+            resolve(null);
+            return;
+          }
           this.decodeOperationId = task.operationId;
           void this.pollDecode(this.generation);
         })
