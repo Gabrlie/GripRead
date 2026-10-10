@@ -37,7 +37,7 @@ Repairs in `55223ca` and `0714fbb`: dependency optimization and sampled encoding
 
 The same device review asked to rebuild the reader around Legado 3.26.7 (contents, directory rules, search, encoding, reading styles, author and introduction parsing); that is a separate task.
 
-Device results for `17ba26e` and its repairs (user-provided): imports of a 6 MB TXT are fast; tab pages and the reader respect the status and gesture bars; curl no longer stutters or locks the reader when the toolbar opens mid-turn. Scroll mode briefly lost its single-page text column because `.reader-prose` resets padding on its own element; the column now wraps the text while the position indicator stays at the screen edge. Horizontal swipes still do not turn pages on the device, page dragging is not interactive, and the middle column has no page-turn tap zones.
+Device results for `17ba26e` and its repairs (user-provided): imports of a 6 MB TXT are fast; tab pages and the reader respect the status and gesture bars; curl no longer stutters or locks the reader when the toolbar opens mid-turn. Scroll mode briefly lost its single-page text column because `.reader-prose` resets padding on its own element; the column now wraps the text while the position indicator stays at the screen edge. Horizontal swipes turn pages only when they start on blank space, not on text, page dragging is not interactive, and the middle column has no page-turn tap zones.
 
 ## Handoff
 
