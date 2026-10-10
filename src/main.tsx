@@ -14,9 +14,14 @@ async function start() {
     await import("@wdio/tauri-plugin");
   }
 
+  // Preview mode renders the real UI with in-memory data in a plain browser.
+  const services =
+    import.meta.env.MODE === "preview"
+      ? (await import("./preview/services")).previewServices()
+      : undefined;
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-      <App />
+      <App services={services} />
     </React.StrictMode>,
   );
 }
