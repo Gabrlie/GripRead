@@ -349,7 +349,8 @@ export class ReaderController {
   }
 
   public setMode(mode: ReaderMode): Promise<void> {
-    if (this.mode === mode) return Promise.resolve();
+    if (this.mode === mode && this.snapshot.mode === mode && !this.snapshot.error)
+      return Promise.resolve();
     this.capturePosition();
     this.mode = mode;
     this.adapter?.cancel?.();
@@ -549,7 +550,17 @@ export class ReaderController {
       const bookId = this.activeBookId;
       // ReaderView calls reflow while its initial open is still pending. It is
       // safe to wait for the next ResizeObserver/font event in that case.
-      if (!current || !bookId) return;
+      if (!current || !bookId) {
+        if (this.snapshot.contentWindow?.totalLength === 0) {
+          this.snapshot = {
+            ...this.snapshot,
+            mode: this.mode,
+            scroll: this.mode === "scroll" ? this.snapshot.contentWindow : null,
+          };
+          this.notify();
+        }
+        return;
+      }
       const locator = { ...current.locator };
       this.setLoading(true);
       this.adapter?.resize?.();

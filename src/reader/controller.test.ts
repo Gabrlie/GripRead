@@ -162,6 +162,21 @@ function adapterSpy(): ReaderPresentationAdapter & {
 }
 
 describe("ReaderController", () => {
+  it("retries a failed mode change without losing the visible passage", async () => {
+    const service = serviceFor({ book: "abcdef" });
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 6,
+    });
+    await controller.open("book");
+    vi.spyOn(service, "readContentWindow").mockRejectedValueOnce(new Error("temporary read error"));
+    await expect(controller.setMode("double")).rejects.toThrow("temporary read error");
+    expect(controller.getSnapshot().page?.startOffset).toBe(0);
+    await controller.setMode("double");
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["a", "b"]);
+    expect(controller.getSnapshot().mode).toBe("double");
+    expect(controller.getSnapshot().error).toBeNull();
+  });
   it("turns whole spreads across windows without publishing or saving the intermediate page", async () => {
     const service = serviceFor({ book: "abcdefgh" });
     const controller = new ReaderController(service, {
