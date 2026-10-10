@@ -34,7 +34,8 @@ vi.mock("../../reader", async () => {
       }
       dispose() {}
     },
-    StPageFlipAdapter: class {
+    PageTurnAdapter: class {
+      aim() {}
       setEffect() {}
       setPages() {}
       present() {}

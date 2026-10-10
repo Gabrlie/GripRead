@@ -13,8 +13,8 @@ export { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./rende
 export type { RenderTextOptions } from "./render";
 export { InstantReaderAdapter } from "./instant";
 export type { InstantReaderAdapterOptions } from "./instant";
-export { StPageFlipAdapter } from "./st-page-flip";
-export type { StPageFlipAdapterOptions, StPageFlipLike, StPageFlipSettings } from "./st-page-flip";
+export { PageTurnAdapter } from "./page-turn";
+export type { PageTurnAdapterOptions } from "./page-turn";
 export type {
   ReaderDisplayedPage,
   ReaderNavigationDirection,

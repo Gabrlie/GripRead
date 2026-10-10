@@ -27,7 +27,7 @@ export interface ReaderControllerOptions {
   maxUnits?: number;
   /** Selects instant presentation when the operating system asks for it. */
   reducedMotion?: boolean;
-  /** Optional page presentation adapter, such as StPageFlip. */
+  /** Optional page presentation adapter, such as PageTurnAdapter. */
   adapter?: ReaderPresentationAdapter;
   positions?: ReaderPositions;
   mode?: ReaderMode;

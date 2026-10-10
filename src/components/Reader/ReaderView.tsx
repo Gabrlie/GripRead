@@ -12,7 +12,7 @@ import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
 import {
   ReaderController,
   DomReaderMeasurer,
-  StPageFlipAdapter,
+  PageTurnAdapter,
   emptyReaderSnapshot,
 } from "../../reader";
 import type { ReaderSnapshot } from "../../reader";
@@ -78,7 +78,7 @@ export function ReaderView() {
   const animationBox = useRef<HTMLDivElement>(null);
   const scrollBox = useRef<HTMLDivElement>(null);
   const synchronizeScroll = useRef<(() => void) | null>(null);
-  const adapter = useRef<StPageFlipAdapter | null>(null);
+  const adapter = useRef<PageTurnAdapter | null>(null);
   const [controller, setController] = useState<ReaderController | null>(null);
   const state = useSyncExternalStore(
     controller?.subscribe ?? noopSubscribe,
@@ -165,8 +165,9 @@ export function ReaderView() {
     [openPanelState, pauseAutomatic],
   );
   const turn = useCallback(
-    (direction: "next" | "previous") => {
+    (direction: "next" | "previous", point?: { x: number; y: number }) => {
       void pauseAutomatic();
+      adapter.current?.aim(point ?? null);
       if (effectiveMode === "scroll") {
         if (scrollBox.current)
           scrollBox.current.scrollTop +=
@@ -265,10 +266,10 @@ export function ReaderView() {
     if (!bookId || !preferences || !measureBox.current || !pageBox.current || !animationBox.current)
       return;
     syncMeasureBox(pageBox.current, measureBox.current, effectiveMode === "double" ? 2 : 1);
-    const presentation = new StPageFlipAdapter(animationBox.current, {
+    const presentation = new PageTurnAdapter(animationBox.current, {
       effect: preferences.pageTurnEffect,
       reducedMotion: Boolean(reducedMotion),
-      pageClassName: "reader-prose bg-surface text-on-surface",
+      pageClassName: "reader-prose reader-text bg-surface text-on-surface",
     });
     adapter.current = presentation;
     const reader = new ReaderController(runtime.services.reader, {
