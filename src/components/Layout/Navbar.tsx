@@ -24,7 +24,7 @@ export function Navbar() {
     <>
       {/* Mobile Apple-style Floating Island Dock */}
       <nav
-        className="glass-dock fixed bottom-4 inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none"
+        className="glass-dock fixed bottom-[calc(1rem+var(--safe-bottom))] inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none"
         aria-label="Mobile Navigation Dock"
       >
         <div className="flex items-center justify-around h-[60px] px-2 py-1">

@@ -205,7 +205,7 @@ function MainContent() {
         <div
           role="alert"
           data-testid="reader-background-error"
-          className="fixed bottom-24 left-4 right-4 z-[60] rounded-xl bg-error-container text-error px-4 py-2 text-sm"
+          className="fixed bottom-[calc(6rem+var(--safe-bottom))] left-4 right-4 z-[60] rounded-xl bg-error-container text-error px-4 py-2 text-sm"
         >
           阅读进度尚未保存：{positionError || readerWriteError}
           <button className="ml-3 underline" onClick={runtime.retryReaderWrites}>

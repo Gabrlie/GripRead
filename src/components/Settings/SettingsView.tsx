@@ -70,7 +70,7 @@ export function SettingsView() {
   };
 
   return (
-    <div className="flex-1 flex flex-col relative w-full pt-14 pb-20 md:pb-8 bg-surface min-w-0">
+    <div className="flex-1 flex flex-col relative w-full pt-[calc(3.5rem+var(--safe-top))] pb-[calc(5rem+var(--safe-bottom))] md:pb-8 bg-surface min-w-0">
       <Header title="设置" subtitle="SETTINGS" />
 
       <main className="flex-1 flex flex-col relative w-full max-w-3xl mx-auto px-4 md:px-8 pb-space-lg space-y-4 pt-3">

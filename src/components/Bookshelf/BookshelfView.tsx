@@ -193,7 +193,7 @@ export function BookshelfView() {
         统一连续毛玻璃顶栏 (Unified Continuous Glass Header)
         顶栏与分类横滑栏统一置于原生类苹果毛玻璃容器中，精准匹配 macOS 原生窗口标题栏透光率与色调
       */}
-      <div className="fixed top-0 left-0 right-0 z-30 md:left-64 glass-header">
+      <div className="fixed top-0 left-0 right-0 z-30 md:left-64 glass-header pt-safe">
         {/* Row 1: Header (h-14) */}
         <Header
           title="书架"
@@ -268,8 +268,8 @@ export function BookshelfView() {
         </div>
       </div>
 
-      {/* Main Content Area: pt-[112px] 留出连续顶栏与分组栏总高度空间 */}
-      <div className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[112px] pb-24 md:pb-8">
+      {/* Main Content Area: 留出状态栏、连续顶栏与分组栏总高度空间 */}
+      <div className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8">
         {/* Search Bar (Expandable) */}
         {isSearching && (
           <div className="mb-4 animate-in fade-in slide-in-from-top-2 duration-200">

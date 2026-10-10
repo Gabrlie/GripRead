@@ -6,7 +6,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function SubscriptionView() {
   return (
-    <div className="flex-1 flex flex-col relative w-full pt-14 pb-20 md:pb-8 bg-surface min-w-0">
+    <div className="flex-1 flex flex-col relative w-full pt-[calc(3.5rem+var(--safe-top))] pb-[calc(5rem+var(--safe-bottom))] md:pb-8 bg-surface min-w-0">
       <Header
         title="订阅"
         subtitle="FEEDS"

@@ -82,7 +82,7 @@ export function ImportModal() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-24 md:bottom-5 right-5 z-[60] flex max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-full border border-surface-variant bg-surface-container px-4 py-2 text-sm shadow-sm"
+          className="fixed bottom-[calc(6rem+var(--safe-bottom))] md:bottom-5 right-5 z-[60] flex max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-full border border-surface-variant bg-surface-container px-4 py-2 text-sm shadow-sm"
           aria-label="查看导入进度"
         >
           <span>{statusLabel}</span>
@@ -96,7 +96,7 @@ export function ImportModal() {
 
       {notice && (
         <div
-          className="fixed bottom-24 md:bottom-5 right-5 z-[60] flex max-w-[calc(100vw-2.5rem)] items-center gap-1 rounded-full border border-surface-variant bg-surface-container px-2 py-1.5 text-sm shadow-sm"
+          className="fixed bottom-[calc(6rem+var(--safe-bottom))] md:bottom-5 right-5 z-[60] flex max-w-[calc(100vw-2.5rem)] items-center gap-1 rounded-full border border-surface-variant bg-surface-container px-2 py-1.5 text-sm shadow-sm"
           onPointerEnter={() => setHovered(true)}
           onPointerLeave={() => setHovered(false)}
           onFocusCapture={() => setFocused(true)}
