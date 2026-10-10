@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent,
+} from "react";
 import { useApp } from "../../context/AppContext";
 import { useLibrary, useShelf, useShelfPreferences } from "../../application/runtime";
 import type { LibraryBook } from "../../types/generated";
@@ -10,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { LibraryManager } from "./LibraryManager";
+import { BookInfoSheet } from "./BookInfoSheet";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 
@@ -28,6 +35,7 @@ export function BookshelfView() {
   const { state: groupState, store: groupStore } = useShelf();
   const preferences = useShelfPreferences();
   const [manager, setManager] = useState<"manage" | "removed" | "sort" | null>(null);
+  const [infoBook, setInfoBook] = useState<LibraryBook | null>(null);
   const [isSearching, setIsSearching] = useState(Boolean(shelf.query));
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const tabsListRef = useRef<HTMLDivElement>(null);
@@ -390,6 +398,7 @@ export function BookshelfView() {
                   key={book.entry.book.id}
                   book={book}
                   onOpen={() => openReader(book.entry)}
+                  onInfo={() => setInfoBook(book.entry)}
                 />
               ))}
             </div>
@@ -400,6 +409,7 @@ export function BookshelfView() {
                   key={book.entry.book.id}
                   book={book}
                   onOpen={() => openReader(book.entry)}
+                  onInfo={() => setInfoBook(book.entry)}
                 />
               ))}
             </div>
@@ -408,24 +418,82 @@ export function BookshelfView() {
       </div>
 
       <LibraryManager mode={manager} onClose={() => setManager(null)} />
+      {infoBook && (
+        <BookInfoSheet
+          book={state.books.find((entry) => entry.book.id === infoBook.book.id) ?? infoBook}
+          onOpen={() => {
+            setInfoBook(null);
+            openReader(infoBook);
+          }}
+          onClose={() => setInfoBook(null)}
+        />
+      )}
       <GroupManager open={isGroupModalOpen} onOpenChange={setIsGroupModalOpen} />
     </div>
   );
 }
 // 1. List View Card (Requirement 3: 封面固定比例4:3，无放大动画，无左上序号；右侧严格4行均等间距：书名、作者名、读至目录章节、最新目录与更新时间)
-function BookCardList({ book, onOpen }: { book: ShelfBook; onOpen: () => void }) {
+/**
+ * Long-press (or right-click) opens book information, as in Legado; the
+ * click that ends a long press does not also open the book.
+ */
+function useLongPress(onLongPress: () => void, onClick: () => void) {
+  const timer = useRef<number | null>(null);
+  const fired = useRef(false);
+  const clear = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+  };
+  return {
+    onPointerDown: () => {
+      fired.current = false;
+      clear();
+      timer.current = window.setTimeout(() => {
+        fired.current = true;
+        onLongPress();
+      }, 550);
+    },
+    onPointerUp: clear,
+    onPointerLeave: clear,
+    onPointerCancel: clear,
+    onContextMenu: (event: ReactMouseEvent) => {
+      event.preventDefault();
+      clear();
+      if (!fired.current) onLongPress();
+      fired.current = true;
+    },
+    onClick: () => {
+      if (fired.current) {
+        fired.current = false;
+        return;
+      }
+      onClick();
+    },
+  };
+}
+
+function BookCardList({
+  book,
+  onOpen,
+  onInfo,
+}: {
+  book: ShelfBook;
+  onOpen: () => void;
+  onInfo: () => void;
+}) {
+  const press = useLongPress(onInfo, onOpen);
   return (
     <Card
       data-testid={`library-book-${book.entry.book.id}`}
       role="button"
       tabIndex={0}
+      {...press}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen();
         }
       }}
-      onClick={onOpen}
       className="book-card bg-surface-container-low hover:bg-surface-container border-surface-variant/30 transition-colors duration-200 rounded-xl p-3 sm:p-3.5 shadow-xs cursor-pointer"
     >
       <CardContent className="p-0 flex gap-3.5 items-center">
@@ -464,19 +532,28 @@ function BookCardList({ book, onOpen }: { book: ShelfBook; onOpen: () => void })
 }
 
 // 2. Grid View Card
-function BookCardGrid({ book, onOpen }: { book: ShelfBook; onOpen: () => void }) {
+function BookCardGrid({
+  book,
+  onOpen,
+  onInfo,
+}: {
+  book: ShelfBook;
+  onOpen: () => void;
+  onInfo: () => void;
+}) {
+  const press = useLongPress(onInfo, onOpen);
   return (
     <div
       data-testid={`library-book-${book.entry.book.id}`}
       role="button"
       tabIndex={0}
+      {...press}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen();
         }
       }}
-      onClick={onOpen}
       className="flex flex-col cursor-pointer transition-colors text-left"
     >
       <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-surface-container-high shadow-xs mb-1.5">

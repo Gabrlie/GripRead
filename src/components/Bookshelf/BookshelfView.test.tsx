@@ -9,7 +9,7 @@ import { AppProvider } from "../../context/AppContext";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type { ImportStatus, LibraryBook } from "../../types/generated";
-import { ruleServiceMocks, tocEntry, tocListing } from "../../test/toc";
+import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
 afterEach(() => {
   cleanup();
   vi.clearAllTimers();
@@ -93,6 +93,7 @@ function runtime(books: LibraryBook[] = []) {
         groupId: "all",
       })),
       saveShelfPreferences: vi.fn(async (value) => value),
+      ...fontServiceMocks(),
     },
   } satisfies AppServices);
 }
@@ -232,6 +233,23 @@ describe("real library presentation", () => {
     expect(screen.getByText("作者未知")).toBeTruthy();
     expect(screen.queryByText("全本完结")).toBeNull();
   });
+  it("opens book information with the introduction on a long press or right-click", async () => {
+    const app = runtime([entry]);
+    vi.mocked(app.services.library.getBookInfo).mockResolvedValue({
+      bookId: entry.book.id,
+      intro: "前言里的一段简介。",
+      sourceByteLength: 4096,
+      chapterCount: 12,
+    });
+    await app.library.refresh();
+    view(app);
+    fireEvent.contextMenu(screen.getByTestId("library-book-real-book"));
+    expect(await screen.findByText("前言里的一段简介。")).toBeTruthy();
+    expect(screen.getByText("12 章")).toBeTruthy();
+    expect(screen.getByText("4 KB")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "开始阅读" })).toBeTruthy();
+  });
+
   it("makes a database failure visible and permits retry", async () => {
     const app = runtime();
     vi.mocked(app.services.library.listBooks).mockRejectedValueOnce(
