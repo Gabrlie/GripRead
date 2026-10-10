@@ -166,14 +166,17 @@ export function ReaderScrollText({
         onTouchStart={onInteract}
         onTouchMove={onUserScroll}
       >
-        <div
-          ref={body}
-          className="reader-prose reader-text max-w-2xl mx-auto px-5 sm:px-8 md:px-12"
-          data-testid="reader-scroll-text"
-          data-start={content.startOffset}
-          data-end={content.endOffset}
-          data-total={content.totalLength}
-        />
+        {/* The single-page text column; .reader-prose resets padding on its own element. */}
+        <div className="max-w-2xl mx-auto px-5 sm:px-8 md:px-12">
+          <div
+            ref={body}
+            className="reader-prose reader-text"
+            data-testid="reader-scroll-text"
+            data-start={content.startOffset}
+            data-end={content.endOffset}
+            data-total={content.totalLength}
+          />
+        </div>
         {!content.hasAfter && <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />}
       </div>
       <div
