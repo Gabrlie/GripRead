@@ -9,6 +9,7 @@ import { AppProvider } from "../../context/AppContext";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type { ImportStatus, LibraryBook } from "../../types/generated";
+import { ruleServiceMocks, tocEntry, tocListing } from "../../test/toc";
 afterEach(() => {
   cleanup();
   vi.clearAllTimers();
@@ -64,6 +65,7 @@ function runtime(books: LibraryBook[] = []) {
       getTxtDecodeStatus: vi.fn(),
       cancelTxtDecode: vi.fn(async () => ({ requested: true })),
       onTxtDecodeProgress: vi.fn(async () => () => {}),
+      getBookInfo: vi.fn(),
       getTxtEncoding: vi.fn(),
       pickAndReassociateTxt: vi.fn(async () => null),
       reassociateTxtSource: vi.fn(),
@@ -74,10 +76,8 @@ function runtime(books: LibraryBook[] = []) {
       resolveOffset: vi.fn(),
       saveReaderLocator: vi.fn(),
       getSavedReaderLocator: vi.fn(),
-      listToc: vi.fn(async () => []),
-      getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
-      previewTocRule: vi.fn(async () => ({ entries: [] })),
-      saveTocRule: vi.fn(async (request) => request.rule),
+      listToc: vi.fn(async () => tocListing()),
+      ...ruleServiceMocks(),
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),

@@ -9,13 +9,15 @@ import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type {
   ContentWindow,
+  ReadContentRequest,
   LibraryBook,
   ReaderLocator,
   SearchResponse,
   TocEntry,
+  BookTocSettings,
   TxtTocRule,
-  TxtTocRulePreview,
 } from "../../types/generated";
+import { ruleServiceMocks, tocEntry, tocListing } from "../../test/toc";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -54,7 +56,27 @@ const locator = (offset = 0): ReaderLocator => ({
   contextBefore: "",
   contextAfter: "",
 });
-const chapter = (title: string): TocEntry => ({ ordinal: 0, title, locator: locator() });
+const chapter = (title: string, offset = 0): TocEntry => tocEntry(0, title, locator(offset));
+const RULES: TxtTocRule[] = [
+  {
+    id: "chinese",
+    name: "中文章节",
+    pattern: "^第.+章.*$",
+    example: "第一章 开始",
+    serial: 0,
+    enabled: true,
+    builtin: true,
+  },
+  {
+    id: "english",
+    name: "英文章节",
+    pattern: "^Chapter \\d+.*$",
+    example: "Chapter 1",
+    serial: 1,
+    enabled: true,
+    builtin: true,
+  },
+];
 const entry: LibraryBook = {
   book: {
     id: "reader-book",
@@ -113,6 +135,7 @@ function runtime() {
       getTxtDecodeStatus: vi.fn(),
       cancelTxtDecode: vi.fn(async () => ({ requested: true })),
       onTxtDecodeProgress: vi.fn(async () => () => {}),
+      getBookInfo: vi.fn(),
       getTxtEncoding: vi.fn(async () => ({
         detected: "utf8" as const,
         selected: "auto" as const,
@@ -123,24 +146,27 @@ function runtime() {
       reassociateTxtSource: vi.fn(),
     },
     reader: {
-      readContentWindow: vi.fn(async () => ({
-        ...locator(),
-        text,
-        startOffset: 0,
-        endOffset: text.length,
-        totalLength: text.length,
-        hasBefore: false,
-        hasAfter: false,
-        locator: locator(),
-      })),
+      // Forward windows start at the requested position, like the Rust reader.
+      readContentWindow: vi.fn(async (request: ReadContentRequest) => {
+        const start =
+          request.direction === "forward" && request.locator ? request.locator.offset : 0;
+        return {
+          ...locator(start),
+          text: text.slice(start),
+          startOffset: start,
+          endOffset: text.length,
+          totalLength: text.length,
+          hasBefore: start > 0,
+          hasAfter: false,
+          locator: locator(start),
+        };
+      }),
       resolveLocator: vi.fn(async () => locator()),
       resolveOffset: vi.fn(async (request) => locator(request.offset)),
       saveReaderLocator: vi.fn(async (value) => value),
       getSavedReaderLocator: vi.fn(async () => null),
-      listToc: vi.fn(async () => [chapter("初始章节")]),
-      getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
-      previewTocRule: vi.fn(async () => ({ entries: [chapter("新目录章节")] })),
-      saveTocRule: vi.fn(async (request) => request.rule),
+      listToc: vi.fn(async () => tocListing([chapter("初始章节")])),
+      ...ruleServiceMocks(),
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
       deleteBookmark: vi.fn(),
@@ -219,88 +245,78 @@ async function view(app: AppRuntime) {
 }
 
 describe("reader directory and search operation ownership", () => {
-  it("waits for the initial rule read before accepting a draft or preview", async () => {
+  it("selects a chapter rule for the book and refreshes the directory when the save completes", async () => {
     const app = runtime();
-    const loading = deferred<TxtTocRule>();
-    vi.mocked(app.services.reader.getTocRule).mockReturnValue(loading.promise);
+    const saving = deferred<BookTocSettings>();
+    vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
+    vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValue(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "预览" }) as HTMLButtonElement).disabled).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    expect(app.services.reader.previewTocRule).not.toHaveBeenCalled();
-    await act(async () => loading.resolve({ mode: "english", pattern: "" }));
-    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("english");
-    expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(false);
-  });
-
-  it("keeps a save owned after closing the panel and refreshes the directory when it completes", async () => {
-    const app = runtime();
-    const saving = deferred<TxtTocRule>();
-    vi.mocked(app.services.reader.saveTocRule).mockReturnValue(saving.promise);
-    await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.selectOptions(screen.getByRole("combobox"), "english");
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    await userEvent.click(screen.getByRole("button", { name: "应用本书" }));
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "正在应用…" }) as HTMLButtonElement).disabled).toBe(
-      true,
+    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
+    expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledWith(entry.book.id, {
+      ruleId: "english",
+      splitLongChapters: false,
+    });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    vi.mocked(app.services.reader.listToc).mockResolvedValue(
+      tocListing([chapter("保存后章节")], "英文章节"),
     );
-    vi.mocked(app.services.reader.listToc).mockResolvedValue([chapter("保存后章节")]);
-    await act(async () => saving.resolve({ mode: "english", pattern: "" }));
-    await waitFor(() =>
-      expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(false),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await act(async () => saving.resolve({ ruleId: "english", splitLongChapters: false }));
     await userEvent.click(screen.getByRole("button", { name: "目录" }));
-    expect(await screen.findByRole("button", { name: "保存后章节" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "初始章节" })).toBeNull();
-    expect(app.services.reader.saveTocRule).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: /保存后章节/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /初始章节/ })).toBeNull();
     expect(screen.getByTestId("reader-page").getAttribute("data-start")).toBe("0");
   });
 
-  it("rejects an old preview after closing and previewing a newer choice", async () => {
+  it("shows volumes, the current chapter, and jumps from Contents", async () => {
     const app = runtime();
-    const oldPreview = deferred<TxtTocRulePreview>();
-    vi.mocked(app.services.reader.previewTocRule).mockReturnValueOnce(oldPreview.promise);
+    const second = text.indexOf("Chapter", 40);
+    vi.mocked(app.services.reader.listToc).mockResolvedValue(
+      tocListing([
+        { ...tocEntry(0, "第一卷 起", locator(0)), volume: true },
+        tocEntry(1, "第一章 开端", locator(0)),
+        tocEntry(2, "第二章 远行", locator(second)),
+      ]),
+    );
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.selectOptions(screen.getByRole("combobox"), "english");
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    await act(async () => oldPreview.resolve({ entries: [chapter("过期预览章节")] }));
-    expect(screen.queryByText("过期预览章节")).toBeNull();
-    expect(screen.getByText("新目录章节")).toBeTruthy();
-    expect(app.services.reader.saveTocRule).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    const current = await screen.findByRole("button", { name: /第一章 开端/ });
+    expect(current.getAttribute("aria-current")).toBe("location");
+    await userEvent.click(screen.getByRole("button", { name: "收起 第一卷 起" }));
+    expect(screen.queryByRole("button", { name: /第二章 远行/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "展开 第一卷 起" }));
+    await userEvent.click(screen.getByRole("button", { name: /第二章 远行/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull());
+    await waitFor(() =>
+      expect(Number(screen.getByTestId("reader-page").getAttribute("data-end"))).toBeGreaterThan(
+        second,
+      ),
+    );
   });
 
-  it("retries a failed directory reload without repeating an already saved rule", async () => {
+  it("lists bookmarks in Contents and opens them", async () => {
     const app = runtime();
+    const at = text.indexOf("Read", 80);
+    vi.mocked(app.services.reader.listBookmarks).mockResolvedValue([
+      {
+        id: "mark",
+        bookId: entry.book.id,
+        contentVersion: "v1",
+        locator: locator(at),
+        excerpt: "书签摘录",
+        createdAt: 1,
+      },
+    ]);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.selectOptions(screen.getByRole("combobox"), "english");
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    vi.mocked(app.services.reader.listToc).mockRejectedValueOnce(
-      new Error("TOC temporarily unavailable"),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "应用本书" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("规则已保存，目录读取失败");
-    vi.mocked(app.services.reader.getTocRule).mockResolvedValue({ mode: "english", pattern: "" });
-    vi.mocked(app.services.reader.listToc).mockResolvedValue([chapter("重试后章节")]);
-    await userEvent.click(screen.getByRole("button", { name: "重新加载" }));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     await userEvent.click(screen.getByRole("button", { name: "目录" }));
-    expect(await screen.findByRole("button", { name: "重试后章节" })).toBeTruthy();
-    expect(app.services.reader.saveTocRule).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("tab", { name: /书签/ }));
+    await userEvent.click(screen.getByRole("button", { name: /书签摘录/ }));
+    await waitFor(() =>
+      expect(Number(screen.getByTestId("reader-page").getAttribute("data-end"))).toBeGreaterThan(
+        at,
+      ),
+    );
   });
 
   it("highlights an opened search match on the page", async () => {
@@ -321,10 +337,11 @@ describe("reader directory and search operation ownership", () => {
       hasMore: false,
     });
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
     await userEvent.type(screen.getByRole("textbox", { name: "搜索关键词" }), "page");
     await userEvent.keyboard("{Enter}");
-    await userEvent.click(await screen.findByRole("button", { name: "Read a page" }));
+    await userEvent.click(await screen.findByRole("button", { name: /Read a page/ }));
+    expect(screen.getByRole("button", { name: /第 1\/1 处/ })).toBeTruthy();
     expect((await screen.findByTestId("reader-highlight")).textContent).toBe("page");
   });
 
@@ -332,6 +349,17 @@ describe("reader directory and search operation ownership", () => {
     const app = runtime();
     const boundary = paginateText(text, 0, 60)[0].endOffset;
     const start = boundary - 3;
+    // Page boundaries are those of the whole text measured from its start.
+    vi.mocked(app.services.reader.readContentWindow).mockImplementation(async () => ({
+      ...locator(),
+      text,
+      startOffset: 0,
+      endOffset: text.length,
+      totalLength: text.length,
+      hasBefore: false,
+      hasAfter: false,
+      locator: locator(),
+    }));
     vi.mocked(app.services.reader.search).mockResolvedValue({
       contentVersion: "v1",
       matches: [
@@ -347,10 +375,10 @@ describe("reader directory and search operation ownership", () => {
       hasMore: false,
     });
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
     await userEvent.type(screen.getByRole("textbox", { name: "搜索关键词" }), "page");
     await userEvent.keyboard("{Enter}");
-    await userEvent.click(await screen.findByRole("button", { name: "跨页结果" }));
+    await userEvent.click(await screen.findByRole("button", { name: /跨页结果/ }));
     await waitFor(() =>
       expect(screen.getByTestId("reader-highlight").textContent).toBe(text.slice(start, boundary)),
     );
@@ -398,17 +426,6 @@ describe("reader directory and search operation ownership", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the Contents tab for the book after its panel closes", async () => {
-    const app = runtime();
-    await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录" }));
-    await userEvent.click(screen.getByRole("tab", { name: "全文" }));
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    await userEvent.click(screen.getByRole("button", { name: "目录" }));
-    expect(screen.getByRole("tab", { name: "全文" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("button", { name: "从开头阅读" })).toBeTruthy();
-  });
-
   it("returns to the shelf immediately while a position save is still pending", async () => {
     const app = runtime();
     const gate = deferred<ReaderLocator>();
@@ -451,7 +468,7 @@ describe("reader directory and search operation ownership", () => {
     const searching = deferred<SearchResponse>();
     vi.mocked(app.services.reader.search).mockReturnValue(searching.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
     await userEvent.type(screen.getByRole("textbox", { name: "搜索关键词" }), "page");
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "搜索" }));
     const request = vi.mocked(app.services.reader.search).mock.calls[0][0];
@@ -459,9 +476,9 @@ describe("reader directory and search operation ownership", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(app.services.reader.cancelSearch).toHaveBeenCalledWith(request.operationId);
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: "搜索正文" })),
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "搜索" })),
     );
-    await userEvent.click(screen.getByRole("button", { name: "搜索正文" }));
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
     await act(async () =>
       searching.resolve({
         contentVersion: "v1",
@@ -478,13 +495,12 @@ describe("reader directory and search operation ownership", () => {
 
   it("waits for the pending directory write when the native exit flush begins", async () => {
     const app = runtime();
-    const saving = deferred<TxtTocRule>();
-    vi.mocked(app.services.reader.saveTocRule).mockReturnValue(saving.promise);
+    const saving = deferred<BookTocSettings>();
+    vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
+    vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValue(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    await userEvent.click(screen.getByRole("button", { name: "应用本书" }));
+    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     let complete = false;
     const flush = app.readerFlush!().then(() => {
       complete = true;
@@ -494,44 +510,40 @@ describe("reader directory and search operation ownership", () => {
     });
     expect(complete).toBe(false);
     await act(async () => {
-      saving.resolve({ mode: "automatic", pattern: "" });
+      saving.resolve({ ruleId: "english", splitLongChapters: false });
       await flush;
     });
     expect(complete).toBe(true);
   });
 
-  it("reports a rule write failure after closing the panel and offers a working retry", async () => {
+  it("reports a failed rule selection after the dialog closes and offers a working retry", async () => {
     const app = runtime();
-    const saving = deferred<TxtTocRule>();
-    vi.mocked(app.services.reader.saveTocRule).mockReturnValueOnce(saving.promise);
+    const saving = deferred<BookTocSettings>();
+    vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
+    vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValueOnce(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.selectOptions(screen.getByRole("combobox"), "english");
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    await userEvent.click(screen.getByRole("button", { name: "应用本书" }));
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
+    fireEvent.keyDown(window, { key: "Escape" });
     await act(async () => saving.reject(new Error("database unavailable")));
-    expect(screen.getByRole("alert").textContent).toContain("目录规则保存失败");
+    expect((await screen.findByRole("alert")).textContent).toContain("目录设置保存失败");
     await userEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(app.services.reader.saveTocRule).toHaveBeenCalledTimes(2);
-    expect(app.services.reader.saveTocRule).toHaveBeenLastCalledWith({
-      bookId: entry.book.id,
-      rule: { mode: "english", pattern: "" },
+    expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledTimes(2);
+    expect(app.services.reader.saveBookTocSettings).toHaveBeenLastCalledWith(entry.book.id, {
+      ruleId: "english",
+      splitLongChapters: false,
     });
   });
 
-  it("retains a failed in-flight rule save so retrying native exit retries the write", async () => {
+  it("retains a failed in-flight rule selection so retrying native exit retries the write", async () => {
     const app = runtime();
-    const saving = deferred<TxtTocRule>();
-    vi.mocked(app.services.reader.saveTocRule).mockReturnValueOnce(saving.promise);
+    const saving = deferred<BookTocSettings>();
+    vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
+    vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValueOnce(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "目录规则" }));
-    await userEvent.selectOptions(screen.getByRole("combobox"), "english");
-    await userEvent.click(screen.getByRole("button", { name: "预览" }));
-    await screen.findByText("新目录章节");
-    await userEvent.click(screen.getByRole("button", { name: "应用本书" }));
+    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     const firstFlush = app.readerFlush!().then(
       () => null,
       (error: unknown) => error,
@@ -541,10 +553,6 @@ describe("reader directory and search operation ownership", () => {
       expect(await firstFlush).toEqual(new Error("temporary write failure"));
     });
     await act(async () => app.readerFlush!());
-    expect(app.services.reader.saveTocRule).toHaveBeenCalledTimes(2);
-    expect(app.services.reader.saveTocRule).toHaveBeenLastCalledWith({
-      bookId: entry.book.id,
-      rule: { mode: "english", pattern: "" },
-    });
+    expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledTimes(2);
   });
 });

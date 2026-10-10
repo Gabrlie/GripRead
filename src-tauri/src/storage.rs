@@ -16,18 +16,20 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, ErrorCode};
-use crate::m1_txt::build_toc_with_rule;
 use crate::models::{
-    AssetAvailability, AssetKind, Book, BookAsset, Bookmark, BookmarkRequest, ContentWindow,
-    ImportPhase, ImportResult, LibraryBook, LibraryGroup, ReadContentRequest, ReaderLocator,
-    ReaderPreferences, ResolveLocatorRequest, ResolveOffsetRequest, SearchMatch, SearchRequest,
-    SearchResponse, TocEntry, TxtDecodeState, TxtEncoding, TxtEncodingInfo, TxtTocRule,
-    TxtTocRuleMode, WindowDirection,
+    AssetAvailability, AssetKind, Book, BookAsset, BookInfo, BookTocSettings, Bookmark,
+    BookmarkRequest, ContentWindow, ImportPhase, ImportResult, LibraryBook, LibraryGroup,
+    ReadContentRequest, ReaderLocator, ReaderPreferences, ResolveLocatorRequest,
+    ResolveOffsetRequest, SearchMatch, SearchRequest, SearchResponse, TxtDecodeState, TxtEncoding,
+    TxtEncodingInfo, TxtTocRule, WindowDirection,
 };
 use crate::models::{ShelfPreferences, UpdateBookRequest};
 use crate::txt::detect_and_decode;
+use crate::txt_toc::{
+    build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
+};
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -653,6 +655,16 @@ impl Storage {
             tx.commit()?;
         }
 
+        if current < 9 {
+            let tx = self.conn.transaction()?;
+            migrate_to_legado_toc_rules(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (9, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -940,13 +952,16 @@ impl Storage {
             maybe_inject_failure(&self.root, cancel, FailurePoint::AfterRename)?;
 
             let tx = self.conn.transaction()?;
+            // The journal keeps the file name; the shelf shows its parsed parts.
+            let parsed_name = parse_name_author(&journal.title);
             if !duplicate {
                 tx.execute(
                     "INSERT INTO books(id, title, author, content_version, created_at, updated_at)
-                     VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         journal.book_id,
-                        journal.title,
+                        parsed_name.name,
+                        parsed_name.author,
                         journal.content_version,
                         journal.created_at,
                         journal.created_at
@@ -1646,126 +1661,341 @@ impl Storage {
         )
     }
 
-    pub fn get_toc_rule(&self, book_id: &str) -> Result<TxtTocRule, AppError> {
-        self.toc_rule_snapshot(book_id).map(|(rule, _)| rule)
+    pub fn list_txt_toc_rules(&self) -> Result<Vec<TxtTocRule>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, pattern, example, serial, enabled, builtin
+             FROM txt_toc_rules ORDER BY serial, id",
+        )?;
+        let rules = statement
+            .query_map([], txt_toc_rule_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rules)
     }
 
-    pub(crate) fn toc_rule_snapshot(&self, book_id: &str) -> Result<(TxtTocRule, i64), AppError> {
-        let saved: Option<(String, String, i64)> = self
+    /// Adds a rule when `id` is empty, otherwise updates it. Built-in rules
+    /// may be edited; patterns must compile.
+    pub fn save_txt_toc_rule(&mut self, rule: &TxtTocRule) -> Result<TxtTocRule, AppError> {
+        let name = rule.name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(AppError::invalid_argument(
+                "rule names need 1 to 64 characters",
+            ));
+        }
+        if rule.pattern.chars().count() > 2048 || rule.example.chars().count() > 2048 {
+            return Err(AppError::invalid_argument("rule text is too long"));
+        }
+        if !rule.pattern.is_empty() {
+            compile_rule(&rule.pattern)?;
+        }
+        let tx = self.conn.transaction()?;
+        let saved_id = if rule.id.is_empty() {
+            let id = Uuid::new_v4().to_string();
+            let serial: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(serial), -1) + 1 FROM txt_toc_rules",
+                [],
+                |row| row.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO txt_toc_rules(id, name, pattern, example, serial, enabled, builtin, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
+                params![id, name, rule.pattern, rule.example, serial, rule.enabled, now_millis()],
+            )?;
+            id
+        } else {
+            let changed = tx.execute(
+                "UPDATE txt_toc_rules SET name = ?2, pattern = ?3, example = ?4, enabled = ?5,
+                    updated_at = ?6 WHERE id = ?1",
+                params![
+                    rule.id,
+                    name,
+                    rule.pattern,
+                    rule.example,
+                    rule.enabled,
+                    now_millis()
+                ],
+            )?;
+            if changed == 0 {
+                return Err(AppError::new(ErrorCode::NotFound, "TOC rule was not found"));
+            }
+            rule.id.clone()
+        };
+        let saved = tx.query_row(
+            "SELECT id, name, pattern, example, serial, enabled, builtin
+             FROM txt_toc_rules WHERE id = ?1",
+            params![saved_id],
+            txt_toc_rule_from_row,
+        )?;
+        tx.commit()?;
+        Ok(saved)
+    }
+
+    pub fn delete_txt_toc_rule(&mut self, id: &str) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        let builtin: Option<bool> = tx
+            .query_row(
+                "SELECT builtin FROM txt_toc_rules WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match builtin {
+            None => return Err(AppError::new(ErrorCode::NotFound, "TOC rule was not found")),
+            Some(true) => {
+                return Err(AppError::invalid_argument(
+                    "built-in rules can be disabled but not deleted",
+                ))
+            }
+            Some(false) => {}
+        }
+        // Books that used the rule return to automatic detection.
+        tx.execute(
+            "UPDATE book_toc_settings SET rule_id = NULL, revision = revision + 1,
+                updated_at = ?2 WHERE rule_id = ?1",
+            params![id, now_millis()],
+        )?;
+        tx.execute("DELETE FROM txt_toc_rules WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn order_txt_toc_rules(&mut self, ids: &[String]) -> Result<Vec<TxtTocRule>, AppError> {
+        let tx = self.conn.transaction()?;
+        let existing: HashSet<String> = {
+            let mut statement = tx.prepare("SELECT id FROM txt_toc_rules")?;
+            let ids = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?;
+            ids
+        };
+        let requested: HashSet<&String> = ids.iter().collect();
+        if requested.len() != ids.len()
+            || ids.len() != existing.len()
+            || ids.iter().any(|id| !existing.contains(id))
+        {
+            return Err(AppError::invalid_argument(
+                "rule order must list every rule exactly once",
+            ));
+        }
+        for (serial, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE txt_toc_rules SET serial = ?2 WHERE id = ?1",
+                params![id, serial as i64],
+            )?;
+        }
+        tx.commit()?;
+        self.list_txt_toc_rules()
+    }
+
+    /// Imports rules exported by Legado (`name`, `rule`, `example`, `enable`)
+    /// or by GripRead (`name`, `pattern`, …). Identical rules are skipped.
+    pub fn import_txt_toc_rules(&mut self, json: &str) -> Result<Vec<TxtTocRule>, AppError> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+            AppError::invalid_argument(format!("not a rule JSON file: {error}"))
+        })?;
+        let items = match value {
+            serde_json::Value::Array(items) => items,
+            item @ serde_json::Value::Object(_) => vec![item],
+            _ => return Err(AppError::invalid_argument("not a rule JSON file")),
+        };
+        let existing = self.list_txt_toc_rules()?;
+        let mut imported = Vec::new();
+        for item in items.iter().take(500) {
+            let text = |key: &str| item.get(key).and_then(|value| value.as_str());
+            let Some(name) = text("name") else { continue };
+            let pattern = text("rule").or_else(|| text("pattern")).unwrap_or("");
+            if existing
+                .iter()
+                .chain(imported.iter())
+                .any(|rule: &TxtTocRule| rule.name == name.trim() && rule.pattern == pattern)
+            {
+                continue;
+            }
+            let enabled = item
+                .get("enable")
+                .or_else(|| item.get("enabled"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            imported.push(self.save_txt_toc_rule(&TxtTocRule {
+                id: String::new(),
+                name: name.to_string(),
+                pattern: pattern.to_string(),
+                example: text("example").unwrap_or("").to_string(),
+                serial: 0,
+                enabled,
+                builtin: false,
+            })?);
+        }
+        Ok(imported)
+    }
+
+    /// Exports every rule in Legado's format.
+    pub fn export_txt_toc_rules(&self) -> Result<String, AppError> {
+        let rules: Vec<_> = self
+            .list_txt_toc_rules()?
+            .into_iter()
+            .map(|rule| {
+                serde_json::json!({
+                    "name": rule.name,
+                    "rule": rule.pattern,
+                    "example": rule.example,
+                    "enable": rule.enabled,
+                    "serialNumber": rule.serial,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string_pretty(&rules)?)
+    }
+
+    pub fn book_toc_settings(&self, book_id: &str) -> Result<(BookTocSettings, i64), AppError> {
+        self.get_book(book_id)?;
+        let saved: Option<(Option<String>, bool, i64)> = self
             .conn
             .query_row(
-                "SELECT mode, pattern, revision FROM book_toc_rules WHERE book_id = ?1",
+                "SELECT rule_id, split_long_chapters, revision FROM book_toc_settings
+                 WHERE book_id = ?1",
                 params![book_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        if let Some((mode, pattern, revision)) = saved {
-            return Ok((
-                TxtTocRule {
-                    mode: parse_toc_rule_mode(&mode)?,
-                    pattern,
-                },
-                revision,
-            ));
-        }
-
-        let exists: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT id FROM books WHERE id = ?1",
-                params![book_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if exists.is_none() {
-            return Err(AppError::new(
-                ErrorCode::NotFound,
-                format!("book {book_id} was not found"),
-            ));
-        }
-        Ok((
-            TxtTocRule {
-                mode: TxtTocRuleMode::Automatic,
-                pattern: String::new(),
+        Ok(saved.map_or(
+            (BookTocSettings::default(), 0),
+            |(rule_id, split, revision)| {
+                (
+                    BookTocSettings {
+                        rule_id,
+                        split_long_chapters: split,
+                    },
+                    revision,
+                )
             },
-            0,
         ))
     }
 
-    pub fn save_toc_rule(
+    pub fn save_book_toc_settings(
         &mut self,
         book_id: &str,
-        rule: &TxtTocRule,
-    ) -> Result<TxtTocRule, AppError> {
-        crate::m1_txt::validate_toc_rule(rule)?;
+        settings: &BookTocSettings,
+    ) -> Result<BookTocSettings, AppError> {
+        self.get_book(book_id)?;
         let tx = self.conn.transaction()?;
-        let exists: Option<String> = tx
-            .query_row(
-                "SELECT id FROM books WHERE id = ?1",
-                params![book_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if exists.is_none() {
-            return Err(AppError::new(
-                ErrorCode::NotFound,
-                format!("book {book_id} was not found"),
-            ));
+        if let Some(rule_id) = settings.rule_id.as_deref() {
+            let exists: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM txt_toc_rules WHERE id = ?1",
+                    params![rule_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                return Err(AppError::new(ErrorCode::NotFound, "TOC rule was not found"));
+            }
         }
-        let previous_revision: Option<i64> = tx
-            .query_row(
-                "SELECT revision FROM book_toc_rules WHERE book_id = ?1",
-                params![book_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let revision = previous_revision
-            .unwrap_or_default()
-            .checked_add(1)
-            .ok_or_else(|| AppError::new(ErrorCode::Database, "TOC rule revision overflow"))?;
         tx.execute(
-            "INSERT INTO book_toc_rules(book_id, mode, pattern, revision, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(book_id) DO UPDATE SET mode = excluded.mode,
-                pattern = excluded.pattern, revision = excluded.revision,
-                updated_at = excluded.updated_at",
-            params![
-                book_id,
-                toc_rule_mode_name(&rule.mode),
-                &rule.pattern,
-                revision,
-                now_millis()
-            ],
-        )?;
-        tx.execute(
-            "DELETE FROM toc_cache WHERE asset_id IN
-             (SELECT id FROM book_assets WHERE book_id = ?1)",
-            params![book_id],
+            "INSERT INTO book_toc_settings(book_id, rule_id, split_long_chapters, revision, updated_at)
+             VALUES (?1, ?2, ?3, 1, ?4)
+             ON CONFLICT(book_id) DO UPDATE SET rule_id = excluded.rule_id,
+                split_long_chapters = excluded.split_long_chapters,
+                revision = book_toc_settings.revision + 1, updated_at = excluded.updated_at",
+            params![book_id, settings.rule_id, settings.split_long_chapters, now_millis()],
         )?;
         tx.commit()?;
-        Ok(rule.clone())
+        Ok(settings.clone())
     }
 
-    pub fn list_toc(&mut self, book_id: &str) -> Result<Vec<TocEntry>, AppError> {
+    /// The resolved build input: the selected rule, or every enabled rule for
+    /// automatic choice. Its JSON identifies cached TOCs, so editing, toggling,
+    /// or reordering rules invalidates exactly the books they can affect.
+    pub(crate) fn toc_rule_snapshot(&self, book_id: &str) -> Result<(TocBuildRule, i64), AppError> {
+        let (settings, revision) = self.book_toc_settings(book_id)?;
+        let rules = self.list_txt_toc_rules()?;
+        let spec = |rule: &TxtTocRule| RuleSpec {
+            id: rule.id.clone(),
+            name: rule.name.clone(),
+            pattern: rule.pattern.clone(),
+        };
+        let selected = settings
+            .rule_id
+            .as_deref()
+            .and_then(|id| rules.iter().find(|rule| rule.id == id));
+        let build = match selected {
+            Some(rule) => TocBuildRule {
+                automatic: false,
+                rules: vec![spec(rule)],
+                split_long_chapters: settings.split_long_chapters,
+            },
+            None => TocBuildRule {
+                automatic: true,
+                rules: rules.iter().filter(|rule| rule.enabled).map(spec).collect(),
+                split_long_chapters: settings.split_long_chapters,
+            },
+        };
+        Ok((build, revision))
+    }
+
+    pub fn book_info(&self, book_id: &str) -> Result<BookInfo, AppError> {
+        let record = self.asset_for_book(book_id)?;
+        let (intro, entries_json): (Option<String>, Option<String>) = self.conn.query_row(
+            "SELECT b.intro, t.entries_json FROM books b
+             LEFT JOIN toc_cache t ON t.asset_id = ?2
+             WHERE b.id = ?1",
+            params![book_id, record.asset.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let source_byte_length: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT source_byte_length FROM txt_assets WHERE asset_id = ?1",
+                params![record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let chapter_count = entries_json
+            .and_then(|json| serde_json::from_str::<TocBuild>(&json).ok())
+            .map(|build| build.entries.len() as u64);
+        Ok(BookInfo {
+            book_id: book_id.to_string(),
+            intro,
+            source_byte_length: source_byte_length
+                .map_or(record.asset.byte_length, |length| length.max(0) as u64),
+            chapter_count,
+        })
+    }
+
+    /// Records the introduction found by a TOC build unless the book has one.
+    pub(crate) fn remember_intro(
+        &self,
+        book_id: &str,
+        intro: Option<&str>,
+    ) -> Result<(), AppError> {
+        if let Some(intro) = intro {
+            self.conn.execute(
+                "UPDATE books SET intro = ?2 WHERE id = ?1 AND intro IS NULL",
+                params![book_id, intro],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn list_toc(&mut self, book_id: &str) -> Result<TocBuild, AppError> {
         let context = self.content_read_context(book_id)?;
         let verified = verify_content_context(&context)?;
         let (rule, revision) = self.toc_rule_snapshot(book_id)?;
-        if let Some(entries) = self.cached_toc(&context, &rule, revision)? {
+        if let Some(build) = self.cached_toc(&context, &rule, revision)? {
             self.persist_content_index(&context, &verified)?;
-            return Ok(entries);
+            return Ok(build);
         }
-        let entries = build_toc_from_context(&context, &verified, book_id, &rule)?;
+        let build = build_toc_from_context(&context, &verified, book_id, &rule)?;
         self.persist_content_index(&context, &verified)?;
-        self.cache_toc(&context, &entries, &rule, revision)?;
-        Ok(entries)
+        self.cache_toc(&context, &build, &rule, revision)?;
+        Ok(build)
     }
 
     pub(crate) fn cached_toc(
         &self,
         context: &ContentReadContext,
-        rule: &TxtTocRule,
+        rule: &TocBuildRule,
         revision: i64,
-    ) -> Result<Option<Vec<TocEntry>>, AppError> {
+    ) -> Result<Option<TocBuild>, AppError> {
         self.validate_toc_snapshot(context, rule, revision)?;
         let identity = toc_rule_identity(rule)?;
         let cached: Option<(String, String, i64, String)> = self
@@ -1786,24 +2016,26 @@ impl Storage {
         {
             return Ok(None);
         }
-        let mut entries = serde_json::from_str::<Vec<TocEntry>>(&json).ok();
-        if let Some(entries) = entries.as_mut() {
-            entries.iter_mut().for_each(|entry| {
+        // Caches written before schema 9 hold a bare entry array and rebuild.
+        let mut build = serde_json::from_str::<TocBuild>(&json).ok();
+        if let Some(build) = build.as_mut() {
+            build.entries.iter_mut().for_each(|entry| {
                 entry.locator.resource_id = context.record.asset.id.clone();
             });
         }
-        Ok(entries)
+        Ok(build)
     }
 
     pub(crate) fn cache_toc(
         &self,
         context: &ContentReadContext,
-        entries: &[TocEntry],
-        rule: &TxtTocRule,
+        build: &TocBuild,
+        rule: &TocBuildRule,
         revision: i64,
     ) -> Result<(), AppError> {
         self.validate_toc_snapshot(context, rule, revision)?;
-        let serialized = serde_json::to_string(&entries)?;
+        let serialized = serde_json::to_string(build)?;
+        self.remember_intro(&context.record.asset.book_id, build.intro.as_deref())?;
         let identity = toc_rule_identity(rule)?;
         self.conn.execute(
             "INSERT INTO toc_cache(
@@ -1829,7 +2061,7 @@ impl Storage {
     pub(crate) fn toc_snapshot_is_current(
         &self,
         context: &ContentReadContext,
-        rule: &TxtTocRule,
+        rule: &TocBuildRule,
         revision: i64,
     ) -> Result<bool, AppError> {
         if !self.content_snapshot_is_current(context)? {
@@ -1843,7 +2075,7 @@ impl Storage {
     fn validate_toc_snapshot(
         &self,
         context: &ContentReadContext,
-        rule: &TxtTocRule,
+        rule: &TocBuildRule,
         revision: i64,
     ) -> Result<(), AppError> {
         if !self.toc_snapshot_is_current(context, rule, revision)? {
@@ -3656,15 +3888,14 @@ pub(crate) fn build_toc_from_context(
     context: &ContentReadContext,
     verified: &VerifiedContentIndex,
     book_id: &str,
-    rule: &TxtTocRule,
-) -> Result<Vec<TocEntry>, AppError> {
+    rule: &TocBuildRule,
+) -> Result<TocBuild, AppError> {
     let text = read_verified_text(context, verified)?;
-    let mut entries =
-        build_toc_with_rule(&text, book_id, &context.record.asset.content_version, rule)?;
-    entries.iter_mut().for_each(|entry| {
+    let mut build = build_toc(&text, book_id, &context.record.asset.content_version, rule)?;
+    build.entries.iter_mut().for_each(|entry| {
         entry.locator.resource_id = context.record.asset.id.clone();
     });
-    Ok(entries)
+    Ok(build)
 }
 
 fn search_text_stream(
@@ -4650,29 +4881,7 @@ fn encoding_name(encoding: &TxtEncoding) -> &'static str {
     }
 }
 
-fn toc_rule_mode_name(mode: &TxtTocRuleMode) -> &'static str {
-    match mode {
-        TxtTocRuleMode::Automatic => "automatic",
-        TxtTocRuleMode::Chinese => "chinese",
-        TxtTocRuleMode::English => "english",
-        TxtTocRuleMode::Custom => "custom",
-    }
-}
-
-fn parse_toc_rule_mode(value: &str) -> Result<TxtTocRuleMode, AppError> {
-    match value {
-        "automatic" => Ok(TxtTocRuleMode::Automatic),
-        "chinese" => Ok(TxtTocRuleMode::Chinese),
-        "english" => Ok(TxtTocRuleMode::English),
-        "custom" => Ok(TxtTocRuleMode::Custom),
-        _ => Err(AppError::new(
-            ErrorCode::Database,
-            format!("stored TOC rule mode is invalid: {value}"),
-        )),
-    }
-}
-
-fn toc_rule_identity(rule: &TxtTocRule) -> Result<String, AppError> {
+fn toc_rule_identity(rule: &TocBuildRule) -> Result<String, AppError> {
     Ok(serde_json::to_string(rule)?)
 }
 
@@ -4830,6 +5039,111 @@ fn native_fault(root: &Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn txt_toc_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtTocRule> {
+    Ok(TxtTocRule {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        pattern: row.get(2)?,
+        example: row.get(3)?,
+        serial: row.get(4)?,
+        enabled: row.get(5)?,
+        builtin: row.get(6)?,
+    })
+}
+
+/// Schema 9: Legado's rule table seeded with its 26 defaults, per-book
+/// settings migrated from the schema 8 modes, book introductions, managed
+/// reading assets, and authors parsed from existing titles.
+fn migrate_to_legado_toc_rules(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
+    tx.execute_batch(
+        "CREATE TABLE txt_toc_rules (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            example TEXT NOT NULL DEFAULT '',
+            serial INTEGER NOT NULL,
+            enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+            builtin INTEGER NOT NULL CHECK(builtin IN (0, 1)),
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE book_toc_settings (
+            book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            rule_id TEXT REFERENCES txt_toc_rules(id) ON DELETE SET NULL,
+            split_long_chapters INTEGER NOT NULL DEFAULT 0 CHECK(split_long_chapters IN (0, 1)),
+            revision INTEGER NOT NULL CHECK(revision > 0),
+            updated_at INTEGER NOT NULL
+        );
+        ALTER TABLE books ADD COLUMN intro TEXT;
+        CREATE TABLE reader_assets (
+            id TEXT PRIMARY KEY NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('font')),
+            name TEXT NOT NULL,
+            relative_path TEXT NOT NULL UNIQUE,
+            byte_length INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        );",
+    )?;
+    let now = now_millis();
+    for rule in crate::txt_toc::default_rules() {
+        tx.execute(
+            "INSERT INTO txt_toc_rules(id, name, pattern, example, serial, enabled, builtin, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+            params![rule.id, rule.name, rule.pattern, rule.example, rule.serial, rule.enabled, now],
+        )?;
+    }
+    // Schema 8 modes map onto the nearest Legado rule; a custom pattern
+    // becomes a disabled user rule so it does not affect other books.
+    let legacy: Vec<(String, String, String, i64)> = {
+        let mut statement =
+            tx.prepare("SELECT book_id, mode, pattern, revision FROM book_toc_rules")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (book_id, mode, pattern, revision) in legacy {
+        let rule_id = match mode.as_str() {
+            "chinese" => Some("legado-2".to_string()),
+            "english" => Some("legado-12".to_string()),
+            "custom" if !pattern.is_empty() => {
+                let id = Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO txt_toc_rules(id, name, pattern, example, serial, enabled, builtin, updated_at)
+                     VALUES (?1, '自定义规则（已迁移）', ?2, '', 100 + (SELECT COUNT(*) FROM txt_toc_rules), 0, 0, ?3)",
+                    params![id, pattern, now],
+                )?;
+                Some(id)
+            }
+            _ => None,
+        };
+        tx.execute(
+            "INSERT INTO book_toc_settings(book_id, rule_id, split_long_chapters, revision, updated_at)
+             VALUES (?1, ?2, 0, ?3, ?4)",
+            params![book_id, rule_id, revision.max(1) + 1, now],
+        )?;
+    }
+    tx.execute_batch("DROP TABLE book_toc_rules; DELETE FROM toc_cache;")?;
+    let untitled: Vec<(String, String)> = {
+        let mut statement = tx.prepare("SELECT id, title FROM books WHERE author IS NULL")?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (id, title) in untitled {
+        let parsed = parse_name_author(&title);
+        if let Some(author) = parsed.author {
+            tx.execute(
+                "UPDATE books SET title = ?2, author = ?3 WHERE id = ?1",
+                params![id, parsed.name, author],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4901,11 +5215,16 @@ mod tests {
             let index = indexed.elapsed();
             let mut storage = Storage::open(&root.0.join("data")).unwrap();
             let imported = Instant::now();
-            import(&mut storage, &source, name);
+            let book = import(&mut storage, &source, name);
             let total = imported.elapsed();
+            let listed = Instant::now();
+            let toc = storage.list_toc(&book.book.id).unwrap();
+            let directory = listed.elapsed();
             eprintln!(
-                "{name} {} bytes: decode {decode:?}, hash {hash:?}, index {index:?}, full import {total:?}",
-                bytes.len()
+                "{name} {} bytes: decode {decode:?}, hash {hash:?}, index {index:?}, full import {total:?}, directory {directory:?} ({} chapters by {})",
+                bytes.len(),
+                toc.entries.len(),
+                toc.rule_name
             );
         }
     }
@@ -4972,7 +5291,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 8);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
     }
 
     #[test]
@@ -5002,7 +5321,7 @@ mod tests {
         let source = write_source(
             &root.0,
             "chapters.txt",
-            "第一章 开始😀\n正文中文\nChapter 2\n结尾\n".as_bytes(),
+            "第一章 开始😀\n内容中文\nChapter 2\n结尾\n".as_bytes(),
         );
         let app_root = root.0.join("data");
         let mut storage = Storage::open(&app_root).unwrap();
@@ -5011,8 +5330,9 @@ mod tests {
         assert!(info.can_change);
         assert_eq!(info.selected, TxtEncoding::Auto);
 
-        let toc = storage.list_toc(&imported.book.id).unwrap();
-        assert_eq!(toc.len(), 2);
+        let toc = storage.list_toc(&imported.book.id).unwrap().entries;
+        // Both rule families match once; Legado's tie goes to the earlier rule.
+        assert_eq!(toc.len(), 1);
         assert_eq!(toc[0].title, "第一章 开始😀");
         let locator = storage
             .read_content_window(&imported.book.id, None, 64)
@@ -5777,45 +6097,60 @@ mod tests {
         let source = write_source(
             &root.0,
             "rules.txt",
-            "第一章 开始\n正文😀\nChapter 2\nPart 3\n".as_bytes(),
+            "第一章 开始\n内容😀\nChapter 2\nPart 3\n".as_bytes(),
         );
         let app_root = root.0.join("data");
         let mut storage = Storage::open(&app_root).unwrap();
         let imported = import(&mut storage, &source, "rules");
         let initial = storage.list_toc(&imported.book.id).unwrap();
-        assert_eq!(initial.len(), 2);
-        let position = initial[1].locator.clone();
+        assert_eq!(initial.rule_id.as_deref(), Some("legado-1"));
+        let position = initial.entries[0].locator.clone();
         storage.save_position(&position).unwrap();
         let bookmark = storage
             .add_bookmark(&BookmarkRequest {
                 book_id: imported.book.id.clone(),
                 locator: position.clone(),
-                excerpt: "Chapter 2".to_string(),
+                excerpt: "第一章".to_string(),
             })
             .unwrap();
-        let rule = TxtTocRule {
-            mode: TxtTocRuleMode::Custom,
-            pattern: "^Part [0-9]+$".to_string(),
+        let rule = storage
+            .save_txt_toc_rule(&TxtTocRule {
+                id: String::new(),
+                name: "Part".to_string(),
+                pattern: "^Part [0-9]+$".to_string(),
+                example: String::new(),
+                serial: 0,
+                enabled: false,
+                builtin: false,
+            })
+            .unwrap();
+        let settings = BookTocSettings {
+            rule_id: Some(rule.id.clone()),
+            split_long_chapters: false,
         };
-        storage.save_toc_rule(&imported.book.id, &rule).unwrap();
+        storage
+            .save_book_toc_settings(&imported.book.id, &settings)
+            .unwrap();
         let entries = storage.list_toc(&imported.book.id).unwrap();
         assert_eq!(
             entries
+                .entries
                 .iter()
                 .map(|entry| entry.title.as_str())
                 .collect::<Vec<_>>(),
-            ["Part 3"]
+            ["前言", "Part 3"]
         );
         let snapshot = storage.toc_rule_snapshot(&imported.book.id).unwrap();
         let invalid = TxtTocRule {
-            mode: TxtTocRuleMode::Custom,
             pattern: "[".to_string(),
+            ..rule.clone()
         };
         assert_eq!(
-            storage
-                .save_toc_rule(&imported.book.id, &invalid)
-                .unwrap_err()
-                .code,
+            storage.save_txt_toc_rule(&invalid).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            storage.delete_txt_toc_rule("legado-2").unwrap_err().code,
             ErrorCode::InvalidArgument
         );
         assert_eq!(
@@ -5823,7 +6158,6 @@ mod tests {
             snapshot
         );
         assert_eq!(storage.list_toc(&imported.book.id).unwrap(), entries);
-        assert_eq!(storage.get_book(&imported.book.id).unwrap(), imported.book);
         assert_eq!(
             storage.saved_position(&imported.book.id).unwrap(),
             Some(position.clone())
@@ -5834,7 +6168,10 @@ mod tests {
         );
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
-        assert_eq!(reopened.get_toc_rule(&imported.book.id).unwrap(), rule);
+        assert_eq!(
+            reopened.book_toc_settings(&imported.book.id).unwrap().0,
+            settings
+        );
         assert_eq!(reopened.list_toc(&imported.book.id).unwrap(), entries);
         assert_eq!(
             reopened.saved_position(&imported.book.id).unwrap(),
@@ -5844,16 +6181,123 @@ mod tests {
             reopened.list_bookmarks(&imported.book.id).unwrap(),
             [bookmark]
         );
-        reopened
-            .save_toc_rule(
-                &imported.book.id,
-                &TxtTocRule {
-                    mode: TxtTocRuleMode::Automatic,
-                    pattern: String::new(),
-                },
+        // Deleting the selected rule returns the book to automatic detection.
+        reopened.delete_txt_toc_rule(&rule.id).unwrap();
+        assert_eq!(
+            reopened.book_toc_settings(&imported.book.id).unwrap().0,
+            BookTocSettings::default()
+        );
+        assert_eq!(reopened.list_toc(&imported.book.id).unwrap(), initial);
+    }
+
+    #[test]
+    fn schema_nine_migrates_rule_modes_and_parses_existing_authors() {
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let mut ids = Vec::new();
+        {
+            let mut storage = Storage::open(&app_root).unwrap();
+            for (name, text) in [
+                ("《斗破苍穹》作者：天蚕土豆.txt", "第一章 开始\n内容\n"),
+                ("english.txt", "Chapter 1 A\nText\n"),
+                ("custom.txt", "Part 1\nText\n"),
+            ] {
+                let source = write_source(&root.0, name, text.as_bytes());
+                ids.push(import(&mut storage, &source, name).book.id);
+            }
+            // Recreate the schema 8 state: legacy titles and per-book modes.
+            storage
+                .conn
+                .execute_batch(
+                    "DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                     ALTER TABLE books DROP COLUMN intro;
+                     UPDATE books SET author = NULL;
+                     CREATE TABLE book_toc_rules (
+                        book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                        mode TEXT NOT NULL, pattern TEXT NOT NULL,
+                        revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+                     DELETE FROM schema_migrations WHERE version >= 9;",
+                )
+                .unwrap();
+            storage
+                .conn
+                .execute(
+                    "UPDATE books SET title = '《斗破苍穹》作者：天蚕土豆' WHERE id = ?1",
+                    params![ids[0]],
+                )
+                .unwrap();
+            for (id, mode, pattern) in [
+                (&ids[1], "english", ""),
+                (&ids[2], "custom", "^Part [0-9]+$"),
+            ] {
+                storage
+                    .conn
+                    .execute(
+                        "INSERT INTO book_toc_rules VALUES (?1, ?2, ?3, 3, 1)",
+                        params![id, mode, pattern],
+                    )
+                    .unwrap();
+            }
+        }
+        let mut storage = Storage::open(&app_root).unwrap();
+        let book = storage.get_book(&ids[0]).unwrap();
+        assert_eq!(book.title, "斗破苍穹");
+        assert_eq!(book.author.as_deref(), Some("天蚕土豆"));
+        let english = storage.book_toc_settings(&ids[1]).unwrap();
+        assert_eq!(english.0.rule_id.as_deref(), Some("legado-12"));
+        assert!(english.1 > 3);
+        let custom = storage.book_toc_settings(&ids[2]).unwrap().0;
+        let rule = storage
+            .list_txt_toc_rules()
+            .unwrap()
+            .into_iter()
+            .find(|rule| Some(&rule.id) == custom.rule_id.as_ref())
+            .unwrap();
+        assert_eq!(rule.pattern, "^Part [0-9]+$");
+        assert!(!rule.enabled && !rule.builtin);
+        assert_eq!(
+            storage.list_toc(&ids[2]).unwrap().entries[0].title,
+            "Part 1"
+        );
+        assert_eq!(
+            storage.book_toc_settings(&ids[0]).unwrap().0,
+            BookTocSettings::default()
+        );
+    }
+
+    #[test]
+    fn rule_tables_reorder_toggle_import_and_export() {
+        let root = TestRoot::new();
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let rules = storage.list_txt_toc_rules().unwrap();
+        assert_eq!(rules.len(), 26);
+        assert!(rules.iter().all(|rule| rule.builtin));
+        assert_eq!(rules.iter().filter(|rule| rule.enabled).count(), 12);
+        let mut ids: Vec<String> = rules.iter().map(|rule| rule.id.clone()).collect();
+        ids.reverse();
+        let ordered = storage.order_txt_toc_rules(&ids).unwrap();
+        assert_eq!(ordered[0].id, "legado-100");
+        assert!(storage.order_txt_toc_rules(&ids[1..]).is_err());
+        let toggled = storage
+            .save_txt_toc_rule(&TxtTocRule {
+                enabled: true,
+                ..ordered[1].clone()
+            })
+            .unwrap();
+        assert!(toggled.enabled && toggled.builtin);
+        let imported = storage
+            .import_txt_toc_rules(
+                r#"[{"name":"Legado 导出","rule":"^卷.+$","example":"卷一","enable":true,"serialNumber":3},
+                   {"name":"Legado 导出","rule":"^卷.+$"}]"#,
             )
             .unwrap();
-        assert_eq!(reopened.list_toc(&imported.book.id).unwrap(), initial);
+        assert_eq!(imported.len(), 1);
+        assert!(!imported[0].builtin);
+        assert!(storage.import_txt_toc_rules("{").is_err());
+        let exported: serde_json::Value =
+            serde_json::from_str(&storage.export_txt_toc_rules().unwrap()).unwrap();
+        assert_eq!(exported.as_array().unwrap().len(), 27);
+        assert!(exported[0].get("rule").is_some());
     }
 
     #[test]
@@ -5869,13 +6313,18 @@ mod tests {
         let context = storage.content_read_context(&imported.book.id).unwrap();
         let (old_rule, old_revision) = storage.toc_rule_snapshot(&imported.book.id).unwrap();
         let old_entries = storage.list_toc(&imported.book.id).unwrap();
-        let new_rule = TxtTocRule {
-            mode: TxtTocRuleMode::English,
-            pattern: String::new(),
-        };
-        storage.save_toc_rule(&imported.book.id, &new_rule).unwrap();
+        storage
+            .save_book_toc_settings(
+                &imported.book.id,
+                &BookTocSettings {
+                    rule_id: Some("legado-12".to_string()),
+                    split_long_chapters: false,
+                },
+            )
+            .unwrap();
+        let (new_rule, _) = storage.toc_rule_snapshot(&imported.book.id).unwrap();
         let current_entries = storage.list_toc(&imported.book.id).unwrap();
-        assert_eq!(current_entries.len(), 1);
+        assert_eq!(current_entries.entries.len(), 2);
         assert_eq!(
             storage
                 .cache_toc(&context, &old_entries, &old_rule, old_revision)
@@ -6683,7 +7132,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; DROP TABLE book_toc_rules; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -6709,7 +7158,7 @@ mod tests {
         let app_root = root.0.join("data");
         let mut storage = Storage::open(&app_root).unwrap();
         let imported = import(&mut storage, &source, "v7");
-        let toc = storage.list_toc(&imported.book.id).unwrap();
+        let toc = storage.list_toc(&imported.book.id).unwrap().entries;
         let position = toc[1].locator.clone();
         storage.save_position(&position).unwrap();
         let bookmark = storage
@@ -6754,7 +7203,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE book_toc_rules; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(
@@ -6765,7 +7214,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            8
+            9
         );
         assert_eq!(reopened.get_book(&imported.book.id).unwrap(), imported.book);
         assert_eq!(
@@ -6778,7 +7227,7 @@ mod tests {
         );
         assert_eq!(reopened.list_groups().unwrap(), groups);
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(reopened.list_toc(&imported.book.id).unwrap(), toc);
+        assert_eq!(reopened.list_toc(&imported.book.id).unwrap().entries, toc);
         let mut updated = preferences.clone();
         updated.auto_page_seconds = 12;
         reopened.save_settings(&updated).unwrap();

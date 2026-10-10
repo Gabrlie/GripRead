@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-None is in progress. The [Android adaptation task](plans/2026-10-10-android-adaptation.md) is complete. Local reading will next be rebuilt after legado-with-MD3 tag `3.26.7` (its functions and layout, GripRead's styling); this supersedes Batches 3–5 of the [TXT reader modes and settings task](plans/2026-09-24-txt-reader-modes-and-settings.md).
+The [Legado-style local reading task](plans/2026-10-10-legado-local-reading.md) is in progress: local reading is rebuilt after legado-with-MD3 tag `3.26.7` and delivered as one Android build.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Write the decision note and task for the Legado TXT table-of-contents engine (rule table, volumes, preface and introduction, author parsing; schema 9), then the reader menu, contents and search pages, page turning with swipe, drag, and nine tap zones, and reading styles with font import.
+Chapter rules, the reading menu, Contents, and Search are done. Continue with page turning and gestures, then reading styles, fonts, information bars, and book information.

@@ -1,22 +1,24 @@
 import { useCallback, useRef, useState } from "react";
 
-export type ReaderPanel =
-  "settings" | "directory" | "encoding" | "more" | "search" | "contents" | "automatic";
+/**
+ * Reader tools, following Legado's read menu: full-screen Contents and Search
+ * pages, the chapter rule and encoding dialogs, and the 界面 style sheet.
+ */
+export type ReaderPanel = "contents" | "search" | "rules" | "encoding" | "style" | "automatic";
 
-/** Accessible labels of the toolbar buttons that open each top-level panel. */
+/** Accessible labels of the menu buttons that open each top-level panel. */
 export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
-  settings: "设置",
-  directory: "目录规则",
-  encoding: "编码格式",
-  more: "更多",
-  search: "搜索正文",
   contents: "目录",
+  search: "搜索",
+  rules: "TXT目录规则",
+  encoding: "设置编码",
+  style: "界面",
   automatic: "自动翻页",
 };
 
 /**
  * One panel state for every reader tool. Nested panels push onto a back
- * stack; closing the last panel restores focus to the toolbar button that
+ * stack; closing the last panel restores focus to the menu button that
  * opened it without delivering the dismissal to the page.
  */
 export function useReaderPanel(onClose?: (panel: ReaderPanel) => void) {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LibraryService, ReaderService } from "../services/contracts";
 import type { LibraryBook, LibraryGroup, TocEntry } from "../types/generated";
 import { ShelfStore } from "./shelf";
+import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -46,8 +47,8 @@ const entry: LibraryBook = {
   removedAt: null,
 };
 const chapters: TocEntry[] = [
-  { ordinal: 0, title: "第一章", locator: entry.locator! },
-  { ordinal: 1, title: "第二章", locator: { ...entry.locator!, offset: 20 } },
+  tocEntry(0, "第一章", entry.locator!),
+  tocEntry(1, "第二章", { ...entry.locator!, offset: 20 }),
 ];
 const original: LibraryGroup = { id: "original", name: "已有分组", bookIds: [] };
 const created: LibraryGroup = { id: "created", name: "新建分组", bookIds: [] };
@@ -76,12 +77,11 @@ function setup() {
     getTxtDecodeStatus: vi.fn(),
     cancelTxtDecode: vi.fn(),
     onTxtDecodeProgress: vi.fn(async () => () => {}),
+    getBookInfo: vi.fn(),
   };
   const reader: ReaderService = {
-    listToc: vi.fn(async () => chapters),
-    getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
-    previewTocRule: vi.fn(async () => ({ entries: [] })),
-    saveTocRule: vi.fn(async (request) => request.rule),
+    listToc: vi.fn(async () => tocListing(chapters)),
+    ...ruleServiceMocks(),
     readContentWindow: vi.fn(),
     resolveLocator: vi.fn(),
     resolveOffset: vi.fn(),
@@ -108,7 +108,7 @@ describe("shelf group request ordering", () => {
       return group;
     });
     vi.mocked(library.listGroups).mockImplementation(async () => groups);
-    vi.mocked(reader.listToc).mockReturnValue(toc.promise);
+    vi.mocked(reader.listToc).mockReturnValue(toc.promise.then((entries) => tocListing(entries)));
     const change = store.create(created.name);
     await vi.waitFor(() => expect(library.createGroup).toHaveBeenCalledOnce());
     const load = store.load([entry]);
@@ -243,7 +243,9 @@ describe("shelf chapter snapshots", () => {
     await store.load([entry]);
     expect(store.getSnapshot().chapters.book.latest).toBe("第二章");
     const old = deferred<TocEntry[]>();
-    vi.mocked(reader.listToc).mockReturnValueOnce(old.promise);
+    vi.mocked(reader.listToc).mockReturnValueOnce(
+      old.promise.then((entries) => tocListing(entries)),
+    );
     const staleLoad = store.load([entry]);
     store.invalidateChapterCache(entry.book.id);
     vi.mocked(reader.listToc).mockRejectedValueOnce(new Error("new directory unavailable"));
@@ -263,7 +265,9 @@ describe("shelf chapter snapshots", () => {
     async (outcome) => {
       const { reader, store } = setup();
       const old = deferred<TocEntry[]>();
-      vi.mocked(reader.listToc).mockReturnValueOnce(old.promise);
+      vi.mocked(reader.listToc).mockReturnValueOnce(
+        old.promise.then((entries) => tocListing(entries)),
+      );
       const stale = store.load([entry]);
       const nextEntry: LibraryBook = {
         ...entry,

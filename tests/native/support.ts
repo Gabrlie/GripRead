@@ -512,38 +512,14 @@ export async function waitForNextPage(previous: PageSnapshot): Promise<PageSnaps
 
 export async function seekReaderProgress(progress: number): Promise<PageSnapshot> {
   const clamped = Math.max(0, Math.min(100, progress));
-  await showReaderControls();
-  await browser.$('button[aria-label="目录"]').click();
-  const slider = await browser.$('[data-testid="reader-book-progress"] input[type="range"]');
-  await slider.waitForExist({ timeout: TEST_TIMEOUT });
-  if (clamped === 0 || clamped === 100) {
-    await browser.execute((value) => {
-      const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="reader-book-progress"] input[type="range"]',
-      );
-      if (!input) throw new Error("progress slider input is missing");
-      input.focus();
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: value === 0 ? "Home" : "End",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }, clamped);
-  } else {
-    await browser.execute((value) => {
-      const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="reader-book-progress"] input[type="range"]',
-      );
-      if (!input) throw new Error("progress slider input is missing");
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      if (!setValue) throw new Error("slider value setter is missing");
-      setValue.call(input, String(value));
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    }, clamped);
-  }
+  // The reading menu has no whole-book slider (as in Legado); native-test
+  // builds expose the controller seek used by the old slider.
+  await browser.execute(async (value) => {
+    const seek = (window as unknown as { __gripreadSeekProgress?: (p: number) => Promise<void> })
+      .__gripreadSeekProgress;
+    if (!seek) throw new Error("native-test seek hook is missing");
+    await seek(value / 100);
+  }, clamped);
   let snapshot: PageSnapshot | undefined;
   try {
     await browser.waitUntil(
@@ -615,12 +591,14 @@ export async function waitForReaderClosed(): Promise<void> {
   }
 }
 
+/** Flushes the reader's accepted position like the old manual-save control. */
 export async function clickSaveControl(): Promise<void> {
-  await showReaderControls();
-  await browser.$('button[aria-label="更多"]').click();
-  const control = await browser.$('[data-testid="reader-save"]');
-  await control.waitForDisplayed({ timeout: TEST_TIMEOUT });
-  await control.click();
+  await browser.execute(async () => {
+    const runtime = (window as unknown as { __gripreadFlush?: () => Promise<void> })
+      .__gripreadFlush;
+    if (!runtime) throw new Error("native-test flush hook is missing");
+    await runtime();
+  });
 }
 
 export async function managedAssetPath(bookId: string): Promise<string> {

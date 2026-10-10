@@ -17,7 +17,7 @@ import {
 
 async function mode(value: "单页" | "双页" | "滚动") {
   await showReaderControls();
-  await browser.$('button[aria-label="设置"]').click();
+  await browser.$('button[aria-label="界面"]').click();
   await browser.$(`button=${value}`).click();
   await browser.keys("Escape");
   const expected = { 单页: "single", 双页: "double", 滚动: "scroll" }[value];
@@ -223,7 +223,7 @@ describe("native reading modes", () => {
     await mode("双页");
     for (const effect of ["仿真", "滑动", "淡入", "无"]) {
       await showReaderControls();
-      await browser.$('button[aria-label="设置"]').click();
+      await browser.$('button[aria-label="界面"]').click();
       await browser.$(`button=${effect}`).click();
       await browser.keys("Escape");
       const before = await viewport();

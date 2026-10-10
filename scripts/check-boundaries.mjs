@@ -56,7 +56,11 @@ export function checkBoundaries(root) {
         /^(src\/(components|context|application)|react(?:\/|$)|@tauri-apps)/.test(local)
       )
         errors.push(`${path}: reading logic cannot depend on presentation or native APIs`);
-      if (/^src\/(components|context|App)/.test(path) && /^src\/(data|fixtures|test)/.test(local))
+      if (
+        /^src\/(components|context|App)/.test(path) &&
+        !/\.test\.[cm]?[jt]sx?$/.test(path) &&
+        /^src\/(data|fixtures|test)/.test(local)
+      )
         errors.push(`${path}: production pages cannot import test or mock data`);
     }
   }

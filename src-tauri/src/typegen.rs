@@ -35,12 +35,16 @@ const IPC_TYPES: &[&str] = &[
     "TxtDecodeTask",
     "TxtDecodeStatus",
     "TocEntry",
-    "TxtTocRuleMode",
     "TxtTocRule",
-    "TxtTocRulePreview",
-    "GetTocRuleRequest",
-    "SaveTocRuleRequest",
-    "PreviewTocRuleRequest",
+    "BookTocSettings",
+    "TocListing",
+    "SaveBookTocSettingsRequest",
+    "SaveTxtTocRuleRequest",
+    "TxtTocRuleIdRequest",
+    "OrderTxtTocRulesRequest",
+    "ImportTxtTocRulesRequest",
+    "TestTxtTocRuleRequest",
+    "BookInfo",
     "Bookmark",
     "BookmarkRequest",
     "BookmarkIdRequest",
@@ -114,12 +118,16 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<TxtDecodeTask>(&config)?;
     export_all::<TxtDecodeStatus>(&config)?;
     export_all::<TocEntry>(&config)?;
-    export_all::<TxtTocRuleMode>(&config)?;
     export_all::<TxtTocRule>(&config)?;
-    export_all::<TxtTocRulePreview>(&config)?;
-    export_all::<GetTocRuleRequest>(&config)?;
-    export_all::<SaveTocRuleRequest>(&config)?;
-    export_all::<PreviewTocRuleRequest>(&config)?;
+    export_all::<BookTocSettings>(&config)?;
+    export_all::<TocListing>(&config)?;
+    export_all::<SaveBookTocSettingsRequest>(&config)?;
+    export_all::<SaveTxtTocRuleRequest>(&config)?;
+    export_all::<TxtTocRuleIdRequest>(&config)?;
+    export_all::<OrderTxtTocRulesRequest>(&config)?;
+    export_all::<ImportTxtTocRulesRequest>(&config)?;
+    export_all::<TestTxtTocRuleRequest>(&config)?;
+    export_all::<BookInfo>(&config)?;
     export_all::<Bookmark>(&config)?;
     export_all::<BookmarkRequest>(&config)?;
     export_all::<BookmarkIdRequest>(&config)?;

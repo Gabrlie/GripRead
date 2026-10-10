@@ -7,25 +7,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/dialog";
-import { Icon } from "../../ui/Icon";
-import { PanelStatus, type PanelStatusProps } from "./PanelShell";
 
 interface SettingsPanelProps {
   preferences: ReaderPreferences | null;
   onChange: (patch: Partial<ReaderPreferences>) => void;
   onClose: () => void;
-  status: PanelStatusProps;
 }
 
-const PAPER_TONES = [
-  { tone: "warm-tea", label: "柔雅暖茶", color: "#f6f2e9" },
-  { tone: "bone-white", label: "羊脂白", color: "#faf8f5" },
-  { tone: "xuan-paper", label: "宣纸微黄", color: "#f3ece0" },
-  { tone: "jade-green", label: "墨绿温润", color: "#e7ebe4" },
-] as const;
-
-/** Theme and typography controls. Changes preview immediately and save after a pause. */
-export function SettingsPanel({ preferences, onChange, onClose, status }: SettingsPanelProps) {
+/** Reading mode, page animation, and typography. Changes preview immediately and save after a pause. */
+export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelProps) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -33,12 +23,11 @@ export function SettingsPanel({ preferences, onChange, onClose, status }: Settin
         style={{ maxHeight: "calc(100dvh - 8rem)" }}
       >
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-sm">排版与纸张微调</DialogTitle>
+          <DialogTitle className="font-title-editorial text-sm">界面</DialogTitle>
           <DialogDescription className="sr-only">
             调整排版会保留当前阅读位置。TXT 目录、书签和搜索均绑定当前正文版本。
           </DialogDescription>
         </DialogHeader>
-        <PanelStatus {...status} />
         {preferences && (
           <div className="space-y-4 text-xs">
             <div className="space-y-2">
@@ -75,22 +64,6 @@ export function SettingsPanel({ preferences, onChange, onClose, status }: Settin
                     onClick={() => onChange({ pageTurnEffect })}
                   >
                     {{ instant: "无", curl: "仿真", slide: "滑动", fade: "淡入" }[pageTurnEffect]}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <span className="text-secondary font-medium">界面主题</span>
-              <div className="grid grid-cols-3 gap-2">
-                {(["system", "light", "dark"] as const).map((theme) => (
-                  <Button
-                    key={theme}
-                    variant="outline"
-                    size="sm"
-                    aria-pressed={preferences.theme === theme}
-                    onClick={() => onChange({ theme })}
-                  >
-                    {{ system: "跟随系统", light: "日间", dark: "夜间" }[theme]}
                   </Button>
                 ))}
               </div>
@@ -137,22 +110,6 @@ export function SettingsPanel({ preferences, onChange, onClose, status }: Settin
                   </Button>
                 ))}
               </div>
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              {PAPER_TONES.map(({ tone, label, color }) => (
-                <button
-                  key={tone}
-                  aria-label={label}
-                  aria-pressed={preferences.paperTone === tone}
-                  onClick={() => onChange({ paperTone: tone })}
-                  className={`h-8 rounded-lg border border-black/10 flex items-center justify-center ${preferences.paperTone === tone ? "ring-2 ring-primary" : ""}`}
-                  style={{ background: color }}
-                >
-                  {preferences.paperTone === tone && (
-                    <Icon name="check" size={14} className="text-primary" />
-                  )}
-                </button>
-              ))}
             </div>
             <div className="border-t border-surface-variant/30 pt-3 space-y-2">
               <span className="text-xs text-secondary">字体</span>

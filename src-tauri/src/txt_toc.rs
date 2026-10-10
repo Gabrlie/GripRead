@@ -1,0 +1,610 @@
+//! TXT chapter detection following Legado 3.26.7 (`model/localBook/TextFile.kt`
+//! and `LocalBook.kt`): a table of regex rules, automatic rule selection on a
+//! sample, a preface chapter whose text becomes the introduction, volumes as
+//! headings without body text, size-based splitting when no rule matches, and
+//! title/author parsing from file names. Locators use UTF-16 offsets in the
+//! normalized LF text, like every other reader position.
+
+use fancy_regex::Regex;
+use regex::Regex as PlainRegex;
+use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
+use crate::error::{AppError, ErrorCode};
+use crate::m1_txt::make_toc_locator;
+use crate::models::TocEntry;
+
+/// Legado's built-in rules, copied from `assets/defaultData/txtTocRule.json`.
+const DEFAULT_RULES_JSON: &str = include_str!("legado_txt_toc_rules.json");
+/// Text sampled to choose a rule automatically (Legado reads 512000 bytes).
+const SAMPLE_BYTES: usize = 512_000;
+/// Matches closer than this to the previous counted match do not add score.
+const SCORE_GAP_CHARS: usize = 1000;
+/// Size of a chapter when no rule applies (Legado `maxLengthWithNoToc`).
+const SIZE_SPLIT_BYTES: usize = 10 * 1024;
+/// Size above which a detected chapter may be split (Legado `maxLengthWithToc`).
+const LONG_CHAPTER_BYTES: usize = 100 * 1024;
+/// Size-split blocks, used only for generated titles (Legado `bufferSize`).
+const BLOCK_BYTES: usize = 512_000;
+/// A trailing size-split piece this small joins the previous one.
+const TAIL_BYTES: usize = 100;
+const INTRO_CHARS: usize = 500;
+const MAX_TITLE_CHARS: usize = 120;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DefaultRule {
+    pub id: String,
+    pub name: String,
+    pub pattern: String,
+    pub example: String,
+    pub serial: i64,
+    pub enabled: bool,
+}
+
+pub fn default_rules() -> Vec<DefaultRule> {
+    serde_json::from_str(DEFAULT_RULES_JSON).expect("embedded Legado TOC rules are valid JSON")
+}
+
+/// One rule as used by a build. An empty pattern means size splitting.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleSpec {
+    pub id: String,
+    pub name: String,
+    pub pattern: String,
+}
+
+/// Everything that determines a book's TOC; its JSON is the cache identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TocBuildRule {
+    /// Choose among `rules` by score instead of using the only entry.
+    pub automatic: bool,
+    pub rules: Vec<RuleSpec>,
+    pub split_long_chapters: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TocBuild {
+    pub entries: Vec<TocEntry>,
+    /// The rule that produced the entries; `None` for size splitting.
+    pub rule_id: Option<String>,
+    pub rule_name: String,
+    /// Text before the first heading, shortened, when it is not blank.
+    pub intro: Option<String>,
+}
+
+/// Compiles a rule like Java's `Pattern.MULTILINE`.
+pub fn compile_rule(pattern: &str) -> Result<Regex, AppError> {
+    Regex::new(&format!("(?m){pattern}"))
+        .map_err(|error| AppError::invalid_argument(format!("invalid TOC rule pattern: {error}")))
+}
+
+/// Matches of `pattern` in `sample`, for testing a rule while editing it.
+pub fn test_rule(pattern: &str, sample: &str) -> Result<Vec<String>, AppError> {
+    let regex = compile_rule(pattern)?;
+    let mut titles = Vec::new();
+    for found in regex.find_iter(sample).take(50) {
+        let found = found.map_err(regex_runtime_error)?;
+        titles.push(clean_title(found.as_str()));
+    }
+    Ok(titles)
+}
+
+fn regex_runtime_error(error: fancy_regex::Error) -> AppError {
+    AppError::new(
+        ErrorCode::InvalidArgument,
+        format!("TOC rule could not be applied: {error}"),
+    )
+}
+
+/// Legado `getTocRule`: the enabled rule with the most well-separated matches
+/// in the sample wins; ties go to the earlier rule. `None` means no rule
+/// matched at all and the book is split by size.
+pub fn choose_rule<'a>(text: &str, rules: &'a [RuleSpec]) -> Option<&'a RuleSpec> {
+    let sample = format!("\n{}", &text[..floor_boundary(text, SAMPLE_BYTES)]);
+    let sample = sample.as_str();
+    let mut best: Option<&RuleSpec> = None;
+    let mut best_score = 1;
+    // Reverse order with `>=` makes the earliest of equally scored rules win.
+    for rule in rules.iter().rev() {
+        if rule.pattern.is_empty() {
+            continue;
+        }
+        let Ok(regex) = compile_rule(&rule.pattern) else {
+            continue;
+        };
+        let mut score = 0;
+        let mut last_end: Option<usize> = None;
+        // Character positions advance with the matches, keeping scoring linear.
+        let (mut cursor_byte, mut cursor_chars) = (0, 0);
+        let mut chars_at = |byte: usize| {
+            cursor_chars += sample[cursor_byte..byte].chars().count();
+            cursor_byte = byte;
+            cursor_chars
+        };
+        for found in regex.find_iter(sample) {
+            let Ok(found) = found else { break };
+            let start = chars_at(found.start());
+            if last_end.map_or(true, |end| start > end + SCORE_GAP_CHARS) {
+                score += 1;
+                last_end = Some(chars_at(found.end()));
+            }
+        }
+        if score >= best_score {
+            best_score = score;
+            best = Some(rule);
+        }
+    }
+    best
+}
+
+/// Builds the TOC for normalized text.
+pub fn build_toc(
+    text: &str,
+    book_id: &str,
+    content_version: &str,
+    rule: &TocBuildRule,
+) -> Result<TocBuild, AppError> {
+    let chosen = if rule.automatic {
+        choose_rule(text, &rule.rules)
+    } else {
+        rule.rules.first().filter(|rule| !rule.pattern.is_empty())
+    };
+    let mut builder = Builder::new(text, book_id, content_version);
+    let mut intro = None;
+    match chosen {
+        Some(spec) => {
+            let regex = compile_rule(&spec.pattern)?;
+            let mut headings = Vec::new();
+            // Rules that require whitespace before a heading would miss one on
+            // the first line, so the text is searched as if a line ended first.
+            let padded = format!("\n{text}");
+            for found in regex.find_iter(&padded) {
+                let found = found.map_err(regex_runtime_error)?;
+                let title = clean_title(found.as_str());
+                if found.start() == found.end() {
+                    continue;
+                }
+                let start = floor_boundary(text, found.start().saturating_sub(1));
+                headings.push((start, found.end() - 1, title));
+            }
+            if let Some(&(first, _, _)) = headings.first() {
+                let preface = &text[..first];
+                if !preface.trim().is_empty() {
+                    builder.push(
+                        0,
+                        first,
+                        "前言".to_string(),
+                        false,
+                        rule.split_long_chapters,
+                    );
+                    intro = Some(shorten(preface.trim(), INTRO_CHARS));
+                }
+            }
+            for (index, (start, end, title)) in headings.iter().enumerate() {
+                let next = headings
+                    .get(index + 1)
+                    .map_or(text.len(), |heading| heading.0);
+                // Legado: a heading without body text before the next one is a volume.
+                let volume = index + 1 < headings.len() && text[*end..next].trim().is_empty();
+                let title = if title.is_empty() {
+                    "无标题章节".to_string()
+                } else {
+                    title.clone()
+                };
+                builder.push(
+                    *start,
+                    next,
+                    title,
+                    volume,
+                    rule.split_long_chapters && !volume,
+                );
+            }
+            if headings.is_empty() {
+                builder.split_by_size(0, text.len(), None);
+            }
+        }
+        None => builder.split_by_size(0, text.len(), None),
+    }
+    Ok(TocBuild {
+        entries: builder.entries,
+        rule_id: chosen.map(|rule| rule.id.clone()),
+        rule_name: chosen.map_or_else(|| "按字数分章".to_string(), |rule| rule.name.clone()),
+        intro,
+    })
+}
+
+struct Builder<'a> {
+    text: &'a str,
+    book_id: &'a str,
+    content_version: &'a str,
+    entries: Vec<TocEntry>,
+    /// UTF-16 offset of `cursor_byte`, advanced monotonically.
+    cursor_byte: usize,
+    cursor_units: u64,
+}
+
+impl<'a> Builder<'a> {
+    fn new(text: &'a str, book_id: &'a str, content_version: &'a str) -> Self {
+        Self {
+            text,
+            book_id,
+            content_version,
+            entries: Vec::new(),
+            cursor_byte: 0,
+            cursor_units: 0,
+        }
+    }
+
+    fn units_at(&mut self, byte: usize) -> u64 {
+        debug_assert!(byte >= self.cursor_byte, "TOC entries are built in order");
+        self.cursor_units += self.text[self.cursor_byte..byte].encode_utf16().count() as u64;
+        self.cursor_byte = byte;
+        self.cursor_units
+    }
+
+    fn push(&mut self, start: usize, end: usize, title: String, volume: bool, split: bool) {
+        if split && end - start > LONG_CHAPTER_BYTES {
+            self.split_by_size(start, end, Some(&title));
+            return;
+        }
+        let units = self.units_at(start);
+        let length = self.text[start..end].encode_utf16().count() as u64;
+        self.entries.push(TocEntry {
+            ordinal: self.entries.len() as u64,
+            title,
+            volume,
+            length,
+            locator: make_toc_locator(self.text, self.book_id, self.content_version, start, units),
+        });
+    }
+
+    /// Legado's rule-less splitter: cut at the first line end after each
+    /// 10 KB step. Generated titles follow Legado's `第N章(n)`, or
+    /// `标题(n)` when re-splitting an over-long chapter.
+    fn split_by_size(&mut self, start: usize, end: usize, title: Option<&str>) {
+        let mut cuts = vec![start];
+        let mut position = start;
+        while end - position > SIZE_SPLIT_BYTES {
+            let target = floor_boundary(self.text, position + SIZE_SPLIT_BYTES);
+            let cut = self.text[target..end]
+                .find('\n')
+                .map_or(end, |offset| target + offset + 1);
+            if cut >= end || end - cut <= TAIL_BYTES {
+                break;
+            }
+            cuts.push(cut);
+            position = cut;
+        }
+        for (index, &piece_start) in cuts.iter().enumerate() {
+            let piece_end = cuts.get(index + 1).copied().unwrap_or(end);
+            let name = match title {
+                Some(title) => format!("{title}({})", index + 1),
+                None => {
+                    let block = piece_start / BLOCK_BYTES + 1;
+                    let within = cuts[..=index]
+                        .iter()
+                        .filter(|&&cut| cut / BLOCK_BYTES + 1 == block)
+                        .count();
+                    format!("第{block}章({within})")
+                }
+            };
+            self.push(piece_start, piece_end, name, false, false);
+        }
+    }
+}
+
+/// Collapses a matched heading to one trimmed line.
+fn clean_title(raw: &str) -> String {
+    let line = raw
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    let title = line.trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}');
+    title.chars().take(MAX_TITLE_CHARS).collect()
+}
+
+fn shorten(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+fn floor_boundary(text: &str, byte: usize) -> usize {
+    let mut byte = byte.min(text.len());
+    while !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    byte
+}
+
+/// A book name and author parsed from a file name without its extension
+/// (Legado `LocalBook.analyzeNameAuthor`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameAuthor {
+    pub name: String,
+    pub author: Option<String>,
+}
+
+pub fn parse_name_author(file_stem: &str) -> NameAuthor {
+    static PATTERNS: OnceLock<Vec<PlainRegex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        [
+            r"(.*?)《([^《》]+)》.*?作者：(.*)",
+            r"(.*?)《([^《》]+)》(.*)",
+            r"(^)(.+) 作者：(.+)$",
+            r"(^)(.+) by (.+)$",
+        ]
+        .iter()
+        .map(|pattern| PlainRegex::new(pattern).expect("built-in name patterns are valid"))
+        .collect()
+    });
+    let stem = file_stem.trim();
+    for pattern in patterns {
+        if let Some(captures) = pattern.captures(stem) {
+            let name = captures[2].trim().to_string();
+            let author = format_author(&format!("{}{}", &captures[1], &captures[3]));
+            if !name.is_empty() {
+                return NameAuthor { name, author };
+            }
+        }
+    }
+    let name = format_name(stem);
+    let author = if name.is_empty() || name == stem {
+        None
+    } else {
+        format_author(&stem.replacen(&name, "", 1))
+    };
+    NameAuthor {
+        name: if name.is_empty() {
+            stem.to_string()
+        } else {
+            name
+        },
+        author,
+    }
+}
+
+/// `BookHelp.formatBookName` with Legado's `nameRegex`.
+fn format_name(name: &str) -> String {
+    static NAME: OnceLock<PlainRegex> = OnceLock::new();
+    NAME.get_or_init(|| PlainRegex::new(r"\s+作\s*者.*|\s+\S+\s+著").expect("valid"))
+        .replace_all(name, "")
+        .trim()
+        .to_string()
+}
+
+/// `BookHelp.formatBookAuthor` with Legado's `authorRegex`.
+fn format_author(author: &str) -> Option<String> {
+    static AUTHOR: OnceLock<PlainRegex> = OnceLock::new();
+    let author = AUTHOR
+        .get_or_init(|| PlainRegex::new(r"^\s*作\s*者[:：\s]+|\s+著").expect("valid"))
+        .replace_all(author, "")
+        .trim()
+        .to_string();
+    (!author.is_empty()).then_some(author)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auto() -> TocBuildRule {
+        TocBuildRule {
+            automatic: true,
+            rules: default_rules()
+                .into_iter()
+                .filter(|rule| rule.enabled)
+                .map(|rule| RuleSpec {
+                    id: rule.id,
+                    name: rule.name,
+                    pattern: rule.pattern,
+                })
+                .collect(),
+            split_long_chapters: false,
+        }
+    }
+
+    fn titles(build: &TocBuild) -> Vec<&str> {
+        build
+            .entries
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn every_default_rule_compiles_and_matches_its_example() {
+        let rules = default_rules();
+        assert_eq!(rules.len(), 26);
+        for rule in rules
+            .iter()
+            .filter(|rule| !rule.pattern.is_empty() && rule.id != "legado-25")
+        {
+            let sample = format!("\n{}\n", rule.example);
+            assert!(
+                !test_rule(&rule.pattern, &sample).unwrap().is_empty(),
+                "{} does not match its example",
+                rule.name
+            );
+        }
+    }
+
+    #[test]
+    fn preface_becomes_intro_and_volumes_have_no_body() {
+        let text = "这是一本书的简介。\n\n第一卷 风起\n第一章 开始\n内容一\n第二章 继续\n内容二\n第二卷 云涌\n第三章 结束\n内容三\n";
+        let build = build_toc(text, "b", "v", &auto()).unwrap();
+        assert_eq!(
+            titles(&build),
+            [
+                "前言",
+                "第一卷 风起",
+                "第一章 开始",
+                "第二章 继续",
+                "第二卷 云涌",
+                "第三章 结束"
+            ]
+        );
+        let volumes: Vec<bool> = build.entries.iter().map(|entry| entry.volume).collect();
+        assert_eq!(volumes, [false, true, false, false, true, false]);
+        assert_eq!(build.intro.as_deref(), Some("这是一本书的简介。"));
+        assert_eq!(build.rule_id.as_deref(), Some("legado-1"));
+        let starts: Vec<u64> = build
+            .entries
+            .iter()
+            .map(|entry| entry.locator.offset)
+            .collect();
+        assert_eq!(
+            starts[1],
+            "这是一本书的简介。\n\n".encode_utf16().count() as u64
+        );
+        assert!(starts.windows(2).all(|pair| pair[0] < pair[1]));
+        let total: u64 = build.entries.iter().map(|entry| entry.length).sum();
+        assert_eq!(total, text.encode_utf16().count() as u64);
+    }
+
+    #[test]
+    fn english_and_numbered_headings_are_detected() {
+        let text = "Chapter 1 Begin\nText.\nChapter 2 Next\nMore text.\n";
+        assert_eq!(
+            titles(&build_toc(text, "b", "v", &auto()).unwrap()),
+            ["Chapter 1 Begin", "Chapter 2 Next"]
+        );
+        let text = "1、开端\n内容\n2、发展\n内容\n";
+        assert_eq!(
+            titles(&build_toc(text, "b", "v", &auto()).unwrap()),
+            ["1、开端", "2、发展"]
+        );
+    }
+
+    #[test]
+    fn rule_less_text_is_split_by_size_at_line_ends() {
+        let line = "没有任何章节标题的一行文字。\n";
+        let text = line.repeat(2000);
+        let build = build_toc(&text, "b", "v", &auto()).unwrap();
+        assert!(build.rule_id.is_none());
+        assert!(build.entries.len() > 3);
+        assert_eq!(build.entries[0].title, "第1章(1)");
+        assert_eq!(build.entries[1].title, "第1章(2)");
+        for entry in &build.entries[1..] {
+            let byte = text
+                .encode_utf16()
+                .take(entry.locator.offset as usize)
+                .count();
+            assert!(byte > 0);
+        }
+        let total: u64 = build.entries.iter().map(|entry| entry.length).sum();
+        assert_eq!(total, text.encode_utf16().count() as u64);
+    }
+
+    #[test]
+    fn long_chapters_split_only_when_enabled() {
+        let text = format!(
+            "第一章 长\n{}第二章 短\n短\n",
+            "很长的正文。\n".repeat(12_000)
+        );
+        let mut rule = auto();
+        assert_eq!(build_toc(&text, "b", "v", &rule).unwrap().entries.len(), 2);
+        rule.split_long_chapters = true;
+        let build = build_toc(&text, "b", "v", &rule).unwrap();
+        assert!(build.entries.len() > 3);
+        assert_eq!(build.entries[0].title, "第一章 长(1)");
+        assert_eq!(build.entries.last().unwrap().title, "第二章 短");
+    }
+
+    #[test]
+    fn a_fixed_rule_is_used_without_scoring() {
+        let text = "【第一章】甲\n内容\n第二章 乙\n内容\n";
+        let rule = TocBuildRule {
+            automatic: false,
+            rules: vec![RuleSpec {
+                id: "x".into(),
+                name: "x".into(),
+                pattern: "^第.+章.*$".into(),
+            }],
+            split_long_chapters: false,
+        };
+        let build = build_toc(text, "b", "v", &rule).unwrap();
+        assert_eq!(titles(&build), ["前言", "第二章 乙"]);
+        assert!(compile_rule("(").is_err());
+    }
+
+    #[test]
+    fn automatic_choice_prefers_well_separated_matches() {
+        let body = "　　正文内容。".repeat(200);
+        let text: String = (1..=5).map(|n| format!("第{n}章 标题\n{body}\n")).collect();
+        let rules = auto();
+        let chosen = choose_rule(&text, &rules.rules).unwrap();
+        assert_eq!(chosen.id, "legado-1");
+    }
+
+    #[test]
+    fn parses_name_and_author_from_file_names() {
+        let cases = [
+            ("《斗破苍穹》作者：天蚕土豆", "斗破苍穹", Some("天蚕土豆")),
+            ("《诡秘之主》爱潜水的乌贼", "诡秘之主", Some("爱潜水的乌贼")),
+            ("凡人修仙传 作者：忘语", "凡人修仙传", Some("忘语")),
+            ("Dune by Frank Herbert", "Dune", Some("Frank Herbert")),
+            (
+                "雪中悍刀行  烽火戏诸侯 著",
+                "雪中悍刀行",
+                Some("烽火戏诸侯"),
+            ),
+            ("三体", "三体", None),
+        ];
+        for (stem, name, author) in cases {
+            let parsed = parse_name_author(stem);
+            assert_eq!(parsed.name, name, "{stem}");
+            assert_eq!(parsed.author.as_deref(), author, "{stem}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+
+    /// `cargo test --lib txt_toc::timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn directory_timing() {
+        let mut text = String::new();
+        let mut chapter = 1;
+        while text.len() < 6 * 1024 * 1024 {
+            text.push_str(&format!("第{chapter}章 风起云涌\n"));
+            for _ in 0..40 {
+                text.push_str(
+                    "　　少年站在山门之前，望着云海翻腾，心中暗暗发誓，此生定要踏上那九天之巅。\n",
+                );
+            }
+            chapter += 1;
+        }
+        let rules: Vec<RuleSpec> = default_rules()
+            .into_iter()
+            .filter(|rule| rule.enabled)
+            .map(|rule| RuleSpec {
+                id: rule.id,
+                name: rule.name,
+                pattern: rule.pattern,
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let chosen = choose_rule(&text, &rules).unwrap().clone();
+        eprintln!("choose {:?} -> {}", started.elapsed(), chosen.name);
+        for rule in &rules {
+            let started = std::time::Instant::now();
+            let single = std::slice::from_ref(rule);
+            let _ = choose_rule(&text, single);
+            eprintln!("  score {:>10?} {}", started.elapsed(), rule.name);
+        }
+        let fixed = TocBuildRule {
+            automatic: false,
+            rules: vec![chosen],
+            split_long_chapters: false,
+        };
+        let started = std::time::Instant::now();
+        let build = build_toc(&text, "b", "v", &fixed).unwrap();
+        eprintln!(
+            "build {:?} ({} entries)",
+            started.elapsed(),
+            build.entries.len()
+        );
+    }
+}

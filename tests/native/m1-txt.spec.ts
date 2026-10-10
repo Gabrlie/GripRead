@@ -22,7 +22,7 @@ import type {
   ContentWindow,
   ImportResult,
   SearchResponse,
-  TocEntry,
+  TocListing,
   LibraryBook,
   TxtEncodingInfo,
 } from "../../src/types/generated";
@@ -69,7 +69,9 @@ describe("GripRead native M1 TXT tools", () => {
 
   it("persists TOC and de-duplicates bookmarks at one locator", async () => {
     const source = await importFixture("chapters.txt");
-    const toc = await invoke<TocEntry[]>("list_toc", { request: { bookId: source.book.id } });
+    const { entries: toc } = await invoke<TocListing>("list_toc", {
+      request: { bookId: source.book.id },
+    });
     expect(toc.length).toBeGreaterThan(0);
     const window = await invoke<ContentWindow>("read_content_window", {
       request: {
@@ -173,13 +175,18 @@ describe("GripRead native M1 TXT tools", () => {
     await openBook(source.book.id);
     await showReaderControls();
     await browser.$('button[aria-label="目录"]').click();
-    await browser.$('[role="dialog"]').waitForDisplayed();
-    const chapter = await (await browser.$('[role="dialog"]')).$("button*=第一章");
+    await browser.$('[role="dialog"][aria-label="目录"]').waitForDisplayed();
+    const chapter = await (
+      await browser.$('[role="dialog"][aria-label="目录"]')
+    ).$("button*=第一章");
     await chapter.waitForDisplayed();
     await chapter.click();
     await browser.waitUntil(async () => (await readPage()).start > 0);
+    await showReaderControls();
     await browser.$('button[aria-label="更多"]').click();
-    await browser.$("button*=添加当前位置书签").click();
+    await browser.$('[role="menuitem"]*=添加书签').click();
+    await browser.$('button[aria-label="目录"]').click();
+    await browser.$('[role="tab"]*=书签').click();
     await browser.waitUntil(
       async () =>
         (await browser.execute(
@@ -187,7 +194,8 @@ describe("GripRead native M1 TXT tools", () => {
         )) === 2,
     );
     await browser.keys("Escape");
-    await browser.$('button[aria-label="搜索正文"]').click();
+    await showReaderControls();
+    await browser.$('button[aria-label="搜索"]').click();
     const input = await browser.$('input[aria-label="搜索关键词"]');
     await input.setValue("结尾");
     await browser.keys("Enter");
@@ -204,11 +212,12 @@ describe("GripRead native M1 TXT tools", () => {
     );
     expect(await browser.$('[data-testid="reader-highlight"]').getText()).toBe("结尾");
 
-    await browser.$('button[aria-label="搜索正文"]').click();
+    await showReaderControls();
+    await browser.$('button[aria-label="搜索"]').click();
     const searchInput = await browser.$('input[aria-label="搜索关键词"]');
     await searchInput.setValue("明确不存在的关键词");
     await browser.keys("Enter");
-    await browser.$("p*=没有找到匹配内容").waitForDisplayed();
+    await browser.$("p*=没有找到").waitForDisplayed();
 
     const managedPath = await managedAssetPath(source.book.id);
     const missingPath = `${managedPath}.native-search-missing`;

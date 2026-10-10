@@ -28,6 +28,7 @@ const library = (): LibraryService => ({
   getTxtDecodeStatus: vi.fn(),
   cancelTxtDecode: vi.fn(async () => ({ requested: true })),
   onTxtDecodeProgress: vi.fn(async () => () => {}),
+  getBookInfo: vi.fn(),
   getTxtEncoding: vi.fn(),
   pickAndReassociateTxt: vi.fn(async () => null),
   reassociateTxtSource: vi.fn(),

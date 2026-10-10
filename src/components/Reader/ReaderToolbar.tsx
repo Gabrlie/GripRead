@@ -2,6 +2,12 @@ import { useState } from "react";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Slider } from "../ui/slider";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import type { ReaderPanel } from "./use-reader-panel";
 
 const hiddenClass = (visible: boolean, hidden: string) =>
@@ -10,12 +16,17 @@ const hiddenClass = (visible: boolean, hidden: string) =>
 interface ReaderTopBarProps {
   visible: boolean;
   title: string;
+  /** The current chapter. */
   subtitle: string;
   closing: boolean;
   onBack: () => void;
   onOpenPanel: (panel: ReaderPanel) => void;
+  canBookmark: boolean;
+  onAddBookmark: () => void;
+  onRefreshDirectory: () => void;
 }
 
+/** Legado's read menu title bar: book and chapter, TXT tools, and More. */
 export function ReaderTopBar({
   visible,
   title,
@@ -23,24 +34,28 @@ export function ReaderTopBar({
   closing,
   onBack,
   onOpenPanel,
+  canBookmark,
+  onAddBookmark,
+  onRefreshDirectory,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
       aria-label={label}
+      title={label}
       variant="ghost"
       size="icon"
-      className="h-8 w-8 text-secondary rounded-full"
+      className="h-9 w-9 text-secondary rounded-full"
       onClick={() => onOpenPanel(panel)}
     >
-      <Icon name={icon} size={18} />
+      <Icon name={icon} size={19} />
     </Button>
   );
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-20 bg-surface/90 backdrop-blur-xl border-b border-surface-variant/30 pt-safe ${hiddenClass(visible, "-translate-y-full")}`}
+      className={`fixed top-0 left-0 right-0 z-20 bg-surface border-b border-surface-variant/30 pt-safe ${hiddenClass(visible, "-translate-y-full")}`}
       inert={!visible}
     >
-      <div className="h-14 px-4 sm:px-6 flex items-center justify-between max-w-4xl mx-auto gap-2">
+      <div className="h-14 px-2 sm:px-4 flex items-center max-w-4xl mx-auto gap-1">
         <Button
           data-testid="reader-close"
           aria-label="返回书架"
@@ -48,19 +63,40 @@ export function ReaderTopBar({
           size="icon"
           disabled={closing}
           onClick={onBack}
-          className="h-9 w-9 text-secondary rounded-full"
+          className="h-9 w-9 text-secondary rounded-full shrink-0"
         >
           <Icon name="arrow_back" size={20} />
         </Button>
-        <div className="flex-1 min-w-0 text-center">
-          <h1 className="font-title-editorial truncate text-sm font-semibold">{title}</h1>
-          <p className="text-[10px] text-secondary mt-0.5 truncate">{subtitle}</p>
+        <div className="flex-1 min-w-0 px-1">
+          <h1 className="font-title-editorial truncate text-[15px] font-semibold leading-tight">
+            {title}
+          </h1>
+          <p className="text-[11px] text-secondary truncate leading-tight mt-0.5">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-0.5">
-          {action("directory", "目录规则", "import_contacts")}
-          {action("encoding", "编码格式", "tune")}
-          {action("more", "更多", "more_horiz")}
-        </div>
+        {action("rules", "TXT目录规则", "toc_rule")}
+        {action("encoding", "设置编码", "translate")}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="更多"
+            className="h-9 w-9 rounded-full flex items-center justify-center text-secondary hover:bg-surface-container/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <Icon name="more_vert" size={19} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem disabled={!canBookmark} onClick={onAddBookmark}>
+              <Icon name="bookmark_add" size={15} />
+              添加书签
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onRefreshDirectory}>
+              <Icon name="refresh" size={15} />
+              更新目录
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onOpenPanel("style")}>
+              <Icon name="swap_vert" size={15} />
+              翻页动画
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );
@@ -68,49 +104,54 @@ export function ReaderTopBar({
 
 interface ReaderBottomBarProps {
   visible: boolean;
-  /** Labels and disabled states of the paired navigation buttons. */
-  previous: { label: string; disabled: boolean; onClick: () => void };
-  next: { label: string; disabled: boolean; onClick: () => void };
+  previous: { disabled: boolean; onClick: () => void };
+  next: { disabled: boolean; onClick: () => void };
+  /** Position within the current chapter, 0–100. */
   progress: number;
-  progressLabel: string;
   progressDisabled: boolean;
   onProgressDraft: () => void;
   onProgressCommit: (percent: number) => void;
   onOpenPanel: (panel: ReaderPanel) => void;
+  night: boolean;
+  onToggleNight: () => void;
 }
 
+/**
+ * Legado's bottom menu: previous chapter, in-chapter progress, next chapter,
+ * then search, automatic page turning, contents, 界面, and day/night.
+ */
 export function ReaderBottomBar({
   visible,
   previous,
   next,
   progress,
-  progressLabel,
   progressDisabled,
   onProgressDraft,
   onProgressCommit,
   onOpenPanel,
+  night,
+  onToggleNight,
 }: ReaderBottomBarProps) {
   const [draft, setDraft] = useState<number | null>(null);
-  const tool = (panel: ReaderPanel, label: string, text: string, icon: string) => (
+  const tool = (label: string, icon: string, onClick: () => void) => (
     <Button
       variant="ghost"
       aria-label={label}
-      className="flex flex-col items-center text-secondary hover:text-primary h-auto py-1 px-3 text-xs gap-1"
-      onClick={() => onOpenPanel(panel)}
+      className="flex flex-col items-center text-secondary hover:text-primary h-auto py-1.5 px-2 text-[11px] gap-1 min-w-14"
+      onClick={onClick}
     >
       <Icon name={icon} size={20} />
-      {text}
+      {label}
     </Button>
   );
-  const navClass =
-    "text-xs text-secondary hover:text-on-surface h-7 px-2 bg-surface-container shrink-0";
+  const navClass = "text-xs text-secondary hover:text-on-surface h-8 px-2.5 shrink-0";
   return (
     <div
-      className={`fixed bottom-0 left-0 right-0 z-20 bg-surface/90 backdrop-blur-xl pb-safe border-t border-surface-variant/30 ${hiddenClass(visible, "translate-y-full")}`}
+      className={`fixed bottom-0 left-0 right-0 z-20 bg-surface pb-safe border-t border-surface-variant/30 ${hiddenClass(visible, "translate-y-full")}`}
       inert={!visible}
     >
-      <div className="max-w-xl mx-auto px-4 sm:px-6 py-3 space-y-3">
-        <div className="flex items-center gap-3">
+      <div className="max-w-xl mx-auto px-3 sm:px-6 pt-2.5 pb-2 space-y-2">
+        <div className="flex items-center gap-2">
           <Button
             data-testid="reader-previous-chapter"
             variant="ghost"
@@ -119,11 +160,11 @@ export function ReaderBottomBar({
             disabled={previous.disabled}
             onClick={previous.onClick}
           >
-            {previous.label}
+            上一章
           </Button>
           <Slider
             data-testid="reader-progress"
-            aria-label={progressLabel}
+            aria-label="章节进度"
             className="flex-1"
             min={0}
             max={100}
@@ -139,9 +180,6 @@ export function ReaderBottomBar({
               onProgressCommit(Array.isArray(value) ? value[0] : value);
             }}
           />
-          <span className="text-[11px] text-secondary tabular-nums w-9 text-right">
-            {draft ?? progress}%
-          </span>
           <Button
             data-testid="reader-next-chapter"
             variant="ghost"
@@ -150,14 +188,15 @@ export function ReaderBottomBar({
             disabled={next.disabled}
             onClick={next.onClick}
           >
-            {next.label}
+            下一章
           </Button>
         </div>
         <div className="flex items-center justify-around">
-          {tool("search", "搜索正文", "搜索", "search")}
-          {tool("automatic", "自动翻页", "自动翻页", "schedule")}
-          {tool("contents", "目录", "目录", "list")}
-          {tool("settings", "设置", "设置", "format_size")}
+          {tool("搜索", "search", () => onOpenPanel("search"))}
+          {tool("自动翻页", "schedule", () => onOpenPanel("automatic"))}
+          {tool("目录", "list", () => onOpenPanel("contents"))}
+          {tool("界面", "format_size", () => onOpenPanel("style"))}
+          {tool(night ? "日间" : "夜间", night ? "light_mode" : "dark_mode", onToggleNight)}
         </div>
       </div>
     </div>

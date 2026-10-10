@@ -14,16 +14,15 @@ import type {
   TxtEncodingInfo,
   TxtEncodingRequest,
   TxtSourceRequest,
-  TocEntry,
+  TocListing,
+  BookInfo,
+  BookTocSettings,
   Bookmark,
   BookmarkRequest,
   BookmarkIdRequest,
   SearchRequest,
   SearchResponse,
-  PreviewTocRuleRequest,
-  SaveTocRuleRequest,
   TxtTocRule,
-  TxtTocRulePreview,
   TxtDecodeStatus,
   TxtDecodeTask,
   TxtEncoding,
@@ -54,6 +53,7 @@ export interface LibraryService {
   getTxtDecodeStatus(operationId: string): Promise<TxtDecodeStatus>;
   cancelTxtDecode(operationId: string): Promise<CancelResult>;
   onTxtDecodeProgress(listener: (status: TxtDecodeStatus) => void): Promise<Unsubscribe>;
+  getBookInfo(bookId: string): Promise<BookInfo>;
 }
 export interface ReaderService {
   readContentWindow(request: ReadContentRequest): Promise<ContentWindow>;
@@ -61,10 +61,18 @@ export interface ReaderService {
   resolveOffset(request: ResolveOffsetRequest): Promise<ReaderLocator>;
   saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
   getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
-  listToc(bookId: string): Promise<TocEntry[]>;
-  getTocRule(bookId: string): Promise<TxtTocRule>;
-  previewTocRule(request: PreviewTocRuleRequest): Promise<TxtTocRulePreview>;
-  saveTocRule(request: SaveTocRuleRequest): Promise<TxtTocRule>;
+  listToc(bookId: string): Promise<TocListing>;
+  /** Chapter rules shared by all books, ordered as automatic detection tries them. */
+  listTxtTocRules(): Promise<TxtTocRule[]>;
+  /** Adds a rule when `id` is empty; otherwise updates it. */
+  saveTxtTocRule(rule: TxtTocRule): Promise<TxtTocRule>;
+  deleteTxtTocRule(id: string): Promise<void>;
+  orderTxtTocRules(ids: string[]): Promise<TxtTocRule[]>;
+  /** Imports a Legado or GripRead rule export; returns the rules added. */
+  importTxtTocRules(json: string): Promise<TxtTocRule[]>;
+  exportTxtTocRules(): Promise<string>;
+  testTxtTocRule(pattern: string, sample: string): Promise<string[]>;
+  saveBookTocSettings(bookId: string, settings: BookTocSettings): Promise<BookTocSettings>;
   listBookmarks(bookId: string): Promise<Bookmark[]>;
   addBookmark(request: BookmarkRequest): Promise<Bookmark>;
   deleteBookmark(request: BookmarkIdRequest): Promise<void>;

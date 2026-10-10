@@ -35,17 +35,21 @@ import type {
   TxtSourceRequest,
   TxtDecodeStatus,
   TxtDecodeTask,
-  TocEntry,
+  TocListing,
+  BookInfo,
+  BookTocSettings,
+  SaveBookTocSettingsRequest,
+  SaveTxtTocRuleRequest,
+  TxtTocRuleIdRequest,
+  OrderTxtTocRulesRequest,
+  ImportTxtTocRulesRequest,
+  TestTxtTocRuleRequest,
   Bookmark,
   BookmarkRequest,
   BookmarkIdRequest,
   SearchRequest,
   SearchResponse,
-  GetTocRuleRequest,
-  PreviewTocRuleRequest,
-  SaveTocRuleRequest,
   TxtTocRule,
-  TxtTocRulePreview,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -192,6 +196,8 @@ export const tauriServices: AppServices = {
       }),
     onTxtDecodeProgress: (listener) =>
       listen<TxtDecodeStatus>("txt-decode-progress", (event) => listener(event.payload)),
+    getBookInfo: (bookId) =>
+      invokeCommand<BookInfo>("get_book_info", { request: { bookId } satisfies BookRequest }),
   },
   reader: {
     readContentWindow: (request: ReadContentRequest) =>
@@ -209,18 +215,33 @@ export const tauriServices: AppServices = {
       invokeCommand<ReaderLocator | null>("get_saved_reader_locator", {
         request: { bookId } satisfies BookRequest,
       }),
-    listToc: (bookId) => invokeCommand<TocEntry[]>("list_toc", { request: { bookId } }),
-    getTocRule: (bookId) =>
-      invokeCommand<TxtTocRule>("get_toc_rule", {
-        request: { bookId } satisfies GetTocRuleRequest,
+    listToc: (bookId) =>
+      invokeCommand<TocListing>("list_toc", { request: { bookId } satisfies BookRequest }),
+    listTxtTocRules: () => invokeCommand<TxtTocRule[]>("list_txt_toc_rules"),
+    saveTxtTocRule: (rule) =>
+      invokeCommand<TxtTocRule>("save_txt_toc_rule", {
+        request: { rule } satisfies SaveTxtTocRuleRequest,
       }),
-    previewTocRule: (request) =>
-      invokeCommand<TxtTocRulePreview>("preview_toc_rule", {
-        request: request satisfies PreviewTocRuleRequest,
+    deleteTxtTocRule: (id) =>
+      invokeCommand<void>("delete_txt_toc_rule", {
+        request: { id } satisfies TxtTocRuleIdRequest,
       }),
-    saveTocRule: (request) =>
-      invokeCommand<TxtTocRule>("save_toc_rule", {
-        request: request satisfies SaveTocRuleRequest,
+    orderTxtTocRules: (ids) =>
+      invokeCommand<TxtTocRule[]>("order_txt_toc_rules", {
+        request: { ids } satisfies OrderTxtTocRulesRequest,
+      }),
+    importTxtTocRules: (json) =>
+      invokeCommand<TxtTocRule[]>("import_txt_toc_rules", {
+        request: { json } satisfies ImportTxtTocRulesRequest,
+      }),
+    exportTxtTocRules: () => invokeCommand<string>("export_txt_toc_rules"),
+    testTxtTocRule: (pattern, sample) =>
+      invokeCommand<string[]>("test_txt_toc_rule", {
+        request: { pattern, sample } satisfies TestTxtTocRuleRequest,
+      }),
+    saveBookTocSettings: (bookId, settings) =>
+      invokeCommand<BookTocSettings>("save_book_toc_settings", {
+        request: { bookId, settings } satisfies SaveBookTocSettingsRequest,
       }),
     listBookmarks: (bookId) => invokeCommand<Bookmark[]>("list_bookmarks", { request: { bookId } }),
     addBookmark: (request) => invokeCommand<Bookmark>("add_bookmark", { request }),

@@ -28,17 +28,12 @@ import { ReaderPageText } from "./ReaderPageText";
 import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
 import { ReaderBottomBar, ReaderTopBar } from "./ReaderToolbar";
-import { PanelShell } from "./panels/PanelShell";
 import { SettingsPanel } from "./panels/SettingsPanel";
-import {
-  AutomaticPanel,
-  ContentsPanel,
-  DirectoryPanel,
-  EncodingPanel,
-  MorePanel,
-  SearchPanel,
-  type ContentsMode,
-} from "./panels/ToolPanels";
+import { ContentsPage } from "./pages/ContentsPage";
+import { SearchPage, SearchResultBar } from "./pages/SearchPage";
+import { TocRuleDialog } from "./dialogs/TocRuleDialog";
+import { EncodingDialog } from "./dialogs/EncodingDialog";
+import { AutomaticDialog } from "./dialogs/AutomaticDialog";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 const noopSubscribe = () => () => {};
@@ -57,15 +52,6 @@ function safeExcerpt(text: string, maxUnits = 160): string {
   }
   return text.slice(0, end);
 }
-
-const PANEL_TEXT: Record<Exclude<ReaderPanel, "settings">, [string, string]> = {
-  contents: ["目录", "按正文位置跳转"],
-  more: ["更多", "书签与阅读进度"],
-  search: ["搜索正文", "在当前 TXT 中查找文字"],
-  encoding: ["编码格式", "只在当前 TXT 内重新解码，不会上传正文"],
-  directory: ["目录规则", "预览识别结果，再应用到本书目录"],
-  automatic: ["自动翻页", "仅在阅读本书期间自动翻页"],
-};
 
 export function ReaderView() {
   const { activeBook, closeReader } = useApp();
@@ -98,32 +84,24 @@ export function ReaderView() {
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
-  // Contents keeps its tab for the current book session only.
-  const [contentsChoice, setContentsChoice] = useState<{
-    bookId: string | undefined;
-    mode: ContentsMode;
-  }>({ bookId: undefined, mode: "auto" });
-  const contentsMode = contentsChoice.bookId === bookId ? contentsChoice.mode : "auto";
-  const setContentsMode = useCallback(
-    (mode: ContentsMode) => setContentsChoice({ bookId, mode }),
-    [bookId],
-  );
+  /** The search result being read, while the result bar is shown. */
+  const [searchIndex, setSearchIndex] = useState<number | null>(null);
+  useEffect(() => setSearchIndex(null), [bookId]);
   const actions = useReaderActions(bookId);
   const { run, fail, sessionEpoch, failedAction, actionError } = actions;
   const search = useReaderSearch(bookId, runtime.services.reader, run);
   const panelRef = useRef<ReaderPanel | null>(null);
-  const directoryPanelOpen = useCallback(() => panelRef.current === "directory", []);
-  const tools = useReaderTools(activeBook, runtime, actions, directoryPanelOpen);
-  const { cancelPreview, flushDirectory } = tools;
+  const tools = useReaderTools(activeBook, runtime, actions);
+  const { flushDirectory } = tools;
   const { cancel: cancelSearch } = search;
   const onPanelClose = useCallback(
     (closed: ReaderPanel) => {
-      if (closed === "directory") cancelPreview();
+      // Results stay for the result bar; only a running search stops.
       if (closed === "search") cancelSearch();
       // Previewed adjustments are written at once when their panel closes.
-      if (closed === "settings") void settingsStore.flush().catch(() => undefined);
+      if (closed === "style") void settingsStore.flush().catch(() => undefined);
     },
-    [cancelPreview, cancelSearch, settingsStore],
+    [cancelSearch, settingsStore],
   );
   const panels = useReaderPanel(onPanelClose);
   const { panel, open: openPanelState, close: closePanel } = panels;
@@ -203,7 +181,7 @@ export function ReaderView() {
     settingsStore,
   ]);
 
-  const { setBookmarks, setEncodingInfo, resetForDecode, reload: reloadTools } = tools;
+  const { setBookmarks, setEncodingInfo, reload: reloadTools } = tools;
   const addBookmark = useCallback(() => {
     const page = state.page;
     if (!bookId || !page || !state.contentWindow) return;
@@ -230,10 +208,10 @@ export function ReaderView() {
   const { clearResults } = search;
   const changeEncoding = useCallback(
     (encoding: TxtEncoding) => {
-      if (!bookId || !controller || tools.ruleOperation.current === "save") return;
+      if (!bookId || !controller || tools.savingSettings()) return;
       const epoch = sessionEpoch.current;
       void pauseAutomatic();
-      resetForDecode();
+      setSearchIndex(null);
       run(async () => {
         clearResults();
         await controller.flush();
@@ -253,12 +231,11 @@ export function ReaderView() {
       controller,
       pauseAutomatic,
       reloadTools,
-      resetForDecode,
       run,
       runtime,
       sessionEpoch,
       setEncodingInfo,
-      tools.ruleOperation,
+      tools,
     ],
   );
 
@@ -289,6 +266,13 @@ export function ReaderView() {
       await reader.flush();
     };
     runtime.readerFlush = flushReader;
+    // Native acceptance seeks by whole-book progress, which the Legado-style
+    // menu does not offer; the hook exists only in native-test builds.
+    if (import.meta.env.MODE === "native-test")
+      Object.assign(window, {
+        __gripreadSeekProgress: (progress: number) => reader.seekProgress(progress),
+        __gripreadFlush: () => reader.flush(),
+      });
     run(() => reader.open(bookId));
     return () => {
       reader.dispose();
@@ -384,6 +368,10 @@ export function ReaderView() {
   const progress =
     page && page.totalLength ? Math.floor((page.startOffset / page.totalLength) * 100) : 0;
   const totalLength = state.contentWindow?.totalLength ?? activeBook.totalLength ?? 0;
+  const night =
+    preferences?.theme === "dark" ||
+    (preferences?.theme === "system" &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   const typeStyle = {
     fontSize: `${preferences?.fontSize ?? 18}px`,
     lineHeight: preferences?.lineHeight ?? 1.8,
@@ -392,19 +380,17 @@ export function ReaderView() {
         ? "system-ui, sans-serif"
         : '"Literata Variable", "Noto Serif SC Variable", serif',
   };
-  const retryAction = failedAction.current
-    ? () => failedAction.current && run(failedAction.current)
-    : null;
-  const status = {
-    actionError,
-    retryAction,
-    toolsLoading: tools.loading,
-    toolsError: tools.error,
-    reloadTools,
-  };
   const seekTo = (locator: Bookmark["locator"]) => {
     closePanel();
+    setControls(false);
     if (controller) run(() => controller.seek(locator));
+  };
+  const openMatch = (index: number) => {
+    const match = search.matches[index];
+    if (!match) return;
+    setSearchIndex(index);
+    search.setHighlight({ start: match.matchStart, end: match.matchEnd });
+    seekTo(match.locator);
   };
   const canStartAutomatic =
     Boolean(controller) &&
@@ -434,6 +420,9 @@ export function ReaderView() {
         closing={closing}
         onBack={() => void close()}
         onOpenPanel={openPanel}
+        canBookmark={Boolean(page) && !closing}
+        onAddBookmark={addBookmark}
+        onRefreshDirectory={reloadTools}
       />
       <ReaderSurface
         double={effectiveMode === "double"}
@@ -525,9 +514,8 @@ export function ReaderView() {
         </div>
       )}
       <ReaderBottomBar
-        visible={controls}
+        visible={controls && searchIndex === null}
         previous={{
-          label: "上一章",
           disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
           onClick: () => {
             void pauseAutomatic();
@@ -535,7 +523,6 @@ export function ReaderView() {
           },
         }}
         next={{
-          label: "下一章",
           disabled: !state.chapter || state.chapter === state.chapters.at(-1) || closing,
           onClick: () => {
             void pauseAutomatic();
@@ -543,7 +530,6 @@ export function ReaderView() {
           },
         }}
         progress={state.chapterProgress}
-        progressLabel="章节进度"
         progressDisabled={!state.chapter}
         onProgressDraft={() => void pauseAutomatic()}
         onProgressCommit={(target) => {
@@ -551,116 +537,132 @@ export function ReaderView() {
           if (controller) run(() => controller.seekChapterProgress(target / 100));
         }}
         onOpenPanel={openPanel}
+        night={night}
+        onToggleNight={() => settingsStore.set({ theme: night ? "light" : "dark" })}
       />
-      {panel === "settings" && (
+      {searchIndex !== null && panel === null && (
+        <SearchResultBar
+          index={searchIndex}
+          count={search.matches.length}
+          hasMore={search.hasMore}
+          onStep={(direction) => openMatch(searchIndex + direction)}
+          onList={() => openPanel("search")}
+          onExit={() => {
+            setSearchIndex(null);
+            search.setHighlight(null);
+          }}
+        />
+      )}
+      {panel === "style" && (
         <SettingsPanel
           preferences={preferences}
           onChange={settingsStore.set}
           onClose={closePanel}
-          status={status}
         />
       )}
-      {panel !== null && panel !== "settings" && (
-        <PanelShell
-          title={PANEL_TEXT[panel][0]}
-          description={PANEL_TEXT[panel][1]}
+      {panel === "contents" && (
+        <ContentsPage
+          bookTitle={activeBook.book.title}
+          toc={tools.toc}
+          ruleName={tools.tocRuleName}
+          splitLongChapters={tools.tocSettings.splitLongChapters}
+          position={page?.startOffset ?? state.scroll?.startOffset ?? 0}
+          loading={tools.loading}
+          error={tools.error}
+          busy={tools.busy}
+          bookmarks={tools.bookmarks}
+          contentVersion={state.contentWindow?.contentVersion}
+          onReload={reloadTools}
+          onSeek={seekTo}
+          onOpenBookmark={(bookmark) => {
+            if (bookmark.contentVersion !== state.contentWindow?.contentVersion) {
+              fail("该书签属于旧正文版本，请从目录重新定位。");
+              return;
+            }
+            seekTo(bookmark.locator);
+          }}
+          onDeleteBookmark={(bookmark) =>
+            run(async () => {
+              await runtime.services.reader.deleteBookmark({ bookmarkId: bookmark.id });
+              setBookmarks((current) => current.filter((item) => item.id !== bookmark.id));
+            })
+          }
+          onOpenRules={() => panels.push("rules")}
+          onToggleSplit={() =>
+            void tools.saveTocSettings({
+              ...tools.tocSettings,
+              splitLongChapters: !tools.tocSettings.splitLongChapters,
+            })
+          }
           onClose={closePanel}
-          status={status}
-        >
-          {panel === "encoding" && (
-            <EncodingPanel
-              encodingInfo={tools.encodingInfo}
-              decoding={libraryState.decoding}
-              decodeError={libraryState.decodeError}
-              disabled={tools.ruleOperation.current === "save"}
-              onChange={changeEncoding}
-              onReassociate={() =>
-                run(async () => {
-                  const next = await runtime.services.library.pickAndReassociateTxt(
-                    activeBook.book.id,
-                  );
-                  if (next) setEncodingInfo(next);
-                })
-              }
-              onCancelDecode={() => void runtime.library.cancelDecode()}
-            />
-          )}
-          {panel === "directory" && <DirectoryPanel tools={tools} totalLength={totalLength} />}
-          {panel === "automatic" && (
-            <AutomaticPanel
-              scroll={effectiveMode === "scroll"}
-              speed={preferences?.autoScrollSpeed ?? 40}
-              onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
-              seconds={preferences?.autoPageSeconds ?? 8}
-              disabledInterval={!preferences}
-              running={automaticTurn.running}
-              canStart={canStartAutomatic}
-              onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
-              onPause={() => void pauseAutomatic()}
-              onStart={() => {
-                closePanel();
-                setControls(false);
-                automaticTurn.start();
-              }}
-            />
-          )}
-          {panel === "contents" && (
-            <ContentsPanel
-              mode={contentsMode}
-              progress={progress}
-              onProgress={(value) => {
-                closePanel();
-                if (controller) run(() => controller.seekProgress(value / 100));
-              }}
-              onModeChange={setContentsMode}
-              toc={tools.toc}
-              toolsLoading={tools.loading}
-              toolsError={tools.error}
-              onSeek={(entry) => seekTo(entry.locator)}
-              onStart={() => {
-                closePanel();
-                if (controller) run(() => controller.seekProgress(0));
-              }}
-            />
-          )}
-          {panel === "more" && (
-            <MorePanel
-              bookmarks={tools.bookmarks}
-              contentVersion={state.contentWindow?.contentVersion}
-              canBookmark={Boolean(page) && !closing}
-              canSave={Boolean(controller) && !closing}
-              toolsLoading={tools.loading}
-              toolsError={tools.error}
-              onAddBookmark={addBookmark}
-              onSave={() => {
-                closePanel();
-                if (controller) run(() => controller.flush());
-              }}
-              onOpenBookmark={(bookmark) => {
-                if (bookmark.contentVersion !== state.contentWindow?.contentVersion) {
-                  fail("该书签属于旧正文版本，请从目录或全文重新定位。");
-                  return;
-                }
-                seekTo(bookmark.locator);
-              }}
-              onDeleteBookmark={(bookmark) =>
-                run(async () => {
-                  await runtime.services.reader.deleteBookmark({ bookmarkId: bookmark.id });
-                  setBookmarks((current) => current.filter((item) => item.id !== bookmark.id));
-                })
-              }
-            />
-          )}
-          {panel === "search" && (
-            <SearchPanel
-              search={search}
-              onOpenMatch={(match) => {
-                search.setHighlight({ start: match.matchStart, end: match.matchEnd });
-                seekTo(match.locator);
-              }}
-            />
-          )}
-        </PanelShell>
+        />
+      )}
+      {panel === "search" && (
+        <SearchPage
+          search={search}
+          toc={tools.toc}
+          totalLength={totalLength}
+          onOpenMatch={openMatch}
+          onClose={closePanel}
+        />
+      )}
+      {panel === "rules" && (
+        <TocRuleDialog
+          rules={tools.rules}
+          settings={tools.tocSettings}
+          detectedName={tools.tocRuleName}
+          busy={tools.busy}
+          onSelect={(ruleId) => void tools.saveTocSettings({ ...tools.tocSettings, ruleId })}
+          onToggleSplit={() =>
+            void tools.saveTocSettings({
+              ...tools.tocSettings,
+              splitLongChapters: !tools.tocSettings.splitLongChapters,
+            })
+          }
+          onSave={tools.saveRule}
+          onDelete={(rule) => tools.deleteRule(rule.id)}
+          onOrder={tools.orderRules}
+          onImport={tools.importRules}
+          onExport={tools.exportRules}
+          onTest={tools.testRule}
+          onClose={panels.back}
+        />
+      )}
+      {panel === "encoding" && (
+        <EncodingDialog
+          encodingInfo={tools.encodingInfo}
+          decoding={libraryState.decoding}
+          decodeError={libraryState.decodeError}
+          disabled={tools.savingSettings()}
+          onChange={changeEncoding}
+          onReassociate={() =>
+            run(async () => {
+              const next = await runtime.services.library.pickAndReassociateTxt(activeBook.book.id);
+              if (next) setEncodingInfo(next);
+            })
+          }
+          onCancelDecode={() => void runtime.library.cancelDecode()}
+          onClose={closePanel}
+        />
+      )}
+      {panel === "automatic" && (
+        <AutomaticDialog
+          onClose={closePanel}
+          scroll={effectiveMode === "scroll"}
+          speed={preferences?.autoScrollSpeed ?? 40}
+          onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
+          seconds={preferences?.autoPageSeconds ?? 8}
+          disabledInterval={!preferences}
+          running={automaticTurn.running}
+          canStart={canStartAutomatic}
+          onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
+          onPause={() => void pauseAutomatic()}
+          onStart={() => {
+            closePanel();
+            setControls(false);
+            automaticTurn.start();
+          }}
+        />
       )}
     </div>
   );

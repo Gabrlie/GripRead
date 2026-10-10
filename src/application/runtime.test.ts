@@ -7,6 +7,7 @@ import type {
 } from "../services/contracts";
 import type { Book, LibraryGroup, ReaderPreferences, ShelfPreferences } from "../types/generated";
 import { AppRuntime } from "./runtime";
+import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,6 +43,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     getTxtDecodeStatus: vi.fn(),
     cancelTxtDecode: vi.fn(),
     onTxtDecodeProgress: vi.fn(async () => () => {}),
+    getBookInfo: vi.fn(),
     ...overrides,
   };
   const reader: ReaderService = {
@@ -50,10 +52,8 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     resolveOffset: vi.fn(),
     saveReaderLocator: vi.fn(),
     getSavedReaderLocator: vi.fn(),
-    listToc: vi.fn(async () => []),
-    getTocRule: vi.fn(async () => ({ mode: "automatic" as const, pattern: "" })),
-    previewTocRule: vi.fn(async () => ({ entries: [] })),
-    saveTocRule: vi.fn(async (request) => request.rule),
+    listToc: vi.fn(async () => tocListing()),
+    ...ruleServiceMocks(),
     listBookmarks: vi.fn(),
     addBookmark: vi.fn(),
     deleteBookmark: vi.fn(),

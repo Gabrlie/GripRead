@@ -152,7 +152,7 @@ describe("current page geometry and material", () => {
             node.getAttribute("aria-label"),
           ),
           bottom: Array.from(
-            document.querySelector('button[aria-label="搜索正文"]')!.parentElement!.children,
+            document.querySelector('button[aria-label="搜索"]')!.parentElement!.children,
           ).map((node) => node.getAttribute("aria-label")),
         }));
         expect(actions.top).toEqual(["返回书架", "目录规则", "编码格式", "更多"]);

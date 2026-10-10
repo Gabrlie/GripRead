@@ -11,6 +11,7 @@ import type {
   ReaderPresentationAdapter,
   ReaderPresentationContext,
 } from "./types";
+import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
 
 const locatorFor = (bookId: string, offset: number): ReaderLocator => ({
   bookId,
@@ -73,20 +74,12 @@ function serviceFor(
       saves.push({ ...value });
       return onSave(value);
     },
-    async getTocRule() {
-      return { mode: "automatic", pattern: "" };
-    },
-    async previewTocRule() {
-      return { entries: [] };
-    },
-    async saveTocRule(request) {
-      return request.rule;
-    },
+    ...ruleServiceMocks(),
     async getSavedReaderLocator(bookId) {
       return saved[bookId] ?? null;
     },
     async listToc() {
-      return [];
+      return tocListing();
     },
     async listBookmarks() {
       return [];
@@ -208,8 +201,8 @@ describe("ReaderController", () => {
       mode: "double",
     });
     await controller.setDirectory([
-      { ordinal: 0, title: "第一章", locator: locatorFor("book", 0) },
-      { ordinal: 1, title: "第二章", locator: locatorFor("book", 3) },
+      tocEntry(0, "第一章", locatorFor("book", 0)),
+      tocEntry(1, "第二章", locatorFor("book", 3)),
     ]);
     await controller.open("book");
     await controller.next();
@@ -255,16 +248,14 @@ describe("ReaderController", () => {
       measurer: { measure: oneUnitMeasurer },
       maxUnits: 6,
     });
-    await controller.setDirectory([{ ordinal: 0, title: "old", locator: locatorFor("book", 0) }]);
+    await controller.setDirectory([tocEntry(0, "old", locatorFor("book", 0))]);
     await controller.open("book");
     const gate = deferred<ReaderLocator>();
     vi.spyOn(service, "resolveOffset").mockReturnValueOnce(gate.promise);
     const seeking = controller.seekChapterProgress(1);
     const failed = expect(seeking).rejects.toMatchObject({ name: "AbortError" });
     await Promise.resolve();
-    const updating = controller.setDirectory([
-      { ordinal: 0, title: "new", locator: locatorFor("book", 2) },
-    ]);
+    const updating = controller.setDirectory([tocEntry(0, "new", locatorFor("book", 2))]);
     gate.resolve(locatorFor("book", 6));
     await failed;
     await updating;

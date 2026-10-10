@@ -50,3 +50,18 @@ test("ignores comments while allowing service adapters and interface-only consum
     (root) => assert.deepEqual(checkBoundaries(root), []),
   );
 });
+
+test("lets component tests import shared test helpers but not production pages", () => {
+  fixture(
+    {
+      "src/components/View.test.tsx": 'import { tocListing } from "../test/toc";',
+      "src/components/View.tsx": 'import { tocListing } from "../test/toc";',
+    },
+    (root) => {
+      const errors = checkBoundaries(root);
+      assert.deepEqual(errors, [
+        "src/components/View.tsx: production pages cannot import test or mock data",
+      ]);
+    },
+  );
+});

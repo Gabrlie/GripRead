@@ -26,10 +26,11 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 - [M0 IPC bindings and text locator](notes/implemented/2026-09-17-m0-ipc-and-locator.md) records the Rust source, generated TypeScript, and Unicode position contract.
 - [TXT encoding and reading tools](notes/implemented/2026-09-18-txt-m1.md) records retained source bytes, re-decode recovery, TOC, bookmarks, and cancellable search.
 - [Local shelf archive, preferences, and verified TXT relocation](notes/implemented/2026-09-21-local-library-closeout.md) records schema 7 shelf state, reversible removal, and byte-boundary position recovery.
-- [TXT directory rules and automatic page turning](notes/implemented/2026-09-23-txt-directory-rules-and-auto-turn.md) records schema 8 per-book heading rules, cache identity, single-pass TOC construction, and the automatic-turn interval.
+- [TXT directory rules and automatic page turning](notes/implemented/2026-09-23-txt-directory-rules-and-auto-turn.md) records TOC cache identity and the automatic-turn interval.
 - [Reader preferences v2 and managed display assets](notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md) proposes nested preferences and schema 9 asset storage.
 - [Chapter navigation and shared reading-mode state](notes/implemented/2026-09-27-reader-navigation-and-modes.md) records bounded chapter seeks and one locator/persistence owner for pages, spreads, and scrolling.
-- [Android document import and mobile lifecycle](notes/implemented/2026-10-10-android-document-import.md) records staged document-URI import, pause-time saves, back navigation, and native insets.
+- [Android document import and mobile lifecycle](notes/implemented/2026-10-10-android-document-import.md) records document-URI import, pause-time saves, back navigation, and insets.
+- [TXT chapter rules after Legado](notes/implemented/2026-10-10-legado-txt-chapter-rules.md) records schema 9 chapter rules, volumes, introductions, and authors.
 - [Reading-first extension boundaries](notes/proposed/2026-09-17-reading-first-extensions.md) records the approved direction for deferred integrations.
 
 Add decision links here only when they guide current work. Source modules should own their local README and any additional instructions when the corresponding code exists.

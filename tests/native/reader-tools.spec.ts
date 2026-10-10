@@ -3,10 +3,10 @@ import { writeFile } from "node:fs/promises";
 import type {
   ContentWindow,
   ImportTask,
+  BookTocSettings,
   ReaderLocator,
-  TocEntry,
+  TocListing,
   TxtEncodingInfo,
-  TxtTocRule,
 } from "../../src/types/generated";
 import {
   clickReaderControl,
@@ -28,15 +28,14 @@ async function closePanel() {
   await browser.waitUntil(async () => !(await browser.$('[role="dialog"]').isExisting()));
 }
 
-async function selectRule(mode: TxtTocRule["mode"]) {
-  await browser.waitUntil(async () => (await browser.$('[role="dialog"] select')).isEnabled());
-  // Embedded WebDriver clicks <option> without changing its parent select.
-  // Dispatch the native change event through the rendered control instead.
-  await browser.execute((value) => {
-    const select = document.querySelector<HTMLSelectElement>('[role="dialog"] select')!;
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  }, mode);
+async function selectRule(name: string) {
+  const option = await browser.$(`[role="dialog"] [role="radio"]*=${name}`);
+  await option.waitForEnabled();
+  await option.click();
+}
+
+async function bookTocSettings(bookId: string): Promise<BookTocSettings> {
+  return (await invoke<TocListing>("list_toc", { request: { bookId } })).settings;
 }
 
 describe("immersive reader tools", () => {
@@ -73,54 +72,34 @@ describe("immersive reader tools", () => {
     expect(window.text).toBe("\u28f0\u288c");
   });
 
-  it("previews and persists per-book rules without changing the current passage", async () => {
+  it("selects and persists per-book chapter rules without changing the current passage", async () => {
     const book = await importFixture("chapters.txt");
     await refreshLibraryInUi(book.book.id);
     const initial = await openBook(book.book.id);
     await showReaderControls();
-    await browser.$('button[aria-label="目录规则"]').click();
+    await browser.$('button[aria-label="TXT目录规则"]').click();
     const dialog = await browser.$('[role="dialog"]');
     await dialog.waitForDisplayed();
-    await selectRule("english");
-    await dialog.$("button=预览").click();
-    await browser.$("p*=预览到 1 个章节").waitForDisplayed();
-    expect(
-      (await invoke<TxtTocRule>("get_toc_rule", { request: { bookId: book.book.id } })).mode,
-    ).toBe("automatic");
-    await dialog.$("button=应用本书").click();
+    expect((await bookTocSettings(book.book.id)).ruleId).toBeNull();
+    await selectRule("Chapter/Section/Part/Episode");
     await browser.waitUntil(
-      async () =>
-        (await invoke<TxtTocRule>("get_toc_rule", { request: { bookId: book.book.id } })).mode ===
-        "english",
+      async () => (await bookTocSettings(book.book.id)).ruleId === "legado-12",
     );
-    await browser.waitUntil(async () => (await dialog.$("select")).isEnabled());
-    const entries = await invoke<TocEntry[]>("list_toc", { request: { bookId: book.book.id } });
-    expect(entries.map((entry) => entry.title)).toEqual(["Chapter 2"]);
-    expect(entries[0]?.locator.contentVersion).toBe(book.book.contentVersion);
+    const listing = await invoke<TocListing>("list_toc", { request: { bookId: book.book.id } });
+    expect(listing.entries.map((entry) => entry.title)).toEqual(["前言", "Chapter 2"]);
+    expect(listing.entries[0]?.locator.contentVersion).toBe(book.book.contentVersion);
     expect((await readPage()).start).toBe(initial.start);
-
-    await selectRule("custom");
-    const expression = await dialog.$("input");
-    await expression.setValue("(");
-    await dialog.$("button=预览").click();
-    await dialog.$('[role="alert"]').waitForDisplayed();
-    expect(await dialog.$('[role="alert"]').getText()).toContain("invalid");
-    expect(
-      (await invoke<TxtTocRule>("get_toc_rule", { request: { bookId: book.book.id } })).mode,
-    ).toBe("english");
     await closePanel();
 
-    await browser.$('button[aria-label="编码格式"]').click();
-    await browser.$("#reader-encoding").waitForDisplayed();
-    expect(await browser.$("#reader-encoding").isEnabled()).toBe(true);
+    await browser.$('button[aria-label="设置编码"]').click();
+    await browser.$('[role="radiogroup"][aria-label="文本编码"]').waitForDisplayed();
+    expect(await browser.$('[role="radio"]*=UTF-8').isEnabled()).toBe(true);
     await closePanel();
     await clickReaderControl("reader-close");
     await waitForReaderClosed();
     await browser.execute(() => location.reload());
     await waitForAppReady();
-    expect(
-      (await invoke<TxtTocRule>("get_toc_rule", { request: { bookId: book.book.id } })).mode,
-    ).toBe("english");
+    expect((await bookTocSettings(book.book.id)).ruleId).toBe("legado-12");
     const saved = await invoke<ReaderLocator | null>("get_saved_reader_locator", {
       request: { bookId: book.book.id },
     });

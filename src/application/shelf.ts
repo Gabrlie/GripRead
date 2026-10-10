@@ -196,7 +196,7 @@ export class ShelfStore {
       books.map(async (book) => {
         try {
           if (book.asset.availability === "missing") throw new Error("文件缺失，无法读取目录");
-          const entries = await this.reader.listToc(book.book.id);
+          const { entries } = await this.reader.listToc(book.book.id);
           return { book, entries, error: null };
         } catch (error) {
           return { book, entries: null, error: String(error) };

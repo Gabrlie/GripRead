@@ -84,7 +84,7 @@ describe("native typography and reader interaction", () => {
     expect((await readPage()).start).toBe(page.start);
     await browser.execute(() => window.getSelection()?.removeAllRanges());
     await showReaderControls();
-    const trigger = await browser.$('button[aria-label="设置"]');
+    const trigger = await browser.$('button[aria-label="界面"]');
     await trigger.click();
     const dialog = await browser.$('[role="dialog"]:not([hidden])');
     await dialog.waitForDisplayed();

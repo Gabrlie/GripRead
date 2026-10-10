@@ -249,49 +249,101 @@ pub struct TxtDecodeStatus {
 pub struct TocEntry {
     pub ordinal: u64,
     pub title: String,
+    /// A volume heading (卷) with no body text before the next heading.
+    #[serde(default)]
+    pub volume: bool,
+    /// Chapter length in UTF-16 code units, up to the next entry.
+    #[serde(default)]
+    pub length: u64,
     pub locator: ReaderLocator,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TxtTocRuleMode {
-    Automatic,
-    Chinese,
-    English,
-    Custom,
-}
-
+/// A TXT chapter rule (Legado `TxtTocRule`). Built-in rules come from
+/// Legado 3.26.7 and can be enabled, disabled, or reordered but not deleted.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TxtTocRule {
-    pub mode: TxtTocRuleMode,
+    /// Empty when saving a new rule.
+    pub id: String,
+    pub name: String,
+    /// A Java-compatible regex applied in multi-line mode; empty splits by size.
     pub pattern: String,
+    pub example: String,
+    pub serial: i64,
+    pub enabled: bool,
+    pub builtin: bool,
 }
 
+/// Per-book chapter detection settings.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BookTocSettings {
+    /// The selected rule, or `None` to choose among enabled rules automatically.
+    pub rule_id: Option<String>,
+    /// Split chapters longer than about 100 KB (Legado 拆分超长章节).
+    pub split_long_chapters: bool,
+}
+
+/// A book's chapters and the rule that produced them.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct TxtTocRulePreview {
+pub struct TocListing {
     pub entries: Vec<TocEntry>,
+    /// `None` when no rule matched and the text was split by size.
+    pub rule_id: Option<String>,
+    pub rule_name: String,
+    pub settings: BookTocSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct GetTocRuleRequest {
+pub struct SaveBookTocSettingsRequest {
     pub book_id: String,
+    pub settings: BookTocSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SaveTocRuleRequest {
-    pub book_id: String,
+pub struct SaveTxtTocRuleRequest {
     pub rule: TxtTocRule,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewTocRuleRequest {
+pub struct TxtTocRuleIdRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderTxtTocRulesRequest {
+    /// Every rule id in the new order.
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportTxtTocRulesRequest {
+    /// A Legado rule export (a JSON array or a single rule object).
+    pub json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TestTxtTocRuleRequest {
+    pub pattern: String,
+    pub sample: String,
+}
+
+/// Book details beyond the shelf record.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookInfo {
     pub book_id: String,
-    pub rule: TxtTocRule,
+    /// Text before the first chapter, when the book has one.
+    pub intro: Option<String>,
+    pub source_byte_length: u64,
+    pub chapter_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
