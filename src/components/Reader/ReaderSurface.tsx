@@ -18,6 +18,8 @@ export function interactiveTarget(target: EventTarget | null): boolean {
 
 interface ReaderSurfaceProps {
   pageBox: RefObject<HTMLDivElement | null>;
+  /** The full-screen element that receives gestures; points are relative to it. */
+  gestureBox: RefObject<HTMLDivElement | null>;
   animationBox: RefObject<HTMLDivElement | null>;
   style: CSSProperties;
   /** False while a panel, exit, or other modal state owns input. */
@@ -43,6 +45,7 @@ interface ReaderSurfaceProps {
  */
 export function ReaderSurface({
   pageBox,
+  gestureBox,
   animationBox,
   style,
   acceptsGestures,
@@ -71,77 +74,83 @@ export function ReaderSurface({
   // extending a text selection while the finger moves (needs a non-passive
   // listener, which React's synthetic touch events are not).
   useEffect(() => {
-    const box = pageBox.current;
+    const box = gestureBox.current;
     if (!box) return;
     const guard = (event: TouchEvent) => {
       if (tracker.current?.dragging && event.cancelable) event.preventDefault();
     };
     box.addEventListener("touchmove", guard, { passive: false });
     return () => box.removeEventListener("touchmove", guard);
-  }, [pageBox]);
+  }, [gestureBox]);
 
   const local = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
   return (
+    // Gestures cover the whole screen, including margins, bars, and the space
+    // beside a centred column on tablets; tap zones use the full screen.
     <div
-      // Scroll mode spans the full width so its position indicator sits at the
-      // screen edge; ReaderScrollText applies the text column itself.
-      className={`absolute inset-0 w-full ${scroll ? "" : `${double ? "max-w-6xl" : "max-w-2xl"} mx-auto`} pt-safe pb-safe overflow-hidden flex flex-col`}
-      // Typography applies to the page and to page-turn copies of it.
-      style={style}
+      ref={gestureBox}
+      data-testid="reader-surface"
+      className="absolute inset-0"
+      style={{ touchAction: scroll ? "pan-y" : "none" }}
+      onPointerDown={(event) => {
+        onInteract();
+        if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        // Keep receiving moves even when the finger leaves the text node.
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        tracker.current?.down(local(event));
+      }}
+      onPointerMove={(event) => {
+        if (!event.isPrimary) return;
+        const wasDragging = tracker.current?.dragging;
+        tracker.current?.move(local(event));
+        // A drag that started over text must not leave a selection behind.
+        if (!wasDragging && tracker.current?.dragging) window.getSelection()?.removeAllRanges();
+      }}
+      onPointerUp={(event) => {
+        if (!event.isPrimary) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
+      }}
+      onPointerCancel={() => tracker.current?.cancel()}
     >
-      {header}
       <div
-        className="flex-1 min-h-0"
-        style={{
-          paddingTop: margins.top,
-          paddingBottom: margins.bottom,
-          paddingLeft: scroll ? 0 : margins.left,
-          paddingRight: scroll ? 0 : margins.right,
-        }}
+        // Scroll mode spans the full width so its position indicator sits at
+        // the screen edge; ReaderScrollText applies the text column itself.
+        className={`absolute inset-0 w-full ${scroll ? "" : `${double ? "max-w-6xl" : "max-w-2xl"} mx-auto`} pt-safe pb-safe overflow-hidden flex flex-col`}
+        // Typography applies to the page and to page-turn copies of it.
+        style={style}
       >
+        {header}
         <div
-          ref={pageBox}
-          data-testid="reader-surface"
-          className="relative h-full min-h-0 w-full"
-          // Paginated pages handle every touch themselves; scroll mode keeps
-          // native vertical panning.
-          style={{ touchAction: scroll ? "pan-y" : "none" }}
-          onPointerDown={(event) => {
-            onInteract();
-            if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
-            if (event.pointerType === "mouse" && event.button !== 0) return;
-            // Keep receiving moves even when the finger leaves the text node.
-            event.currentTarget.setPointerCapture?.(event.pointerId);
-            tracker.current?.down(local(event));
+          className="flex-1 min-h-0"
+          style={{
+            paddingTop: margins.top,
+            paddingBottom: margins.bottom,
+            paddingLeft: scroll ? 0 : margins.left,
+            paddingRight: scroll ? 0 : margins.right,
           }}
-          onPointerMove={(event) => {
-            if (!event.isPrimary) return;
-            const wasDragging = tracker.current?.dragging;
-            tracker.current?.move(local(event));
-            // A drag that started over text must not leave a selection behind.
-            if (!wasDragging && tracker.current?.dragging) window.getSelection()?.removeAllRanges();
-          }}
-          onPointerUp={(event) => {
-            if (!event.isPrimary) return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
-          }}
-          onPointerCancel={() => tracker.current?.cancel()}
         >
-          {children}
+          <div
+            ref={pageBox}
+            data-testid="reader-page-box"
+            className="relative h-full min-h-0 w-full"
+          >
+            {children}
+          </div>
         </div>
+        {footer}
+        {/* Covers the whole reading screen, so a turn moves bars and margins too. */}
+        <div
+          ref={animationBox}
+          data-testid="reader-animation"
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none overflow-hidden"
+        />
       </div>
-      {footer}
-      {/* Covers the whole reading screen, so a turn moves bars and margins too. */}
-      <div
-        ref={animationBox}
-        data-testid="reader-animation"
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none overflow-hidden"
-      />
     </div>
   );
 }

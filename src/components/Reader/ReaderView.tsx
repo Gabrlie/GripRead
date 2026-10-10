@@ -22,7 +22,7 @@ import type { Bookmark, TxtEncoding } from "../../types/generated";
 import { Button } from "../ui/button";
 import { useAutomaticTurn } from "./use-automatic-turn";
 import { useReaderActions } from "./use-reader-actions";
-import { useReaderLayout, syncMeasureBox } from "./use-reader-layout";
+import { canShowSpread, useReaderLayout, syncMeasureBox } from "./use-reader-layout";
 import { useReaderPanel, type ReaderPanel } from "./use-reader-panel";
 import { useReaderSearch } from "./use-reader-search";
 import { useReaderTools } from "./use-reader-tools";
@@ -67,6 +67,7 @@ export function ReaderView() {
   const reducedMotion = useReducedMotion();
   const pageBox = useRef<HTMLDivElement>(null);
   const measureBox = useRef<HTMLDivElement>(null);
+  const gestureBox = useRef<HTMLDivElement>(null);
   const animationBox = useRef<HTMLDivElement>(null);
   const scrollBox = useRef<HTMLDivElement>(null);
   const synchronizeScroll = useRef<(() => void) | null>(null);
@@ -81,15 +82,18 @@ export function ReaderView() {
   /** The margin dialog previews on an unobstructed page, so the menu hides. */
   const [previewing, setPreviewing] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
   const preferences = settings.value;
   const bookId = activeBook?.book.id;
   const effectiveMode =
-    preferences?.readingMode === "double" && viewportWidth < 900
+    preferences?.readingMode === "double" && !canShowSpread(viewport.width, viewport.height)
       ? "single"
       : (preferences?.readingMode ?? "single");
   useEffect(() => {
-    const resize = () => setViewportWidth(window.innerWidth);
+    const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
@@ -308,6 +312,7 @@ export function ReaderView() {
       pageClassName: "reader-prose reader-text reader-paper",
       screenClassName: "reader-paper",
       pageBox: () => pageBox.current,
+      gestureBox: () => gestureBox.current,
     });
     adapter.current = presentation;
     const measuring = new DomReaderMeasurer(measureBox.current);
@@ -571,6 +576,7 @@ export function ReaderView() {
         double={effectiveMode === "double"}
         scroll={effectiveMode === "scroll"}
         pageBox={pageBox}
+        gestureBox={gestureBox}
         animationBox={animationBox}
         style={typeStyle}
         acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}

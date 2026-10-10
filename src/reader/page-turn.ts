@@ -25,6 +25,8 @@ export interface PageTurnAdapterOptions {
    * it pages fill the host.
    */
   pageBox?: () => HTMLElement | null;
+  /** The element gesture points are relative to; defaults to `pageBox`. */
+  gestureBox?: () => HTMLElement | null;
   /** Class of the full-screen copy, which supplies the reading background. */
   screenClassName?: string;
   /** Frame scheduling, replaceable in tests. */
@@ -134,9 +136,9 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.aimPoint = point && this.toHost(point);
   }
 
-  /** Gesture points arrive relative to the page box; turns use the host. */
+  /** Gesture points arrive relative to the gesture box; turns use the host. */
   private toHost(point: Point): Point {
-    const box = this.options.pageBox?.();
+    const box = this.options.gestureBox?.() ?? this.options.pageBox?.();
     if (!box) return point;
     const origin = this.host.getBoundingClientRect();
     const frame = box.getBoundingClientRect();

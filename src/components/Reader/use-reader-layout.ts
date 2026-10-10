@@ -1,6 +1,14 @@
 import { useLayoutEffect, type RefObject } from "react";
 import type { ReaderController } from "../../reader";
 
+/**
+ * Two pages fit on wide screens and on landscape screens from 600 CSS px,
+ * so phones turned sideways show spreads as Legado does.
+ */
+export function canShowSpread(width: number, height: number): boolean {
+  return width >= 900 || (width > height && width >= 600);
+}
+
 /** Copy the page box size to the hidden measurement box. */
 export function syncMeasureBox(page: HTMLElement, measure: HTMLElement, columns = 1): void {
   const rect = page.getBoundingClientRect();

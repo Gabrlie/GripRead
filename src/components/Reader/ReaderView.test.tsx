@@ -471,6 +471,17 @@ describe("reader directory and search operation ownership", () => {
     );
   });
 
+  it("turns from a tap on the margin beside the text", async () => {
+    const app = runtime();
+    await view(app);
+    tapSurface();
+    // The far right edge is outside the centred text column on wide screens.
+    tapSurface(0.99, 0.5);
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).not.toBe("0"),
+    );
+  });
+
   it("turns a page when a swipe starts on the text", async () => {
     const app = runtime();
     await view(app);
