@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { InfoBar, InfoSlot } from "../../types/generated";
+import type { InfoBar, InfoSlot, Margins } from "../../types/generated";
 import { system } from "../../services/system";
 
 export interface InfoValues {
@@ -40,12 +40,15 @@ function useBattery(enabled: boolean): number | null {
 export function ReaderInfoBar({
   bar,
   values,
-  margin,
+  margins,
+  line,
   position,
 }: {
   bar: InfoBar;
   values: InfoValues;
-  margin: { left: number; right: number };
+  margins: Margins;
+  /** A divider between this bar and the body. */
+  line: boolean;
   position: "header" | "footer";
 }) {
   const slots = [bar.left, bar.middle, bar.right];
@@ -73,13 +76,24 @@ export function ReaderInfoBar({
   return (
     <div
       data-testid={`reader-${position}`}
+      // Page turns copy the bars so the whole screen turns (page-turn.ts).
+      data-reader-chrome=""
       aria-hidden="true"
-      className="shrink-0 h-7 flex items-center gap-3 text-[11px] opacity-60 tabular-nums select-none"
-      style={{ paddingLeft: margin.left, paddingRight: margin.right }}
+      className="shrink-0 select-none"
+      style={{
+        paddingTop: margins.top,
+        paddingBottom: margins.bottom,
+        paddingLeft: margins.left,
+        paddingRight: margins.right,
+      }}
     >
-      <span className="flex-1 min-w-0 truncate text-left">{text(slots[0])}</span>
-      <span className="shrink-0 truncate text-center">{text(slots[1])}</span>
-      <span className="flex-1 min-w-0 truncate text-right">{text(slots[2])}</span>
+      <div
+        className={`h-6 flex items-center gap-3 text-[11px] opacity-60 tabular-nums ${line ? (position === "header" ? "border-b" : "border-t") : ""} border-current`}
+      >
+        <span className="flex-1 min-w-0 truncate text-left">{text(slots[0])}</span>
+        <span className="shrink-0 truncate text-center">{text(slots[1])}</span>
+        <span className="flex-1 min-w-0 truncate text-right">{text(slots[2])}</span>
+      </div>
     </div>
   );
 }

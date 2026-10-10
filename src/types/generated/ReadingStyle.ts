@@ -29,7 +29,15 @@ fontWeight: number, titleMode: TitleMode,
 /**
  * Chapter heading size relative to the body text.
  */
-titleScale: number, margins: Margins, header: InfoBar, footer: InfoBar, 
+titleScale: number, margins: Margins, 
+/**
+ * Space around the header and footer text (Legado PaddingConfig).
+ */
+headerMargins: Margins, footerMargins: Margins, 
+/**
+ * Divider lines between the body and the header or footer.
+ */
+headerLine: boolean, footerLine: boolean, header: InfoBar, footer: InfoBar, 
 /**
  * A managed font from `reader_assets`, overriding `font_family`.
  */

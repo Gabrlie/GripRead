@@ -136,6 +136,8 @@ describe("PageTurnAdapter", () => {
     await adapter.present(first, "open", context(pages, 0));
     expect(adapter.followsDrag).toBe(true);
     adapter.beginDrag({ x: 380, y: 600 });
+    // The controller cancels any animation before starting the navigation.
+    adapter.cancel();
     adapter.hold();
     adapter.setPages(pages, 1);
     const turning = adapter.present(second, "next", context(pages, 1));

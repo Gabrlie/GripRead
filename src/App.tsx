@@ -127,6 +127,8 @@ function MainContent() {
         if (!backState.current.activeBook && !document.querySelector(OPEN_LAYER)) return false;
         // Dispatch from body: the reader ignores Escape aimed at a focused control.
         dismissWithEscape(document.body);
+        // Focus restored after a dismissal would otherwise show a keyboard ring.
+        requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
         return true;
       },
       () => {

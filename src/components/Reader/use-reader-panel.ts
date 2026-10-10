@@ -36,9 +36,11 @@ export function useReaderPanel(onClose?: (panel: ReaderPanel) => void) {
     setStack([]);
     const root = current[0];
     queueMicrotask(() => {
+      // Keep keyboard users on the trigger without drawing a focus ring after
+      // a touch or the Android back action dismissed the panel.
       document
         .querySelector<HTMLButtonElement>(`button[aria-label="${PANEL_TRIGGER_LABELS[root]}"]`)
-        ?.focus();
+        ?.focus({ focusVisible: false } as FocusOptions);
     });
   }, [onClose]);
   /** Return to the previous panel, or close when this is the root panel. */

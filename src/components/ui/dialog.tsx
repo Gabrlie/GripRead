@@ -65,6 +65,44 @@ function DialogContent({
   );
 }
 
+/**
+ * A bottom sheet (like Android's BottomSheetDialog): full width, attached to
+ * the bottom edge, above the gesture bar, rising into view.
+ */
+function SheetContent({
+  className,
+  children,
+  showCloseButton = true,
+  ...props
+}: DialogPrimitive.Popup.Props & {
+  showCloseButton?: boolean;
+}) {
+  return (
+    <DialogPortal>
+      <DialogOverlay className="bg-black/20 backdrop-blur-none" />
+      <DialogPrimitive.Popup
+        data-slot="sheet-content"
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-50 grid grid-cols-1 w-full gap-3 rounded-t-2xl bg-surface px-4 pt-4 pb-[calc(1rem+var(--safe-bottom))] text-sm text-on-surface shadow-2xl outline-none overflow-y-auto overflow-x-hidden transition-transform duration-200 ease-out data-[starting-style]:translate-y-full data-[ending-style]:translate-y-full motion-reduce:transition-none",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            data-slot="dialog-close"
+            render={<Button variant="ghost" className="absolute top-2 right-2" size="icon-sm" />}
+          >
+            <XIcon />
+            <span className="sr-only">关闭</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
+    </DialogPortal>
+  );
+}
+
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div data-slot="dialog-header" className={cn("flex flex-col gap-2", className)} {...props} />
@@ -130,4 +168,5 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
+  SheetContent,
 };

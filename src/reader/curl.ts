@@ -241,6 +241,41 @@ export function rasterizePage(
   context.fillStyle = opaque(style?.backgroundColor) ?? "#ffffff";
   context.fillRect(0, 0, origin.width, origin.height);
   context.textBaseline = "alphabetic";
+  // Combined opacity of an element and its ancestors inside the copy.
+  const alphas = new Map<Element, number>();
+  const alphaOf = (node: Element | null): number => {
+    if (!node || node === element.parentElement) return 1;
+    const known = alphas.get(node);
+    if (known !== undefined) return known;
+    const own = Number(view?.getComputedStyle(node).opacity ?? 1);
+    const value = (Number.isFinite(own) ? own : 1) * alphaOf(node.parentElement);
+    alphas.set(node, value);
+    return value;
+  };
+  // Divider lines (border-top/bottom) such as those of the header and footer.
+  for (const box of element.querySelectorAll<HTMLElement>("*")) {
+    const boxStyle = view?.getComputedStyle(box);
+    if (!boxStyle) continue;
+    const top = parseFloat(boxStyle.borderTopWidth) || 0;
+    const bottom = parseFloat(boxStyle.borderBottomWidth) || 0;
+    if (top <= 0 && bottom <= 0) continue;
+    const rect = box.getBoundingClientRect();
+    context.globalAlpha = alphaOf(box);
+    if (top > 0 && boxStyle.borderTopStyle !== "none") {
+      context.fillStyle = boxStyle.borderTopColor;
+      context.fillRect(rect.left - origin.left, rect.top - origin.top, rect.width, top);
+    }
+    if (bottom > 0 && boxStyle.borderBottomStyle !== "none") {
+      context.fillStyle = boxStyle.borderBottomColor;
+      context.fillRect(
+        rect.left - origin.left,
+        rect.bottom - origin.top - bottom,
+        rect.width,
+        bottom,
+      );
+    }
+  }
+  context.globalAlpha = 1;
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   const range = document.createRange();
   const metrics = new Map<string, { ascent: number; descent: number }>();
@@ -252,6 +287,7 @@ export function rasterizePage(
     const font = parentStyle ? fontOf(parentStyle) : "16px serif";
     context.font = font;
     context.fillStyle = parentStyle?.color ?? "#000000";
+    context.globalAlpha = alphaOf(parent);
     let fontMetrics = metrics.get(font);
     if (!fontMetrics) {
       const measured = context.measureText("国");
@@ -280,6 +316,7 @@ export function rasterizePage(
     }
   }
   range.detach?.();
+  context.globalAlpha = 1;
   return canvas;
 }
 

@@ -1,5 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // Touch screens keep :hover after a tap; apply hover styles only where a
+  // pointer can hover, so tapped buttons do not stay highlighted.
+  future: { hoverOnlyWhenSupported: true },
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   darkMode: "class",
   theme: {

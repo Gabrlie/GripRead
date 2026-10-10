@@ -19,6 +19,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  SheetContent,
 } from "../../ui/dialog";
 
 interface StylePanelProps {
@@ -156,6 +157,8 @@ export function StylePanel({ preferences, night, onChange, fonts, onClose }: Sty
   if (!preferences) return null;
   const style = preferences.style;
   const setStyle = (patch: Partial<ReadingStyle>) => onChange({ style: { ...style, ...patch } });
+  if (view === "margins")
+    return <MarginsDialog style={style} setStyle={setStyle} onBack={() => setView("main")} />;
   const title =
     typeof view === "object"
       ? "编辑样式"
@@ -169,10 +172,7 @@ export function StylePanel({ preferences, night, onChange, fonts, onClose }: Sty
         }[view];
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="bg-surface border border-surface-variant/50 w-[calc(100%-1.5rem)] max-w-md grid-cols-1 rounded-2xl p-4 shadow-2xl overflow-y-auto overflow-x-hidden top-auto bottom-3 translate-y-0 gap-3"
-        style={{ maxHeight: "calc(100dvh - 6rem)" }}
-      >
+      <SheetContent style={{ maxHeight: "calc(100dvh - 5rem)" }}>
         <DialogHeader className="flex-row items-center gap-2 space-y-0">
           {view !== "main" && (
             <Button
@@ -206,29 +206,6 @@ export function StylePanel({ preferences, night, onChange, fonts, onClose }: Sty
             setStyle={setStyle}
             fonts={fonts}
           />
-        )}
-        {view === "margins" && (
-          <div className="space-y-3">
-            {(
-              [
-                ["top", "上边距"],
-                ["bottom", "下边距"],
-                ["left", "左边距"],
-                ["right", "右边距"],
-              ] as const
-            ).map(([side, label]) => (
-              <Range
-                key={side}
-                label={label}
-                min={0}
-                max={60}
-                step={1}
-                value={style.margins[side]}
-                format={(value) => `${value}`}
-                onChange={(value) => setStyle({ margins: { ...style.margins, [side]: value } })}
-              />
-            ))}
-          </div>
         )}
         {view === "info" && (
           <div className="space-y-4">
@@ -281,7 +258,7 @@ export function StylePanel({ preferences, night, onChange, fonts, onClose }: Sty
             onDone={() => setView("main")}
           />
         )}
-      </DialogContent>
+      </SheetContent>
     </Dialog>
   );
 }
@@ -378,7 +355,7 @@ function MainView({
         )}
       </Section>
       <Section title={`背景样式（${night ? "夜间" : "日间"}，长按或点铅笔编辑）`}>
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+        <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
           {style.presets.map((preset, index) => (
             <div key={index} className="flex flex-col items-center gap-1 shrink-0">
               <button
@@ -791,5 +768,85 @@ function PresetEditor({
         </Button>
       </div>
     </div>
+  );
+}
+
+const SIDES = [
+  ["top", "上"],
+  ["bottom", "下"],
+  ["left", "左"],
+  ["right", "右"],
+] as const;
+
+/**
+ * Legado's PaddingConfigDialog as a centred dialog: body, header, and footer
+ * margins, and the divider lines between them.
+ */
+function MarginsDialog({
+  style,
+  setStyle,
+  onBack,
+}: {
+  style: ReadingStyle;
+  setStyle: (patch: Partial<ReadingStyle>) => void;
+  onBack: () => void;
+}) {
+  const group = (
+    title: string,
+    key: "margins" | "headerMargins" | "footerMargins",
+    max: number,
+  ) => (
+    <Section title={title}>
+      <div className="space-y-2">
+        {SIDES.map(([side, label]) => (
+          <Range
+            key={side}
+            label={`${label}边距`}
+            min={0}
+            max={max}
+            step={1}
+            value={style[key][side]}
+            format={(value) => `${value}`}
+            onChange={(value) => setStyle({ [key]: { ...style[key], [side]: value } })}
+          />
+        ))}
+      </div>
+    </Section>
+  );
+  return (
+    <Dialog open onOpenChange={(open) => !open && onBack()}>
+      <DialogContent className="grid-cols-1 bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-sm max-h-[78dvh] overflow-y-auto p-4 gap-4">
+        <DialogHeader>
+          <DialogTitle className="text-sm">边距</DialogTitle>
+          <DialogDescription className="text-[11px]">
+            正文、页眉、页脚分别设置，单位为像素。
+          </DialogDescription>
+        </DialogHeader>
+        {group("正文", "margins", 80)}
+        {group("页眉", "headerMargins", 60)}
+        {group("页脚", "footerMargins", 60)}
+        <Section title="分隔线">
+          <label className="flex items-center justify-between text-xs">
+            显示页眉分隔线
+            <Switch
+              aria-label="显示页眉分隔线"
+              checked={style.headerLine}
+              onCheckedChange={(headerLine) => setStyle({ headerLine })}
+            />
+          </label>
+          <label className="flex items-center justify-between text-xs">
+            显示页脚分隔线
+            <Switch
+              aria-label="显示页脚分隔线"
+              checked={style.footerLine}
+              onCheckedChange={(footerLine) => setStyle({ footerLine })}
+            />
+          </label>
+        </Section>
+        <Button variant="outline" size="sm" onClick={onBack}>
+          完成
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }

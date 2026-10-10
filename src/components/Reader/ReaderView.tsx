@@ -304,6 +304,8 @@ export function ReaderView() {
       effect: preferences.pageTurnEffect,
       reducedMotion: Boolean(reducedMotion),
       pageClassName: "reader-prose reader-text reader-paper",
+      screenClassName: "reader-paper",
+      pageBox: () => pageBox.current,
     });
     adapter.current = presentation;
     const measuring = new DomReaderMeasurer(measureBox.current);
@@ -579,7 +581,8 @@ export function ReaderView() {
             <ReaderInfoBar
               bar={style.header}
               values={info}
-              margin={style.margins}
+              margins={style.headerMargins}
+              line={style.headerLine}
               position="header"
             />
           ) : undefined
@@ -589,7 +592,8 @@ export function ReaderView() {
             <ReaderInfoBar
               bar={style.footer}
               values={info}
-              margin={style.margins}
+              margins={style.footerMargins}
+              line={style.footerLine}
               position="footer"
             />
           ) : undefined

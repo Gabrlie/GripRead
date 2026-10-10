@@ -19,6 +19,14 @@ export interface PageTurnAdapterOptions {
   pageClassName?: string;
   /** Duration of a full-width turn in milliseconds (Legado: 300). */
   turnDuration?: number;
+  /**
+   * The element pages are laid out in. Turns animate the whole host (the
+   * reading screen), with page copies placed where this element is; without
+   * it pages fill the host.
+   */
+  pageBox?: () => HTMLElement | null;
+  /** Class of the full-screen copy, which supplies the reading background. */
+  screenClassName?: string;
   /** Frame scheduling, replaceable in tests. */
   requestFrame?: (callback: (time: number) => void) => number;
   cancelFrame?: (handle: number) => void;
@@ -72,6 +80,8 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   private aimPoint: Point | null = null;
   private drag: Drag | null = null;
   private headings: HeadingIndex = NO_HEADINGS;
+  /** Header and footer copies of the outgoing screen, taken before it changed. */
+  private outgoingChrome: HTMLElement[] | null = null;
   private cancelled = false;
   private skipNext = false;
 
@@ -121,7 +131,16 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
 
   /** Records the touch that starts the next turn; curl lifts the nearer corner. */
   public aim(point: Point | null): void {
-    this.aimPoint = point;
+    this.aimPoint = point && this.toHost(point);
+  }
+
+  /** Gesture points arrive relative to the page box; turns use the host. */
+  private toHost(point: Point): Point {
+    const box = this.options.pageBox?.();
+    if (!box) return point;
+    const origin = this.host.getBoundingClientRect();
+    const frame = box.getBoundingClientRect();
+    return { x: point.x + frame.left - origin.left, y: point.y + frame.top - origin.top };
   }
 
   /** Whether the selected effect follows a dragging finger (curl, slide, cover). */
@@ -134,13 +153,14 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
 
   /** The next turn follows the finger from `start` until `endDrag`. */
   public beginDrag(start: Point): void {
-    this.aimPoint = start;
-    this.drag = { start, point: start, release: null, wake: null };
+    const at = this.toHost(start);
+    this.aimPoint = at;
+    this.drag = { start: at, point: at, release: null, wake: null };
   }
 
   public updateDrag(point: Point): void {
     if (!this.drag) return;
-    this.drag.point = point;
+    this.drag.point = this.toHost(point);
     this.drag.wake?.();
   }
 
@@ -229,8 +249,12 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   }
 
   /** Ends any animation at once; the published page is already correct. */
+  /**
+   * The controller cancels before every navigation, including the one a drag
+   * starts, so a pending drag survives; its turn or `clearDrag` ends it.
+   */
   public cancel(): void {
-    this.drag = null;
+    this.outgoingChrome = null;
     this.stopAnimation();
     this.releaseHold();
   }
@@ -248,7 +272,8 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     if (this.disposed || this.reducedMotion || this.effect === "instant") return;
     if (!this.currentSpread.length) return;
     this.releaseHold();
-    const held = this.spreadElement(this.currentSpread);
+    this.outgoingChrome = this.captureChrome();
+    const held = this.screenElement(this.currentSpread, this.outgoingChrome);
     held.style.zIndex = "1";
     this.held = held;
     this.mount.append(held);
@@ -272,7 +297,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
 
   private async presentFade(): Promise<void> {
     this.stopAnimation();
-    const overlay = this.spreadElement(this.previousSpread);
+    const overlay = this.screenElement(this.previousSpread, this.takeOutgoingChrome());
     this.mount.append(overlay);
     this.overlay = overlay;
     this.releaseHold();
@@ -307,8 +332,8 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       return;
     }
     const ratio = this.host.ownerDocument.defaultView?.devicePixelRatio || 1;
-    const outgoing = this.rasterize(this.previousSpread, rect, ratio);
-    const incoming = this.rasterize(this.currentSpread, rect, ratio);
+    const outgoing = this.rasterize(this.previousSpread, this.takeOutgoingChrome(), rect, ratio);
+    const incoming = this.rasterize(this.currentSpread, this.captureChrome(), rect, ratio);
     const canvas = this.host.ownerDocument.createElement("canvas");
     canvas.width = Math.max(1, Math.round(width * ratio));
     canvas.height = Math.max(1, Math.round(height * ratio));
@@ -454,10 +479,11 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
 
   private rasterize(
     pages: readonly ReaderDisplayedPage[],
+    chrome: HTMLElement[],
     rect: DOMRect,
     ratio: number,
   ): { canvas: HTMLCanvasElement; background: string } {
-    const element = this.spreadElement(pages);
+    const element = this.screenElement(pages, chrome);
     element.style.visibility = "hidden";
     this.mount.append(element);
     try {
@@ -496,6 +522,57 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
 
   private updateVisibility(): void {
     this.mount.style.visibility = this.held || this.overlay ? "visible" : "hidden";
+  }
+
+  private takeOutgoingChrome(): HTMLElement[] {
+    const chrome = this.outgoingChrome ?? this.captureChrome();
+    this.outgoingChrome = null;
+    return chrome;
+  }
+
+  /** Copies of the header and footer (`data-reader-chrome`) at their screen positions. */
+  private captureChrome(): HTMLElement[] {
+    const parent = this.host.parentElement;
+    if (!parent) return [];
+    const origin = this.host.getBoundingClientRect();
+    return Array.from(parent.querySelectorAll<HTMLElement>(":scope > [data-reader-chrome]")).map(
+      (bar) => {
+        const rect = bar.getBoundingClientRect();
+        const copy = bar.cloneNode(true) as HTMLElement;
+        copy.removeAttribute("data-reader-chrome");
+        copy.removeAttribute("data-testid");
+        Object.assign(copy.style, {
+          position: "absolute",
+          left: `${rect.left - origin.left}px`,
+          top: `${rect.top - origin.top}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+          margin: "0",
+        });
+        return copy;
+      },
+    );
+  }
+
+  /** A copy of the whole reading screen: background, bars, and pages in place. */
+  private screenElement(pages: readonly ReaderDisplayedPage[], chrome: HTMLElement[]): HTMLElement {
+    const box = this.options.pageBox?.();
+    const spread = this.spreadElement(pages);
+    if (!box) return spread;
+    const screen = this.mount.ownerDocument.createElement("div");
+    screen.className = this.options.screenClassName ?? "";
+    Object.assign(screen.style, { position: "absolute", inset: "0" });
+    const origin = this.host.getBoundingClientRect();
+    const frame = box.getBoundingClientRect();
+    Object.assign(spread.style, {
+      inset: "auto",
+      left: `${frame.left - origin.left}px`,
+      top: `${frame.top - origin.top}px`,
+      width: `${frame.width}px`,
+      height: `${frame.height}px`,
+    });
+    screen.append(...chrome.map((bar) => bar.cloneNode(true) as HTMLElement), spread);
+    return screen;
   }
 
   private spreadElement(pages: readonly ReaderDisplayedPage[]): HTMLElement {

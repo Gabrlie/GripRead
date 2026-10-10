@@ -56,7 +56,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[86dvh] flex flex-col gap-3 p-4">
+      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[68dvh] flex flex-col gap-2.5 p-4">
         <DialogHeader>
           <DialogTitle>
             {view.kind === "edit"

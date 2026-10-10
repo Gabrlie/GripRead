@@ -89,6 +89,8 @@ export function ReaderSurface({
       // Scroll mode spans the full width so its position indicator sits at the
       // screen edge; ReaderScrollText applies the text column itself.
       className={`absolute inset-0 w-full ${scroll ? "" : `${double ? "max-w-6xl" : "max-w-2xl"} mx-auto`} pt-safe pb-safe overflow-hidden flex flex-col`}
+      // Typography applies to the page and to page-turn copies of it.
+      style={style}
     >
       {header}
       <div
@@ -106,7 +108,7 @@ export function ReaderSurface({
           className="relative h-full min-h-0 w-full"
           // Paginated pages handle every touch themselves; scroll mode keeps
           // native vertical panning.
-          style={{ ...style, touchAction: scroll ? "pan-y" : "none" }}
+          style={{ touchAction: scroll ? "pan-y" : "none" }}
           onPointerDown={(event) => {
             onInteract();
             if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
@@ -130,15 +132,16 @@ export function ReaderSurface({
           onPointerCancel={() => tracker.current?.cancel()}
         >
           {children}
-          <div
-            ref={animationBox}
-            data-testid="reader-animation"
-            aria-hidden="true"
-            className="absolute inset-0 pointer-events-none overflow-hidden"
-          />
         </div>
       </div>
       {footer}
+      {/* Covers the whole reading screen, so a turn moves bars and margins too. */}
+      <div
+        ref={animationBox}
+        data-testid="reader-animation"
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none overflow-hidden"
+      />
     </div>
   );
 }

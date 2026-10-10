@@ -84,6 +84,7 @@ export function readingAppearance(
     style.margins.right,
     style.header.visible,
     style.footer.visible,
+    JSON.stringify([style.headerMargins, style.footerMargins, style.headerLine, style.footerLine]),
   ].join("|");
   return { root, text, signature };
 }
