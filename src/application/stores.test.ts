@@ -41,6 +41,8 @@ const preferences: ReaderPreferences = {
   fontFamily: "serif",
   pageTurnEffect: "curl",
   autoPageSeconds: 8,
+  readingMode: "single",
+  autoScrollSpeed: 40,
 };
 const book = (
   id: string,

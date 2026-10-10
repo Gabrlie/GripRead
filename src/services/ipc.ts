@@ -200,6 +200,7 @@ export const tauriServices: AppServices = {
       invokeCommand<ReaderLocator>("resolve_reader_locator", {
         request: { bookId, progress } satisfies ResolveLocatorRequest,
       }),
+    resolveOffset: (request) => invokeCommand<ReaderLocator>("resolve_reader_offset", { request }),
     saveReaderLocator: (locator) =>
       invokeCommand<ReaderLocator>("save_reader_locator", {
         request: { locator } satisfies SaveLocatorRequest,

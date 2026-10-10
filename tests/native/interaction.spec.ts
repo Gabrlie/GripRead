@@ -130,24 +130,7 @@ describe("native typography and reader interaction", () => {
     await refreshLibraryInUi(book.book.id);
     let start = await openBook(book.book.id);
     if (start.start !== 0) start = await seekReaderProgress(0);
-    const slider = await browser.$('[data-testid="reader-progress"] input[type="range"]');
-    await slider.waitForExist();
-    await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="reader-progress"] input[type="range"]',
-      );
-      if (!input) throw new Error("progress slider input is missing");
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      if (!setValue) throw new Error("slider value setter is missing");
-      setValue.call(input, "100");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await browser.waitUntil(
-      async () => !(await browser.$('[data-testid="reader-next"]').isEnabled()),
-      { timeout: TEST_TIMEOUT, interval: 100 },
-    );
-    const end = await readPage();
+    const end = await seekReaderProgress(100);
     expect(end.end).toBe(end.total);
     expect(end.start).toBeGreaterThan(start.start);
     await clickReaderControl("reader-previous");
@@ -157,7 +140,7 @@ describe("native typography and reader interaction", () => {
     await closeBook();
   });
 
-  it("keeps the reader open after a save failure and closes after retry", async () => {
+  it("returns to the shelf during a save failure and retries the retained position", async () => {
     const book = await importFixture("mixed.txt");
     await refreshLibraryInUi(book.book.id);
     let first = await openBook(book.book.id);
@@ -172,15 +155,17 @@ describe("native typography and reader interaction", () => {
       await saveError.waitForDisplayed();
 
       await clickReaderControl("reader-close");
-      await browser.$('[data-testid="reader-page"]').waitForDisplayed();
-      expect(await browser.$('[data-testid="reader-close"]').isEnabled()).toBe(true);
+      await waitForReaderClosed();
+      await browser.$('[data-testid="reader-background-error"]').waitForDisplayed();
 
       await unlink(fault);
-      const retry = await browser.$('[data-testid="reader-save-error"] button');
+      const retry = await browser.$('[data-testid="reader-background-error"] button');
       await retry.click();
       await browser.waitUntil(
-        async () => !(await browser.$('[data-testid="reader-save-error"]').isExisting()),
+        async () => !(await browser.$('[data-testid="reader-background-error"]').isExisting()),
       );
+      const reopened = await openBook(book.book.id);
+      expect(reopened.start).toBeGreaterThan(first.start);
       await closeBook();
     } finally {
       await unlink(fault).catch(() => undefined);

@@ -28,6 +28,8 @@ Interface motion must be interruptible and must not delay persistence, input han
 
 Motion owns page and control transitions. The [reader's page-turn adapter](../subsystems/reader.md) owns page-curl rendering; Motion must not manipulate the same page transform. Reduced motion also selects the reader's instant page-turn behavior.
 
+Reader slide/fade transitions animate an aria-hidden clone of the outgoing page or spread with the ordinary transition duration. Curl clones use each measured column's actual text width, including a blank final leaf where needed. Manual navigation, resize, mode/effect changes, reduced motion, and disposal cancel the active transition and settle its completion immediately. The selectable final text and saved locator never wait for decoration to finish.
+
 Default to `MotionConfig` with `reducedMotion="user"`; use the reduced-motion preference for non-Motion effects too. Preserve focus management and accessible state even when an exit transition is interrupted. Load only needed animation features and evaluate LazyMotion when establishing the frontend bundle. See [accessibility](https://motion.dev/docs/react-accessibility) and [bundle guidance](https://motion.dev/docs/react-reduce-bundle-size).
 
 ## Acceptance

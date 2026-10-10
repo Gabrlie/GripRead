@@ -25,6 +25,35 @@ afterEach(() => {
 });
 
 describe("automatic page turning", () => {
+  it("scrolls at the selected speed and discards elapsed background time", async () => {
+    const advancePixels = vi.fn();
+    const { result } = renderHook(() =>
+      useAutomaticTurn({
+        intervalSeconds: 8,
+        canContinue: () => true,
+        turn: vi.fn(),
+        scroll: { speed: 40, advance: advancePixels },
+      }),
+    );
+    await advance(1000);
+    expect(advancePixels).not.toHaveBeenCalled();
+    await act(() => result.current.start());
+    await advance(1000);
+    const distance = advancePixels.mock.calls.reduce((sum, [pixels]) => sum + Number(pixels), 0);
+    expect(distance).toBeGreaterThan(35);
+    expect(distance).toBeLessThanOrEqual(40);
+    await act(() => window.dispatchEvent(new Event("blur")));
+    const count = advancePixels.mock.calls.length;
+    await advance(60_000);
+    expect(advancePixels).toHaveBeenCalledTimes(count);
+    expect(result.current.running).toBe(false);
+    advancePixels.mockClear();
+    await act(() => result.current.start());
+    await advance(100);
+    expect(
+      advancePixels.mock.calls.reduce((sum, [pixels]) => sum + Number(pixels), 0),
+    ).toBeLessThan(5);
+  });
   it("starts explicitly and waits a complete interval after cross-window loading", async () => {
     const loading = deferred();
     const turn = vi.fn().mockReturnValueOnce(loading.promise).mockResolvedValue(undefined);

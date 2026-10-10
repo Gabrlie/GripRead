@@ -165,6 +165,15 @@ pub struct ResolveLocatorRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ResolveOffsetRequest {
+    pub book_id: String,
+    pub content_version: String,
+    pub resource_id: String,
+    pub offset: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct BookRequest {
     pub book_id: String,
 }
@@ -400,6 +409,17 @@ pub enum ReaderFont {
 pub enum PageTurnEffect {
     Instant,
     Curl,
+    Slide,
+    Fade,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderMode {
+    #[default]
+    Single,
+    Double,
+    Scroll,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
@@ -414,7 +434,18 @@ pub struct ReaderPreferences {
     pub page_turn_effect: PageTurnEffect,
     #[serde(default = "default_auto_page_seconds")]
     pub auto_page_seconds: u8,
+    #[serde(default)]
+    pub reading_mode: ReaderMode,
+    #[serde(default = "default_auto_scroll_speed")]
+    pub auto_scroll_speed: u16,
 }
+
+fn default_auto_scroll_speed() -> u16 {
+    40
+}
+
+pub const AUTO_SCROLL_SPEED_MIN: u16 = 5;
+pub const AUTO_SCROLL_SPEED_MAX: u16 = 200;
 
 fn default_auto_page_seconds() -> u8 {
     8
@@ -431,6 +462,8 @@ impl Default for ReaderPreferences {
             font_family: ReaderFont::Serif,
             page_turn_effect: PageTurnEffect::Curl,
             auto_page_seconds: default_auto_page_seconds(),
+            reading_mode: ReaderMode::Single,
+            auto_scroll_speed: default_auto_scroll_speed(),
         }
     }
 }
@@ -453,6 +486,11 @@ impl ReaderPreferences {
         if !(2..=60).contains(&self.auto_page_seconds) {
             return Err(AppError::invalid_argument(
                 "auto_page_seconds must be between 2 and 60",
+            ));
+        }
+        if !(AUTO_SCROLL_SPEED_MIN..=AUTO_SCROLL_SPEED_MAX).contains(&self.auto_scroll_speed) {
+            return Err(AppError::invalid_argument(
+                "auto_scroll_speed must be between 5 and 200 CSS pixels per second",
             ));
         }
         Ok(())

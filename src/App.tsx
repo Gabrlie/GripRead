@@ -5,6 +5,7 @@ import React, {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
@@ -79,6 +80,11 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 function MainContent() {
   const { activeTab, activeBook } = useApp();
   const runtime = useRuntime();
+  const positionError = useSyncExternalStore(
+    runtime.positions.subscribe,
+    runtime.positions.getSnapshot,
+  );
+  const readerWriteError = useSyncExternalStore(runtime.subscribeReader, runtime.getReaderError);
   const { state: library } = useLibrary();
   const { state: settings } = useSettings();
   const { state: shelfPreferences, store: shelfPreferenceStore } = useShelfPreferences();
@@ -147,6 +153,18 @@ function MainContent() {
       className="min-h-screen flex flex-col bg-surface text-on-surface min-w-0"
     >
       <Navbar />
+      {!activeBook && (positionError || readerWriteError) && (
+        <div
+          role="alert"
+          data-testid="reader-background-error"
+          className="fixed bottom-24 left-4 right-4 z-[60] rounded-xl bg-error-container text-error px-4 py-2 text-sm"
+        >
+          阅读进度尚未保存：{positionError || readerWriteError}
+          <button className="ml-3 underline" onClick={runtime.retryReaderWrites}>
+            重试
+          </button>
+        </div>
+      )}
       {closeError && (
         <div role="alert" className="fixed top-0 z-[100] bg-error-container text-error p-3 w-full">
           退出前保存失败：{closeError}

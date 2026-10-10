@@ -1,4 +1,5 @@
 import { PageFlip } from "page-flip";
+import { animate, type AnimationPlaybackControls } from "motion";
 import type { PageTurnEffect } from "../types/generated";
 import { renderReaderText } from "./render";
 import type {
@@ -89,6 +90,10 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   private animationToken = 0;
   private pageFlipReady: Promise<void> | null = null;
   private pageFlipInitCancel: (() => void) | null = null;
+  private columns: 1 | 2 = 1;
+  private currentSpread: readonly ReaderDisplayedPage[] = [];
+  private previousSpread: readonly ReaderDisplayedPage[] = [];
+  private motion: AnimationPlaybackControls | null = null;
 
   public constructor(host: HTMLElement, options: StPageFlipAdapterOptions = {}) {
     if (!host) throw new TypeError("StPageFlipAdapter requires an overlay host");
@@ -124,6 +129,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   }
 
   public setEffect(effect: PageTurnEffect): void {
+    if (this.effect !== effect) this.cancel();
     this.effect = effect;
     this.applyMotionSetting();
     if (this.effect === "instant") this.cancelAnimation(true);
@@ -133,6 +139,7 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     if (this.disposed) return;
     this.cancelAnimation(this.animationResolve !== null);
     this.previousPage = this.currentPage;
+    this.previousSpread = this.currentSpread;
     this.previousIndex = this.index;
     this.pages = pages;
     this.index = clampIndex(currentIndex, pages.length);
@@ -146,6 +153,13 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     context: ReaderPresentationContext,
   ): Promise<void> {
     if (this.disposed) return;
+    const columns = context.columns ?? 1;
+    if (this.columns !== columns) {
+      this.cancelAnimation(true);
+      this.resetPageFlip();
+      this.columns = columns;
+    }
+    this.currentSpread = context.visiblePages ?? [page];
     const targetIndex = clampIndex(context.index, this.pages.length);
     const target = page ?? this.pages[targetIndex];
     const instant =
@@ -171,12 +185,25 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     if (!previous || !target) return;
     const forward =
       direction === "next" || (direction !== "previous" && targetIndex >= this.previousIndex);
+    if (this.effect === "slide" || this.effect === "fade") {
+      await this.presentMotion(forward);
+      return;
+    }
     const items: [ReaderDisplayedPage, ReaderDisplayedPage] = forward
       ? [previous, target]
       : [target, previous];
     const startPage = forward ? 0 : 1;
     const flip = this.ensurePageFlip();
-    this.loadPair(flip, items, startPage);
+    const spread = (pages: readonly ReaderDisplayedPage[]) => [pages[0] ?? null, pages[1] ?? null];
+    this.loadPair(
+      flip,
+      this.columns === 2
+        ? forward
+          ? [...spread(this.previousSpread), ...spread(this.currentSpread)]
+          : [...spread(this.currentSpread), ...spread(this.previousSpread)]
+        : items,
+      this.columns === 2 ? (forward ? 0 : 2) : startPage,
+    );
     const ready = this.pageFlipReady;
     if (ready) await ready;
     // A preference change or resize may have destroyed the instance while the
@@ -206,6 +233,41 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
 
   public get currentPageFlip(): StPageFlipLike | null {
     return this.pageFlip;
+  }
+
+  public cancel(): void {
+    this.cancelAnimation(true);
+    if (this.pageFlipReady) this.resetPageFlip();
+  }
+
+  private async presentMotion(forward: boolean): Promise<void> {
+    this.resetPageFlip();
+    const overlay = this.mount.ownerDocument.createElement("div");
+    overlay.className = this.options.pageClassName ?? "reader-prose";
+    Object.assign(overlay.style, {
+      position: "absolute",
+      inset: "0",
+      display: "grid",
+      gridTemplateColumns: `repeat(${this.columns}, minmax(0, 1fr))`,
+      gap: this.columns === 2 ? "32px" : "0",
+    });
+    for (const page of this.previousSpread) overlay.append(this.createPageElement(page, false));
+    this.mount.append(overlay);
+    this.mount.style.visibility = "visible";
+    const finished = new Promise<void>((resolve) => {
+      this.animationResolve = resolve;
+    });
+    this.motion = animate(
+      overlay,
+      this.effect === "fade" ? { opacity: [1, 0] } : { x: [0, forward ? "-100%" : "100%"] },
+      {
+        duration: 0.2,
+        ease: "easeOut",
+        onComplete: () => this.cancelAnimation(),
+      },
+    );
+    await finished;
+    overlay.remove();
   }
 
   /**
@@ -244,11 +306,11 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     }
 
     const settings: StPageFlipSettings = {
-      width: nextGeometry.width,
+      width: nextGeometry.width / this.columns,
       height: nextGeometry.height,
       size: "fixed",
       flippingTime: this.animationDuration(),
-      usePortrait: true,
+      usePortrait: this.columns === 1,
       autoSize: false,
       drawShadow: true,
       useMouseEvents: false,
@@ -280,10 +342,14 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
 
   private loadPair(
     flip: StPageFlipLike,
-    items: readonly [ReaderDisplayedPage | null, ReaderDisplayedPage],
+    items: readonly (ReaderDisplayedPage | null)[],
     startPage: number,
   ): void {
-    const elements = items.map((page) => this.createPageElement(page));
+    const elements = items.map((page, index) => {
+      const element = this.createPageElement(page);
+      if (this.columns === 2) element.style.paddingInline = index % 2 === 0 ? "0 16px" : "16px 0";
+      return element;
+    });
     if (!this.loaded) {
       if (!flip.loadFromHTML) {
         throw new Error("StPageFlip instance cannot load HTML pages");
@@ -337,6 +403,8 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
   private cancelAnimation(resetUnderlying: boolean = false): void {
     const wasAnimating = this.animationResolve !== null;
     this.animationToken += 1;
+    this.motion?.stop();
+    this.motion = null;
     if (this.animationTimer !== null) {
       clearTimeout(this.animationTimer);
       this.animationTimer = null;
@@ -409,11 +477,16 @@ export class StPageFlipAdapter implements ReaderPresentationAdapter {
     if (settings) settings.flippingTime = this.animationDuration();
   }
 
-  private createPageElement(page: ReaderDisplayedPage | null): HTMLElement {
-    if (!page) throw new Error("StPageFlip cannot render an empty page");
+  private createPageElement(page: ReaderDisplayedPage | null, gutter = true): HTMLElement {
     const element = this.mount.ownerDocument.createElement("div");
     element.className = this.options.pageClassName ?? "reader-page-flip";
     element.setAttribute("aria-hidden", "true");
+    if (gutter && this.columns === 2) {
+      element.style.boxSizing = "border-box";
+      // Each leaf includes half the center gutter; text width matches measurement.
+      element.style.paddingInline = "8px";
+    }
+    if (!page) return element;
     element.dataset.start = String(page.startOffset);
     element.dataset.end = String(page.endOffset);
     element.dataset.total = String(page.totalLength);

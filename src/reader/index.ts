@@ -1,4 +1,5 @@
-export { ReaderController, ReaderProtocolError } from "./controller";
+export { ReaderController, ReaderProtocolError, emptyReaderSnapshot } from "./controller";
+export { ReaderPositions } from "./positions";
 export type { ReaderControllerOptions } from "./controller";
 export {
   DomReaderMeasurer,

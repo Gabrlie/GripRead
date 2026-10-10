@@ -25,6 +25,8 @@ interface ReaderSurfaceProps {
   onTurn: (direction: "next" | "previous") => void;
   onToggleControls: () => void;
   children: ReactNode;
+  double?: boolean;
+  scroll?: boolean;
 }
 
 /**
@@ -41,10 +43,14 @@ export function ReaderSurface({
   onTurn,
   onToggleControls,
   children,
+  double = false,
+  scroll = false,
 }: ReaderSurfaceProps) {
   const pointer = useRef<{ x: number; y: number } | null>(null);
   return (
-    <div className="absolute inset-0 w-full max-w-2xl mx-auto px-5 sm:px-8 md:px-12 pt-safe pb-safe overflow-hidden">
+    <div
+      className={`absolute inset-0 w-full ${double ? "max-w-6xl" : "max-w-2xl"} mx-auto px-5 sm:px-8 md:px-12 pt-safe pb-safe overflow-hidden`}
+    >
       <div
         ref={pageBox}
         className="relative h-full min-h-0 w-full"
@@ -65,16 +71,17 @@ export function ReaderSurface({
             return;
           }
           if (Math.abs(dx) > 60) {
+            if (scroll) return;
             onInteract();
             onTurn(dx < 0 ? "next" : "previous");
             return;
           }
-          if (Math.abs(dx) > 5) return;
+          if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
           onInteract();
           const rect = event.currentTarget.getBoundingClientRect();
           const fraction = (event.clientX - rect.left) / rect.width;
-          if (fraction < 0.2) onTurn("previous");
-          else if (fraction > 0.8) onTurn("next");
+          if (!scroll && fraction < 0.2) onTurn("previous");
+          else if (!scroll && fraction > 0.8) onTurn("next");
           else onToggleControls();
         }}
       >

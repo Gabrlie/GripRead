@@ -13,16 +13,16 @@ use crate::models::{
     CreateGroupRequest, GetTocRuleRequest, GroupRequest, ImportOperationRequest, ImportPhase,
     ImportResult, ImportStatus, ImportTask, LibraryBook, LibraryGroup, PreviewTocRuleRequest,
     ReadContentRequest, ReaderLocator, ReaderPreferences, RenameGroupRequest,
-    ResolveLocatorRequest, SaveLocatorRequest, SaveSettingsRequest, SaveTocRuleRequest,
-    SearchRequest, SearchResponse, SetBookGroupsRequest, StartImportRequest, TocEntry,
-    TxtDecodeStatus, TxtDecodeTask, TxtEncoding, TxtEncodingInfo, TxtEncodingRequest,
+    ResolveLocatorRequest, ResolveOffsetRequest, SaveLocatorRequest, SaveSettingsRequest,
+    SaveTocRuleRequest, SearchRequest, SearchResponse, SetBookGroupsRequest, StartImportRequest,
+    TocEntry, TxtDecodeStatus, TxtDecodeTask, TxtEncoding, TxtEncodingInfo, TxtEncodingRequest,
     TxtSourceRequest, TxtTocRulePreview,
 };
 use crate::storage::{
     before_import_commit, build_toc_from_context, duplicate_validation_retry,
     prepare_import_for_target, read_content_window_from_context, resolve_locator_from_context,
-    validate_content_locator, validate_import_target, verify_content_context,
-    verify_prepared_txt_decode_source, Storage,
+    resolve_offset_from_context, validate_content_locator, validate_import_target,
+    verify_content_context, verify_prepared_txt_decode_source, Storage,
 };
 
 pub struct AppState {
@@ -1068,6 +1068,28 @@ pub async fn resolve_reader_locator(
             storage.persist_content_index(&context, &verified)?;
         }
         resolve_locator_from_context(&request, &context, &verified)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("locator worker stopped: {error}")))?
+}
+
+#[tauri::command]
+pub async fn resolve_reader_offset(
+    request: ResolveOffsetRequest,
+    state: State<'_, AppState>,
+) -> Result<ReaderLocator, AppError> {
+    let storage = Arc::clone(&state.storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .content_read_context(&request.book_id)?;
+        let verified = verify_content_context(&context)?;
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .persist_content_index(&context, &verified)?;
+        resolve_offset_from_context(&request, &context, &verified)
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, format!("locator worker stopped: {error}")))?

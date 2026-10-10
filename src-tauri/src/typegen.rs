@@ -28,6 +28,7 @@ const IPC_TYPES: &[&str] = &[
     "WindowDirection",
     "ReadContentRequest",
     "ResolveLocatorRequest",
+    "ResolveOffsetRequest",
     "BookRequest",
     "TxtEncodingRequest",
     "TxtSourceRequest",
@@ -59,6 +60,7 @@ const IPC_TYPES: &[&str] = &[
     "PaperTone",
     "ReaderFont",
     "PageTurnEffect",
+    "ReaderMode",
     "ReaderPreferences",
     "SaveSettingsRequest",
     "UpdateBookRequest",
@@ -70,6 +72,7 @@ const IPC_TYPES: &[&str] = &[
 
 pub fn generated_types() -> Result<String, AppError> {
     let mut output = String::from(GENERATED_HEADER);
+    output.push_str(&format!("export const AUTO_SCROLL_SPEED_MIN = {AUTO_SCROLL_SPEED_MIN};\nexport const AUTO_SCROLL_SPEED_MAX = {AUTO_SCROLL_SPEED_MAX};\n\n"));
     for name in IPC_TYPES {
         output.push_str(&format!(
             "export type {{ {name} }} from \"./generated/{name}\";\n"
@@ -104,6 +107,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<WindowDirection>(&config)?;
     export_all::<ReadContentRequest>(&config)?;
     export_all::<ResolveLocatorRequest>(&config)?;
+    export_all::<ResolveOffsetRequest>(&config)?;
     export_all::<BookRequest>(&config)?;
     export_all::<TxtEncodingRequest>(&config)?;
     export_all::<TxtSourceRequest>(&config)?;
@@ -135,6 +139,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<PaperTone>(&config)?;
     export_all::<ReaderFont>(&config)?;
     export_all::<PageTurnEffect>(&config)?;
+    export_all::<ReaderMode>(&config)?;
     export_all::<ReaderPreferences>(&config)?;
     export_all::<SaveSettingsRequest>(&config)?;
     export_all::<UpdateBookRequest>(&config)?;

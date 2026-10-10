@@ -1,5 +1,6 @@
-import type { ContentWindow, PageTurnEffect, ReaderLocator } from "../types/generated";
+import type { ContentWindow, PageTurnEffect, ReaderLocator, ReaderMode } from "../types/generated";
 import type { ReaderPage } from "./pagination";
+import type { ReaderChapter } from "./chapters";
 
 /** Direction of a visible page turn. */
 export type ReaderNavigationDirection = "next" | "previous" | "open" | "seek" | "reflow";
@@ -16,6 +17,8 @@ export interface ReaderPresentationContext {
   index: number;
   pages: readonly ReaderDisplayedPage[];
   reducedMotion: boolean;
+  visiblePages?: readonly ReaderDisplayedPage[];
+  columns?: 1 | 2;
 }
 
 /**
@@ -35,6 +38,7 @@ export interface ReaderPresentationAdapter {
   setEffect?(effect: PageTurnEffect): void;
   /** Reset visual geometry after the host viewport changes. */
   resize?(): void;
+  cancel?(): void;
   dispose?(): void;
 }
 
@@ -42,6 +46,13 @@ export interface ReaderPresentationAdapter {
 export interface ReaderSnapshot {
   bookId: string | null;
   page: ReaderDisplayedPage | null;
+  pages: readonly ReaderDisplayedPage[];
+  mode: ReaderMode;
+  chapters: readonly ReaderChapter[];
+  chapter: ReaderChapter | null;
+  chapterProgress: number;
+  scroll: ContentWindow | null;
+  scrollRevision: number;
   contentWindow: ContentWindow | null;
   pageIndex: number;
   pageCount: number;

@@ -47,6 +47,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
   const reader: ReaderService = {
     readContentWindow: vi.fn(),
     resolveLocator: vi.fn(),
+    resolveOffset: vi.fn(),
     saveReaderLocator: vi.fn(),
     getSavedReaderLocator: vi.fn(),
     listToc: vi.fn(async () => []),
@@ -69,6 +70,8 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
       fontFamily: "serif",
       pageTurnEffect: "curl",
       autoPageSeconds: 8,
+      readingMode: "single",
+      autoScrollSpeed: 40,
     })),
     saveSettings: vi.fn(async (value) => value),
     getShelfPreferences: vi.fn(async (): Promise<ShelfPreferences> => ({

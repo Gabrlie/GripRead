@@ -4,7 +4,7 @@ Status: planned
 
 ## Scope
 
-Parse TXT and DRM-free reflowable EPUB, render normalized chapters, and support offline reading, navigation, search, and bookmarks. Online chapters enter through the same content interface. Screen layout and default typography belong to [interaction design](../design/interaction.md). The current planned import and reader work is tracked in the [active plan](../plans/2026-09-23-import-reader-experience.md).
+Parse TXT and DRM-free reflowable EPUB, render normalized chapters, and support offline reading, navigation, search, and bookmarks. Online chapters enter through the same content interface. Screen layout and default typography belong to [interaction design](../design/interaction.md). The current TXT mode work is tracked in the [active plan](../plans/2026-09-27-reader-batch-2.md); EPUB remains planned.
 
 ## Interfaces
 
@@ -16,7 +16,7 @@ Keep these interfaces sufficient for future read-only content retrieval; do not 
 
 ## Behavior
 
-Novels default to pagination with page-curl, slide, and instant effects, plus an optional scrolling mode. StPageFlip is the planned page-curl adapter: it receives already paginated content and owns neither text parsing nor persisted positions. General interface transitions follow [motion design](../design/motion.md).
+TXT defaults to single-page reading, with double-page and continuous-scroll modes available. Paginated screens contain only one chapter; an odd final spread leaves its right column empty, and the next turn enters the next chapter. Below 900 CSS px the selected double-page mode displays one page without changing the saved preference. Instant, curl, slide, and fade effects operate on the complete visible page/spread; StPageFlip owns curl and Motion owns slide/fade. Adapters own neither content loading nor saved positions. Scroll retains the selected effect for returning to pagination. General interface transitions follow [motion design](../design/motion.md).
 
 Changing fonts, size, orientation, viewport, or single/double-page layout reflows from the text locator. Toolbar visibility and panel changes overlay stable page geometry and do not repaginate or alter the saved passage. Cross-chapter turns must preserve content without missing or repeating text. Retain only the required reading window in the DOM; a large novel must not be rendered in full.
 
@@ -28,13 +28,17 @@ For TXT, build directory entries from heading lines in the existing text and pre
 
 Directory generation must not rescan the entire TXT once for every matched chapter. Build chapter locations in work proportional to the text and matches, independently from first-page rendering and shelf usability; benchmark cold and warm uncached cases with dense headings to verify the improvement.
 
-Automatic page turning uses the existing reader controller and presentation modes. Its initial interval is 8 seconds per page and the chosen interval persists; the running state is session-local and never resumes automatically after reopening. It waits for a page/window turn to finish before starting the next interval, never overlaps turns, and pauses for manual reading interaction, controls or panels, text selection, blur/background, content replacement, reflow, encoding changes, navigation failure, or the final page. Resume requires an explicit user action and does not replay elapsed background time.
+Derive chapter ranges from accepted TOC positions, including a preface and whole-text fallback. Current chapter follows the leading visible locator. Chapter progress seeks resolve exact UTF-16 offsets through Rust; 100% reads backward from the exclusive chapter end and displays the terminal page/spread without entering the next chapter. Progress stays at 100% while that end is visible. A directory generation change cancels old chapter-targeted requests and retains the current passage. TOC loading never blocks body rendering.
+
+Scroll renders at most three adjacent bounded windows and allows one transient read. Prepend and eviction preserve a visible text anchor; text-node mappings exclude hidden LF separators from visible anchors, and window boundaries do not introduce paragraph breaks. Selection defers recycling selected text. A bounded non-content spacer at EOF permits short final chapters and late locators to align at the viewport top. The spacer has no locator or progress contribution. Save the first visible UTF-16 position periodically during scrolling and synchronize it before leaving or exit; pixel adjustments are temporary layout state only.
+
+Automatic reading uses the same controller and session pause state across modes. Paginated reading advances one page/spread per saved interval; continuous reading uses a separately saved CSS-pixel speed, with defaults and bounds owned by the Rust preference declarations and generated bindings. It waits for page/window completion before the next interval, never overlaps turns, and pauses for manual reading interaction, controls or panels, text selection, blur/background, content replacement, reflow, encoding changes, navigation failure, or the final visible text. It never resumes after reopening or replays elapsed background time. Explicit automatic scrolling remains available with reduced motion, while decorative transitions are disabled.
 
 ## M0 implementation contract
 
-TXT is one resource named Full text; content windows do not create chapters. Forward windows begin at their locator; backward windows end exclusively at it. Both reject surrogate-pair splits. The controller measures a single visible page using actual WebView typography and dimensions, retains bounded window data, and reflows from the current locator. Previous-page navigation after restart loads a backward window instead of relying on session history.
+TXT is one resource named Full text; content windows do not create chapters. Forward windows begin at their locator; backward windows end exclusively at it. Both reject surrogate-pair splits. Paginated layout measures each column using actual WebView typography and dimensions. Chapter slices preserve absolute offsets and whole-book length. Previous-page/spread navigation after restart reads backward instead of relying on session history.
 
-Navigation is serialized within a session. Opening another book or reflowing invalidates stale results. Position saves are ordered and coalesce pending locations; explicit flush, leaving a book, and normal native exit wait for persistence and report failures. Instant and StPageFlip presentation adapters consume measured pages and own no reading location. Reduced motion uses instant presentation; selection, controls, and open dialogs suppress reading gestures. Unsupported modes remain unavailable.
+Navigation is serialized within a session; seeks invalidate stale targets, and reflow queues behind accepted navigation. Complete spreads publish and save once. The application owns ordered/coalesced position writes across reader views; returning to the shelf cancels unshown navigation and immediately leaves while accepted writes continue. Reopening uses the latest session locator before a slow write finishes; encoding replacement clears that cache and uses the relocated backend position. Save failures retain their value and offer non-modal retry. Explicit save and native exit drain pending writes; exit ends animation without waiting for its duration. Reduced motion uses instant presentation, and selection, controls, and dialogs suppress reading gestures.
 
 Supported preferences use the settings service and persist in SQLite. Theme follows live system changes when selected. Basic reading uses system fonts, local SVG icons, and local cover placeholders without remote asset requests.
 

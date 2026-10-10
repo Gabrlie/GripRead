@@ -112,7 +112,7 @@ export function ReaderBottomBar({
       <div className="max-w-xl mx-auto px-4 sm:px-6 py-3 space-y-3">
         <div className="flex items-center gap-3">
           <Button
-            data-testid="reader-previous"
+            data-testid="reader-previous-chapter"
             variant="ghost"
             size="sm"
             className={navClass}
@@ -143,7 +143,7 @@ export function ReaderBottomBar({
             {draft ?? progress}%
           </span>
           <Button
-            data-testid="reader-next"
+            data-testid="reader-next-chapter"
             variant="ghost"
             size="sm"
             className={navClass}

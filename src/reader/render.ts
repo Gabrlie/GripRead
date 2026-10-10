@@ -35,6 +35,7 @@ export function renderReaderText(
     if (lineEnd > lineStart) {
       const paragraph = document.createElement("p");
       paragraph.className = READER_PARAGRAPH_CLASS;
+      paragraph.dataset.textStart = String(lineStart);
       if (continued) paragraph.dataset.continued = "true";
       if (!continued && options.headings?.has(lineStart)) paragraph.dataset.heading = "true";
       appendHighlighted(paragraph, text, lineStart, lineEnd, options.highlight ?? null);
@@ -43,6 +44,7 @@ export function renderReaderText(
       // An empty line occupies one line box, matching pre-wrapped text.
       const blank = document.createElement("p");
       blank.className = READER_PARAGRAPH_CLASS;
+      blank.dataset.textStart = String(lineStart);
       blank.dataset.blank = "true";
       blank.append(document.createElement("br"));
       fragment.append(blank);

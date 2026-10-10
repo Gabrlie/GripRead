@@ -84,6 +84,7 @@ function setup() {
     saveTocRule: vi.fn(async (request) => request.rule),
     readContentWindow: vi.fn(),
     resolveLocator: vi.fn(),
+    resolveOffset: vi.fn(),
     saveReaderLocator: vi.fn(),
     getSavedReaderLocator: vi.fn(),
     listBookmarks: vi.fn(),

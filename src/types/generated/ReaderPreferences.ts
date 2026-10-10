@@ -2,6 +2,7 @@
 import type { PageTurnEffect } from "./PageTurnEffect";
 import type { PaperTone } from "./PaperTone";
 import type { ReaderFont } from "./ReaderFont";
+import type { ReaderMode } from "./ReaderMode";
 import type { ThemeMode } from "./ThemeMode";
 
-export type ReaderPreferences = { theme: ThemeMode, paperTone: PaperTone, oledBlack: boolean, fontSize: number, lineHeight: number, fontFamily: ReaderFont, pageTurnEffect: PageTurnEffect, autoPageSeconds: number, };
+export type ReaderPreferences = { theme: ThemeMode, paperTone: PaperTone, oledBlack: boolean, fontSize: number, lineHeight: number, fontFamily: ReaderFont, pageTurnEffect: PageTurnEffect, autoPageSeconds: number, readingMode: ReaderMode, autoScrollSpeed: number, };

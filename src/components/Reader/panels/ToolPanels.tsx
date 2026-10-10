@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   Bookmark,
   TocEntry,
@@ -6,6 +7,8 @@ import type {
   TxtTocRule,
 } from "../../../types/generated";
 import { Button } from "../../ui/button";
+import { Slider } from "../../ui/slider";
+import { AUTO_SCROLL_SPEED_MIN, AUTO_SCROLL_SPEED_MAX } from "../../../types/generated";
 import type { ReaderSearch } from "../use-reader-search";
 import type { ReaderTools } from "../use-reader-tools";
 
@@ -185,6 +188,9 @@ export function DirectoryPanel({
 }
 
 interface AutomaticPanelProps {
+  scroll: boolean;
+  speed: number;
+  onSpeed: (speed: number) => void;
   seconds: number;
   disabledInterval: boolean;
   running: boolean;
@@ -195,6 +201,9 @@ interface AutomaticPanelProps {
 }
 
 export function AutomaticPanel({
+  scroll,
+  speed,
+  onSpeed,
   seconds,
   disabledInterval,
   running,
@@ -207,28 +216,28 @@ export function AutomaticPanel({
     <div className="space-y-4">
       <label className="block space-y-2 text-sm">
         <span className="flex justify-between">
-          <span>每页间隔</span>
-          <output>{seconds} 秒</output>
+          <span>{scroll ? "滚动速度" : "每屏间隔"}</span>
+          <output>{scroll ? `${speed} px/秒` : `${seconds} 秒`}</output>
         </span>
         <input
-          aria-label="自动翻页间隔"
+          aria-label={scroll ? "自动滚动速度" : "自动翻页间隔"}
           type="range"
-          min={2}
-          max={60}
+          min={scroll ? AUTO_SCROLL_SPEED_MIN : 2}
+          max={scroll ? AUTO_SCROLL_SPEED_MAX : 60}
           step={1}
           disabled={disabledInterval}
-          value={seconds}
-          onChange={(event) => onInterval(Number(event.target.value))}
+          value={scroll ? speed : seconds}
+          onChange={(event) => (scroll ? onSpeed : onInterval)(Number(event.target.value))}
           className="w-full accent-primary"
         />
       </label>
       {running ? (
         <Button variant="outline" onClick={onPause}>
-          暂停自动翻页
+          {scroll ? "暂停自动滚动" : "暂停自动翻页"}
         </Button>
       ) : (
         <Button disabled={!canStart} onClick={onStart}>
-          开始自动翻页
+          {scroll ? "开始自动滚动" : "开始自动翻页"}
         </Button>
       )}
       <p className="text-xs text-secondary">手动翻页、显示工具栏、打开面板或切换到后台时会暂停。</p>
@@ -237,6 +246,8 @@ export function AutomaticPanel({
 }
 
 interface ContentsPanelProps {
+  progress: number;
+  onProgress: (progress: number) => void;
   /** Owned by the reader session so the choice survives closing the panel. */
   mode: ContentsMode;
   onModeChange: (mode: ContentsMode) => void;
@@ -255,9 +266,30 @@ export function ContentsPanel({
   toolsError,
   onSeek,
   onStart,
+  progress,
+  onProgress,
 }: ContentsPanelProps) {
+  const [draft, setDraft] = useState<number | null>(null);
   return (
     <div className="space-y-3">
+      <div className="flex items-center gap-3 text-xs text-secondary">
+        <span>全书</span>
+        <Slider
+          data-testid="reader-book-progress"
+          aria-label="全书进度"
+          className="flex-1"
+          min={0}
+          max={100}
+          step={1}
+          value={draft ?? progress}
+          onValueChange={(value) => setDraft(Array.isArray(value) ? value[0] : value)}
+          onValueCommitted={(value) => {
+            setDraft(null);
+            onProgress(Array.isArray(value) ? value[0] : value);
+          }}
+        />
+        <span>{draft ?? progress}%</span>
+      </div>
       <div className="flex gap-2" role="tablist" aria-label="目录模式">
         <Button
           variant={mode === "auto" ? "secondary" : "ghost"}

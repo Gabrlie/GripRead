@@ -71,6 +71,7 @@ function runtime(books: LibraryBook[] = []) {
     reader: {
       readContentWindow: vi.fn(),
       resolveLocator: vi.fn(),
+      resolveOffset: vi.fn(),
       saveReaderLocator: vi.fn(),
       getSavedReaderLocator: vi.fn(),
       listToc: vi.fn(async () => []),

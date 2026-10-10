@@ -96,6 +96,38 @@ afterEach(() => {
 });
 
 describe("StPageFlipAdapter", () => {
+  it("loads two complete spreads with a blank final leaf and cancels the turn immediately", async () => {
+    const { host, mount } = hostForTest();
+    const flip = mockPageFlip();
+    const create = vi.fn(() => flip.mock);
+    const adapter = new StPageFlipAdapter(host, {
+      mount,
+      createPageFlip: create,
+      width: 1000,
+      height: 700,
+    });
+    const pages = [page("b", "one", 0, 9), page("b", "two", 3, 9), page("b", "end", 6, 9)];
+    adapter.setPages(pages, 0);
+    await adapter.present(pages[0], "open", {
+      ...context(pages, 0),
+      columns: 2,
+      visiblePages: pages.slice(0, 2),
+    });
+    adapter.setPages(pages, 2);
+    const turning = adapter.present(pages[2], "next", {
+      ...context(pages, 2),
+      columns: 2,
+      visiblePages: pages.slice(2),
+    });
+    expect(create.mock.calls[0]).toBeTruthy();
+    expect(flip.loadFromHTML.mock.calls[0][0].map((node: HTMLElement) => node.textContent)).toEqual(
+      ["one", "two", "end", ""],
+    );
+    adapter.cancel();
+    await turning;
+    expect(mount.style.visibility).toBe("hidden");
+    adapter.dispose();
+  });
   it("clears the fallback timer when PageFlip reports an early flip", async () => {
     vi.useFakeTimers();
     const { host, mount } = hostForTest();

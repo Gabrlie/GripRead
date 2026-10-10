@@ -9,7 +9,12 @@ import {
 import { useReducedMotion } from "motion/react";
 import { useApp } from "../../context/AppContext";
 import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
-import { ReaderController, DomReaderMeasurer, StPageFlipAdapter } from "../../reader";
+import {
+  ReaderController,
+  DomReaderMeasurer,
+  StPageFlipAdapter,
+  emptyReaderSnapshot,
+} from "../../reader";
 import type { ReaderSnapshot } from "../../reader";
 import type { Bookmark, TxtEncoding } from "../../types/generated";
 import { Button } from "../ui/button";
@@ -20,6 +25,7 @@ import { useReaderPanel, type ReaderPanel } from "./use-reader-panel";
 import { useReaderSearch } from "./use-reader-search";
 import { useReaderTools } from "./use-reader-tools";
 import { ReaderPageText } from "./ReaderPageText";
+import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
 import { ReaderBottomBar, ReaderTopBar } from "./ReaderToolbar";
 import { PanelShell } from "./panels/PanelShell";
@@ -34,19 +40,7 @@ import {
   type ContentsMode,
 } from "./panels/ToolPanels";
 
-const empty: ReaderSnapshot = {
-  bookId: null,
-  page: null,
-  contentWindow: null,
-  pageIndex: 0,
-  pageCount: 0,
-  hasBefore: false,
-  hasAfter: false,
-  loading: true,
-  error: null,
-  saveError: null,
-  positionWarning: null,
-};
+const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 const noopSubscribe = () => () => {};
 
 function safeExcerpt(text: string, maxUnits = 160): string {
@@ -82,6 +76,8 @@ export function ReaderView() {
   const pageBox = useRef<HTMLDivElement>(null);
   const measureBox = useRef<HTMLDivElement>(null);
   const animationBox = useRef<HTMLDivElement>(null);
+  const scrollBox = useRef<HTMLDivElement>(null);
+  const synchronizeScroll = useRef<(() => void) | null>(null);
   const adapter = useRef<StPageFlipAdapter | null>(null);
   const [controller, setController] = useState<ReaderController | null>(null);
   const state = useSyncExternalStore(
@@ -90,8 +86,18 @@ export function ReaderView() {
   );
   const [controls, setControls] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const preferences = settings.value;
   const bookId = activeBook?.book.id;
+  const effectiveMode =
+    preferences?.readingMode === "double" && viewportWidth < 900
+      ? "single"
+      : (preferences?.readingMode ?? "single");
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
   // Contents keeps its tab for the current book session only.
   const [contentsChoice, setContentsChoice] = useState<{
     bookId: string | undefined;
@@ -125,6 +131,15 @@ export function ReaderView() {
 
   const automaticTurn = useAutomaticTurn({
     intervalSeconds: preferences?.autoPageSeconds ?? 8,
+    scroll:
+      effectiveMode === "scroll"
+        ? {
+            speed: preferences?.autoScrollSpeed ?? 40,
+            advance: (pixels: number) => {
+              if (scrollBox.current) scrollBox.current.scrollTop += pixels;
+            },
+          }
+        : undefined,
     canContinue: () => {
       const current = controller?.getSnapshot();
       return Boolean(
@@ -152,25 +167,30 @@ export function ReaderView() {
   const turn = useCallback(
     (direction: "next" | "previous") => {
       void pauseAutomatic();
+      if (effectiveMode === "scroll") {
+        if (scrollBox.current)
+          scrollBox.current.scrollTop +=
+            scrollBox.current.clientHeight * (direction === "next" ? 0.9 : -0.9);
+        return;
+      }
       if (controller) run(() => (direction === "next" ? controller.next() : controller.previous()));
     },
-    [controller, pauseAutomatic, run],
+    [controller, effectiveMode, pauseAutomatic, run],
   );
 
-  const close = useCallback(async () => {
+  const close = useCallback(() => {
     if (closing) return;
     setClosing(true);
-    try {
-      await pauseAutomatic();
-      await flushDirectory();
-      await controller?.flush();
-      await settingsStore.flush();
-      closeReader();
-      void runtime.library.refresh();
-    } catch (error) {
-      fail(String(error));
-      setClosing(false);
-    }
+    synchronizeScroll.current?.();
+    void pauseAutomatic();
+    controller?.dispose();
+    runtime.finishReaderWrite(flushDirectory);
+    runtime.finishReaderWrite(settingsStore.flush);
+    closeReader();
+    void runtime.positions
+      .flush()
+      .then(() => runtime.library.refresh())
+      .catch(() => undefined);
   }, [
     controller,
     closing,
@@ -219,6 +239,7 @@ export function ReaderView() {
         const next = await runtime.library.decodeTxt(bookId, encoding);
         if (epoch !== sessionEpoch.current) return;
         setEncodingInfo(next);
+        runtime.positions.forget(bookId);
         await controller.open(bookId);
         if (epoch !== sessionEpoch.current) return;
         reloadTools();
@@ -243,7 +264,7 @@ export function ReaderView() {
   useLayoutEffect(() => {
     if (!bookId || !preferences || !measureBox.current || !pageBox.current || !animationBox.current)
       return;
-    syncMeasureBox(pageBox.current, measureBox.current);
+    syncMeasureBox(pageBox.current, measureBox.current, effectiveMode === "double" ? 2 : 1);
     const presentation = new StPageFlipAdapter(animationBox.current, {
       effect: preferences.pageTurnEffect,
       reducedMotion: Boolean(reducedMotion),
@@ -255,9 +276,13 @@ export function ReaderView() {
       maxUnits: 8192,
       reducedMotion: Boolean(reducedMotion),
       adapter: presentation,
+      positions: runtime.positions,
+      mode: effectiveMode,
     });
     setController(reader);
     const flushReader = async () => {
+      synchronizeScroll.current?.();
+      reader.stopNavigation();
       await pauseAutomatic();
       await flushDirectory();
       await reader.flush();
@@ -280,6 +305,18 @@ export function ReaderView() {
     controller?.setReducedMotion(Boolean(reducedMotion));
     adapter.current?.setEffect(preferences?.pageTurnEffect ?? "instant");
   }, [controller, reducedMotion, preferences?.pageTurnEffect]);
+  useLayoutEffect(() => {
+    if (!controller) return;
+    synchronizeScroll.current?.();
+    void pauseAutomatic();
+    if (pageBox.current && measureBox.current)
+      syncMeasureBox(pageBox.current, measureBox.current, effectiveMode === "double" ? 2 : 1);
+    run(() => controller.setMode(effectiveMode));
+  }, [controller, effectiveMode, run, pauseAutomatic]);
+  useEffect(() => {
+    if (controller)
+      run(() => controller.setDirectory(tools.loading || tools.error ? null : tools.toc));
+  }, [controller, tools.loading, tools.error, tools.toc, run]);
   useEffect(() => {
     if (!automaticTurn.running) return;
     const pauseForSelection = () => {
@@ -294,7 +331,15 @@ export function ReaderView() {
     preferences?.fontFamily,
   ].join("|");
   const pauseForLayout = useCallback(() => void pauseAutomatic(), [pauseAutomatic]);
-  useReaderLayout(controller, pageBox, measureBox, layoutSignature, pauseForLayout, run);
+  useReaderLayout(
+    controller,
+    pageBox,
+    measureBox,
+    layoutSignature,
+    pauseForLayout,
+    run,
+    effectiveMode === "double" ? 2 : 1,
+  );
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (document.querySelector('[data-exit-pending="true"]')) return;
@@ -371,17 +416,23 @@ export function ReaderView() {
     <div
       className="fixed inset-0 z-50 bg-surface text-on-surface flex flex-col"
       data-reader-effect={reducedMotion ? "instant" : preferences?.pageTurnEffect}
+      data-reader-mode={state.mode}
+      data-reader-position={page?.startOffset}
+      data-chapter-start={state.chapter?.start}
+      data-chapter-end={state.chapter?.end}
       inert={closing}
     >
       <ReaderTopBar
         visible={controls}
         title={activeBook.book.title}
-        subtitle="全文"
+        subtitle={state.chapter?.title ?? "全文"}
         closing={closing}
         onBack={() => void close()}
         onOpenPanel={openPanel}
       />
       <ReaderSurface
+        double={effectiveMode === "double"}
+        scroll={effectiveMode === "scroll"}
         pageBox={pageBox}
         animationBox={animationBox}
         style={typeStyle}
@@ -390,7 +441,31 @@ export function ReaderView() {
         onTurn={turn}
         onToggleControls={() => setControls((value) => !value)}
       >
-        {page && <ReaderPageText page={page} bookId={state.bookId} highlight={search.highlight} />}
+        {state.scroll && controller ? (
+          <ReaderScrollText
+            key={state.scrollRevision}
+            window={state.scroll}
+            controller={controller}
+            viewport={scrollBox}
+            synchronize={synchronizeScroll}
+            highlight={search.highlight}
+            onInteract={() => void pauseAutomatic()}
+            run={run}
+          />
+        ) : (
+          page && (
+            <div className={`h-full ${effectiveMode === "double" ? "grid grid-cols-2 gap-8" : ""}`}>
+              {state.pages.map((visible) => (
+                <ReaderPageText
+                  key={visible.startOffset}
+                  page={visible}
+                  bookId={state.bookId}
+                  highlight={search.highlight}
+                />
+              ))}
+            </div>
+          )
+        )}
         {!page && state.loading && (
           <p role="status" className="text-sm text-secondary">
             正在读取正文…
@@ -444,22 +519,28 @@ export function ReaderView() {
       <ReaderBottomBar
         visible={controls}
         previous={{
-          label: "上一页",
-          disabled: !state.hasBefore || closing,
-          onClick: () => turn("previous"),
+          label: "上一章",
+          disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
+          onClick: () => {
+            void pauseAutomatic();
+            if (controller) run(() => controller.seekChapter("previous"));
+          },
         }}
         next={{
-          label: "下一页",
-          disabled: !state.hasAfter || closing,
-          onClick: () => turn("next"),
+          label: "下一章",
+          disabled: !state.chapter || state.chapter === state.chapters.at(-1) || closing,
+          onClick: () => {
+            void pauseAutomatic();
+            if (controller) run(() => controller.seekChapter("next"));
+          },
         }}
-        progress={progress}
-        progressLabel="阅读进度"
-        progressDisabled={!page || !page.totalLength}
+        progress={state.chapterProgress}
+        progressLabel="章节进度"
+        progressDisabled={!state.chapter}
         onProgressDraft={() => void pauseAutomatic()}
         onProgressCommit={(target) => {
           void pauseAutomatic();
-          if (controller) run(() => controller.seekProgress(target / 100));
+          if (controller) run(() => controller.seekChapterProgress(target / 100));
         }}
         onOpenPanel={openPanel}
       />
@@ -499,6 +580,9 @@ export function ReaderView() {
           {panel === "directory" && <DirectoryPanel tools={tools} totalLength={totalLength} />}
           {panel === "automatic" && (
             <AutomaticPanel
+              scroll={effectiveMode === "scroll"}
+              speed={preferences?.autoScrollSpeed ?? 40}
+              onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
               seconds={preferences?.autoPageSeconds ?? 8}
               disabledInterval={!preferences}
               running={automaticTurn.running}
@@ -515,6 +599,11 @@ export function ReaderView() {
           {panel === "contents" && (
             <ContentsPanel
               mode={contentsMode}
+              progress={progress}
+              onProgress={(value) => {
+                closePanel();
+                if (controller) run(() => controller.seekProgress(value / 100));
+              }}
               onModeChange={setContentsMode}
               toc={tools.toc}
               toolsLoading={tools.loading}

@@ -4,14 +4,23 @@ interface AutomaticTurnOptions {
   intervalSeconds: number;
   canContinue: () => boolean;
   turn: () => Promise<void>;
+  scroll?: { speed: number; advance: (pixels: number) => void };
 }
 
 /** Runs one page turn at a time, including across pause/resume and interval changes. */
-export function useAutomaticTurn({ intervalSeconds, canContinue, turn }: AutomaticTurnOptions) {
+export function useAutomaticTurn({
+  intervalSeconds,
+  canContinue,
+  turn,
+  scroll,
+}: AutomaticTurnOptions) {
   const [session, setSession] = useState<number | null>(null);
   const generation = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pendingTurn = useRef<Promise<void> | null>(null);
+  const animationFrame = useRef(0);
+  const scrollRef = useRef(scroll);
+  scrollRef.current = scroll;
   const canContinueRef = useRef(canContinue);
   const turnRef = useRef(turn);
   canContinueRef.current = canContinue;
@@ -28,6 +37,7 @@ export function useAutomaticTurn({ intervalSeconds, canContinue, turn }: Automat
     generation.current += 1;
     clearTimeout(timer.current);
     timer.current = undefined;
+    cancelAnimationFrame(animationFrame.current);
     setSession(null);
     return pendingTurn.current ?? Promise.resolve();
   }, []);
@@ -37,6 +47,20 @@ export function useAutomaticTurn({ intervalSeconds, canContinue, turn }: Automat
     let active = true;
     const isCurrent = () => active && generation.current === session;
     const pauseWhenUnavailable = () => void pause();
+    let previousFrame: number | null = null;
+    const scrollFrame = (time: number) => {
+      if (!isCurrent()) return;
+      if (document.visibilityState === "hidden" || !canContinueRef.current()) {
+        void pause();
+        return;
+      }
+      if (previousFrame !== null)
+        scrollRef.current?.advance(
+          (Math.min(100, time - previousFrame) / 1000) * scrollRef.current.speed,
+        );
+      previousFrame = time;
+      animationFrame.current = requestAnimationFrame(scrollFrame);
+    };
     const schedule = async () => {
       // A previous session may still be loading or animating its last page.
       await pendingTurn.current;
@@ -69,15 +93,17 @@ export function useAutomaticTurn({ intervalSeconds, canContinue, turn }: Automat
     };
     window.addEventListener("blur", pauseWhenUnavailable);
     document.addEventListener("visibilitychange", pauseWhenUnavailable);
-    void schedule();
+    if (scroll) animationFrame.current = requestAnimationFrame(scrollFrame);
+    else void schedule();
     return () => {
       active = false;
       clearTimeout(timer.current);
+      cancelAnimationFrame(animationFrame.current);
       timer.current = undefined;
       window.removeEventListener("blur", pauseWhenUnavailable);
       document.removeEventListener("visibilitychange", pauseWhenUnavailable);
     };
-  }, [intervalSeconds, pause, session]);
+  }, [intervalSeconds, pause, session, Boolean(scroll)]);
 
   return useMemo(() => ({ running: session !== null, start, pause }), [session, start, pause]);
 }

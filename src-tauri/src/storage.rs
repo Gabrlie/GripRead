@@ -20,8 +20,9 @@ use crate::m1_txt::build_toc_with_rule;
 use crate::models::{
     AssetAvailability, AssetKind, Book, BookAsset, Bookmark, BookmarkRequest, ContentWindow,
     ImportPhase, ImportResult, LibraryBook, LibraryGroup, ReadContentRequest, ReaderLocator,
-    ReaderPreferences, ResolveLocatorRequest, SearchMatch, SearchRequest, SearchResponse, TocEntry,
-    TxtDecodeState, TxtEncoding, TxtEncodingInfo, TxtTocRule, TxtTocRuleMode, WindowDirection,
+    ReaderPreferences, ResolveLocatorRequest, ResolveOffsetRequest, SearchMatch, SearchRequest,
+    SearchResponse, TocEntry, TxtDecodeState, TxtEncoding, TxtEncodingInfo, TxtTocRule,
+    TxtTocRuleMode, WindowDirection,
 };
 use crate::models::{ShelfPreferences, UpdateBookRequest};
 use crate::txt::detect_and_decode;
@@ -3595,6 +3596,43 @@ pub(crate) fn validate_content_locator(
     )
 }
 
+pub(crate) fn resolve_offset_from_context(
+    request: &ResolveOffsetRequest,
+    context: &ContentReadContext,
+    verified: &VerifiedContentIndex,
+) -> Result<ReaderLocator, AppError> {
+    if request.content_version != context.record.asset.content_version {
+        return Err(AppError::new(
+            ErrorCode::ContentVersionMismatch,
+            "reader content version changed",
+        ));
+    }
+    if request.resource_id != context.record.asset.id
+        || request.offset > verified.index.utf16_length
+    {
+        return Err(AppError::new(
+            ErrorCode::InvalidLocator,
+            "reader offset or resource is invalid",
+        ));
+    }
+    let boundary = boundary_for_offset(
+        &context.root,
+        &context.record.relative_path,
+        &verified.index,
+        request.offset,
+        BoundaryMode::Floor,
+        &verified.fingerprint,
+    )?;
+    locator_for(
+        &context.root,
+        &context.record,
+        &verified.index,
+        boundary.utf16_offset,
+        boundary.byte_offset,
+        &verified.fingerprint,
+    )
+}
+
 fn read_verified_text(
     context: &ContentReadContext,
     verified: &VerifiedContentIndex,
@@ -4826,6 +4864,71 @@ mod tests {
         storage
             .import_txt(source, operation, &no_cancel(), |_, _, _| {})
             .unwrap()
+    }
+
+    #[test]
+    fn exact_reader_offsets_floor_surrogates_and_validate_identity() {
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "offset.txt", "a😀b".as_bytes());
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let book = import(&mut storage, &source, "offset");
+        let context = storage.content_read_context(&book.book.id).unwrap();
+        let verified = verify_content_context(&context).unwrap();
+        let mut request = ResolveOffsetRequest {
+            book_id: book.book.id,
+            content_version: book.asset.content_version,
+            resource_id: book.asset.id,
+            offset: 2,
+        };
+        let locator = resolve_offset_from_context(&request, &context, &verified).unwrap();
+        assert_eq!(locator.offset, 1);
+        assert_eq!(locator.context_before, "a");
+        assert_eq!(locator.context_after, "😀b");
+        request.offset = 4;
+        assert_eq!(
+            resolve_offset_from_context(&request, &context, &verified)
+                .unwrap()
+                .offset,
+            4
+        );
+        request.offset = 5;
+        assert_eq!(
+            resolve_offset_from_context(&request, &context, &verified)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidLocator
+        );
+        request.content_version = "old".into();
+        assert_eq!(
+            resolve_offset_from_context(&request, &context, &verified)
+                .unwrap_err()
+                .code,
+            ErrorCode::ContentVersionMismatch
+        );
+    }
+
+    #[test]
+    fn reading_modes_round_trip_without_a_schema_migration() {
+        let root = TestRoot::new();
+        let data = root.0.join("data");
+        let storage = Storage::open(&data).unwrap();
+        let preferences = ReaderPreferences {
+            reading_mode: crate::models::ReaderMode::Scroll,
+            page_turn_effect: crate::models::PageTurnEffect::Fade,
+            auto_scroll_speed: 75,
+            ..ReaderPreferences::default()
+        };
+        storage.save_settings(&preferences).unwrap();
+        assert!(storage
+            .save_settings(&ReaderPreferences {
+                auto_scroll_speed: 0,
+                ..preferences.clone()
+            })
+            .is_err());
+        drop(storage);
+        let reopened = Storage::open(&data).unwrap();
+        assert_eq!(reopened.get_settings().unwrap(), preferences);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 8);
     }
 
     #[test]
@@ -6586,6 +6689,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("autoPageSeconds");
+        legacy_preferences
+            .as_object_mut()
+            .unwrap()
+            .remove("readingMode");
+        legacy_preferences
+            .as_object_mut()
+            .unwrap()
+            .remove("autoScrollSpeed");
         storage
             .conn
             .execute(

@@ -1,7 +1,15 @@
-import type { ContentWindow, ReaderLocator, WindowDirection } from "../types/generated";
+import type {
+  ContentWindow,
+  ReaderLocator,
+  WindowDirection,
+  ReaderMode,
+  TocEntry,
+} from "../types/generated";
 import type { ReaderService } from "../services/contracts";
 import { isUtf16ScalarBoundary, windowStartsMidLine } from "./pagination";
 import { continuesLine } from "./render";
+import { ReaderPositions } from "./positions";
+import { chapterRanges, chapterAt, type ReaderChapter } from "./chapters";
 import type { ReaderMeasurer, ReaderPage } from "./pagination";
 import type {
   ReaderDisplayedPage,
@@ -21,6 +29,8 @@ export interface ReaderControllerOptions {
   reducedMotion?: boolean;
   /** Optional page presentation adapter, such as StPageFlip. */
   adapter?: ReaderPresentationAdapter;
+  positions?: ReaderPositions;
+  mode?: ReaderMode;
 }
 
 interface MeasuredWindow {
@@ -31,10 +41,17 @@ interface MeasuredWindow {
 const MAX_WINDOW_UNITS = 1_000_000;
 const CONTEXT_UNITS = 32;
 
-function emptySnapshot(bookId: string | null = null): ReaderSnapshot {
+export function emptyReaderSnapshot(bookId: string | null = null): ReaderSnapshot {
   return {
     bookId,
     page: null,
+    pages: [],
+    mode: "single",
+    chapters: [],
+    chapter: null,
+    chapterProgress: 0,
+    scroll: null,
+    scrollRevision: 0,
     contentWindow: null,
     pageIndex: 0,
     pageCount: 0,
@@ -79,23 +96,6 @@ function requiresRelocation(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "content_version_mismatch"
   );
-}
-
-interface SaveFailure {
-  readonly locator: ReaderLocator;
-  readonly error: unknown;
-}
-
-/** Keeps a save failure identifiable after the user opens another book. */
-class ReaderSaveError extends Error {
-  public constructor(
-    message: string,
-    public readonly locator: ReaderLocator,
-    public readonly cause: unknown,
-  ) {
-    super(message);
-    this.name = "ReaderSaveError";
-  }
 }
 
 function isFiniteInteger(value: number): boolean {
@@ -173,7 +173,7 @@ export class ReaderController {
   private readonly adapter: ReaderPresentationAdapter | undefined;
   private reducedMotion: boolean;
 
-  private snapshot: ReaderSnapshot = emptySnapshot();
+  private snapshot: ReaderSnapshot = emptyReaderSnapshot();
   private readonly listeners = new Set<() => void>();
 
   private windows: MeasuredWindow[] = [];
@@ -186,11 +186,15 @@ export class ReaderController {
   private reflowToken = 0;
   private disposed = false;
   private navigationTail: Promise<void> = Promise.resolve();
+  private mode: ReaderMode;
+  private directory: readonly TocEntry[] | null = null;
+  private directoryGeneration = 0;
+  private scrollWindows: ContentWindow[] = [];
+  private scrollRead: Promise<void> | null = null;
+  private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** The save worker drains at most the latest pending locator per turn. */
-  private pendingSave: ReaderLocator | null = null;
-  private saveWorker: Promise<void> | null = null;
-  private readonly saveFailures = new Map<string, SaveFailure>();
+  private readonly positions: ReaderPositions;
+  private readonly unsubscribePositions: () => void;
   /** Do not overwrite a stale saved locator until the user chooses a position. */
   private suppressPositionSave = false;
 
@@ -219,6 +223,12 @@ export class ReaderController {
     this.maxUnits = maxUnits;
     this.reducedMotion = Boolean(options.reducedMotion);
     this.adapter = options.adapter;
+    this.mode = options.mode ?? "single";
+    this.positions = options.positions ?? new ReaderPositions(service);
+    this.unsubscribePositions = this.positions.subscribe(() => {
+      this.snapshot = { ...this.snapshot, saveError: this.positions.errorFor(this.activeBookId) };
+      this.notify();
+    });
   }
 
   /** Open a book at its saved locator, or at the beginning when none exists. */
@@ -234,15 +244,13 @@ export class ReaderController {
     this.currentWindowIndex = -1;
     this.currentPageIndex = -1;
     this.snapshot = {
-      ...emptySnapshot(bookId),
+      ...emptyReaderSnapshot(bookId),
       loading: true,
     };
     this.notify();
 
     return this.schedule(epoch, async () => {
-      const previousSaveFailure = await this.awaitSavesBeforeOpen();
-      this.assertCurrent(epoch);
-      const saved = await this.service.getSavedReaderLocator(bookId);
+      const saved = await this.positions.load(bookId);
       this.assertCurrent(epoch);
       let positionWarning: string | null = null;
       let measured: MeasuredWindow;
@@ -270,13 +278,6 @@ export class ReaderController {
         this.notify();
       }
       await this.presentCurrent("open", epoch);
-      if (previousSaveFailure) {
-        throw new ReaderSaveError(
-          errorMessage(previousSaveFailure.error),
-          previousSaveFailure.locator,
-          previousSaveFailure.error,
-        );
-      }
     });
   }
 
@@ -284,6 +285,7 @@ export class ReaderController {
   public next(): Promise<void> {
     if (this.disposed) return Promise.reject(abortError());
     const epoch = this.epoch;
+    this.adapter?.cancel?.();
     return this.schedule(epoch, () => this.performNext(epoch));
   }
 
@@ -291,6 +293,7 @@ export class ReaderController {
   public previous(): Promise<void> {
     if (this.disposed) return Promise.reject(abortError());
     const epoch = this.epoch;
+    this.adapter?.cancel?.();
     return this.schedule(epoch, () => this.performPrevious(epoch));
   }
 
@@ -301,6 +304,7 @@ export class ReaderController {
       return Promise.reject(new TypeError("seek requires a reader locator"));
     }
     const epoch = ++this.epoch;
+    this.adapter?.cancel?.();
     this.activeBookId = locator.bookId;
     return this.schedule(epoch, async () => {
       this.setLoading(true);
@@ -327,6 +331,7 @@ export class ReaderController {
     }
 
     const epoch = ++this.epoch;
+    this.adapter?.cancel?.();
     const boundedProgress = Math.min(1, Math.max(0, progress));
     return this.schedule(epoch, async () => {
       this.setLoading(true);
@@ -343,6 +348,189 @@ export class ReaderController {
     });
   }
 
+  public setMode(mode: ReaderMode): Promise<void> {
+    if (this.mode === mode) return Promise.resolve();
+    this.capturePosition();
+    this.mode = mode;
+    this.adapter?.cancel?.();
+    return this.reflow();
+  }
+
+  public setDirectory(entries: readonly TocEntry[] | null): Promise<void> {
+    if (this.directory === entries) return Promise.resolve();
+    this.directory = entries;
+    this.directoryGeneration++;
+    return this.reflow();
+  }
+
+  public seekChapter(direction: "next" | "previous"): Promise<void> {
+    const { chapters, chapter } = this.snapshot;
+    const index = chapters.indexOf(chapter!);
+    const target = chapters[index + (direction === "next" ? 1 : -1)];
+    return target ? this.seekChapterOffset(target.start, false) : Promise.resolve();
+  }
+
+  public seekChapterProgress(progress: number): Promise<void> {
+    const chapter = this.snapshot.chapter;
+    if (!chapter || !Number.isFinite(progress)) return Promise.resolve();
+    const fraction = Math.max(0, Math.min(1, progress));
+    const offset =
+      fraction === 1
+        ? chapter.end
+        : chapter.start + Math.floor((chapter.end - chapter.start) * fraction);
+    return this.seekChapterOffset(offset, fraction === 1);
+  }
+
+  private seekChapterOffset(offset: number, end: boolean): Promise<void> {
+    const window = this.snapshot.contentWindow;
+    if (!window) return Promise.resolve();
+    const generation = this.directoryGeneration;
+    const epoch = ++this.epoch;
+    this.adapter?.cancel?.();
+    return this.schedule(epoch, async () => {
+      const locator = await this.service.resolveOffset({
+        bookId: window.bookId,
+        contentVersion: window.contentVersion,
+        resourceId: window.resourceId,
+        offset,
+      });
+      this.assertCurrent(epoch);
+      if (generation !== this.directoryGeneration) throw abortError();
+      const measured = await this.readAndMeasure(
+        window.bookId,
+        locator,
+        end ? "backward" : "forward",
+        epoch,
+      );
+      this.assertCurrent(epoch);
+      if (generation !== this.directoryGeneration) throw abortError();
+      this.windows = [measured];
+      this.currentWindowIndex = 0;
+      this.currentPageIndex = end
+        ? Math.max(0, measured.pages.length - 1)
+        : pageIndexAt(measured.pages, locator.offset);
+      if (end && this.mode === "double" && this.currentPageIndex > 0) {
+        const chapter = chapterAt(this.ranges(measured.window), offset - 1);
+        if (measured.pages[this.currentPageIndex - 1].startOffset >= (chapter?.start ?? 0))
+          this.currentPageIndex--;
+      }
+      // Scroll's renderer positions a chapter end after its DOM has been measured.
+      if (end && this.mode === "scroll") {
+        const chapter = chapterAt(this.ranges(measured.window), offset - 1);
+        this.scrollTarget = { offset, start: chapter?.start ?? 0 };
+      }
+      this.suppressPositionSave = false;
+      await this.presentCurrent("seek", epoch);
+    });
+  }
+
+  private scrollTarget: { offset: number; start: number } | null = null;
+  public takeScrollTarget() {
+    const target = this.scrollTarget;
+    this.scrollTarget = null;
+    return target;
+  }
+
+  private ranges(window: ContentWindow) {
+    return this.directory === null ? [] : chapterRanges(this.directory, window);
+  }
+
+  public capturePosition(): void {
+    if (this.scrollSaveTimer !== null) {
+      clearTimeout(this.scrollSaveTimer);
+      this.scrollSaveTimer = null;
+      if (this.snapshot.page && !this.suppressPositionSave)
+        this.positions.queue(this.snapshot.page.locator);
+    }
+  }
+
+  /** DOM layout reports visible scalar boundaries, never pixel-based persisted positions. */
+  public updateScrollPosition(start: number, end: number): void {
+    const window = this.snapshot.scroll;
+    if (this.disposed || !window || start < window.startOffset || start >= window.endOffset) return;
+    if (!isUtf16ScalarBoundary(window.text, start - window.startOffset)) return;
+    end = Math.min(window.endOffset, Math.max(start + 1, end));
+    if (!isUtf16ScalarBoundary(window.text, end - window.startOffset)) end++;
+    if (start !== this.snapshot.page?.startOffset) {
+      this.suppressPositionSave = false;
+      this.clearPositionWarning();
+    }
+    const page = normalizePages(sliceWindow(window, start, end), [
+      {
+        text: window.text.slice(start - window.startOffset, end - window.startOffset),
+        startOffset: start,
+        endOffset: end,
+        hasBefore: start > 0,
+        hasAfter: end < window.totalLength,
+      },
+    ])[0];
+    const chapter = chapterAt(this.snapshot.chapters, start);
+    this.snapshot = {
+      ...this.snapshot,
+      page,
+      pages: [page],
+      chapter,
+      chapterProgress: progressInChapter(chapter, start, end),
+      hasBefore: start > 0,
+      hasAfter: end < window.totalLength,
+    };
+    this.notify();
+    // Persist the latest passage periodically even during uninterrupted automatic scrolling.
+    if (this.scrollSaveTimer === null)
+      this.scrollSaveTimer = setTimeout(() => this.capturePosition(), 1000);
+  }
+
+  public extendScroll(
+    direction: WindowDirection,
+    canCommit: () => boolean = () => true,
+  ): Promise<void> {
+    if (this.scrollRead) return this.scrollRead;
+    const windows = this.scrollWindows;
+    const edge = direction === "forward" ? windows.at(-1) : windows[0];
+    if (!edge || (direction === "forward" ? !edge.hasAfter : !edge.hasBefore))
+      return Promise.resolve();
+    const epoch = this.epoch;
+    const anchor = direction === "forward" ? edge.endOffset : edge.startOffset;
+    const operation = this.service
+      .readContentWindow({
+        bookId: edge.bookId,
+        locator: boundaryLocator(edge, anchor),
+        maxUnits: this.maxUnits,
+        direction,
+      })
+      .then((next) => {
+        this.assertCurrent(epoch);
+        if (this.mode !== "scroll" || this.scrollWindows !== windows || !canCommit()) return;
+        validateWindowResponse(next, edge.bookId, boundaryLocator(edge, anchor), direction, anchor);
+        const all = direction === "forward" ? [...windows, next] : [next, ...windows];
+        if (all.length > 3 && this.snapshot.page) {
+          if (direction === "forward" && this.snapshot.page.startOffset < all[1].startOffset)
+            return;
+          if (direction === "backward" && this.snapshot.page.endOffset > all[2].endOffset) return;
+        }
+        this.scrollWindows =
+          all.length <= 3 ? all : direction === "forward" ? all.slice(1) : all.slice(0, 3);
+        const combined = joinWindows(this.scrollWindows);
+        this.snapshot = {
+          ...this.snapshot,
+          scroll: combined,
+          contentWindow: combined,
+          error: null,
+        };
+        this.notify();
+      })
+      .catch((error: unknown) => {
+        if (epoch !== this.epoch || this.disposed) return;
+        this.reportOperationError(epoch, error);
+        throw error;
+      })
+      .finally(() => {
+        if (this.scrollRead === operation) this.scrollRead = null;
+      });
+    this.scrollRead = operation;
+    return operation;
+  }
+
   /** Re-measure from the current page's locator after a typography or viewport change. */
   public reflow(): Promise<void> {
     if (this.disposed) return Promise.reject(abortError());
@@ -357,7 +545,7 @@ export class ReaderController {
     };
     return this.schedule(epoch, async () => {
       assertLatest();
-      const current = this.currentPage();
+      const current = this.snapshot.page;
       const bookId = this.activeBookId;
       // ReaderView calls reflow while its initial open is still pending. It is
       // safe to wait for the next ResizeObserver/font event in that case.
@@ -376,6 +564,15 @@ export class ReaderController {
   }
 
   /** Update the motion preference without changing the current locator. */
+  public stopNavigation(): void {
+    this.capturePosition();
+    this.epoch++;
+    this.adapter?.cancel?.();
+    this.navigationTail = Promise.resolve();
+    this.restoreVisibleIndex();
+    this.setLoading(false);
+  }
+
   public setReducedMotion(reducedMotion: boolean): void {
     this.reducedMotion = Boolean(reducedMotion);
     this.adapter?.setReducedMotion?.(this.reducedMotion);
@@ -386,36 +583,23 @@ export class ReaderController {
    * retried once on the next flush and then rejected with its original error.
    */
   public async flush(): Promise<void> {
+    this.capturePosition();
     await this.navigationTail;
-
-    await this.awaitPendingSaves();
-
-    // A failed write is retried once by an explicit flush. Keep the retry
-    // associated with its book so an old error cannot be attached to a new
-    // book's visible state.
-    for (const failure of this.saveFailures.values()) {
-      this.pendingSave = { ...failure.locator };
-      this.startSaveWorker();
-      await this.awaitPendingSaves();
-    }
-    if (this.saveFailures.size > 0) {
-      const failure = this.saveFailures.values().next().value as SaveFailure | undefined;
-      if (failure) {
-        throw new ReaderSaveError(errorMessage(failure.error), failure.locator, failure.error);
-      }
-    }
+    await this.positions.flush();
   }
 
   /** Dispose presentation and measurement resources and invalidate owned work. */
   public dispose(): void {
     if (this.disposed) return;
+    this.capturePosition();
     this.disposed = true;
+    this.unsubscribePositions();
     this.epoch += 1;
     this.windows = [];
     this.currentWindowIndex = -1;
     this.currentPageIndex = -1;
     this.activeBookId = null;
-    this.snapshot = emptySnapshot();
+    this.snapshot = emptyReaderSnapshot();
     this.listeners.clear();
     this.adapter?.dispose?.();
     const maybeDisposable = this.measurer as ReaderMeasurer & { dispose?: () => void };
@@ -455,6 +639,18 @@ export class ReaderController {
   }
 
   private async performNext(epoch: number): Promise<void> {
+    try {
+      const count = this.snapshot.pages.length || 1;
+      for (let index = 0; index < count; index++) await this.moveForward(epoch);
+      await this.presentCurrent("next", epoch);
+      this.trimWindows();
+    } catch (error) {
+      this.restoreVisibleIndex();
+      throw error;
+    }
+  }
+
+  private async moveForward(epoch: number): Promise<void> {
     this.assertCurrent(epoch);
     const current = this.activeMeasuredWindow();
     const page = this.currentPage();
@@ -465,7 +661,6 @@ export class ReaderController {
 
     if (this.currentPageIndex + 1 < current.pages.length) {
       this.currentPageIndex += 1;
-      await this.presentCurrent("next", epoch);
       return;
     }
 
@@ -485,11 +680,42 @@ export class ReaderController {
     }
     this.currentWindowIndex += 1;
     this.currentPageIndex = pageIndexAt(adjacent.pages, anchor);
-    await this.presentCurrent("next", epoch);
-    this.trimWindows();
   }
 
   private async performPrevious(epoch: number): Promise<void> {
+    try {
+      const end = this.snapshot.page?.startOffset ?? 0;
+      await this.moveBackward(epoch);
+      const page = this.currentPage();
+      const chapter = page ? chapterAt(this.snapshot.chapters, page.startOffset) : null;
+      const before = this.windows
+        .flatMap(({ pages }) => pages)
+        .filter((item) => item.startOffset >= (chapter?.start ?? 0) && item.endOffset <= end);
+      const oddEnding = before[0]?.startOffset === (chapter?.start ?? 0) && before.length % 2 === 1;
+      if (this.mode === "double" && page && page.startOffset > (chapter?.start ?? 0) && !oddEnding)
+        await this.moveBackward(epoch);
+      await this.presentCurrent("previous", epoch, end);
+      this.trimWindows();
+    } catch (error) {
+      this.restoreVisibleIndex();
+      throw error;
+    }
+  }
+
+  private restoreVisibleIndex() {
+    const offset = this.snapshot.page?.startOffset;
+    const index = this.windows.findIndex(({ pages }) =>
+      pages.some((page) => page.startOffset === offset),
+    );
+    if (index >= 0) {
+      this.currentWindowIndex = index;
+      this.currentPageIndex = this.windows[index].pages.findIndex(
+        (page) => page.startOffset === offset,
+      );
+    }
+  }
+
+  private async moveBackward(epoch: number): Promise<void> {
     this.assertCurrent(epoch);
     const current = this.activeMeasuredWindow();
     const page = this.currentPage();
@@ -500,7 +726,6 @@ export class ReaderController {
 
     if (this.currentPageIndex > 0) {
       this.currentPageIndex -= 1;
-      await this.presentCurrent("previous", epoch);
       return;
     }
 
@@ -525,8 +750,6 @@ export class ReaderController {
     }
     this.currentWindowIndex -= 1;
     this.currentPageIndex = Math.max(0, adjacent.pages.length - 1);
-    await this.presentCurrent("previous", epoch);
-    this.trimWindows();
   }
 
   private async readAndMeasure(
@@ -561,12 +784,45 @@ export class ReaderController {
     if (window.text.length === 0 && window.totalLength > 0) {
       throw new ReaderProtocolError("non-empty content windows cannot be empty");
     }
-    const pages = await Promise.resolve(this.measurer.measure(window, direction));
-    this.assertCurrent(epoch);
-    return { window, pages: normalizePages(window, pages) };
+    if (this.mode === "scroll") {
+      return {
+        window,
+        pages: window.text
+          ? normalizePages(window, [
+              {
+                text: window.text,
+                startOffset: window.startOffset,
+                endOffset: window.endOffset,
+                hasBefore: window.hasBefore,
+                hasAfter: window.hasAfter,
+              },
+            ])
+          : [],
+      };
+    }
+    const ranges = this.ranges(window);
+    const cuts = [
+      window.startOffset,
+      ...ranges
+        .map((range) => range.start)
+        .filter((offset) => offset > window.startOffset && offset < window.endOffset),
+      window.endOffset,
+    ];
+    const pages: ReaderDisplayedPage[] = [];
+    for (let index = 0; index + 1 < cuts.length; index++) {
+      const slice = sliceWindow(window, cuts[index], cuts[index + 1]);
+      const measured = await Promise.resolve(this.measurer.measure(slice, direction));
+      this.assertCurrent(epoch);
+      pages.push(...normalizePages(slice, measured));
+    }
+    return { window, pages };
   }
 
-  private async presentCurrent(direction: ReaderNavigationDirection, epoch: number): Promise<void> {
+  private async presentCurrent(
+    direction: ReaderNavigationDirection,
+    epoch: number,
+    visibleEnd = Infinity,
+  ): Promise<void> {
     this.assertCurrent(epoch);
     const measured = this.activeMeasuredWindow();
     if (!measured) {
@@ -576,15 +832,46 @@ export class ReaderController {
     const index = this.currentPageIndex < 0 ? 0 : this.currentPageIndex;
     this.currentPageIndex = Math.min(index, Math.max(0, measured.pages.length - 1));
     const displayed = this.currentPage();
+    const chapters = this.ranges(measured.window);
+    const chapter = displayed ? chapterAt(chapters, displayed.startOffset) : null;
+    const visible = displayed ? [displayed] : [];
+    if (
+      displayed &&
+      this.mode === "double" &&
+      displayed.endOffset < Math.min(chapter?.end ?? displayed.totalLength, visibleEnd)
+    ) {
+      const originalWindow = this.currentWindowIndex;
+      const originalPage = this.currentPageIndex;
+      try {
+        await this.moveForward(epoch);
+        const right = this.currentPage();
+        if (right && right !== displayed) visible.push(right);
+      } finally {
+        this.currentWindowIndex = originalWindow;
+        this.currentPageIndex = originalPage;
+      }
+    }
+    if (this.mode === "scroll") this.scrollWindows = [measured.window];
     this.snapshot = {
       ...this.snapshot,
       bookId: this.activeBookId,
       page: displayed,
+      pages: visible,
+      mode: this.mode,
+      chapters,
+      chapter,
+      chapterProgress: progressInChapter(
+        chapter,
+        displayed?.startOffset ?? 0,
+        visible.at(-1)?.endOffset ?? 0,
+      ),
+      scroll: this.mode === "scroll" ? measured.window : null,
+      scrollRevision: this.snapshot.scrollRevision + (this.mode === "scroll" ? 1 : 0),
       contentWindow: measured.window,
       pageIndex: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,
       pageCount: measured.pages.length,
       hasBefore: displayed?.hasBefore ?? measured.window.hasBefore,
-      hasAfter: displayed?.hasAfter ?? measured.window.hasAfter,
+      hasAfter: visible.at(-1)?.hasAfter ?? measured.window.hasAfter,
       loading: false,
       error: null,
     };
@@ -592,12 +879,14 @@ export class ReaderController {
 
     // Saving starts before presentation so a slow page-curl animation cannot
     // delay persistence or make the animation the owner of reading position.
-    if (displayed && !this.suppressPositionSave) this.queueSave(displayed.locator);
+    if (displayed && !this.suppressPositionSave) this.positions.queue(displayed.locator);
 
     const context: ReaderPresentationContext = {
       index: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,
       pages: measured.pages,
       reducedMotion: this.reducedMotion,
+      visiblePages: visible,
+      columns: this.mode === "double" ? 2 : 1,
     };
     await this.adapter?.setPages?.(measured.pages, context.index);
     this.assertCurrent(epoch);
@@ -634,19 +923,6 @@ export class ReaderController {
 
   private reportOperationError(epoch: number, error: unknown): void {
     if (this.disposed || epoch !== this.epoch || isAbortError(error)) return;
-    if (error instanceof ReaderSaveError) {
-      // The locator may belong to the book that was just left. The caller
-      // still receives the rejection, while the new book keeps its own page
-      // and error state intact.
-      if (error.locator.bookId !== this.activeBookId) return;
-      this.snapshot = {
-        ...this.snapshot,
-        loading: false,
-        saveError: errorMessage(error.cause),
-      };
-      this.notify();
-      return;
-    }
     this.snapshot = {
       ...this.snapshot,
       loading: false,
@@ -667,80 +943,6 @@ export class ReaderController {
     if (this.disposed || epoch !== this.epoch) throw abortError();
   }
 
-  private async runSave(locator: ReaderLocator): Promise<void> {
-    try {
-      await this.service.saveReaderLocator(locator);
-      this.saveFailures.delete(locator.bookId);
-      if (!this.disposed && this.activeBookId === locator.bookId) {
-        this.snapshot = { ...this.snapshot, saveError: null };
-        this.notify();
-      }
-    } catch (error) {
-      this.saveFailures.set(locator.bookId, {
-        locator: { ...locator },
-        error,
-      });
-      if (
-        !this.disposed &&
-        this.activeBookId === locator.bookId &&
-        this.snapshot.bookId === locator.bookId
-      ) {
-        this.snapshot = { ...this.snapshot, saveError: errorMessage(error) };
-        this.notify();
-      }
-    }
-  }
-
-  private async drainSaves(): Promise<void> {
-    while (this.pendingSave) {
-      const locator = this.pendingSave;
-      this.pendingSave = null;
-      await this.runSave(locator);
-    }
-  }
-
-  private startSaveWorker(): void {
-    if (this.saveWorker) return;
-    const worker = this.drainSaves();
-    this.saveWorker = worker;
-    void worker.then(
-      () => {
-        if (this.saveWorker === worker) this.saveWorker = null;
-      },
-      () => {
-        // drainSaves currently catches service failures. Keep the worker
-        // self-healing if a future adapter throws outside runSave.
-        if (this.saveWorker === worker) this.saveWorker = null;
-      },
-    );
-  }
-
-  private queueSave(locator: ReaderLocator): void {
-    this.pendingSave = { ...locator };
-    this.startSaveWorker();
-  }
-
-  private async awaitPendingSaves(): Promise<void> {
-    let worker = this.saveWorker;
-    while (worker) {
-      await worker;
-      worker = this.saveWorker;
-    }
-    if (this.pendingSave) {
-      this.startSaveWorker();
-      await this.awaitPendingSaves();
-    }
-  }
-
-  private async awaitSavesBeforeOpen(): Promise<SaveFailure | null> {
-    // An open replaces the active book. Complete all writes queued for the
-    // previous book first. Return a failure for the caller to report after
-    // the new book is displayed; attaching it before then would overwrite
-    // the new book's loading or content state.
-    await this.awaitPendingSaves();
-    return this.saveFailures.values().next().value ?? null;
-  }
-
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
@@ -757,6 +959,39 @@ function pageIndexAt(pages: readonly ReaderDisplayedPage[], anchor: number | nul
   if (containing >= 0) return containing;
   const next = pages.findIndex((page) => page.startOffset > anchor);
   return next >= 0 ? next : pages.length - 1;
+}
+
+function progressInChapter(chapter: ReaderChapter | null, start: number, end: number): number {
+  if (!chapter || chapter.end === chapter.start) return 0;
+  return end >= chapter.end
+    ? 100
+    : Math.min(
+        99,
+        Math.max(0, Math.floor(((start - chapter.start) / (chapter.end - chapter.start)) * 100)),
+      );
+}
+
+function sliceWindow(window: ContentWindow, start: number, end: number): ContentWindow {
+  return {
+    ...window,
+    text: window.text.slice(start - window.startOffset, end - window.startOffset),
+    startOffset: start,
+    endOffset: end,
+    hasBefore: start > 0,
+    hasAfter: end < window.totalLength,
+    locator: boundaryLocator(window, start),
+  };
+}
+
+function joinWindows(windows: readonly ContentWindow[]): ContentWindow {
+  const first = windows[0];
+  const last = windows[windows.length - 1];
+  return {
+    ...first,
+    text: windows.map((window) => window.text).join(""),
+    endOffset: last.endOffset,
+    hasAfter: last.hasAfter,
+  };
 }
 
 function boundaryLocator(window: ContentWindow, offset: number): ReaderLocator {

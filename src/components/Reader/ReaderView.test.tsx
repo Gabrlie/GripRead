@@ -132,6 +132,7 @@ function runtime() {
         locator: locator(),
       })),
       resolveLocator: vi.fn(async () => locator()),
+      resolveOffset: vi.fn(async (request) => locator(request.offset)),
       saveReaderLocator: vi.fn(async (value) => value),
       getSavedReaderLocator: vi.fn(async () => null),
       listToc: vi.fn(async () => [chapter("初始章节")]),
@@ -154,6 +155,8 @@ function runtime() {
         fontFamily: "sans" as const,
         pageTurnEffect: "instant" as const,
         autoPageSeconds: 8,
+        readingMode: "single" as const,
+        autoScrollSpeed: 40,
       })),
       saveSettings: vi.fn(async (value) => value),
       getShelfPreferences: vi.fn(async () => ({
@@ -366,6 +369,19 @@ describe("reader directory and search operation ownership", () => {
     await userEvent.click(screen.getByRole("button", { name: "目录" }));
     expect(screen.getByRole("tab", { name: "全文" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "从开头阅读" })).toBeTruthy();
+  });
+
+  it("returns to the shelf immediately while a position save is still pending", async () => {
+    const app = runtime();
+    const gate = deferred<ReaderLocator>();
+    vi.mocked(app.services.reader.saveReaderLocator).mockReturnValueOnce(gate.promise);
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "返回书架" }));
+    expect(navigation.closeReader).toHaveBeenCalledOnce();
+    await act(async () => {
+      gate.resolve(locator());
+      await app.flush();
+    });
   });
 
   it("cancels a closed search and ignores its late results", async () => {

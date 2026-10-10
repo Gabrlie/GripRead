@@ -6,7 +6,7 @@ Status: in-progress
 
 Deliver the next batch of the [TXT reader task](2026-09-24-txt-reader-modes-and-settings.md): chapter navigation and progress, single-page and double-page reading, bounded continuous scrolling, and mode-appropriate effects and automatic reading. Repair the three Batch 1 review findings before extending their consumers. Acceptance targets the macOS app at desktop and narrow-window sizes.
 
-Behavior belongs to [Reader](../subsystems/reader.md), [interaction design](../design/interaction.md), and [motion design](../design/motion.md). The [navigation and modes proposal](../notes/proposed/2026-09-27-reader-navigation-and-modes.md) records the shared contract to establish before implementation. Update those behavior owners as each slice ships; this plan does not claim that the proposed modes already work.
+Behavior belongs to [Reader](../subsystems/reader.md), [interaction design](../design/interaction.md), and [motion design](../design/motion.md). The [navigation and modes decision](../notes/implemented/2026-09-27-reader-navigation-and-modes.md) records the delivered shared contract.
 
 ## Scope
 
@@ -21,11 +21,11 @@ Allowed areas are `src/reader`, `src/components/Reader`, preference/runtime inte
 5. **Ship continuous scrolling.** Add bounded block loading in both directions, anchor-preserving prepend/eviction, visible-text locator tracking, and restoration through the same controller and save worker. Connect chapter seeks, search highlights, bookmarks, reflow, encoding replacement, loading failure/retry, and mode switching. Verify manual scroll and exact passage restoration before adding automatic scroll.
 6. **Complete effects and automatic reading.** Support instant/curl/slide/fade in paginated modes, with spread-aware presentation and reduced-motion behavior. Retain page interval settings for one page/spread at a time; add independent scroll speed for continuous mode. Share pause/exit ownership across both automatic paths. Run the combined regression, native, visual, and bounded-render acceptance below before declaring Batch 2 complete.
 
-Each numbered slice is a reviewable commit boundary; a large slice may use multiple cohesive commits. The shared-contract slice precedes parallel implementation. After it lands, chapter controls, paginated presentation, and scroll layout can be developed against those contracts, but controller/types, `ReaderView`, shared styles, and native support helpers each need one integration owner. Do not modify a shared interface independently in multiple work streams.
+Each numbered slice is a reviewable commit boundary; a large slice may use multiple cohesive commits. Establish and integrate the shared contracts before connecting chapter controls, paginated presentation, and scroll layout. Review controller/types, view integration, and native support helpers together when their interfaces change.
 
 ## Interfaces
 
-The [navigation proposal](../notes/proposed/2026-09-27-reader-navigation-and-modes.md) owns range, anchor, mode, and boundary semantics. Extend the existing [Rust declarations](../../src-tauri/src/models.rs), [service ports](../../src/services/contracts.ts), [IPC adapter](../../src/services/ipc.ts), and [controller types](../../src/reader/types.ts) together with all consumers and mocks. `ContentWindow` and persisted `ReaderLocator` retain their current wire formats; derived layout bounds do not rewrite book identity, resource identity, content version, or total length.
+The [navigation decision](../notes/implemented/2026-09-27-reader-navigation-and-modes.md) records the shared ownership and links authoritative declarations. The existing [Rust declarations](../../src-tauri/src/models.rs), [service ports](../../src/services/contracts.ts), [IPC adapter](../../src/services/ipc.ts), and [controller types](../../src/reader/types.ts) change together with all consumers and mocks. `ContentWindow` and persisted `ReaderLocator` retain their wire formats; derived layout bounds preserve book/resource identity, content version, and whole-book length.
 
 Use the [phased preference proposal](../notes/proposed/2026-09-24-reader-preferences-v2-and-assets.md) for compatibility. Batch 2 adds only mode, scroll speed, and effect choices to the existing settings record. Asset storage and the larger nested settings migration remain separate. The existing whole-book resolver remains available while chapter targeting gains an exact offset path.
 

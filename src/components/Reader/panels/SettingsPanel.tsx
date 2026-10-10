@@ -42,6 +42,44 @@ export function SettingsPanel({ preferences, onChange, onClose, status }: Settin
         {preferences && (
           <div className="space-y-4 text-xs">
             <div className="space-y-2">
+              <span className="text-secondary font-medium">阅读方式</span>
+              <div className="grid grid-cols-3 gap-2">
+                {(["single", "double", "scroll"] as const).map((readingMode) => (
+                  <Button
+                    key={readingMode}
+                    size="sm"
+                    variant={preferences.readingMode === readingMode ? "secondary" : "outline"}
+                    aria-pressed={preferences.readingMode === readingMode}
+                    onClick={() => onChange({ readingMode })}
+                  >
+                    {{ single: "单页", double: "双页", scroll: "滚动" }[readingMode]}
+                  </Button>
+                ))}
+              </div>
+              {preferences.readingMode === "double" && (
+                <p className="text-secondary">窄窗口自动显示单页，展开后恢复双页。</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <span className="text-secondary font-medium">翻页效果</span>
+              <div className="grid grid-cols-4 gap-2">
+                {(["instant", "curl", "slide", "fade"] as const).map((pageTurnEffect) => (
+                  <Button
+                    key={pageTurnEffect}
+                    size="sm"
+                    disabled={preferences.readingMode === "scroll"}
+                    variant={
+                      preferences.pageTurnEffect === pageTurnEffect ? "secondary" : "outline"
+                    }
+                    aria-pressed={preferences.pageTurnEffect === pageTurnEffect}
+                    onClick={() => onChange({ pageTurnEffect })}
+                  >
+                    {{ instant: "无", curl: "仿真", slide: "滑动", fade: "淡入" }[pageTurnEffect]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
               <span className="text-secondary font-medium">界面主题</span>
               <div className="grid grid-cols-3 gap-2">
                 {(["system", "light", "dark"] as const).map((theme) => (

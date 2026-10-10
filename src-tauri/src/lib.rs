@@ -12,9 +12,9 @@ use commands::{
     delete_group, get_import_status, get_saved_reader_locator, get_settings, get_shelf_preferences,
     get_toc_rule, get_txt_decode_status, get_txt_encoding, list_bookmarks, list_books, list_groups,
     list_removed_books, list_toc, preview_toc_rule, read_content_window, reassociate_txt_source,
-    remove_book, rename_group, resolve_reader_locator, restore_book, save_reader_locator,
-    save_settings, save_shelf_preferences, save_toc_rule, search_book, set_book_groups,
-    set_txt_encoding, start_import, start_txt_decode, update_book, AppState,
+    remove_book, rename_group, resolve_reader_locator, resolve_reader_offset, restore_book,
+    save_reader_locator, save_settings, save_shelf_preferences, save_toc_rule, search_book,
+    set_book_groups, set_txt_encoding, start_import, start_txt_decode, update_book, AppState,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -101,6 +101,7 @@ pub fn run() {
             save_reader_locator,
             get_saved_reader_locator,
             resolve_reader_locator,
+            resolve_reader_offset,
             get_settings,
             save_settings,
             list_toc,

@@ -33,7 +33,7 @@ Do not create generic plugin frameworks or placeholder runtime services for defe
 
 The owning subsystem defines semantic obligations; executable type declarations become authoritative once implemented. Shared command inputs and outputs must be explicit, validated at external boundaries, and updated together with consumers. Avoid independent, manually synchronized copies of IPC types.
 
-`src/application` owns application-lifetime import and preference stores. `src/context` owns navigation and display state only. `src/services/contracts.ts` declares library, reader, and settings ports; `src/services/ipc.ts` is their production platform adapter. Pages never manufacture book identities, content, or persistence results. The reader controller remains independent of React and pages.
+`src/application` owns application-lifetime import and preference stores and the reader position writer. Accepted reader writes survive leaving the view; `src/context` owns navigation and display state only. `src/services/contracts.ts` declares library, reader, and settings ports; `src/services/ipc.ts` is their production platform adapter. Pages never manufacture book identities, content, or persistence results. The reader controller remains independent of React and pages.
 
 Long-running operations expose an operation identity, progress, cancellation, and a terminal result. Resource owners release listeners, workers, and requests when work ends. Stale callbacks cannot overwrite a newer user action. Persistent jobs resume from stored state where the operation requires durability; transient searches need not become database jobs.
 

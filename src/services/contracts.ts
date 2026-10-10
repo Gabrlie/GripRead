@@ -27,6 +27,7 @@ import type {
   TxtDecodeStatus,
   TxtDecodeTask,
   TxtEncoding,
+  ResolveOffsetRequest,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -57,6 +58,7 @@ export interface LibraryService {
 export interface ReaderService {
   readContentWindow(request: ReadContentRequest): Promise<ContentWindow>;
   resolveLocator(bookId: string, progress: number): Promise<ReaderLocator>;
+  resolveOffset(request: ResolveOffsetRequest): Promise<ReaderLocator>;
   saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
   getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
   listToc(bookId: string): Promise<TocEntry[]>;

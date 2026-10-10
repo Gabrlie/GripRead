@@ -2,9 +2,13 @@ import { useLayoutEffect, type RefObject } from "react";
 import type { ReaderController } from "../../reader";
 
 /** Copy the page box size to the hidden measurement box. */
-export function syncMeasureBox(page: HTMLElement, measure: HTMLElement): void {
+export function syncMeasureBox(page: HTMLElement, measure: HTMLElement, columns = 1): void {
   const rect = page.getBoundingClientRect();
-  Object.assign(measure.style, { width: `${rect.width}px`, height: `${rect.height}px` });
+  const gutter = columns === 2 ? 32 : 0;
+  Object.assign(measure.style, {
+    width: `${(rect.width - gutter) / columns}px`,
+    height: `${rect.height}px`,
+  });
 }
 
 /**
@@ -19,6 +23,7 @@ export function useReaderLayout(
   signature: string,
   beforeReflow: () => void,
   run: (action: () => Promise<void>) => void,
+  columns = 1,
 ): void {
   useLayoutEffect(() => {
     if (!controller || !pageBox.current || !measureBox.current) return;
@@ -35,7 +40,7 @@ export function useReaderLayout(
         settled = true;
         window.clearTimeout(fallback);
         if (disposed || !pageBox.current || !measureBox.current) return;
-        syncMeasureBox(pageBox.current, measureBox.current);
+        syncMeasureBox(pageBox.current, measureBox.current, columns);
         run(() => controller.reflow());
       };
       frame = requestAnimationFrame(measure);
@@ -56,5 +61,5 @@ export function useReaderLayout(
       observer.disconnect();
       document.fonts.removeEventListener("loadingdone", reflow);
     };
-  }, [beforeReflow, controller, measureBox, pageBox, run, signature]);
+  }, [beforeReflow, controller, measureBox, pageBox, run, signature, columns]);
 }

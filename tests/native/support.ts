@@ -319,6 +319,11 @@ export async function readPage(): Promise<PageSnapshot> {
 export async function clickReaderControl(
   testId: "reader-next" | "reader-previous" | "reader-close",
 ): Promise<void> {
+  if (testId === "reader-next" || testId === "reader-previous") {
+    await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
+    await browser.keys(testId === "reader-next" ? "ArrowRight" : "ArrowLeft");
+    return;
+  }
   if (testId === "reader-close" && (await browser.$('[role="dialog"]').isExisting())) {
     await browser.keys("Escape");
     await browser.waitUntil(async () => !(await browser.$('[role="dialog"]').isExisting()));
@@ -329,7 +334,24 @@ export async function clickReaderControl(
   await control.click();
 }
 
+export async function ensureNativeVisible(): Promise<void> {
+  if (await browser.execute(() => document.visibilityState === "hidden")) {
+    // Desktop tests share the user's desktop; foreground the actual WebView
+    // before exercising transitions rather than changing production motion.
+    await browser.tauri.execute(async ({ core }) => {
+      await core.invoke("plugin:window|show", { label: "main" });
+      await core.invoke("plugin:window|unminimize", { label: "main" });
+      await core.invoke("plugin:window|set_focus", { label: "main" });
+    });
+    await browser.waitUntil(
+      async () => browser.execute(() => document.visibilityState === "visible"),
+      { timeout: TEST_TIMEOUT, interval: 100 },
+    );
+  }
+}
+
 export async function showReaderControls(): Promise<void> {
+  await ensureNativeVisible();
   const hidden = await browser.execute(() =>
     Boolean(document.querySelector('[data-testid="reader-close"]')?.closest("[inert]")),
   );
@@ -337,7 +359,9 @@ export async function showReaderControls(): Promise<void> {
     // The embedded driver's element click only dispatches `click`; the reader
     // consumes pointer gestures. Exercise its real handler with a center tap.
     await browser.execute(() => {
-      const page = document.querySelector<HTMLElement>('[data-testid="reader-page"]')!;
+      const page = document.querySelector<HTMLElement>(
+        '[data-testid="reader-scroll"], [data-testid="reader-page"]',
+      )!;
       const rect = page.getBoundingClientRect();
       const pointer = {
         bubbles: true,
@@ -488,12 +512,14 @@ export async function waitForNextPage(previous: PageSnapshot): Promise<PageSnaps
 
 export async function seekReaderProgress(progress: number): Promise<PageSnapshot> {
   const clamped = Math.max(0, Math.min(100, progress));
-  const slider = await browser.$('[data-testid="reader-progress"] input[type="range"]');
+  await showReaderControls();
+  await browser.$('button[aria-label="目录"]').click();
+  const slider = await browser.$('[data-testid="reader-book-progress"] input[type="range"]');
   await slider.waitForExist({ timeout: TEST_TIMEOUT });
   if (clamped === 0 || clamped === 100) {
     await browser.execute((value) => {
       const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="reader-progress"] input[type="range"]',
+        '[data-testid="reader-book-progress"] input[type="range"]',
       );
       if (!input) throw new Error("progress slider input is missing");
       input.focus();
@@ -508,7 +534,7 @@ export async function seekReaderProgress(progress: number): Promise<PageSnapshot
   } else {
     await browser.execute((value) => {
       const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="reader-progress"] input[type="range"]',
+        '[data-testid="reader-book-progress"] input[type="range"]',
       );
       if (!input) throw new Error("progress slider input is missing");
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;

@@ -102,6 +102,7 @@ try {
     ["presentation", "tests/native/presentation.spec.ts", {}],
     ["m1-txt", "tests/native/m1-txt.spec.ts", {}],
     ["reader-tools", "tests/native/reader-tools.spec.ts", {}],
+    ["reader-modes", "tests/native/reader-modes.spec.ts", {}],
     ["crash", "tests/native/crash.spec.ts", {}, true],
     ["crash-recovery", "tests/native/crash-recovery.spec.ts", {}],
   ];

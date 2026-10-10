@@ -5,6 +5,7 @@ import type { ContentWindow, ReadContentRequest, ReaderLocator } from "../types/
 import { paginateText } from "./pagination";
 import type { ReaderPage } from "./pagination";
 import { ReaderController, ReaderProtocolError } from "./controller";
+import { ReaderPositions } from "./positions";
 import type {
   ReaderDisplayedPage,
   ReaderPresentationAdapter,
@@ -64,6 +65,9 @@ function serviceFor(
       const content = contents[bookId];
       if (content === undefined) throw new Error(`unknown book ${bookId}`);
       return locatorFor(bookId, Math.floor(content.length * progress));
+    },
+    async resolveOffset(request) {
+      return locatorFor(request.bookId, request.offset);
     },
     async saveReaderLocator(value) {
       saves.push({ ...value });
@@ -158,6 +162,120 @@ function adapterSpy(): ReaderPresentationAdapter & {
 }
 
 describe("ReaderController", () => {
+  it("turns whole spreads across windows without publishing or saving the intermediate page", async () => {
+    const service = serviceFor({ book: "abcdefgh" });
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 3,
+      mode: "double",
+    });
+    await controller.open("book");
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["a", "b"]);
+    const published: number[] = [];
+    controller.subscribe(() => {
+      const offset = controller.getSnapshot().page?.startOffset;
+      if (offset !== undefined) published.push(offset);
+    });
+    await controller.next();
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["c", "d"]);
+    expect(published).not.toContain(1);
+    await controller.flush();
+    expect(service.saves.map((locator) => locator.offset)).toEqual([0, 2]);
+    await controller.next();
+    await controller.previous();
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["c", "d"]);
+  });
+
+  it("keeps an odd chapter ending on its own spread and holds chapter progress at 100%", async () => {
+    const controller = new ReaderController(serviceFor({ book: "abcdef" }), {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 6,
+      mode: "double",
+    });
+    await controller.setDirectory([
+      { ordinal: 0, title: "第一章", locator: locatorFor("book", 0) },
+      { ordinal: 1, title: "第二章", locator: locatorFor("book", 3) },
+    ]);
+    await controller.open("book");
+    await controller.next();
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["c"]);
+    expect(controller.getSnapshot().chapterProgress).toBe(100);
+    await controller.seekChapterProgress(1);
+    expect(controller.getSnapshot().pages.every((page) => page.endOffset <= 3)).toBe(true);
+    expect(controller.getSnapshot().chapter?.title).toBe("第一章");
+    await controller.next();
+    expect(controller.getSnapshot().chapter?.title).toBe("第二章");
+    await controller.previous();
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["c"]);
+    await controller.previous();
+    expect(controller.getSnapshot().pages.map((page) => page.text)).toEqual(["a", "b"]);
+    await controller.seekChapter("next");
+    await controller.seekChapter("previous");
+    expect(controller.getSnapshot().page?.startOffset).toBe(0);
+  });
+
+  it("reopens the latest visible passage before a previous view's slow save finishes", async () => {
+    const gate = deferred<void>();
+    const service = serviceFor({ book: "abcdef" }, {}, async (value) => {
+      await gate.promise;
+      return value;
+    });
+    const positions = new ReaderPositions(service);
+    const options = { measurer: { measure: oneUnitMeasurer }, maxUnits: 6, positions };
+    const first = new ReaderController(service, options);
+    await first.open("book");
+    await first.next();
+    first.dispose();
+    const second = new ReaderController(service, options);
+    await second.open("book");
+    expect(second.getSnapshot().page?.startOffset).toBe(1);
+    gate.resolve();
+    await second.flush();
+    expect(service.saves.at(-1)?.offset).toBe(1);
+  });
+
+  it("rejects a delayed chapter seek after the accepted directory changes", async () => {
+    const service = serviceFor({ book: "abcdef" });
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 6,
+    });
+    await controller.setDirectory([{ ordinal: 0, title: "old", locator: locatorFor("book", 0) }]);
+    await controller.open("book");
+    const gate = deferred<ReaderLocator>();
+    vi.spyOn(service, "resolveOffset").mockReturnValueOnce(gate.promise);
+    const seeking = controller.seekChapterProgress(1);
+    const failed = expect(seeking).rejects.toMatchObject({ name: "AbortError" });
+    await Promise.resolve();
+    const updating = controller.setDirectory([
+      { ordinal: 0, title: "new", locator: locatorFor("book", 2) },
+    ]);
+    gate.resolve(locatorFor("book", 6));
+    await failed;
+    await updating;
+    expect(controller.getSnapshot().page?.startOffset).toBe(0);
+    expect(controller.getSnapshot().chapter?.title).toBe("序言");
+  });
+
+  it("bounds scroll text after loading in both directions and preserves the visible locator", async () => {
+    const controller = new ReaderController(serviceFor({ book: "abcdefghijklmnopqrstuvwxyz" }), {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 4,
+      mode: "scroll",
+    });
+    await controller.open("book");
+    for (let i = 0; i < 5; i++) {
+      const window = controller.getSnapshot().scroll!;
+      controller.updateScrollPosition(window.endOffset - 2, window.endOffset);
+      await controller.extendScroll("forward");
+      expect(controller.getSnapshot().scroll!.text.length).toBeLessThanOrEqual(12);
+    }
+    const window = controller.getSnapshot().scroll!;
+    controller.updateScrollPosition(window.startOffset, window.startOffset + 2);
+    await controller.extendScroll("backward");
+    expect(controller.getSnapshot().page?.startOffset).toBe(window.startOffset);
+    controller.dispose();
+  });
   it("loads bounded windows, turns across their boundary, and saves the current locator", async () => {
     const service = serviceFor({ book: "abcdef" });
     const adapter = adapterSpy();
@@ -382,7 +500,7 @@ describe("ReaderController", () => {
     });
   });
 
-  it("waits for the old save before opening a new book without clobbering its state", async () => {
+  it("opens a new book while an old save is slow without clobbering its state", async () => {
     let releaseSave: (() => void) | undefined;
     const saveStarted = new Promise<void>((resolve) => {
       releaseSave = resolve;
@@ -401,10 +519,10 @@ describe("ReaderController", () => {
 
     await controller.open("first");
     const opening = controller.open("second");
-    await Promise.resolve();
-    expect(service.requests).toHaveLength(1);
+    await expect(opening).resolves.toBeUndefined();
+    expect(service.requests).toHaveLength(2);
     releaseSave?.();
-    await expect(opening).rejects.toMatchObject({ name: "ReaderSaveError" });
+    await expect(controller.flush()).rejects.toThrow("old save failed");
     expect(controller.getSnapshot()).toMatchObject({
       bookId: "second",
       page: expect.objectContaining({ text: "second" }),
