@@ -1834,13 +1834,34 @@ fn merged_webdav(
             "the WebDAV address must start with https:// or http://",
         ));
     }
+    let folder = request.folder.trim().trim_matches('/').to_string();
+    if folder.contains("..") || folder.contains('\\') {
+        return Err(AppError::invalid_argument(
+            "the WebDAV folder name is invalid",
+        ));
+    }
     settings.url = url;
     settings.username = request.username.trim().to_string();
     if let Some(password) = &request.password {
         settings.password = password.clone();
     }
+    settings.folder = folder;
+    settings.device_name = request.device_name.trim().chars().take(40).collect();
     settings.auto_backup = request.auto_backup;
+    settings.sync_progress = request.sync_progress;
+    settings.sync_progress_plus = request.sync_progress_plus;
+    settings.restore_ignore = request.restore_ignore.clone();
     Ok(settings)
+}
+
+/// Writes a backup into the local backup folder (a path, or an Android tree URI).
+fn write_local_backup<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    folder: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    crate::documents::write_to_folder(app, folder, name, "application/json", bytes)
 }
 
 #[tauri::command]
@@ -1863,25 +1884,32 @@ pub async fn save_webdav_settings(
     .await
 }
 
-/// Checks an address and account before saving them.
+/// Checks an address and account before saving them, with the round trip time.
 #[tauri::command]
 pub async fn test_webdav(
     request: crate::models::SaveWebDavRequest,
     state: State<'_, AppState>,
-) -> Result<(), AppError> {
+) -> Result<crate::models::WebDavCheck, AppError> {
     with_cloud(&state, move |storage, _| {
         let settings = merged_webdav(&*lock_storage(storage)?, &request)?;
-        crate::cloud::client(&settings)?.check()
+        crate::cloud::check(&settings)
     })
     .await
 }
 
+/// A manual backup to WebDAV, also written to the local backup folder when one is chosen.
 #[tauri::command]
 pub async fn backup_to_webdav(
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<crate::models::RemoteBackup, AppError> {
-    with_cloud(&state, |storage, _| {
-        crate::cloud::backup_now(storage, device_name(), false)
+    with_cloud(&state, move |storage, _| {
+        let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
+        let folder = lock_storage(storage)?.stored_webdav()?.local_folder;
+        if let Some(folder) = folder {
+            write_local_backup(&app, &folder, &backup.name, &serde_json::to_vec(&document)?)?;
+        }
+        Ok(backup)
     })
     .await
 }
@@ -1890,9 +1918,55 @@ pub async fn backup_to_webdav(
 #[tauri::command]
 pub async fn run_automatic_backup(
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<Option<crate::models::RemoteBackup>, AppError> {
-    with_cloud(&state, |storage, _| {
-        crate::cloud::automatic_backup(storage, device_name())
+    with_cloud(&state, move |storage, _| {
+        crate::cloud::automatic_backup(storage, device_name(), |folder, name, bytes| {
+            write_local_backup(&app, folder, name, bytes)
+        })
+    })
+    .await
+}
+
+/// Chooses the local backup folder (Legado 备份路径); `path` comes from the
+/// desktop folder dialog, Android shows its own picker. `None` clears it.
+#[tauri::command]
+pub async fn set_backup_folder(
+    request: crate::models::OptionalPathRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    with_cloud(&state, move |storage, _| {
+        let picked = match request.path.as_deref() {
+            Some("") => None,
+            path => crate::documents::pick_writable_folder(&app, path)?,
+        };
+        let guard = lock_storage(storage)?;
+        let mut settings = guard.stored_webdav()?;
+        if request.path.as_deref() == Some("") {
+            settings.local_folder = None;
+            settings.local_folder_label = None;
+        } else if let Some((folder, label)) = picked {
+            settings.local_folder = Some(folder);
+            settings.local_folder_label = Some(label);
+        }
+        guard.save_stored_webdav(&settings)?;
+        Ok(settings.view())
+    })
+    .await
+}
+
+/// Removes a book from the app, and with `cloud` its cloud bookshelf copy.
+#[tauri::command]
+pub async fn delete_book(
+    request: crate::models::DeleteBookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_cloud(&state, move |storage, _| {
+        if request.cloud {
+            crate::cloud::delete_cloud_copy(storage, &request.book_id)?;
+        }
+        lock_storage(storage)?.delete_book(&request.book_id)
     })
     .await
 }
@@ -1964,8 +2038,16 @@ pub async fn restore_backup(
 ) -> Result<crate::models::RestoreReport, AppError> {
     with_cloud(&state, move |storage, root| {
         let document = read_backup_source(&app, storage, root, &request.source)?;
+        // Covers come from the cloud when an account is set; a backup still
+        // restores without them.
+        if lock_storage(storage)?.stored_webdav()?.configured() {
+            if let Err(error) = crate::cloud::fetch_backup_covers(storage, &document) {
+                eprintln!("Unable to fetch backup covers: {}", error.message);
+            }
+        }
         let mut guard = lock_storage(storage)?;
-        let recovery_point = guard.write_recovery_point(device_name())?;
+        let device = guard.stored_webdav()?.device(device_name());
+        let recovery_point = guard.write_recovery_point(&device)?;
         let mut report = guard.restore_backup(&document)?;
         report.recovery_point = recovery_point;
         Ok(report)
@@ -1982,9 +2064,14 @@ pub async fn export_backup_file(
     app: AppHandle,
 ) -> Result<bool, AppError> {
     with_cloud(&state, move |storage, _| {
-        let document = lock_storage(storage)?.export_backup(device_name())?;
+        let guard = lock_storage(storage)?;
+        let document = guard.export_backup(&guard.stored_webdav()?.device(device_name()))?;
+        drop(guard);
         let bytes = serde_json::to_vec(&document)?;
-        let name = format!("gripread-backup-{}.json", document.created_at);
+        let name = format!(
+            "gripread-{}",
+            crate::cloud::backup_file_name(&document, false)
+        );
         crate::documents::save_document(
             &app,
             request.path.as_deref(),
@@ -2009,7 +2096,7 @@ pub async fn upload_cloud_books(
     state: State<'_, AppState>,
 ) -> Result<crate::models::CloudUploadReport, AppError> {
     with_cloud(&state, move |storage, _| {
-        crate::cloud::upload_books(storage, &request.book_ids)
+        crate::cloud::upload_books(storage, &request.book_ids, device_name())
     })
     .await
 }
@@ -2033,6 +2120,51 @@ pub async fn delete_cloud_book(
 ) -> Result<(), AppError> {
     with_cloud(&state, move |storage, _| {
         crate::cloud::delete_cloud_book(storage, &request.name)
+    })
+    .await
+}
+
+/// Uploads the open book's position when progress sync is on (Legado 同步阅读进度).
+#[tauri::command]
+pub async fn upload_book_progress(
+    request: crate::models::UploadProgressRequest,
+    state: State<'_, AppState>,
+) -> Result<bool, AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::progress_sync::upload(
+            storage,
+            &request.book_id,
+            &request.chapter_title,
+            device_name(),
+        )
+    })
+    .await
+}
+
+/// Another device's newer position for the book, if it is still to be answered.
+#[tauri::command]
+pub async fn fetch_book_progress(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::progress_sync::fetch(storage, &request.book_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn acknowledge_book_progress(
+    request: crate::models::AcknowledgeProgressRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::progress_sync::acknowledge(
+            storage,
+            &request.book_id,
+            &request.device_id,
+            request.revision,
+        )
     })
     .await
 }

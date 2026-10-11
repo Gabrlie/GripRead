@@ -31,6 +31,7 @@ const library = (): LibraryService => ({
   listRemovedBooks: vi.fn(async () => []),
   updateBook: vi.fn(),
   removeBook: vi.fn(),
+  deleteBook: vi.fn(),
   restoreBook: vi.fn(),
   listBooks: vi.fn(async () => []),
   onImportProgress: vi.fn(async () => () => {}),
@@ -81,6 +82,7 @@ const book = (
   shelfState: null,
   coverAssetId: null,
   useReplaceRules: true,
+  inCloud: false,
 });
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {

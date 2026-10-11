@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLibrary, useShelfPreferences } from "../../application/runtime";
 import { useApp } from "../../context/AppContext";
 import type { ShelfSort } from "../../types/generated";
@@ -15,6 +15,7 @@ export function LibraryManager({
   const { state, store } = useLibrary();
   const preferences = useShelfPreferences();
   const { shelf, setShelf } = useApp();
+  const [confirming, setConfirming] = useState<string | null>(null);
   useEffect(() => {
     if (mode === "removed") void store.loadRemoved();
   }, [mode, store]);
@@ -32,12 +33,12 @@ export function LibraryManager({
       <DialogContent className="bg-surface border-surface-variant/50 max-w-sm w-[calc(100%-2rem)] rounded-2xl p-5 space-y-4">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">
-            {mode === "sort" ? "书架排序" : "已移出书籍"}
+            {mode === "sort" ? "书架排序" : "回收站"}
           </DialogTitle>
           <DialogDescription className="text-xs text-secondary">
             {mode === "sort"
               ? "排序和书架布局自动保存。"
-              : "恢复后继续使用原来的进度、书签和分组。"}
+              : "恢复后继续使用原来的进度、书签和分组；删除后从应用中彻底去除，云书架上的文件保留。"}
           </DialogDescription>
         </DialogHeader>
         {(state.managementError || preferences.state.error) && (
@@ -90,15 +91,13 @@ export function LibraryManager({
           <div className="space-y-2 max-h-80 overflow-auto">
             {(state.removedLoading || !state.removedLoaded) && (
               <p role="status" className="text-xs text-secondary">
-                正在读取已移出书籍…
+                正在读取回收站…
               </p>
             )}
             {state.removedLoaded &&
               !state.removedLoading &&
               state.removedBooks.length === 0 &&
-              !state.managementError && (
-                <p className="text-xs text-secondary">没有已移出的书籍。</p>
-              )}
+              !state.managementError && <p className="text-xs text-secondary">回收站是空的。</p>}
             {state.removedBooks.map(({ book }) => (
               <div
                 key={book.id}
@@ -108,16 +107,37 @@ export function LibraryManager({
                   <p className="font-title-editorial text-sm truncate">{book.title}</p>
                   <p className="text-xs text-secondary truncate">{book.author ?? "作者未知"}</p>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs shrink-0"
-                  aria-label={`恢复 ${book.title}`}
-                  disabled={state.managing}
-                  onClick={() => run(() => store.restore(book.id))}
-                >
-                  恢复
-                </Button>
+                <span className="flex gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    aria-label={`恢复 ${book.title}`}
+                    disabled={state.managing}
+                    onClick={() => run(() => store.restore(book.id))}
+                  >
+                    恢复
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`text-xs ${confirming === book.id ? "text-on-error bg-error" : "text-error"}`}
+                    aria-label={`删除 ${book.title}`}
+                    disabled={state.managing}
+                    onClick={() => {
+                      // A second tap confirms; deleting cannot be undone.
+                      if (confirming !== book.id) {
+                        setConfirming(book.id);
+                        return;
+                      }
+                      setConfirming(null);
+                      const entry = state.removedBooks.find((item) => item.book.id === book.id);
+                      if (entry) run(() => store.deleteBook(entry, false));
+                    }}
+                  >
+                    {confirming === book.id ? "确认删除" : "删除"}
+                  </Button>
+                </span>
               </div>
             ))}
           </div>

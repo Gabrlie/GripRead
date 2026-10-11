@@ -20,6 +20,7 @@ import {
 import type { ReaderSnapshot } from "../../reader";
 import type {
   Bookmark,
+  ProgressPrompt,
   ReaderTool,
   ReplaceRule,
   TxtEncoding,
@@ -74,6 +75,7 @@ import { AutomaticDialog } from "./dialogs/AutomaticDialog";
 import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
+import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
@@ -422,6 +424,60 @@ export function ReaderView() {
     runtime.services.library,
     automaticTurn.running || aloud.state === "playing",
   );
+  /**
+   * Legado's 同步阅读进度: opening a book asks about another device's newer
+   * position; leaving uploads this one. 同步增强 also does both when the
+   * reader returns from the background or the network comes back.
+   */
+  const progressSyncOn = useRef(false);
+  const progressSyncPlus = useRef(false);
+  const [cloudProgress, setCloudProgress] = useState<ProgressPrompt | null>(null);
+  const checkCloudProgress = useCallback(() => {
+    if (!bookId || !progressSyncOn.current) return;
+    void runtime.progressSync.fetch(bookId).then(
+      (prompt) => prompt && setCloudProgress((shown) => shown ?? prompt),
+      () => undefined,
+    );
+  }, [bookId, runtime.progressSync]);
+  useEffect(() => {
+    setCloudProgress(null);
+    if (!bookId) return;
+    let cancelled = false;
+    runtime.services.sync.getWebDav().then(
+      (settings) => {
+        if (cancelled) return;
+        progressSyncOn.current = settings.configured && settings.syncProgress;
+        progressSyncPlus.current = progressSyncOn.current && settings.syncProgressPlus;
+        checkCloudProgress();
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, checkCloudProgress, runtime.services.sync]);
+  useEffect(() => {
+    if (!bookId) return;
+    const visibility = () => {
+      if (!progressSyncPlus.current) return;
+      if (document.visibilityState === "visible") checkCloudProgress();
+      else {
+        const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
+        void runtime.positions
+          .flush()
+          .then(() => runtime.progressSync.upload(bookId, chapterTitle))
+          .catch(() => undefined);
+      }
+    };
+    const online = () => progressSyncPlus.current && checkCloudProgress();
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("online", online);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("online", online);
+    };
+  }, [bookId, checkCloudProgress, controller, runtime]);
+
   // The book detail page can open the reader on its contents.
   useEffect(() => {
     if (takeReaderPage() === "contents") openPanel("contents");
@@ -469,11 +525,19 @@ export function ReaderView() {
     runtime.finishReaderWrite(flushDirectory);
     runtime.finishReaderWrite(settingsStore.flush);
     closeReader();
+    const leaving = bookId;
+    const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
     void runtime.positions
       .flush()
-      .then(() => runtime.library.refresh())
+      .then(() => {
+        // Legado 同步阅读进度: leaving the reader uploads the position.
+        if (leaving && progressSyncOn.current)
+          void runtime.progressSync.upload(leaving, chapterTitle).catch(() => undefined);
+        return runtime.library.refresh();
+      })
       .catch(() => undefined);
   }, [
+    bookId,
     controller,
     closing,
     closeReader,
@@ -547,6 +611,19 @@ export function ReaderView() {
     { excerpt: string; offset: number } | { excerpt: string; bookmark: Bookmark } | null
   >(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const answerCloudProgress = (jump: boolean) => {
+    const prompt = cloudProgress;
+    setCloudProgress(null);
+    if (!prompt || !bookId) return;
+    void runtime.progressSync.acknowledge(prompt, bookId).catch(() => undefined);
+    if (jump && controller) {
+      void pauseAutomatic();
+      run(async () => {
+        await controller.seek(prompt.locator);
+        setNotice(`已同步 ${prompt.deviceName || "其他设备"} 的进度`);
+      });
+    }
+  };
   /** Dialogs opened from the top bar's 更多 menu, and the book detail page. */
   const [dialog, setDialog] = useState<"conversion" | "tools" | "detail" | null>(null);
   // 更新目录 reports its outcome once the directory has been read again.
@@ -1325,6 +1402,9 @@ export function ReaderView() {
           }}
         />
       )}
+      {cloudProgress && (
+        <CloudProgressDialog prompt={cloudProgress} onAnswer={answerCloudProgress} />
+      )}
       {dialog === "conversion" && style && (
         <ConversionDialog
           value={style.chineseConversion}
@@ -1350,6 +1430,10 @@ export function ReaderView() {
             libraryState.books.find((item) => item.book.id === activeBook.book.id) ?? activeBook
           }
           inReader
+          onRemoved={() => {
+            setDialog(null);
+            void close();
+          }}
           onOpen={(target) => {
             setDialog(null);
             if (target === "contents") openPanel("contents");

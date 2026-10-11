@@ -48,6 +48,7 @@ const entry: LibraryBook = {
   shelfState: null,
   coverAssetId: null,
   useReplaceRules: true,
+  inCloud: false,
 };
 const chapters: TocEntry[] = [
   tocEntry(0, "第一章", entry.locator!),
@@ -75,6 +76,7 @@ function setup() {
     listRemovedBooks: vi.fn(async () => []),
     updateBook: vi.fn(),
     removeBook: vi.fn(),
+    deleteBook: vi.fn(),
     restoreBook: vi.fn(),
     listBooks: vi.fn(async () => []),
     pickAndImportTxt: vi.fn(async () => null),

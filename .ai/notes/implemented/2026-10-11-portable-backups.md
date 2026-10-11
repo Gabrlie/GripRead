@@ -14,6 +14,8 @@ Restoring writes a local recovery point (the latest five are kept in `backups/`)
 
 The cloud bookshelf stores original files under `GripRead/Books/` with an index of names, hashes, titles, and authors, so listing can tell which books are local without downloading them. A download is staged and passed to the ordinary import.
 
+Schema 14 adds `cloud_books` (what the device last saw in the cloud, for shelf marks), `pending_book_metadata` (index information applied when a downloaded book is imported), and `progress_sync` (per book: the remote version last uploaded or answered, the local revision, and the last uploaded position). Covers travel by content hash in `Covers/` and are cached locally before they are applied, so a pending book can take its cover later. Progress records identify the writing device by a random id stored with the account, which is how a device recognizes its own uploads regardless of server latency or clock skew.
+
 The WebDAV client uses `ureq` with rustls and ring, which builds for Android without CMake.
 
 ## Alternatives considered
@@ -22,4 +24,4 @@ Copying the SQLite database was rejected: it carries device paths and content ve
 
 ## Consequences
 
-Backups contain short text excerpts around positions and bookmarks. A position whose context was rewritten by a rule falls back to its proportional place. Progress is not replicated between devices automatically; that remains part of the Sync specification.
+Backups contain short text excerpts around positions and bookmarks. A position whose context was rewritten by a rule falls back to its proportional place. Progress sync is per book and last-writer, asking before applying another device's position; causal replication of other records remains part of the Sync specification.

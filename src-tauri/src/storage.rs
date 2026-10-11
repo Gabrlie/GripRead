@@ -34,9 +34,12 @@ use crate::txt_toc::{
 };
 
 mod portable;
-pub use portable::{backup_digest, parse_backup, BackupDocument, StoredWebDav};
+pub use portable::{
+    backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
+    ProgressState, StoredWebDav,
+};
 
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -805,6 +808,37 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        // Schema 14: the books this device last saw on the cloud bookshelf
+        // (marked on the shelf without a network request), cloud book
+        // information waiting for its import, and reading progress sync state.
+        if current < 14 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE cloud_books (
+                    source_sha256 TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    uploaded_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE pending_book_metadata (
+                    source_sha256 TEXT PRIMARY KEY NOT NULL,
+                    metadata_json TEXT NOT NULL
+                 );
+                 CREATE TABLE progress_sync (
+                    book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    handled_device TEXT NOT NULL,
+                    handled_revision INTEGER NOT NULL,
+                    local_revision INTEGER NOT NULL,
+                    synced_version TEXT,
+                    synced_offset INTEGER
+                 );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (14, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1821,7 +1855,9 @@ impl Storage {
             "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
                     a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
                     a.relative_path, a.created_at, p.updated_at, r.removed_at,
-                    b.shelf_state, b.cover_asset_id, b.use_replace_rules
+                    b.shelf_state, b.cover_asset_id, b.use_replace_rules,
+                    EXISTS(SELECT 1 FROM txt_assets t JOIN cloud_books c
+                           ON c.source_sha256 = t.source_sha256 WHERE t.asset_id = a.id)
              FROM books b JOIN book_assets a ON a.book_id = b.id
              LEFT JOIN reading_positions p ON p.book_id = b.id
              LEFT JOIN shelf_removals r ON r.book_id = b.id
@@ -1847,6 +1883,7 @@ impl Storage {
                     row.get::<_, Option<String>>(16)?,
                     row.get::<_, Option<String>>(17)?,
                     row.get::<_, bool>(18)?,
+                    row.get::<_, bool>(19)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1861,6 +1898,7 @@ impl Storage {
                     shelf_state,
                     cover_asset_id,
                     use_replace_rules,
+                    in_cloud,
                 )| {
                     let path = managed_path(&self.root, &record.relative_path, "books")?;
                     record.asset.availability = if is_regular_file(&path) {
@@ -1886,6 +1924,7 @@ impl Storage {
                         shelf_state: shelf_state.as_deref().and_then(parse_shelf_state),
                         cover_asset_id,
                         use_replace_rules,
+                        in_cloud,
                     })
                 },
             )
@@ -3612,6 +3651,51 @@ impl Storage {
         self.conn.execute("INSERT INTO shelf_removals(book_id,removed_at) VALUES(?1,?2) ON CONFLICT(book_id) DO NOTHING",params![book_id,now_millis()])?;
         Ok(())
     }
+    /// Deletes a book from the app: its records and the app's own copies of
+    /// its text, original file, and cover. Files outside the app — the
+    /// reader's own TXT and the cloud bookshelf copy — are untouched.
+    pub fn delete_book(&mut self, book_id: &str) -> Result<(), AppError> {
+        self.get_book(book_id)?;
+        let cover = self.book_cover(book_id)?;
+        let files: Vec<(String, String, Option<String>)> = {
+            let mut statement = self.conn.prepare(
+                "SELECT a.id, a.relative_path, t.source_relative_path FROM book_assets a
+                 LEFT JOIN txt_assets t ON t.asset_id = a.id WHERE a.book_id = ?1",
+            )?;
+            let rows = statement
+                .query_map(params![book_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
+        tx.commit()?;
+        if let Ok(mut indexes) = self.verified_indexes.lock() {
+            for (asset_id, _, _) in &files {
+                indexes.remove(asset_id);
+            }
+        }
+        for (_, text, source) in &files {
+            if let Ok(path) = managed_path(&self.root, text, "books") {
+                let _ = remove_owned_file(&path);
+                if let Some(parent) = path.parent() {
+                    let _ = fs::remove_dir(parent);
+                }
+            }
+            if let Some(source) = source.as_deref().filter(|value| !value.is_empty()) {
+                if let Ok(path) = managed_path(&self.root, source, "sources") {
+                    let _ = remove_owned_file(&path);
+                }
+            }
+        }
+        if let Some(cover) = cover {
+            self.delete_reader_asset(&cover)?;
+        }
+        Ok(())
+    }
+
     pub fn restore_book(&self, book_id: &str) -> Result<(), AppError> {
         self.get_book(book_id)?;
         self.conn.execute(
@@ -6277,7 +6361,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 14);
     }
 
     #[test]
@@ -7244,7 +7328,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -7412,7 +7496,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -8691,7 +8775,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -8759,7 +8843,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(

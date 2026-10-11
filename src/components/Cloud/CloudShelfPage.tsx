@@ -33,8 +33,8 @@ export function CloudShelfPage({
 
   const refresh = useCallback(async () => {
     const settings = await sync.getWebDav();
-    setConfigured(Boolean(settings.url));
-    if (settings.url) setBooks(await sync.listCloudBooks());
+    setConfigured(settings.configured);
+    if (settings.configured) setBooks(await sync.listCloudBooks());
   }, [sync]);
   useEffect(() => {
     setBusy("load");
@@ -79,6 +79,7 @@ export function CloudShelfPage({
                 const report = await sync.uploadBooks([]);
                 await refresh();
                 const parts = [`上传 ${report.uploaded} 本`];
+                if (report.updated) parts.push(`更新信息 ${report.updated} 本`);
                 if (report.skipped) parts.push(`${report.skipped} 本已在云书架`);
                 if (report.failed.length)
                   parts.push(`${report.failed.length} 本失败：${report.failed.join("；")}`);
@@ -136,6 +137,8 @@ export function CloudShelfPage({
               </span>
               {book.localBookId ? (
                 <span className="text-[11px] text-primary shrink-0">已在书架</span>
+              ) : book.localRemoved ? (
+                <span className="text-[11px] text-secondary shrink-0">在回收站</span>
               ) : (
                 <Button
                   size="sm"

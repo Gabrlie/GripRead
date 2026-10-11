@@ -17,6 +17,11 @@ import type {
   NameRequest,
   BookIdListRequest,
   OptionalPathRequest,
+  WebDavCheck,
+  ProgressPrompt,
+  UploadProgressRequest,
+  AcknowledgeProgressRequest,
+  DeleteBookRequest,
   Book,
   UpdateBookRequest,
   ShelfPreferences,
@@ -173,6 +178,10 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("remove_book", { request: { bookId } satisfies BookRequest }),
     restoreBook: (bookId) =>
       invokeCommand<void>("restore_book", { request: { bookId } satisfies BookRequest }),
+    deleteBook: (bookId, cloud) =>
+      invokeCommand<void>("delete_book", {
+        request: { bookId, cloud } satisfies DeleteBookRequest,
+      }),
     listBooks: () => invokeCommand<LibraryBook[]>("list_books"),
     listGroups: () => invokeCommand<LibraryGroup[]>("list_groups"),
     createGroup: (name) =>
@@ -394,7 +403,21 @@ export const tauriServices: AppServices = {
         request: request satisfies SaveWebDavRequest,
       }),
     testWebDav: (request) =>
-      invokeCommand<void>("test_webdav", { request: request satisfies SaveWebDavRequest }),
+      invokeCommand<WebDavCheck>("test_webdav", { request: request satisfies SaveWebDavRequest }),
+    setBackupFolder: async (clear) => {
+      // Android shows its own folder picker (DocumentPlugin.kt).
+      const android = /Android/i.test(navigator.userAgent);
+      let path: string | null = clear ? "" : null;
+      if (!clear && !android) {
+        const picked = await open({ multiple: false, directory: true });
+        if (picked === null || Array.isArray(picked))
+          return invokeCommand<WebDavSettings>("get_webdav_settings");
+        path = picked;
+      }
+      return invokeCommand<WebDavSettings>("set_backup_folder", {
+        request: { path } satisfies OptionalPathRequest,
+      });
+    },
     backupNow: () => invokeCommand<RemoteBackup>("backup_to_webdav"),
     runAutomaticBackup: () => invokeCommand<RemoteBackup | null>("run_automatic_backup"),
     listBackups: () => invokeCommand<RemoteBackup[]>("list_remote_backups"),
@@ -443,5 +466,17 @@ export const tauriServices: AppServices = {
       }),
     deleteCloudBook: (name) =>
       invokeCommand<void>("delete_cloud_book", { request: { name } satisfies NameRequest }),
+    uploadProgress: (bookId, chapterTitle) =>
+      invokeCommand<boolean>("upload_book_progress", {
+        request: { bookId, chapterTitle } satisfies UploadProgressRequest,
+      }),
+    fetchProgress: (bookId) =>
+      invokeCommand<ProgressPrompt | null>("fetch_book_progress", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    acknowledgeProgress: (bookId, deviceId, revision) =>
+      invokeCommand<void>("acknowledge_book_progress", {
+        request: { bookId, deviceId, revision } satisfies AcknowledgeProgressRequest,
+      }),
   },
 };

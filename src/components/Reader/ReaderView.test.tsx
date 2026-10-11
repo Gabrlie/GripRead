@@ -19,7 +19,7 @@ import type {
 } from "../../types/generated";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
 import { DEFAULT_READING_STYLE } from "../../types/generated";
-import { syncServiceMocks } from "../../test/sync";
+import { syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -121,6 +121,7 @@ const entry: LibraryBook = {
   shelfState: null,
   coverAssetId: null,
   useReplaceRules: true,
+  inCloud: false,
 };
 
 function deferred<T>() {
@@ -153,6 +154,7 @@ function runtime() {
       listRemovedBooks: vi.fn(async () => []),
       updateBook: vi.fn(),
       removeBook: vi.fn(),
+      deleteBook: vi.fn(),
       restoreBook: vi.fn(),
       listBooks: vi.fn(async () => [entry]),
       pickAndImportTxt: vi.fn(async () => null),
@@ -542,6 +544,41 @@ describe("reader directory and search operation ownership", () => {
     await userEvent.click(await screen.findByRole("radio", { name: /简转繁/ }));
     await waitFor(() =>
       expect(app.settings.getSnapshot().value?.style.chineseConversion).toBe("to_traditional"),
+    );
+  });
+
+  it("asks to jump to another device's progress and uploads its own on leaving", async () => {
+    const app = runtime();
+    const sync = app.services.sync;
+    vi.mocked(sync.getWebDav).mockResolvedValue({
+      ...unconfiguredWebDav(),
+      username: "reader",
+      configured: true,
+      syncProgress: true,
+    });
+    const target = text.length - 30;
+    vi.mocked(sync.fetchProgress).mockResolvedValue({
+      deviceId: "other",
+      deviceName: "书房平板",
+      revision: 3,
+      writtenAt: 1,
+      chapterTitle: "Chapter 1",
+      excerpt: "Read a page.",
+      locator: locator(target),
+    });
+    await view(app);
+    const dialog = await screen.findByRole("dialog", { name: "云端进度" });
+    expect(within(dialog).getByText(/书房平板/)).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "跳转" }));
+    await waitFor(() =>
+      expect(Number(screen.getByTestId("reader-page").getAttribute("data-end"))).toBeGreaterThan(
+        target,
+      ),
+    );
+    expect(sync.acknowledgeProgress).toHaveBeenCalledWith("reader-book", "other", 3);
+    await userEvent.click(screen.getByTestId("reader-close"));
+    await waitFor(() =>
+      expect(sync.uploadProgress).toHaveBeenCalledWith("reader-book", expect.any(String)),
     );
   });
 

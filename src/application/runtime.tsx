@@ -7,6 +7,7 @@ import { SettingsStore } from "./settings";
 import { ReaderPositions } from "../reader/positions";
 import { FontLoader } from "./fonts";
 import { ImageLoader } from "./images";
+import { ProgressSync } from "./progress-sync";
 /** Reading adjustments preview immediately and persist after 800 ms of inactivity. */
 export const READER_SETTINGS_SAVE_DELAY_MS = 800;
 export class AppRuntime {
@@ -14,6 +15,7 @@ export class AppRuntime {
   readonly shelf: ShelfStore;
   readonly settings: SettingsStore;
   readonly positions: ReaderPositions;
+  readonly progressSync: ProgressSync;
   readonly shelfPreferences: SettingsStore<ShelfPreferences>;
   readonly fonts: FontLoader;
   readonly images: ImageLoader;
@@ -60,6 +62,7 @@ export class AppRuntime {
     this.shelf = new ShelfStore(services.library, services.reader, () => this.library.refresh());
     this.settings = new SettingsStore(services.settings, READER_SETTINGS_SAVE_DELAY_MS);
     this.positions = new ReaderPositions(services.reader);
+    this.progressSync = new ProgressSync(services.sync);
     this.fonts = new FontLoader(services.settings);
     this.images = new ImageLoader(services.library);
     this.shelfPreferences = new SettingsStore({

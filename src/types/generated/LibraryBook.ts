@@ -14,4 +14,8 @@ shelfState: ShelfState | null, coverAssetId: string | null,
 /**
  * Legado's per-book 替换净化 switch.
  */
-useReplaceRules: boolean, };
+useReplaceRules: boolean, 
+/**
+ * The cloud bookshelf had this book's file when it was last seen.
+ */
+inCloud: boolean, };

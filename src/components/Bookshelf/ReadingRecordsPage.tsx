@@ -22,6 +22,8 @@ export function ReadingRecordsPage({
   const page = usePageLayer(onClose);
   useEffect(() => {
     let cancelled = false;
+    // Books in the 回收站 keep their records and are listed as such.
+    void runtime.library.loadRemoved();
     runtime.services.library.readingStats(localDay()).then(
       (value) => !cancelled && setStats(value),
       (failure: unknown) => !cancelled && setError(String(failure)),
@@ -118,7 +120,14 @@ export function ReadingRecordsPage({
                       <BookCover title={book.book.title} assetId={book.coverAssetId} />
                     </span>
                     <span className="flex-1 min-w-0">
-                      <span className="block text-sm font-medium truncate">{book.book.title}</span>
+                      <span className="block text-sm font-medium truncate">
+                        {book.book.title}
+                        {book.removedAt !== null && (
+                          <span className="ml-2 text-[10px] font-normal text-secondary">
+                            回收站
+                          </span>
+                        )}
+                      </span>
                       <span className="block text-xs text-secondary">
                         最近 {record.lastDay} · {formatDuration(record.seconds)}
                       </span>

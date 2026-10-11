@@ -9,7 +9,10 @@
 //! bytes is imported.
 
 use super::*;
-use crate::models::{BackupPreview, RestoreReport, WebDavSettings};
+use crate::models::{
+    BackupPreview, RestoreCategory, RestoreReport, WebDavSettings, DEFAULT_WEBDAV_FOLDER,
+    DEFAULT_WEBDAV_URL,
+};
 
 pub const BACKUP_FORMAT: &str = "gripread-backup";
 pub const BACKUP_VERSION: u32 = 1;
@@ -72,6 +75,47 @@ pub struct PortableBook {
     /// Seconds read per local calendar day (`YYYY-MM-DD`).
     #[serde(default)]
     pub reading_time: Vec<(String, u64)>,
+    /// The book's own cover; the image travels in the cloud `Covers/` folder.
+    #[serde(default)]
+    pub cover: Option<CoverRef>,
+}
+
+/// A cover image by content: `Covers/<sha256>.<ext>` on WebDAV, and the same
+/// name in the local `cloud-covers/` cache.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverRef {
+    pub sha256: String,
+    pub ext: String,
+}
+
+impl CoverRef {
+    pub fn file_name(&self) -> String {
+        format!("{}.{}", self.sha256, self.ext)
+    }
+}
+
+/// What this device last did with a book's cloud progress: the remote
+/// version it uploaded or answered, its own upload count, and the position
+/// it last uploaded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProgressState {
+    pub handled_device: String,
+    pub handled_revision: u64,
+    pub local_revision: u64,
+    pub synced_version: Option<String>,
+    pub synced_offset: Option<u64>,
+}
+
+/// Book information from the cloud bookshelf index, applied when the
+/// downloaded book is imported.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CloudMetadata {
+    pub title: String,
+    pub author: Option<String>,
+    pub intro: Option<String>,
+    pub cover: Option<CoverRef>,
 }
 
 fn default_true() -> bool {
@@ -115,23 +159,91 @@ pub fn parse_backup(bytes: &[u8]) -> Result<BackupDocument, AppError> {
     Ok(document)
 }
 
-/// This device's WebDAV account and backup state, kept out of backups.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// This device's WebDAV account, sync switches, and backup state, kept out of backups.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredWebDav {
     pub url: String,
     pub username: String,
     pub password: String,
+    pub folder: String,
+    pub device_name: String,
+    /// A random identity for this device, so its own progress uploads are recognized.
+    pub device_id: String,
+    /// A local folder (path or Android tree URI) that also receives backups.
+    pub local_folder: Option<String>,
+    pub local_folder_label: Option<String>,
     pub auto_backup: bool,
+    pub sync_progress: bool,
+    pub sync_progress_plus: bool,
+    pub restore_ignore: Vec<RestoreCategory>,
     pub last_backup_at: Option<i64>,
     /// Digest of the records of the last automatic backup, to skip unchanged days.
     pub last_backup_digest: Option<String>,
     pub last_error: Option<String>,
 }
 
+impl Default for StoredWebDav {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            folder: String::new(),
+            device_name: String::new(),
+            device_id: String::new(),
+            local_folder: None,
+            local_folder_label: None,
+            auto_backup: false,
+            // Legado turns progress sync on by default.
+            sync_progress: true,
+            sync_progress_plus: false,
+            restore_ignore: Vec::new(),
+            last_backup_at: None,
+            last_backup_digest: None,
+            last_error: None,
+        }
+    }
+}
+
 impl StoredWebDav {
+    /// An account is set when an address or a user name is.
     pub fn configured(&self) -> bool {
-        !self.url.trim().is_empty()
+        !self.url.trim().is_empty() || !self.username.trim().is_empty()
+    }
+
+    /// The address, with 坚果云 for an empty one.
+    pub fn address(&self) -> String {
+        let url = self.url.trim();
+        if url.is_empty() {
+            DEFAULT_WEBDAV_URL.into()
+        } else {
+            url.into()
+        }
+    }
+
+    /// The application folder under the address.
+    pub fn root_folder(&self) -> String {
+        let folder = self.folder.trim().trim_matches('/');
+        if folder.is_empty() {
+            DEFAULT_WEBDAV_FOLDER.into()
+        } else {
+            folder.into()
+        }
+    }
+
+    /// The device name for backups and progress, `fallback` when unset.
+    pub fn device(&self, fallback: &str) -> String {
+        let name = self.device_name.trim();
+        if name.is_empty() {
+            fallback.into()
+        } else {
+            name.into()
+        }
+    }
+
+    pub fn ignores(&self, category: RestoreCategory) -> bool {
+        self.restore_ignore.contains(&category)
     }
 
     pub fn view(&self) -> WebDavSettings {
@@ -139,9 +251,19 @@ impl StoredWebDav {
             url: self.url.clone(),
             username: self.username.clone(),
             has_password: !self.password.is_empty(),
+            folder: self.folder.clone(),
+            device_name: self.device_name.clone(),
+            local_folder: self
+                .local_folder_label
+                .clone()
+                .or(self.local_folder.clone()),
             auto_backup: self.auto_backup,
+            sync_progress: self.sync_progress,
+            sync_progress_plus: self.sync_progress_plus,
+            restore_ignore: self.restore_ignore.clone(),
             last_backup_at: self.last_backup_at,
             last_error: self.last_error.clone(),
+            configured: self.configured(),
         }
     }
 }
@@ -169,10 +291,15 @@ impl Storage {
                 |row| row.get(0),
             )
             .optional()?;
-        Ok(json
+        let mut settings: StoredWebDav = json
             .map(|json| serde_json::from_str(&json))
             .transpose()?
-            .unwrap_or_default())
+            .unwrap_or_default();
+        if settings.device_id.is_empty() {
+            settings.device_id = Uuid::new_v4().to_string();
+            self.save_stored_webdav(&settings)?;
+        }
+        Ok(settings)
     }
 
     pub fn save_stored_webdav(&self, settings: &StoredWebDav) -> Result<(), AppError> {
@@ -202,6 +329,228 @@ impl Storage {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// The local book with this original file and whether it is in the 回收站.
+    pub(crate) fn local_book_for_source(
+        &self,
+        source_sha256: &str,
+    ) -> Result<Option<(String, bool)>, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT a.book_id, EXISTS(SELECT 1 FROM shelf_removals r WHERE r.book_id = a.book_id)
+                 FROM txt_assets t JOIN book_assets a ON a.id = t.asset_id
+                 WHERE t.source_sha256 = ?1 ORDER BY a.created_at LIMIT 1",
+                params![source_sha256],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// The book's cover image and its content reference.
+    pub fn book_cover_file(&self, book_id: &str) -> Result<Option<(PathBuf, CoverRef)>, AppError> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                "SELECT r.relative_path, r.name FROM books b JOIN reader_assets r ON r.id = b.cover_asset_id
+                 WHERE b.id = ?1",
+                params![book_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((relative, name)) = row else {
+            return Ok(None);
+        };
+        let path = self.root.join(&relative);
+        let Ok(bytes) = fs::read(&path) else {
+            return Ok(None);
+        };
+        let ext = Path::new(&name)
+            .extension()
+            .or_else(|| Path::new(&relative).extension())
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg")
+            .to_ascii_lowercase();
+        Ok(Some((
+            path,
+            CoverRef {
+                sha256: sha256_bytes(&bytes),
+                ext,
+            },
+        )))
+    }
+
+    /// The book's own introduction, as edited or detected.
+    pub fn book_intro(&self, book_id: &str) -> Result<Option<String>, AppError> {
+        Ok(self.conn.query_row(
+            "SELECT intro FROM books WHERE id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// The saved position as a portable locator, with the locator itself.
+    pub fn portable_position(
+        &self,
+        book_id: &str,
+    ) -> Result<Option<(PortableLocator, ReaderLocator)>, AppError> {
+        let Some(locator) = self.saved_position(book_id)? else {
+            return Ok(None);
+        };
+        let total_length = self
+            .persisted_index(&self.asset_for_book(book_id)?.asset.id)?
+            .map(|persisted| persisted.index.utf16_length)
+            .unwrap_or(0);
+        Ok(Some((
+            self.portable_locator(&locator, total_length),
+            locator,
+        )))
+    }
+
+    /// A portable position in this device's text of the book: the same
+    /// offset for the same text, otherwise found again by its context.
+    pub fn locator_from_portable(
+        &self,
+        book_id: &str,
+        portable: &PortableLocator,
+    ) -> Result<Option<ReaderLocator>, AppError> {
+        let context = self.content_read_context(book_id)?;
+        let verified = verify_content_context(&context)?;
+        self.persist_content_index(&context, &verified)?;
+        let offset = if portable.content_version == context.record.asset.content_version {
+            portable.offset
+        } else {
+            relocate(&read_verified_text(&context, &verified)?, portable)
+        };
+        let request = ResolveOffsetRequest {
+            book_id: book_id.into(),
+            content_version: context.record.asset.content_version.clone(),
+            resource_id: context.record.asset.id.clone(),
+            offset: offset.min(verified.index.utf16_length),
+        };
+        Ok(resolve_offset_from_context(&request, &context, &verified).ok())
+    }
+
+    /// The book's progress sync state; defaults before its first sync.
+    pub fn progress_state(&self, book_id: &str) -> Result<ProgressState, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT handled_device, handled_revision, local_revision, synced_version, synced_offset
+                 FROM progress_sync WHERE book_id = ?1",
+                params![book_id],
+                |row| {
+                    Ok(ProgressState {
+                        handled_device: row.get(0)?,
+                        handled_revision: row.get::<_, i64>(1)? as u64,
+                        local_revision: row.get::<_, i64>(2)? as u64,
+                        synced_version: row.get(3)?,
+                        synced_offset: row.get::<_, Option<i64>>(4)?.map(|offset| offset as u64),
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    pub fn save_progress_state(
+        &self,
+        book_id: &str,
+        state: &ProgressState,
+    ) -> Result<(), AppError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO progress_sync(book_id, handled_device, handled_revision,
+                local_revision, synced_version, synced_offset) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                book_id,
+                state.handled_device,
+                state.handled_revision as i64,
+                state.local_revision as i64,
+                state.synced_version,
+                state.synced_offset.map(|offset| offset as i64)
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Where downloaded cover images wait to be applied.
+    pub fn cover_cache(&self) -> PathBuf {
+        self.root.join("cloud-covers")
+    }
+
+    /// Sets the cover from the local cache when it differs from the current one.
+    fn apply_cover(&mut self, book_id: &str, cover: &CoverRef) -> Result<(), AppError> {
+        if self
+            .book_cover_file(book_id)?
+            .is_some_and(|(_, current)| current.sha256 == cover.sha256)
+        {
+            return Ok(());
+        }
+        let path = self.cover_cache().join(cover.file_name());
+        if path.is_file() {
+            self.set_book_cover(book_id, &path, &format!("cover.{}", cover.ext))?;
+        }
+        Ok(())
+    }
+
+    /// Keeps cloud book information for a download until its import commits.
+    pub fn queue_cloud_metadata(
+        &self,
+        source_sha256: &str,
+        metadata: &CloudMetadata,
+    ) -> Result<(), AppError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pending_book_metadata(source_sha256, metadata_json) VALUES (?1, ?2)",
+            params![source_sha256, serde_json::to_string(metadata)?],
+        )?;
+        Ok(())
+    }
+
+    /// Replaces the record of what the cloud bookshelf holds.
+    pub fn set_cloud_books(&mut self, books: &[(String, String, i64)]) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM cloud_books", [])?;
+        for (source, name, uploaded_at) in books {
+            tx.execute(
+                "INSERT OR REPLACE INTO cloud_books(source_sha256, name, uploaded_at) VALUES (?1, ?2, ?3)",
+                params![source, name, uploaded_at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn add_cloud_book(
+        &self,
+        source: &str,
+        name: &str,
+        uploaded_at: i64,
+    ) -> Result<(), AppError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO cloud_books(source_sha256, name, uploaded_at) VALUES (?1, ?2, ?3)",
+            params![source, name, uploaded_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_cloud_book(&self, name: &str) -> Result<(), AppError> {
+        self.conn
+            .execute("DELETE FROM cloud_books WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
+    /// The cloud file name recorded for a book, if it was uploaded.
+    pub fn cloud_name_for_book(&self, book_id: &str) -> Result<Option<String>, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT c.name FROM cloud_books c JOIN txt_assets t ON t.source_sha256 = c.source_sha256
+                 JOIN book_assets a ON a.id = t.asset_id WHERE a.book_id = ?1 LIMIT 1",
+                params![book_id],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// The local book whose original file has `source_sha256`, on the shelf or not.
@@ -302,7 +651,11 @@ impl Storage {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        let cover = self
+            .book_cover_file(&shelf.book_id)?
+            .map(|(_, cover)| cover);
         Ok(PortableBook {
+            cover,
             source_sha256: shelf.source_sha256.clone(),
             title,
             author,
@@ -431,8 +784,20 @@ impl Storage {
     /// that are not here are kept until a matching book is imported.
     pub fn restore_backup(&mut self, document: &BackupDocument) -> Result<RestoreReport, AppError> {
         let mut report = RestoreReport::default();
+        let settings = self.stored_webdav()?;
+        let skip = |category| settings.ignores(category);
+        let groups: &[String] = if skip(RestoreCategory::Groups) {
+            &[]
+        } else {
+            &document.groups
+        };
+        let toc_rules: &[TxtTocRule] = if skip(RestoreCategory::TocRules) {
+            &[]
+        } else {
+            &document.toc_rules
+        };
         let tx = self.conn.transaction()?;
-        for name in &document.groups {
+        for name in groups {
             let name = name.trim();
             if name.is_empty() {
                 continue;
@@ -450,7 +815,7 @@ impl Storage {
                 report.groups_created += 1;
             }
         }
-        for rule in &document.toc_rules {
+        for rule in toc_rules {
             let exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM txt_toc_rules WHERE id = ?1)",
                 params![rule.id],
@@ -495,7 +860,7 @@ impl Storage {
         }
         tx.commit()?;
         for rule in &document.replace_rules {
-            if rule.id.is_empty() {
+            if rule.id.is_empty() || skip(RestoreCategory::ReplaceRules) {
                 continue;
             }
             // Rules are validated by the same path as an edit.
@@ -504,15 +869,23 @@ impl Storage {
             }
         }
         if let Some(preferences) = &document.preferences {
-            let mut restored = preferences.clone();
             let current = self.get_settings()?;
-            keep_device_assets(&mut restored, &current);
-            if restored.validate().is_ok() {
+            let restored = merge_preferences(
+                &current,
+                preferences,
+                !skip(RestoreCategory::ReadingSettings),
+                !skip(RestoreCategory::Theme),
+            );
+            if restored != current && restored.validate().is_ok() {
                 self.save_settings(&restored)?;
                 report.preferences_restored = true;
             }
         }
-        if let Some(shelf) = &document.shelf_preferences {
+        if let Some(shelf) = document
+            .shelf_preferences
+            .as_ref()
+            .filter(|_| !skip(RestoreCategory::ShelfLayout))
+        {
             if self.save_shelf_preferences(shelf).is_err() {
                 let mut shelf = shelf.clone();
                 shelf.group_id = "all".into();
@@ -561,6 +934,32 @@ impl Storage {
         let Some(source) = source else {
             return Ok(false);
         };
+        let metadata: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT metadata_json FROM pending_book_metadata WHERE source_sha256 = ?1",
+                params![source],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut applied = false;
+        if let Some(metadata) = metadata {
+            let metadata: CloudMetadata = serde_json::from_str(&metadata)?;
+            let title = metadata.title.trim();
+            self.conn.execute(
+                "UPDATE books SET title = CASE WHEN ?2 = '' THEN title ELSE ?2 END,
+                    author = COALESCE(?3, author), intro = COALESCE(?4, intro) WHERE id = ?1",
+                params![book_id, title, metadata.author, metadata.intro],
+            )?;
+            if let Some(cover) = &metadata.cover {
+                self.apply_cover(book_id, cover)?;
+            }
+            self.conn.execute(
+                "DELETE FROM pending_book_metadata WHERE source_sha256 = ?1",
+                params![source],
+            )?;
+            applied = true;
+        }
         let record: Option<String> = self
             .conn
             .query_row(
@@ -570,7 +969,7 @@ impl Storage {
             )
             .optional()?;
         let Some(record) = record else {
-            return Ok(false);
+            return Ok(applied);
         };
         let book: PortableBook = serde_json::from_str(&record)?;
         self.apply_portable_book(book_id, &book)?;
@@ -587,80 +986,97 @@ impl Storage {
         book_id: &str,
         book: &PortableBook,
     ) -> Result<(bool, u32), AppError> {
+        let settings = self.stored_webdav()?;
+        let info = !settings.ignores(RestoreCategory::BookInfo);
+        let progress = !settings.ignores(RestoreCategory::Progress);
+        let marks = !settings.ignores(RestoreCategory::Bookmarks);
+        let time = !settings.ignores(RestoreCategory::ReadingTime);
         let title = book.title.trim();
         {
             let tx = self.conn.transaction()?;
-            tx.execute(
-                "UPDATE books SET title = CASE WHEN ?2 = '' THEN title ELSE ?2 END,
-                    author = ?3, intro = COALESCE(?4, intro), use_replace_rules = ?5,
-                    updated_at = ?6
-                 WHERE id = ?1",
-                params![
-                    book_id,
-                    title,
-                    book.author,
-                    book.intro,
-                    book.use_replace_rules,
-                    now_millis()
-                ],
-            )?;
-            let group: Option<String> = match &book.group {
-                Some(name) => tx
-                    .query_row(
-                        "SELECT id FROM library_groups WHERE name = ?1",
-                        params![name],
-                        |row| row.get(0),
-                    )
-                    .optional()?,
-                None => None,
-            };
-            tx.execute(
-                "DELETE FROM book_groups WHERE book_id = ?1",
-                params![book_id],
-            )?;
-            if let Some(group) = &group {
+            if info {
                 tx.execute(
-                    "INSERT INTO book_groups(book_id, group_id) VALUES (?1, ?2)",
-                    params![book_id, group],
+                    "UPDATE books SET title = CASE WHEN ?2 = '' THEN title ELSE ?2 END,
+                        author = ?3, intro = COALESCE(?4, intro), use_replace_rules = ?5,
+                        updated_at = ?6
+                     WHERE id = ?1",
+                    params![
+                        book_id,
+                        title,
+                        book.author,
+                        book.intro,
+                        book.use_replace_rules,
+                        now_millis()
+                    ],
+                )?;
+                let group: Option<String> = match &book.group {
+                    Some(name) => tx
+                        .query_row(
+                            "SELECT id FROM library_groups WHERE name = ?1",
+                            params![name],
+                            |row| row.get(0),
+                        )
+                        .optional()?,
+                    None => None,
+                };
+                tx.execute(
+                    "DELETE FROM book_groups WHERE book_id = ?1",
+                    params![book_id],
+                )?;
+                if let Some(group) = &group {
+                    tx.execute(
+                        "INSERT INTO book_groups(book_id, group_id) VALUES (?1, ?2)",
+                        params![book_id, group],
+                    )?;
+                }
+                tx.execute(
+                    "UPDATE books SET shelf_state = ?2 WHERE id = ?1",
+                    params![
+                        book_id,
+                        if group.is_some() {
+                            None
+                        } else {
+                            book.shelf_state.map(shelf_state_name)
+                        }
+                    ],
                 )?;
             }
-            tx.execute(
-                "UPDATE books SET shelf_state = ?2 WHERE id = ?1",
-                params![
-                    book_id,
-                    if group.is_some() {
-                        None
-                    } else {
-                        book.shelf_state.map(shelf_state_name)
+            if time {
+                for (day, seconds) in &book.reading_time {
+                    if seconds_valid_day(day) {
+                        tx.execute(
+                            "INSERT INTO reading_time(book_id, day, seconds) VALUES (?1, ?2, ?3)
+                             ON CONFLICT(book_id, day) DO UPDATE SET
+                                seconds = MAX(reading_time.seconds, excluded.seconds)",
+                            params![book_id, day, (*seconds).min(86_400) as i64],
+                        )?;
                     }
-                ],
-            )?;
-            for (day, seconds) in &book.reading_time {
-                if seconds_valid_day(day) {
-                    tx.execute(
-                        "INSERT INTO reading_time(book_id, day, seconds) VALUES (?1, ?2, ?3)
-                         ON CONFLICT(book_id, day) DO UPDATE SET
-                            seconds = MAX(reading_time.seconds, excluded.seconds)",
-                        params![book_id, day, (*seconds).min(86_400) as i64],
-                    )?;
                 }
             }
             tx.commit()?;
         }
-        let toc = BookTocSettings {
-            rule_id: book.toc.rule_id.clone().filter(|id| {
-                self.conn
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM txt_toc_rules WHERE id = ?1)",
-                        params![id],
-                        |row| row.get::<_, bool>(0),
-                    )
-                    .unwrap_or(false)
-            }),
-            split_long_chapters: book.toc.split_long_chapters,
-        };
-        if toc != self.book_toc_settings(book_id)?.0 {
-            self.save_book_toc_settings(book_id, &toc)?;
+        if info {
+            let toc = BookTocSettings {
+                rule_id: book.toc.rule_id.clone().filter(|id| {
+                    self.conn
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM txt_toc_rules WHERE id = ?1)",
+                            params![id],
+                            |row| row.get::<_, bool>(0),
+                        )
+                        .unwrap_or(false)
+                }),
+                split_long_chapters: book.toc.split_long_chapters,
+            };
+            if toc != self.book_toc_settings(book_id)?.0 {
+                self.save_book_toc_settings(book_id, &toc)?;
+            }
+            if let Some(cover) = &book.cover {
+                self.apply_cover(book_id, cover)?;
+            }
+        }
+        if !progress && !marks {
+            return Ok((false, 0));
         }
 
         let context = self.content_read_context(book_id)?;
@@ -689,7 +1105,7 @@ impl Storage {
         };
 
         let mut position_restored = false;
-        if let Some(position) = &book.position {
+        if let Some(position) = book.position.as_ref().filter(|_| progress) {
             let local: Option<i64> = self
                 .conn
                 .query_row(
@@ -716,7 +1132,7 @@ impl Storage {
             }
         }
         let mut added = 0;
-        for bookmark in &book.bookmarks {
+        for bookmark in book.bookmarks.iter().filter(|_| marks) {
             let Some(locator) = locate(&bookmark.locator)? else {
                 continue;
             };
@@ -799,6 +1215,30 @@ fn seconds_valid_day(day: &str) -> bool {
                 byte.is_ascii_digit()
             }
         })
+}
+
+/// The restored preferences: reading settings and the theme from the backup
+/// where wanted, this device's otherwise, with this device's fonts and
+/// background images.
+fn merge_preferences(
+    current: &ReaderPreferences,
+    backup: &ReaderPreferences,
+    reading: bool,
+    theme: bool,
+) -> ReaderPreferences {
+    let mut restored = if reading {
+        backup.clone()
+    } else {
+        current.clone()
+    };
+    let source = if theme { backup } else { current };
+    restored.theme = source.theme.clone();
+    restored.paper_tone = source.paper_tone.clone();
+    restored.oled_black = source.oled_black;
+    if reading {
+        keep_device_assets(&mut restored, current);
+    }
+    restored
 }
 
 /// Fonts and background images are files on one device; a backup names none.

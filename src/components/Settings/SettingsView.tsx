@@ -7,7 +7,13 @@ import { Switch } from "../ui/switch";
 import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
 import { useApp } from "../../context/AppContext";
 import { formatDuration, localDay } from "../../application/reading-time";
-import type { ReaderPreferences, ReadingStats, WebDavSettings } from "../../types/generated";
+import type {
+  LibraryBook,
+  ReaderPreferences,
+  ReadingStats,
+  WebDavSettings,
+} from "../../types/generated";
+import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { ReadingRecordsPage } from "../Bookshelf/ReadingRecordsPage";
 import { ReplaceRulesPage } from "../Rules/ReplaceRulesPage";
 import { TocRulesPage } from "../Rules/TocRulesPage";
@@ -85,6 +91,7 @@ export function SettingsView() {
   const { state, store } = useSettings();
   const { state: library } = useLibrary();
   const [page, setPage] = useState<Page | null>(null);
+  const [detail, setDetail] = useState<LibraryBook | null>(null);
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [webdav, setWebdav] = useState<WebDavSettings | null>(null);
   useEffect(() => {
@@ -248,7 +255,7 @@ export function SettingsView() {
             detail={
               !webdav
                 ? undefined
-                : !webdav.url
+                : !webdav.configured
                   ? "WebDAV 未设置，可备份到文件"
                   : webdav.lastError
                     ? `自动备份失败：${webdav.lastError}`
@@ -276,13 +283,21 @@ export function SettingsView() {
         </PageSection>
       </main>
 
-      {page === "records" && (
-        <ReadingRecordsPage
-          onClose={close}
-          onOpenBook={(book) => {
+      {page === "records" && <ReadingRecordsPage onClose={close} onOpenBook={setDetail} />}
+      {detail && (
+        <BookDetailPage
+          book={
+            [...library.books, ...library.removedBooks].find(
+              (item) => item.book.id === detail.book.id,
+            ) ?? detail
+          }
+          onOpen={(target) => {
+            const book = detail;
+            setDetail(null);
             close();
-            openReader(book);
+            openReader(book, target);
           }}
+          onClose={() => setDetail(null)}
         />
       )}
       {page === "replace" && (

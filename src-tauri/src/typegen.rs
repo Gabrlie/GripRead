@@ -64,6 +64,12 @@ const IPC_TYPES: &[&str] = &[
     "ScreenOrientation",
     "AutoPageMode",
     "ReaderTool",
+    "ProgressPrompt",
+    "UploadProgressRequest",
+    "AcknowledgeProgressRequest",
+    "RestoreCategory",
+    "WebDavCheck",
+    "DeleteBookRequest",
     "WebDavSettings",
     "SaveWebDavRequest",
     "RemoteBackup",
@@ -193,6 +199,12 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ScreenOrientation>(&config)?;
     export_all::<AutoPageMode>(&config)?;
     export_all::<ReaderTool>(&config)?;
+    export_all::<ProgressPrompt>(&config)?;
+    export_all::<UploadProgressRequest>(&config)?;
+    export_all::<AcknowledgeProgressRequest>(&config)?;
+    export_all::<RestoreCategory>(&config)?;
+    export_all::<WebDavCheck>(&config)?;
+    export_all::<DeleteBookRequest>(&config)?;
     export_all::<WebDavSettings>(&config)?;
     export_all::<SaveWebDavRequest>(&config)?;
     export_all::<RemoteBackup>(&config)?;

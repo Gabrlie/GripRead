@@ -249,7 +249,7 @@ export function BookshelfView() {
             { icon: "label", label: "分组管理", onSelect: () => setIsGroupModalOpen(true) },
             { icon: "schedule", label: "阅读记录", onSelect: () => setRecords(true) },
             { icon: "cloud", label: "云书架", onSelect: () => setCloud(true) },
-            { icon: "delete", label: "已移出书籍", onSelect: () => setManager("removed") },
+            { icon: "delete", label: "回收站", onSelect: () => setManager("removed") },
           ]}
         />
 
@@ -552,6 +552,7 @@ function BookCardList({
         {/* Book Cover: Fixed 4:3 (portrait) aspect ratio, no hover scale, no corner badge */}
         <div className="relative w-20 aspect-[3/4] shrink-0 rounded-lg overflow-hidden bg-surface-container-high shadow-xs">
           <BookCover title={book.title} assetId={book.entry.coverAssetId} />
+          {book.entry.inCloud && <CloudMark />}
         </div>
 
         {/* Right Content: Strictly 4 lines with identical, uniform spacing */}
@@ -610,11 +611,26 @@ function BookCardGrid({
     >
       <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-surface-container-high shadow-xs mb-1.5">
         <BookCover title={book.title} assetId={book.entry.coverAssetId} />
+        {book.entry.inCloud && <CloudMark />}
       </div>
       <h3 className="font-title-editorial text-xs font-semibold text-on-surface truncate">
         {book.title}
       </h3>
       <p className="text-[11px] text-secondary truncate mt-0.5">{book.author}</p>
     </div>
+  );
+}
+
+/** A quiet corner mark on the cover of a book that is on the cloud bookshelf. */
+function CloudMark() {
+  return (
+    <span
+      role="img"
+      aria-label="已上传到云书架"
+      title="已上传到云书架"
+      className="absolute right-1 bottom-1 h-4 w-4 rounded-full bg-surface/80 text-secondary flex items-center justify-center shadow-xs"
+    >
+      <Icon name="cloud" size={10} />
+    </span>
   );
 }

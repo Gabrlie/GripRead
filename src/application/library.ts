@@ -333,6 +333,13 @@ export class LibraryStore {
       await this.service.removeBook(book.book.id);
       this.update({ lastRemoved: { id: book.book.id, title: book.book.title } });
     });
+  /** Deletes a book from the app; `cloud` also deletes its cloud bookshelf copy. */
+  deleteBook = (book: LibraryBook, cloud: boolean) =>
+    this.manage(`book:${book.book.id}:shelf`, async () => {
+      await this.service.deleteBook(book.book.id, cloud);
+      if (this.snapshot.lastRemoved?.id === book.book.id) this.update({ lastRemoved: null });
+      void this.loadRemoved();
+    });
   restore = (id: string) =>
     this.manage(`book:${id}:shelf`, async () => {
       await this.service.restoreBook(id);

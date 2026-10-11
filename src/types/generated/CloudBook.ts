@@ -15,4 +15,8 @@ sourceSha256: string | null, uploadedAt: number | null,
 /**
  * The local book with the same file, if any.
  */
-localBookId: string | null, };
+localBookId: string | null, 
+/**
+ * That local book is in the 回收站.
+ */
+localRemoved: boolean, };

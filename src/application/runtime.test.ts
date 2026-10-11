@@ -31,6 +31,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     listRemovedBooks: vi.fn(async () => []),
     updateBook: vi.fn(),
     removeBook: vi.fn(),
+    deleteBook: vi.fn(),
     restoreBook: vi.fn(),
     listGroups: vi.fn(async () => []),
     createGroup: vi.fn(),
@@ -184,6 +185,7 @@ describe("runtime durability flush", () => {
       shelfState: null,
       coverAssetId: null,
       useReplaceRules: true,
+      inCloud: false,
     });
     await expect(first).rejects.toThrow("metadata unavailable");
     await expect(second).rejects.toThrow("archive unavailable");

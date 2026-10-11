@@ -115,9 +115,16 @@ const PREFERENCES: ReaderPreferences = {
 export function previewServices(): AppServices {
   let preferences = { ...PREFERENCES };
   let webdav: WebDavSettings = {
-    url: "https://dav.jianguoyun.com/dav/",
+    url: "",
     username: "reader@example.com",
     hasPassword: true,
+    folder: "",
+    deviceName: "",
+    localFolder: null,
+    syncProgress: true,
+    syncProgressPlus: false,
+    restoreIgnore: [],
+    configured: true,
     autoBackup: true,
     lastBackupAt: Date.now() - 3_600_000,
     lastError: null,
@@ -128,12 +135,14 @@ export function previewServices(): AppServices {
       size: 18_204,
       modified: Date.now() - 3_600_000,
       automatic: true,
+      device: "Pixel 8",
     },
     {
       name: "manual-20261009-213000.json",
       size: 17_980,
       modified: Date.now() - 2 * 86_400_000,
       automatic: false,
+      device: "书房平板",
     },
   ];
   let cloud: CloudBook[] = [
@@ -145,6 +154,7 @@ export function previewServices(): AppServices {
       sourceSha256: "preview",
       uploadedAt: Date.now() - 86_400_000,
       localBookId: "preview-book",
+      localRemoved: false,
     },
     {
       name: "山河故人.txt",
@@ -154,6 +164,7 @@ export function previewServices(): AppServices {
       sourceSha256: "other",
       uploadedAt: Date.now() - 3 * 86_400_000,
       localBookId: null,
+      localRemoved: false,
     },
   ];
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
@@ -212,6 +223,7 @@ export function previewServices(): AppServices {
     shelfState,
     coverAssetId: null,
     useReplaceRules: true,
+    inCloud: false,
   });
   const window = (start: number, end: number): ContentWindow => ({
     bookId: BOOK_ID,
@@ -236,6 +248,7 @@ export function previewServices(): AppServices {
       listRemovedBooks: async () => [],
       updateBook: unsupported,
       removeBook: unsupported,
+      deleteBook: unsupported,
       restoreBook: unsupported,
       listGroups: async () => [],
       createGroup: unsupported,
@@ -386,18 +399,20 @@ export function previewServices(): AppServices {
       saveWebDav: async (request) =>
         (webdav = {
           ...webdav,
-          url: request.url,
-          username: request.username,
+          ...request,
           hasPassword: webdav.hasPassword || Boolean(request.password),
-          autoBackup: request.autoBackup,
+          configured: Boolean(request.url || request.username),
         }),
-      testWebDav: async () => undefined,
+      testWebDav: async () => ({ latencyMs: 1240, slow: true }),
+      setBackupFolder: async (clear) =>
+        (webdav = { ...webdav, localFolder: clear ? null : "Download/GripRead" }),
       backupNow: async () => {
         const backup = {
           name: `manual-${Date.now()}.json`,
           size: 18_000,
           modified: Date.now(),
           automatic: false,
+          device: webdav.deviceName || null,
         };
         backups = [backup, ...backups];
         webdav = { ...webdav, lastBackupAt: Date.now() };
@@ -433,11 +448,14 @@ export function previewServices(): AppServices {
       }),
       exportBackupFile: async () => false,
       listCloudBooks: async () => cloud,
-      uploadBooks: async () => ({ uploaded: 0, skipped: 1, failed: [] }),
+      uploadBooks: async () => ({ uploaded: 0, updated: 0, skipped: 1, failed: [] }),
       downloadCloudBook: unsupported,
       deleteCloudBook: async (name) => {
         cloud = cloud.filter((book) => book.name !== name);
       },
+      uploadProgress: async () => false,
+      fetchProgress: async () => null,
+      acknowledgeProgress: async () => undefined,
     },
   };
 }

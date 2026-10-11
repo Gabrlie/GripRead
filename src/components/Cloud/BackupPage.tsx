@@ -1,188 +1,324 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ComponentProps } from "react";
 import { useRuntime } from "../../application/runtime";
+import { defaultDeviceName } from "../../application/device";
 import type {
   BackupPreview,
   BackupSource,
   RemoteBackup,
+  RestoreCategory,
   RestoreReport,
+  SaveWebDavRequest,
+  WebDavCheck,
   WebDavSettings,
 } from "../../types/generated";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { NoticeLine, useNotice } from "../ui/notice";
 import { Input } from "../ui/input";
+import { NoticeLine, useNotice } from "../ui/notice";
 import { Switch } from "../ui/switch";
 import { describeError, formatSize, formatTime } from "./format";
 
+/** Legado's 恢复忽略列表 entries for GripRead's backup contents. */
+export const RESTORE_CATEGORIES: [RestoreCategory, string, string][] = [
+  ["reading-settings", "阅读设置", "字体、排版、翻页、朗读等阅读界面设置"],
+  ["theme", "主题与纸张色调", "深浅色、纸张色调和 OLED 纯黑"],
+  ["shelf-layout", "书架布局", "布局、排序和当前分组"],
+  ["replace-rules", "替换规则", ""],
+  ["toc-rules", "目录规则", ""],
+  ["groups", "分组", "新建备份里的分组"],
+  ["book-info", "书籍信息", "书名、作者、简介、封面、所在分组"],
+  ["progress", "阅读进度", ""],
+  ["bookmarks", "书签", ""],
+  ["reading-time", "阅读时长", ""],
+];
+
+type Draft = Omit<SaveWebDavRequest, "password"> & { password: string };
+
+function draftOf(settings: WebDavSettings): Draft {
+  return {
+    url: settings.url,
+    username: settings.username,
+    password: "",
+    folder: settings.folder,
+    deviceName: settings.deviceName,
+    autoBackup: settings.autoBackup,
+    syncProgress: settings.syncProgress,
+    syncProgressPlus: settings.syncProgressPlus,
+    restoreIgnore: settings.restoreIgnore,
+  };
+}
+
 /**
- * Legado's 备份与恢复 with WebDAV: the account, backing up to WebDAV or a
- * file, and restoring from either or from a recovery point. A backup holds
- * shelf records, progress, bookmarks, rules, and settings, never books.
+ * Legado's 备份与恢复 with WebDAV: the account (an empty address uses 坚果云),
+ * 子文件夹 and 设备名称, progress sync, the local backup folder, backing up
+ * to WebDAV or a file, and restoring from either or from a recovery point,
+ * skipping what the 恢复忽略列表 names. A backup holds shelf records,
+ * progress, bookmarks, rules, and settings, never books.
  */
 export function BackupPage({ onClose }: { onClose: () => void }) {
   const runtime = useRuntime();
   const sync = runtime.services.sync;
   const [settings, setSettings] = useState<WebDavSettings | null>(null);
-  const [draft, setDraft] = useState({ url: "", username: "", password: "", autoBackup: false });
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useNotice();
+  const [latency, setLatency] = useState<WebDavCheck | null>(null);
   const [backups, setBackups] = useState<RemoteBackup[] | null>(null);
   const [points, setPoints] = useState<string[]>([]);
+  const [ignoring, setIgnoring] = useState(false);
   const [restoring, setRestoring] = useState<{
     source: BackupSource;
     label: string;
     preview: BackupPreview;
   } | null>(null);
   const [report, setReport] = useState<RestoreReport | null>(null);
+  const deviceFallback = defaultDeviceName();
 
+  const apply = (value: WebDavSettings) => {
+    setSettings(value);
+    setDraft(draftOf(value));
+  };
   const load = useCallback(async () => {
     const value = await sync.getWebDav();
     setSettings(value);
-    setDraft({
-      url: value.url,
-      username: value.username,
-      password: "",
-      autoBackup: value.autoBackup,
-    });
+    setDraft(draftOf(value));
     setPoints(await sync.listRecoveryPoints().catch(() => []));
   }, [sync]);
   useEffect(() => {
     void load().catch((error: unknown) => setMessage({ text: describeError(error), error: true }));
-  }, [load]);
+  }, [load, setMessage]);
 
   const run = async (label: string, work: () => Promise<string | void>) => {
     setBusy(label);
-    setMessage(null);
     try {
       const text = await work();
-      if (text) setMessage({ text });
+      if (text) setMessage(text);
     } catch (error) {
       setMessage({ text: describeError(error), error: true });
     } finally {
       setBusy(null);
     }
   };
-  const request = () => ({
-    url: draft.url.trim(),
-    username: draft.username.trim(),
-    password: draft.password ? draft.password : null,
-    autoBackup: draft.autoBackup,
+  if (!settings || !draft)
+    return (
+      <FullPage label="备份与恢复" onClose={onClose}>
+        <NoticeLine notice={message} />
+      </FullPage>
+    );
+
+  const request = (from: Draft = draft): SaveWebDavRequest => ({
+    ...from,
+    url: from.url.trim(),
+    username: from.username.trim(),
+    password: from.password ? from.password : null,
+    deviceName: from.deviceName.trim() || deviceFallback,
   });
-  const configured = Boolean(settings?.url);
-  const changed =
-    settings !== null &&
-    (draft.url.trim() !== settings.url ||
-      draft.username.trim() !== settings.username ||
-      draft.password !== "" ||
-      draft.autoBackup !== settings.autoBackup);
+  /** Switches save at once, without the typed but unsaved account fields. */
+  const saveSwitch = (patch: Partial<Draft>) =>
+    run("switch", async () => {
+      const saved = await sync.saveWebDav(request({ ...draftOf(settings), ...patch }));
+      setSettings(saved);
+      setDraft({ ...draft, ...patch });
+    });
+  const accountChanged =
+    draft.url.trim() !== settings.url ||
+    draft.username.trim() !== settings.username ||
+    draft.password !== "" ||
+    draft.folder.trim() !== settings.folder ||
+    draft.deviceName.trim() !== settings.deviceName;
+  const configured = settings.configured;
   const preview = (source: BackupSource, label: string) =>
     run("preview", async () => {
       setRestoring({ source, label, preview: await sync.previewBackup(source) });
     });
+  const field = (
+    label: string,
+    key: "url" | "username" | "password" | "folder" | "deviceName",
+    placeholder: string,
+    extra?: Partial<ComponentProps<typeof Input>>,
+  ) => (
+    <label className="block space-y-1 text-xs text-secondary">
+      {label}
+      <Input
+        value={draft[key]}
+        placeholder={placeholder}
+        onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+        {...extra}
+      />
+    </label>
+  );
+  const slowWarning = latency?.slow && (
+    <p className="text-[11px] text-error">
+      延迟较高（{latency.latencyMs} ms），不建议开启同步阅读进度和同步增强。
+    </p>
+  );
 
   return (
     <FullPage label="备份与恢复" onClose={onClose}>
       <NoticeLine notice={message} />
       <PageSection title="WebDAV 账号">
         <div className="p-4 space-y-3">
-          <label className="block space-y-1 text-xs text-secondary">
-            服务器地址
-            <Input
-              value={draft.url}
-              inputMode="url"
-              placeholder="https://dav.jianguoyun.com/dav/"
-              onChange={(event) => setDraft({ ...draft, url: event.target.value })}
-            />
-          </label>
-          <label className="block space-y-1 text-xs text-secondary">
-            账号
-            <Input
-              value={draft.username}
-              autoComplete="username"
-              onChange={(event) => setDraft({ ...draft, username: event.target.value })}
-            />
-          </label>
-          <label className="block space-y-1 text-xs text-secondary">
-            密码
-            <Input
-              type="password"
-              value={draft.password}
-              autoComplete="current-password"
-              placeholder={
-                settings?.hasPassword ? "已保存，留空则不修改" : "坚果云请填写第三方应用密码"
-              }
-              onChange={(event) => setDraft({ ...draft, password: event.target.value })}
-            />
-          </label>
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span>
-              每日自动备份
-              <span className="block text-[11px] text-secondary">
-                启动时检查，记录有变化才备份，保留最近 7 份
-              </span>
-            </span>
-            <Switch
-              aria-label="每日自动备份"
-              checked={draft.autoBackup}
-              onCheckedChange={(autoBackup) => setDraft({ ...draft, autoBackup })}
-            />
-          </label>
-          <p className="text-[11px] text-secondary">密码只保存在本机，不会写入备份。</p>
+          {field("服务器地址", "url", "留空使用坚果云", { inputMode: "url" })}
+          {field("账号", "username", "", { autoComplete: "username" })}
+          {field(
+            "密码",
+            "password",
+            settings.hasPassword ? "已保存，留空则不修改" : "坚果云请填写第三方应用密码",
+            { type: "password", autoComplete: "current-password" },
+          )}
+          {field("子文件夹", "folder", "GripRead")}
+          {field("设备名称", "deviceName", deviceFallback)}
+          <p className="text-[11px] text-secondary">
+            备份文件名带上设备名称，便于区分来源。密码只保存在本机，不会写入备份。
+          </p>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
-              disabled={!draft.url.trim() || busy !== null}
+              disabled={!(draft.url.trim() || draft.username.trim()) || busy !== null}
               onClick={() =>
                 run("test", async () => {
-                  await sync.testWebDav(request());
-                  return "连接成功。";
+                  const result = await sync.testWebDav(request());
+                  setLatency(result);
+                  return `连接成功，延迟 ${result.latencyMs} ms`;
                 })
               }
             >
-              测试连接
+              {busy === "test" ? "正在测试…" : "测试连接"}
             </Button>
             <Button
               size="sm"
-              disabled={!changed || busy !== null}
+              disabled={!accountChanged || busy !== null}
               onClick={() =>
                 run("save", async () => {
-                  const saved = await sync.saveWebDav(request());
-                  setSettings(saved);
-                  setDraft({ ...draft, password: "" });
-                  return "已保存。";
+                  apply(await sync.saveWebDav(request()));
+                  return "已保存";
                 })
               }
             >
               保存
             </Button>
           </div>
+          {slowWarning}
+        </div>
+      </PageSection>
+
+      <PageSection title="同步">
+        <div className="p-4 space-y-4">
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              同步阅读进度
+              <span className="block text-[11px] text-secondary">
+                进入、退出阅读界面时同步；其他设备有新进度时询问是否跳转
+              </span>
+            </span>
+            <Switch
+              aria-label="同步阅读进度"
+              checked={draft.syncProgress}
+              disabled={busy !== null}
+              onCheckedChange={(syncProgress) =>
+                saveSwitch({
+                  syncProgress,
+                  syncProgressPlus: syncProgress && draft.syncProgressPlus,
+                })
+              }
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              同步增强
+              <span className="block text-[11px] text-secondary">
+                重新进入页面（息屏、后台返回等）或网络恢复时也同步云端进度
+              </span>
+            </span>
+            <Switch
+              aria-label="同步增强"
+              checked={draft.syncProgressPlus}
+              disabled={busy !== null || !draft.syncProgress}
+              onCheckedChange={(syncProgressPlus) => saveSwitch({ syncProgressPlus })}
+            />
+          </label>
+          {slowWarning}
+          {!configured && <p className="text-[11px] text-secondary">设置 WebDAV 账号后生效。</p>}
         </div>
       </PageSection>
 
       <PageSection title="备份">
         <div className="p-4 space-y-3">
           <p className="text-xs text-secondary">
-            备份书架记录、阅读进度、书签、阅读时长、分组、规则和阅读设置，不包含书籍文件；书籍请用云书架上传。
+            备份书架记录、阅读进度、书签、阅读时长、分组、规则和阅读设置，不包含书籍文件；书籍请用云书架上传。封面随
+            WebDAV 备份保存，导出的文件不含封面。
           </p>
-          {settings?.lastBackupAt && (
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="min-w-0">
+              本地备份文件夹
+              <span className="block text-[11px] text-secondary truncate">
+                {settings.localFolder ?? "未选择；选择后自动备份也会保存到这里"}
+              </span>
+            </span>
+            <span className="flex gap-1 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy !== null}
+                onClick={() =>
+                  run("folder", async () => {
+                    apply(await sync.setBackupFolder());
+                  })
+                }
+              >
+                选择
+              </Button>
+              {settings.localFolder && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    run("folder", async () => {
+                      apply(await sync.setBackupFolder(true));
+                    })
+                  }
+                >
+                  清除
+                </Button>
+              )}
+            </span>
+          </div>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              每日自动备份
+              <span className="block text-[11px] text-secondary">
+                启动时检查，记录有变化才备份；WebDAV 保留最近 7 份，本地文件夹保留最新一份
+              </span>
+            </span>
+            <Switch
+              aria-label="每日自动备份"
+              checked={draft.autoBackup}
+              disabled={busy !== null}
+              onCheckedChange={(autoBackup) => saveSwitch({ autoBackup })}
+            />
+          </label>
+          {settings.lastBackupAt && (
             <p className="text-xs">上次备份：{formatTime(settings.lastBackupAt)}</p>
           )}
-          {settings?.lastError && (
-            <p className="text-xs text-error break-words">自动备份失败：{settings.lastError}</p>
+          {settings.lastError && (
+            <p className="text-xs text-error break-words">
+              上次同步失败：{describeError(settings.lastError)}
+            </p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              disabled={!configured || changed || busy !== null}
+              disabled={!configured || accountChanged || busy !== null}
               onClick={() =>
                 run("backup", async () => {
                   const backup = await sync.backupNow();
                   await load();
                   if (backups) setBackups(await sync.listBackups());
-                  return `已备份到 WebDAV：${backup.name}`;
+                  return `已备份：${backup.name}`;
                 })
               }
             >
@@ -195,7 +331,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               disabled={busy !== null}
               onClick={() =>
                 run("export", async () =>
-                  (await sync.exportBackupFile()) ? "备份文件已保存。" : undefined,
+                  (await sync.exportBackupFile()) ? "备份文件已保存" : undefined,
                 )
               }
             >
@@ -203,9 +339,6 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               导出到文件
             </Button>
           </div>
-          {!configured && (
-            <p className="text-[11px] text-secondary">设置并保存 WebDAV 账号后可备份到云端。</p>
-          )}
         </div>
       </PageSection>
 
@@ -247,6 +380,14 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               <Icon name="folder_open" size={14} />
               从文件恢复
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => setIgnoring(true)}>
+              恢复忽略列表
+              {settings.restoreIgnore.length > 0 && (
+                <span className="ml-1 text-[11px] text-secondary">
+                  {settings.restoreIgnore.length} 项
+                </span>
+              )}
+            </Button>
           </div>
           {backups && (
             <ul aria-label="WebDAV 备份" className="space-y-1">
@@ -265,7 +406,9 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                         {backup.automatic ? "自动" : "手动"} · {formatSize(backup.size)}
                       </span>
                     </span>
-                    <span className="block text-[11px] text-secondary truncate">{backup.name}</span>
+                    <span className="block text-[11px] text-secondary truncate">
+                      {backup.device ? `来自 ${backup.device}` : backup.name}
+                    </span>
                   </span>
                   <Button
                     size="sm"
@@ -287,7 +430,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                       run("delete", async () => {
                         await sync.deleteBackup(backup.name);
                         setBackups(await sync.listBackups());
-                        return "已删除。";
+                        return "已删除";
                       })
                     }
                   >
@@ -324,6 +467,41 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
         </div>
       </PageSection>
 
+      {ignoring && (
+        <Dialog open onOpenChange={(open) => !open && setIgnoring(false)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[80dvh] overflow-y-auto p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">恢复忽略列表</DialogTitle>
+              <DialogDescription>开启的内容在恢复时保留本机的，不会被备份覆盖。</DialogDescription>
+            </DialogHeader>
+            <ul className="space-y-1">
+              {RESTORE_CATEGORIES.map(([category, label, note]) => (
+                <li key={category}>
+                  <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm hover:bg-surface-container">
+                    <span>
+                      {label}
+                      {note && <span className="block text-[11px] text-secondary">{note}</span>}
+                    </span>
+                    <Switch
+                      aria-label={`恢复时忽略${label}`}
+                      checked={draft.restoreIgnore.includes(category)}
+                      disabled={busy !== null}
+                      onCheckedChange={(ignore) =>
+                        saveSwitch({
+                          restoreIgnore: ignore
+                            ? [...draft.restoreIgnore, category]
+                            : draft.restoreIgnore.filter((item) => item !== category),
+                        })
+                      }
+                    />
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {restoring && (
         <Dialog open onOpenChange={(open) => !open && setRestoring(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
@@ -344,6 +522,16 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 条，自定义目录规则 {restoring.preview.tocRules} 条
               </li>
               {restoring.preview.hasPreferences && <li>阅读设置（字体和背景图保留本机的）</li>}
+              {settings.restoreIgnore.length > 0 && (
+                <li className="text-secondary text-xs">
+                  忽略：
+                  {RESTORE_CATEGORIES.filter(([category]) =>
+                    settings.restoreIgnore.includes(category),
+                  )
+                    .map(([, label]) => label)
+                    .join("、")}
+                </li>
+              )}
             </ul>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setRestoring(null)}>

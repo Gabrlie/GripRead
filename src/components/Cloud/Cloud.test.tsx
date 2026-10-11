@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
-import { syncServiceMocks } from "../../test/sync";
+import { syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
 import { BackupPage } from "./BackupPage";
 import { CloudShelfPage } from "./CloudShelfPage";
 
@@ -13,12 +13,12 @@ afterEach(cleanup);
 function runtime() {
   const sync = syncServiceMocks();
   vi.mocked(sync.getWebDav).mockResolvedValue({
+    ...unconfiguredWebDav(),
     url: "https://dav.example.com/dav/",
     username: "reader",
     hasPassword: true,
     autoBackup: true,
-    lastBackupAt: null,
-    lastError: null,
+    configured: true,
   });
   // The pages use only the sync service and the stores' refreshes.
   const services = {
@@ -46,7 +46,7 @@ describe("backup and the cloud bookshelf", () => {
     const app = runtime();
     const sync = app.services.sync;
     vi.mocked(sync.listBackups).mockResolvedValue([
-      { name: "auto-20261011-080000.json", size: 2048, modified: 1, automatic: true },
+      { name: "auto-20261011-080000.json", size: 2048, modified: 1, automatic: true, device: null },
     ]);
     vi.mocked(sync.previewBackup).mockResolvedValue({
       createdAt: 1,
@@ -101,6 +101,7 @@ describe("backup and the cloud bookshelf", () => {
         sourceSha256: "h",
         uploadedAt: 1,
         localBookId: null,
+        localRemoved: false,
       },
     ]);
     vi.mocked(sync.downloadCloudBook).mockResolvedValue({

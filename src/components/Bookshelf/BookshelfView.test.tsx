@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, cleanup, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, act, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BookshelfView } from "./BookshelfView";
@@ -46,6 +46,7 @@ const entry: LibraryBook = {
   shelfState: null,
   coverAssetId: null,
   useReplaceRules: true,
+  inCloud: false,
 };
 function runtime(books: LibraryBook[] = []) {
   return new AppRuntime({
@@ -67,6 +68,7 @@ function runtime(books: LibraryBook[] = []) {
       listRemovedBooks: vi.fn(async () => []),
       updateBook: vi.fn(),
       removeBook: vi.fn(),
+      deleteBook: vi.fn(),
       restoreBook: vi.fn(),
       listBooks: vi.fn(async () => books),
       pickAndImportTxt: vi.fn(async () => null),
@@ -370,7 +372,7 @@ describe("real library presentation", () => {
 
     // Books are managed from their detail page.
     fireEvent.contextMenu(screen.getByTestId("library-book-real-book"));
-    await userEvent.click(await screen.findByRole("button", { name: "编辑书籍信息" }));
+    await userEvent.click(await screen.findByRole("button", { name: "编辑" }));
     const title = screen.getByRole("textbox", { name: "书名" });
     await userEvent.clear(title);
     await userEvent.type(title, "已编辑");
@@ -389,19 +391,37 @@ describe("real library presentation", () => {
       }),
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /移出书架/ }));
+    await userEvent.click(screen.getByRole("button", { name: "移出书架" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "移到回收站" }));
     await waitFor(() =>
       expect(app.services.library.removeBook).toHaveBeenCalledWith(entry.book.id),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     await userEvent.click(screen.getByRole("button", { name: "更多选项" }));
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "已移出书籍" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("menuitem", { name: "已移出书籍" }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "回收站" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("menuitem", { name: "回收站" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /恢复/ })).toBeTruthy());
     await userEvent.click(screen.getByRole("button", { name: /恢复/ }));
     await waitFor(() =>
       expect(app.services.library.restoreBook).toHaveBeenCalledWith(entry.book.id),
+    );
+  });
+  it("marks cloud books and deletes a book from its detail page after confirming", async () => {
+    const app = runtime([{ ...entry, inCloud: true }]);
+    vi.mocked(app.services.library.deleteBook).mockResolvedValue(undefined);
+    await app.library.refresh();
+    view(app);
+    expect(screen.getByRole("img", { name: "已上传到云书架" })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByTestId("library-book-real-book"));
+    expect(await screen.findByRole("button", { name: "已在云书架" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "移出书架" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "本地与云端一起删除" }));
+    expect(app.services.library.deleteBook).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "本地与云端一起删除" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(app.services.library.deleteBook).toHaveBeenCalledWith(entry.book.id, true),
     );
   });
 });

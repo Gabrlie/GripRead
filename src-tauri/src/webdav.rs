@@ -10,10 +10,6 @@ use ureq::http::{Method, Request};
 
 use crate::error::{AppError, ErrorCode};
 
-/// Backups and books live in the application folder under the configured address.
-pub const BACKUP_FOLDER: &str = "GripRead/Backups";
-pub const BOOK_FOLDER: &str = "GripRead/Books";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEntry {
     /// The entry's name inside the listed folder.

@@ -4,6 +4,7 @@ pub mod documents;
 pub mod error;
 pub mod m1_txt;
 pub mod models;
+mod progress_sync;
 mod relocation;
 pub mod storage;
 mod transform;
@@ -12,6 +13,7 @@ pub mod txt_toc;
 pub mod typegen;
 mod webdav;
 
+use commands::{acknowledge_book_progress, delete_book, fetch_book_progress, upload_book_progress};
 use commands::{
     add_bookmark, cancel_import, cancel_search, cancel_txt_decode, create_group, delete_bookmark,
     delete_group, delete_txt_toc_rule, export_txt_toc_rules, get_book_info, get_import_status,
@@ -32,7 +34,7 @@ use commands::{
     backup_to_webdav, delete_cloud_book, delete_remote_backup, download_cloud_book,
     export_backup_file, get_webdav_settings, list_cloud_books, list_recovery_points,
     list_remote_backups, preview_backup, restore_backup, run_automatic_backup,
-    save_webdav_settings, test_webdav, upload_cloud_books,
+    save_webdav_settings, set_backup_folder, test_webdav, upload_cloud_books,
 };
 use commands::{
     delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
@@ -193,7 +195,12 @@ pub fn run() {
             list_cloud_books,
             upload_cloud_books,
             download_cloud_book,
-            delete_cloud_book
+            delete_cloud_book,
+            set_backup_folder,
+            delete_book,
+            upload_book_progress,
+            fetch_book_progress,
+            acknowledge_book_progress
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

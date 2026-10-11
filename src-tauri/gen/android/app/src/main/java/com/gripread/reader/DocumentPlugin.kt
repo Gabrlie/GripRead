@@ -21,6 +21,13 @@ class OpenDocumentArgs {
 }
 
 @InvokeArg
+class TreeDocumentArgs {
+  lateinit var tree: String
+  lateinit var name: String
+  lateinit var mime: String
+}
+
+@InvokeArg
 class CreateDocumentArgs {
   lateinit var name: String
   lateinit var mime: String
@@ -81,6 +88,78 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
       invoke.resolve(JSObject().put("fd", descriptor.detachFd()))
     } catch (error: Exception) {
       invoke.reject(error.message ?: "The document cannot be written")
+    }
+  }
+
+  /** Picks a folder for backups and keeps read and write access to it. */
+  @Command
+  fun pickWritableFolder(invoke: Invoke) {
+    try {
+      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+          Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+      )
+      startActivityForResult(invoke, intent, "writableFolderPicked")
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "The folder picker cannot be opened")
+    }
+  }
+
+  @ActivityCallback
+  fun writableFolderPicked(invoke: Invoke, result: ActivityResult) {
+    val tree = result.data?.data
+    if (result.resultCode != Activity.RESULT_OK || tree == null) {
+      invoke.resolve(JSObject())
+      return
+    }
+    try {
+      activity.contentResolver.takePersistableUriPermission(
+        tree,
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+      )
+      val folder = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+      var name: String? = null
+      activity.contentResolver.query(folder, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+        ?.use { cursor -> if (cursor.moveToFirst()) name = cursor.getString(0) }
+      invoke.resolve(JSObject().put("uri", tree.toString()).put("name", name ?: tree.lastPathSegment))
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "The folder cannot be used")
+    }
+  }
+
+  /** Opens `name` in a granted folder for writing, creating or replacing it. */
+  @Command
+  fun openTreeDocument(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(TreeDocumentArgs::class.java)
+      val tree = Uri.parse(args.tree)
+      val parent = DocumentsContract.getTreeDocumentId(tree)
+      val resolver = activity.contentResolver
+      var existing: Uri? = null
+      val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent)
+      resolver.query(
+        children,
+        arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+        null, null, null,
+      )?.use { cursor ->
+        while (cursor.moveToNext()) {
+          if (cursor.getString(1) == args.name) {
+            existing = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0))
+            break
+          }
+        }
+      }
+      val target = existing ?: DocumentsContract.createDocument(
+        resolver,
+        DocumentsContract.buildDocumentUriUsingTree(tree, parent),
+        args.mime,
+        args.name,
+      ) ?: throw IllegalStateException("The backup file cannot be created")
+      val descriptor = resolver.openFileDescriptor(target, "wt")
+        ?: throw IllegalStateException("The document provider returned no file")
+      invoke.resolve(JSObject().put("fd", descriptor.detachFd()))
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "The backup folder cannot be written")
     }
   }
 

@@ -14,7 +14,9 @@ Milestones, each committed separately:
 - (D2) The settings page rebuilt around app settings, rule management, reading records, and backup, without the reader typography it duplicated.
 - (D3) Backup and restore of portable records to a local file or WebDAV, and a cloud bookshelf that uploads local books and pulls remote ones as complete local imports, matched and deduplicated by content.
 
-Replication of progress between devices (the rest of [Sync](../subsystems/sync.md)), online sources, RSS, and EPUB remain excluded.
+- (D4, second device round) The automatic panel never pauses on its own, menu dialogs for the bottom bar and 简繁, book detail from the reader, scroll position captured when leaving scroll mode, dialogs above full-screen pages, dark swatches, an About page, self-dismissing notices, the 回收站 and two kinds of deletion, cloud marks and a reorganized detail page, cloud names with authors and indexed information and covers, a configurable WebDAV folder and device name, a local backup folder, the 恢复忽略列表, latency checks, and Legado's 同步阅读进度 and 同步增强.
+
+Causal replication of the other records (the rest of [Sync](../subsystems/sync.md)), online sources, RSS, and EPUB remain excluded.
 
 ## Interfaces
 
@@ -33,6 +35,8 @@ D1: Rust tests for the reading-state tabs and bottom tool validation and migrati
 
 D2/D3: Rust tests for backup export and restore across a converted copy (metadata, group, newer position, merged bookmarks, larger daily time, idempotent restore, pending records applied on import, recovery points, malformed and newer backups), context relocation, WebDAV multistatus parsing and address encoding, and the full cloud flow against an in-process WebDAV server (wrong password, manual and pruned automatic backups, unchanged-day skip, upload dedupe, listing with local matches, download and import dedupe, delete); frontend tests for restore preview and report and for downloading into the import; phone screenshots of settings, 备份与恢复, the restore preview and report, 云书架, and TXT目录规则. A real WebDAV server (坚果云 or another) was not used.
 
+D4: Rust tests for deletion, 回收站 matching and cloud marks, `书名 - 作者` naming with indexed information and covers applied on pull, restore-ignore categories and backup covers, device names and a custom folder in paths, latency checks, and progress sync (own uploads ignored, each new remote version asked once, no question when already there) against the in-process WebDAV server; a controller test for leaving scroll mode after evicted windows; frontend tests for the automatic panel, the More dialogs, the cloud progress prompt and upload on leaving, upload-before-fetch ordering, the device name default, cloud marks, and confirmed deletion; phone screenshots of the detail page and its removal menu, 备份与恢复 with a latency warning, the ignore list, dark settings, and About. The scroll-to-page regression did not reproduce in the preview even with scrolling and evicted windows; the fix captures the scroll position when the mode is chosen, and device confirmation is pending.
+
 ## Handoff
 
-In progress: D1–D3 are implemented on the host; next is the Android APK and device results.
+In progress: D1–D4 are implemented on the host; next is the Android APK and device results.

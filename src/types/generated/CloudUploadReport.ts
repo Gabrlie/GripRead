@@ -2,6 +2,10 @@
 
 export type CloudUploadReport = { uploaded: number, 
 /**
+ * Books already uploaded whose information or cover was brought up to date.
+ */
+updated: number, 
+/**
  * Books already on the cloud bookshelf.
  */
 skipped: number, 

@@ -40,6 +40,8 @@ import type {
   RestoreReport,
   CloudBook,
   CloudUploadReport,
+  WebDavCheck,
+  ProgressPrompt,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -51,7 +53,10 @@ export interface LibraryService {
   listBooks(): Promise<LibraryBook[]>;
   listRemovedBooks(): Promise<LibraryBook[]>;
   updateBook(request: UpdateBookRequest): Promise<Book>;
+  /** Moves a book to the 回收站. */
   removeBook(bookId: string): Promise<void>;
+  /** Deletes a book from the app; `cloud` also deletes its cloud bookshelf copy. */
+  deleteBook(bookId: string, cloud: boolean): Promise<void>;
   restoreBook(bookId: string): Promise<void>;
   listGroups(): Promise<LibraryGroup[]>;
   createGroup(name: string): Promise<LibraryGroup>;
@@ -139,8 +144,10 @@ export interface SettingsService {
 export interface SyncService {
   getWebDav(): Promise<WebDavSettings>;
   saveWebDav(request: SaveWebDavRequest): Promise<WebDavSettings>;
-  /** Checks an address and account; `password: null` uses the saved one. */
-  testWebDav(request: SaveWebDavRequest): Promise<void>;
+  /** Checks an address and account and measures its latency; `password: null` uses the saved one. */
+  testWebDav(request: SaveWebDavRequest): Promise<WebDavCheck>;
+  /** Picks the local backup folder; `clear` removes it. Unchanged when cancelled. */
+  setBackupFolder(clear?: boolean): Promise<WebDavSettings>;
   backupNow(): Promise<RemoteBackup>;
   /** The daily automatic backup; `null` when it is not due or not enabled. */
   runAutomaticBackup(): Promise<RemoteBackup | null>;
@@ -160,6 +167,11 @@ export interface SyncService {
   /** Downloads a cloud book completely, for the ordinary import. */
   downloadCloudBook(name: string): Promise<PickedFile>;
   deleteCloudBook(name: string): Promise<void>;
+  /** Uploads the book's saved position when progress sync is on; `true` when uploaded. */
+  uploadProgress(bookId: string, chapterTitle: string): Promise<boolean>;
+  /** Another device's position for the book that has not been answered yet. */
+  fetchProgress(bookId: string): Promise<ProgressPrompt | null>;
+  acknowledgeProgress(bookId: string, deviceId: string, revision: number): Promise<void>;
 }
 export interface AppServices {
   library: LibraryService;

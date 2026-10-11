@@ -7,4 +7,8 @@ export type RemoteBackup = { name: string, size: number, modified: number | null
 /**
  * Made by the daily automatic backup, which keeps only the latest seven.
  */
-automatic: boolean, };
+automatic: boolean, 
+/**
+ * The device that made it, from its name.
+ */
+device: string | null, };

@@ -465,6 +465,8 @@ pub struct LibraryBook {
     pub cover_asset_id: Option<String>,
     /// Legado's per-book 替换净化 switch.
     pub use_replace_rules: bool,
+    /// The cloud bookshelf had this book's file when it was last seen.
+    pub in_cloud: bool,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -1109,20 +1111,58 @@ pub struct SaveShelfPreferencesRequest {
     pub preferences: ShelfPreferences,
 }
 
+/// 坚果云, used when the WebDAV address is left empty.
+pub const DEFAULT_WEBDAV_URL: &str = "https://dav.jianguoyun.com/dav/";
+/// The folder under the WebDAV address when 子文件夹 is left empty.
+pub const DEFAULT_WEBDAV_FOLDER: &str = "GripRead";
+
+/// Parts of a backup that a restore can skip (Legado 恢复忽略列表).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestoreCategory {
+    /// Reader typography, styles, page turning, and read-aloud.
+    ReadingSettings,
+    /// Theme mode, paper tone, and OLED black.
+    Theme,
+    /// Shelf layout, sort, and selected tab.
+    ShelfLayout,
+    ReplaceRules,
+    TocRules,
+    Groups,
+    Progress,
+    Bookmarks,
+    ReadingTime,
+    /// Title, author, introduction, cover, and placement.
+    BookInfo,
+}
+
 /// This device's WebDAV account (Legado WebDav 设置). The password is kept in
 /// local storage only; it is never returned or written into backups.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WebDavSettings {
-    /// The server address, such as `https://dav.jianguoyun.com/dav/`; empty when not set up.
+    /// The server address; empty uses 坚果云.
     pub url: String,
     pub username: String,
     pub has_password: bool,
+    /// The folder under the address (Legado 子文件夹); empty uses `GripRead`.
+    pub folder: String,
+    /// Names this device in backups and progress (Legado 设备名称); empty uses the platform.
+    pub device_name: String,
+    /// A local folder that also receives backups (Legado 备份路径), for display.
+    pub local_folder: Option<String>,
     /// Back up once a day when the records changed, keeping seven automatic backups.
     pub auto_backup: bool,
+    /// Sync reading progress when opening and leaving a book (Legado 同步阅读进度).
+    pub sync_progress: bool,
+    /// Also when the reader resumes or the network returns (Legado 同步增强).
+    pub sync_progress_plus: bool,
+    pub restore_ignore: Vec<RestoreCategory>,
     pub last_backup_at: Option<i64>,
-    /// Why the last automatic backup failed.
+    /// Why the last automatic backup or progress upload failed.
     pub last_error: Option<String>,
+    /// Whether an account is set (an address or a user name).
+    pub configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1132,7 +1172,21 @@ pub struct SaveWebDavRequest {
     pub username: String,
     /// `None` keeps the saved password.
     pub password: Option<String>,
+    pub folder: String,
+    pub device_name: String,
     pub auto_backup: bool,
+    pub sync_progress: bool,
+    pub sync_progress_plus: bool,
+    pub restore_ignore: Vec<RestoreCategory>,
+}
+
+/// A WebDAV connection check: the median round trip of a few requests.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavCheck {
+    pub latency_ms: u32,
+    /// Slow enough that progress sync is not recommended.
+    pub slow: bool,
 }
 
 /// A backup file in the WebDAV backup folder.
@@ -1144,6 +1198,8 @@ pub struct RemoteBackup {
     pub modified: Option<i64>,
     /// Made by the daily automatic backup, which keeps only the latest seven.
     pub automatic: bool,
+    /// The device that made it, from its name.
+    pub device: Option<String>,
 }
 
 /// A book file on the cloud bookshelf.
@@ -1160,12 +1216,16 @@ pub struct CloudBook {
     pub uploaded_at: Option<i64>,
     /// The local book with the same file, if any.
     pub local_book_id: Option<String>,
+    /// That local book is in the 回收站.
+    pub local_removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudUploadReport {
     pub uploaded: u32,
+    /// Books already uploaded whose information or cover was brought up to date.
+    pub updated: u32,
     /// Books already on the cloud bookshelf.
     pub skipped: u32,
     /// Titles that could not be uploaded, with the reason.
@@ -1238,4 +1298,42 @@ pub struct BookIdListRequest {
 #[serde(rename_all = "camelCase")]
 pub struct OptionalPathRequest {
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteBookRequest {
+    pub book_id: String,
+    /// Also delete the book's file from the cloud bookshelf.
+    pub cloud: bool,
+}
+
+/// Another device's newer reading position for the open book (Legado 云端进度).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressPrompt {
+    pub device_id: String,
+    pub device_name: String,
+    pub revision: u64,
+    pub written_at: i64,
+    pub chapter_title: String,
+    /// Text at the position, to recognize it.
+    pub excerpt: String,
+    /// The position in this device's text of the book.
+    pub locator: ReaderLocator,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadProgressRequest {
+    pub book_id: String,
+    pub chapter_title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcknowledgeProgressRequest {
+    pub book_id: String,
+    pub device_id: String,
+    pub revision: u64,
 }

@@ -11,6 +11,35 @@ import { BookCover } from "./BookCover";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { describeError } from "../Cloud/format";
+import { NoticeLine, useNotice } from "../ui/notice";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+
+const TILE_CLASS =
+  "flex flex-col items-center justify-center gap-1 rounded-xl bg-surface-container-low py-2.5 text-xs text-on-surface hover:bg-surface-container disabled:opacity-60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+
+function ActionTile({
+  icon,
+  label,
+  disabled,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={TILE_CLASS} disabled={disabled} onClick={onClick}>
+      <Icon name={icon} size={18} className="text-secondary" />
+      <span>{label}</span>
+    </button>
+  );
+}
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -27,20 +56,25 @@ export function BookDetailPage({
   onOpen,
   onClose,
   inReader = false,
+  onRemoved,
 }: {
   book: LibraryBook;
   /** Opened from the reader: the main button returns to the page. */
   inReader?: boolean;
   onOpen: (page?: "contents") => void;
   onClose: () => void;
+  /** After the book leaves the shelf; closes the page by default. */
+  onRemoved?: () => void;
 }) {
   const runtime = useRuntime();
   const { store } = useLibrary();
   const { state: shelf, store: shelfStore } = useShelf();
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [cloudNotice, setCloudNotice] = useState<string | null>(null);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [notice, setNotice] = useNotice();
+  const [confirm, setConfirm] = useState<"delete" | "delete-cloud" | null>(null);
+  const removed = book.removedAt !== null;
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -61,6 +95,35 @@ export function BookDetailPage({
       () => setError(null),
       (failure: unknown) => setError(String(failure)),
     );
+  const cloudAction = (work: () => Promise<string>) => {
+    setCloudBusy(true);
+    work()
+      .then(
+        (text) => setNotice(text),
+        (failure: unknown) => setNotice({ text: describeError(failure), error: true }),
+      )
+      .finally(() => {
+        setCloudBusy(false);
+        void runtime.library.refresh();
+      });
+  };
+  const uploadToCloud = () =>
+    cloudAction(async () => {
+      const report = await runtime.services.sync.uploadBooks([id]);
+      if (report.failed.length) throw new Error(report.failed.join("；"));
+      return report.uploaded
+        ? "已上传到云书架"
+        : report.updated
+          ? "已更新云端信息"
+          : "云端信息已是最新";
+    });
+  const removeFromCloud = () =>
+    cloudAction(async () => {
+      const cloud = await runtime.services.sync.listCloudBooks();
+      const entry = cloud.find((item) => item.localBookId === id);
+      if (entry) await runtime.services.sync.deleteCloudBook(entry.name);
+      return "已从云书架删除";
+    });
   const labels = shelf.chapters[id];
   const automatic = shelf.automatic[id] ?? (book.locator ? "reading" : "unread");
   const current = shelfGroupOf(book, shelf.groups, automatic);
@@ -114,14 +177,6 @@ export function BookDetailPage({
             <Icon name="arrow_back" size={20} />
           </Button>
           <span className="flex-1" />
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="编辑书籍信息"
-            onClick={() => setEditing(true)}
-          >
-            <Icon name="edit" size={20} />
-          </Button>
         </div>
         <div className="relative flex gap-4 px-5 pb-5 max-w-2xl mx-auto w-full">
           <div className="w-24 aspect-[3/4] shrink-0 rounded-lg overflow-hidden shadow-md bg-surface-container-high">
@@ -141,6 +196,79 @@ export function BookDetailPage({
       </header>
       <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <div className="max-w-2xl mx-auto w-full px-5 py-4 space-y-5 min-w-0">
+          <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
+            <ActionTile icon="edit" label="编辑" onClick={() => setEditing(true)} />
+            {book.inCloud ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label="已在云书架"
+                  disabled={cloudBusy}
+                  className={TILE_CLASS}
+                >
+                  <Icon name="check" size={18} className="text-primary" />
+                  <span>{cloudBusy ? "处理中…" : "已在云书架"}</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={uploadToCloud}>
+                    <Icon name="refresh" size={15} />
+                    更新云端信息
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={removeFromCloud}>
+                    <Icon name="delete" size={15} />
+                    从云书架删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <ActionTile
+                icon="cloud"
+                label={cloudBusy ? "正在上传…" : "上传到云书架"}
+                disabled={cloudBusy}
+                onClick={uploadToCloud}
+              />
+            )}
+            {removed ? (
+              <ActionTile
+                icon="restart"
+                label="移回书架"
+                onClick={() => run(() => store.restore(id))}
+              />
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger aria-label="移出书架" className={TILE_CLASS}>
+                  <Icon name="delete" size={18} className="text-secondary" />
+                  <span>移出书架</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      run(async () => {
+                        await store.remove(book);
+                        (onRemoved ?? onClose)();
+                      })
+                    }
+                  >
+                    <Icon name="delete" size={15} />
+                    移到回收站
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setConfirm("delete")}>
+                    <Icon name="close" size={15} />
+                    删除（保留云端文件）
+                  </DropdownMenuItem>
+                  {book.inCloud && (
+                    <DropdownMenuItem onClick={() => setConfirm("delete-cloud")}>
+                      <Icon name="close" size={15} />
+                      本地与云端一起删除
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+          <NoticeLine notice={notice} />
+          {removed && (
+            <p className="text-xs text-secondary">这本书在回收站里，移回书架后继续阅读。</p>
+          )}
           {error && (
             <p role="alert" className="text-xs text-error break-words">
               {error}
@@ -207,63 +335,63 @@ export function BookDetailPage({
               ))}
             </dl>
           </section>
-          {cloudNotice && (
-            <p role="status" className="text-xs text-primary break-words px-1">
-              {cloudNotice}
-            </p>
-          )}
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={uploading}
-            onClick={() => {
-              setUploading(true);
-              setCloudNotice(null);
-              runtime.services.sync
-                .uploadBooks([book.book.id])
-                .then(
-                  (report) =>
-                    setCloudNotice(
-                      report.uploaded
-                        ? "已上传到云书架。"
-                        : report.skipped
-                          ? "云书架已有这本书。"
-                          : `上传失败：${report.failed.join("；")}`,
-                    ),
-                  (failure: unknown) => setCloudNotice(describeError(failure)),
-                )
-                .finally(() => setUploading(false));
-            }}
-          >
-            <Icon name="cloud" size={16} />
-            {uploading ? "正在上传…" : "上传到云书架"}
-          </Button>
-          <Button
-            variant="ghost"
-            className="w-full text-error"
-            onClick={() =>
-              run(async () => {
-                await store.remove(book);
-                onClose();
-              })
-            }
-          >
-            <Icon name="delete" size={16} />
-            移出书架
-          </Button>
         </div>
       </main>
       <footer className="shrink-0 border-t border-surface-variant/40 bg-surface pb-safe">
         <div className="max-w-2xl mx-auto flex gap-3 px-5 py-3">
-          <Button variant="outline" className="flex-1" onClick={() => onOpen("contents")}>
+          <Button
+            variant="outline"
+            className="flex-1"
+            disabled={removed}
+            onClick={() => onOpen("contents")}
+          >
             <Icon name="list" size={16} />
             目录
           </Button>
-          <Button className="flex-[2]" onClick={() => onOpen()}>
+          <Button className="flex-[2]" disabled={removed} onClick={() => onOpen()}>
             {inReader ? "返回阅读" : book.locator ? "继续阅读" : "开始阅读"}
           </Button>
         </div>
       </footer>
+      {confirm && (
+        <Dialog open onOpenChange={(open) => !open && setConfirm(null)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">
+                {confirm === "delete" ? "删除这本书" : "本地与云端一起删除"}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-secondary">
+              {confirm === "delete"
+                ? "从应用中彻底删除《" +
+                  book.book.title +
+                  "》和它的进度、书签、阅读记录，云书架上的文件保留。手机里原来的 TXT 文件不受影响。"
+                : "删除《" +
+                  book.book.title +
+                  "》在应用中的全部记录，并删除云书架上的文件。手机里原来的 TXT 文件不受影响。"}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                className="bg-error text-on-error"
+                onClick={() => {
+                  const cloud = confirm === "delete-cloud";
+                  setConfirm(null);
+                  run(async () => {
+                    await store.deleteBook(book, cloud);
+                    (onRemoved ?? onClose)();
+                  });
+                }}
+              >
+                删除
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {editing && (
         <EditBookDialog
           book={book}
