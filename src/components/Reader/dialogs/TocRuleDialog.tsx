@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { BookTocSettings, TxtTocRule } from "../../../types/generated";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
+import { NoticeLine, useNotice } from "../../ui/notice";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import {
@@ -49,11 +50,11 @@ type View = { kind: "list" } | { kind: "edit"; rule: TxtTocRule } | { kind: "imp
  */
 export function TocRuleDialog(props: TocRuleDialogProps) {
   const [view, setView] = useState<View>({ kind: "list" });
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useNotice();
   const report = (work: Promise<unknown>, done?: string) =>
     work.then(
       () => done && setMessage(done),
-      (error: unknown) => setMessage(String(error)),
+      (error: unknown) => setMessage({ text: String(error), error: true }),
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
@@ -76,14 +77,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
                 : "正则按多行模式匹配，一次匹配就是一个章节标题。"}
           </DialogDescription>
         </DialogHeader>
-        {message && (
-          <p
-            role="status"
-            className="text-xs text-secondary bg-surface-container rounded-lg px-3 py-2"
-          >
-            {message}
-          </p>
-        )}
+        <NoticeLine notice={message} />
         {view.kind === "list" && (
           <RuleList
             {...props}
@@ -104,7 +98,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
                   setMessage(rule.id ? "规则已保存。" : "规则已添加。");
                   setView({ kind: "list" });
                 },
-                (error: unknown) => setMessage(String(error)),
+                (error: unknown) => setMessage({ text: String(error), error: true }),
               )
             }
           />
@@ -119,7 +113,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
                   setMessage(added?.length ? `已导入 ${added.length} 条规则。` : "没有新的规则。");
                   setView({ kind: "list" });
                 },
-                (error: unknown) => setMessage(String(error)),
+                (error: unknown) => setMessage({ text: String(error), error: true }),
               )
             }
           />

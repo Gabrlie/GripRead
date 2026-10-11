@@ -4,17 +4,15 @@ import type {
   InfoSlot,
   ReaderAsset,
   ReaderPreferences,
-  ReaderTool,
   ReadingStyle,
   StylePreset,
   TapAction,
 } from "../../../types/generated";
-import { DEFAULT_READING_STYLE } from "../../../types/generated";
-import { ALL_READER_TOOLS, MAX_BOTTOM_TOOLS, READER_TOOLS } from "../reader-tools";
 import type { SettingsService } from "../../../services/contracts";
 import { useRuntime } from "../../../application/runtime";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
+import { NoticeLine, useNotice } from "../../ui/notice";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import {
@@ -440,12 +438,12 @@ function TextView({
 }) {
   const style = preferences.style;
   const [assets, setAssets] = useState<ReaderAsset[] | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useNotice();
   useEffect(() => {
     let cancelled = false;
     fonts.listFonts().then(
       (list) => !cancelled && setAssets(list),
-      (error: unknown) => !cancelled && setMessage(String(error)),
+      (error: unknown) => !cancelled && setMessage({ text: String(error), error: true }),
     );
     return () => {
       cancelled = true;
@@ -496,7 +494,7 @@ function TextView({
                       setAssets((list) => list?.filter((item) => item.id !== asset.id) ?? null);
                       if (style.fontAssetId === asset.id) setStyle({ fontAssetId: null });
                     },
-                    (error: unknown) => setMessage(String(error)),
+                    (error: unknown) => setMessage({ text: String(error), error: true }),
                   )
                 }
               >
@@ -517,14 +515,14 @@ function TextView({
                 setStyle({ fontAssetId: asset.id });
                 setMessage(`已导入 ${asset.name}`);
               },
-              (error: unknown) => setMessage(String(error)),
+              (error: unknown) => setMessage({ text: String(error), error: true }),
             )
           }
         >
           <Icon name="add" size={14} />
           导入字体（TTF/OTF/WOFF）
         </Button>
-        {message && <p className="text-[11px] text-secondary">{message}</p>}
+        <NoticeLine notice={message} />
       </Section>
       <Range
         label="字重"
@@ -689,10 +687,6 @@ function MoreView({
           ))}
         </div>
       </div>
-      <BottomToolsEditor
-        tools={style.bottomTools}
-        onChange={(bottomTools) => setStyle({ bottomTools })}
-      />
       <Section title="点击区域">
         <div className="grid grid-cols-3 gap-1.5">
           {style.tapZones.map((action, index) => (
@@ -744,96 +738,6 @@ function MoreView({
         </Button>
       </Section>
     </div>
-  );
-}
-
-/**
- * The bottom bar's buttons: shown ones in order, with move and remove, then
- * the remaining tools to add.
- */
-function BottomToolsEditor({
-  tools,
-  onChange,
-}: {
-  tools: ReaderTool[];
-  onChange: (tools: ReaderTool[]) => void;
-}) {
-  const move = (index: number, step: -1 | 1) => {
-    const next = [...tools];
-    [next[index], next[index + step]] = [next[index + step], next[index]];
-    onChange(next);
-  };
-  const hidden = ALL_READER_TOOLS.filter((tool) => !tools.includes(tool));
-  const full = tools.length >= MAX_BOTTOM_TOOLS;
-  return (
-    <Section title={`底部工具栏（最多 ${MAX_BOTTOM_TOOLS} 个）`}>
-      <ul aria-label="底部工具栏按钮" className="space-y-1">
-        {tools.map((tool, index) => (
-          <li
-            key={tool}
-            className="flex items-center gap-2 rounded-lg bg-surface-container px-2 py-1 text-xs"
-          >
-            <Icon name={READER_TOOLS[tool].icon} size={15} className="text-secondary" />
-            <span className="flex-1">{READER_TOOLS[tool].label}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`上移 ${READER_TOOLS[tool].label}`}
-              className="h-7 w-7 text-secondary"
-              disabled={index === 0}
-              onClick={() => move(index, -1)}
-            >
-              <Icon name="arrow_upward" size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`下移 ${READER_TOOLS[tool].label}`}
-              className="h-7 w-7 text-secondary"
-              disabled={index === tools.length - 1}
-              onClick={() => move(index, 1)}
-            >
-              <Icon name="arrow_downward" size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`移除 ${READER_TOOLS[tool].label}`}
-              className="h-7 w-7 text-secondary"
-              disabled={tools.length <= 1}
-              onClick={() => onChange(tools.filter((item) => item !== tool))}
-            >
-              <Icon name="close" size={14} />
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {hidden.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" aria-label="可添加的按钮">
-          {hidden.map((tool) => (
-            <button
-              key={tool}
-              type="button"
-              disabled={full}
-              aria-label={`添加 ${READER_TOOLS[tool].label}`}
-              onClick={() => onChange([...tools, tool])}
-              className="h-7 px-2.5 rounded-full text-[11px] border border-surface-variant flex items-center gap-1 disabled:opacity-40"
-            >
-              <Icon name="add" size={12} />
-              {READER_TOOLS[tool].label}
-            </button>
-          ))}
-        </div>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 text-[11px]"
-        onClick={() => onChange(DEFAULT_READING_STYLE.bottomTools)}
-      >
-        恢复默认
-      </Button>
-    </Section>
   );
 }
 

@@ -26,8 +26,11 @@ export function BookDetailPage({
   book,
   onOpen,
   onClose,
+  inReader = false,
 }: {
   book: LibraryBook;
+  /** Opened from the reader: the main button returns to the page. */
+  inReader?: boolean;
   onOpen: (page?: "contents") => void;
   onClose: () => void;
 }) {
@@ -257,7 +260,7 @@ export function BookDetailPage({
             目录
           </Button>
           <Button className="flex-[2]" onClick={() => onOpen()}>
-            {book.locator ? "继续阅读" : "开始阅读"}
+            {inReader ? "返回阅读" : book.locator ? "继续阅读" : "开始阅读"}
           </Button>
         </div>
       </footer>

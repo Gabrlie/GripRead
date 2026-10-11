@@ -5,6 +5,7 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
+import { NoticeLine, useNotice } from "../ui/notice";
 import { describeError, formatSize, formatTime } from "./format";
 
 /**
@@ -27,7 +28,7 @@ export function CloudShelfPage({
   const [books, setBooks] = useState<CloudBook[] | null>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const [message, setMessage] = useNotice();
   const [removing, setRemoving] = useState<CloudBook | null>(null);
 
   const refresh = useCallback(async () => {
@@ -91,14 +92,7 @@ export function CloudShelfPage({
         )
       }
     >
-      {message && (
-        <p
-          role={message.error ? "alert" : "status"}
-          className={`rounded-lg px-3 py-2 text-xs break-words ${message.error ? "bg-error-container text-error" : "bg-surface-container text-primary"}`}
-        >
-          {message.text}
-        </p>
-      )}
+      <NoticeLine notice={message} />
       {configured === false && (
         <div className="rounded-xl bg-surface-container-low p-4 space-y-3 text-sm">
           <p>云书架使用 WebDAV 保存书籍文件。请先设置 WebDAV 账号。</p>

@@ -5,6 +5,7 @@ import type { ReplaceRule } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
+import { NoticeLine, useNotice } from "../ui/notice";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
@@ -44,7 +45,7 @@ export function ReplaceRulesPage({
 }) {
   const [rules, setRules] = useState<ReplaceRule[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useNotice();
   const [editing, setEditing] = useState<ReplaceRule | null>(null);
   const [importing, setImporting] = useState(false);
   const layer = usePageLayer(backCloses ? onClose : () => undefined);
@@ -78,7 +79,7 @@ export function ReplaceRulesPage({
       aria-modal="true"
       aria-label="替换净化"
       data-open=""
-      className="fixed inset-0 z-[55] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
+      className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
       <header className="shrink-0 h-14 px-2 flex items-center gap-1 border-b border-surface-variant/30 max-w-3xl mx-auto w-full">
         <Button
@@ -142,11 +143,7 @@ export function ReplaceRulesPage({
               {error}
             </p>
           )}
-          {message && (
-            <p role="status" className="text-xs text-primary px-1">
-              {message}
-            </p>
-          )}
+          <NoticeLine notice={message} />
           {rules.length === 0 && (
             <p className="text-sm text-secondary px-1 py-6 text-center">
               还没有替换规则。可以添加，或导入阅读（Legado）导出的规则。

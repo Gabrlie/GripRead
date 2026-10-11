@@ -7,6 +7,7 @@ import { NEW_TOC_RULE, TocRuleEditor, TocRuleImport } from "../Reader/dialogs/To
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
+import { NoticeLine, useNotice } from "../ui/notice";
 import { Switch } from "../ui/switch";
 
 /**
@@ -23,7 +24,7 @@ export function TocRulesPage({
   onClose: () => void;
 }) {
   const [rules, setRules] = useState<TxtTocRule[]>([]);
-  const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const [message, setMessage] = useNotice();
   const [editing, setEditing] = useState<TxtTocRule | null>(null);
   const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -90,14 +91,7 @@ export function TocRulesPage({
       <p className="px-1 text-[11px] text-secondary">
         开启的规则参与自动识别，排在前面的优先；每本书使用的规则在阅读界面的目录规则中选择。
       </p>
-      {message && (
-        <p
-          role={message.error ? "alert" : "status"}
-          className={`rounded-lg px-3 py-2 text-xs break-words ${message.error ? "bg-error-container text-error" : "bg-surface-container text-primary"}`}
-        >
-          {message.text}
-        </p>
-      )}
+      <NoticeLine notice={message} />
       <ul
         aria-label="目录规则"
         className="rounded-xl bg-surface-container-low divide-y divide-surface-variant/30"

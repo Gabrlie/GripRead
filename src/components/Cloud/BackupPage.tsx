@@ -11,6 +11,7 @@ import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
+import { NoticeLine, useNotice } from "../ui/notice";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { describeError, formatSize, formatTime } from "./format";
@@ -26,7 +27,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<WebDavSettings | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", autoBackup: false });
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const [message, setMessage] = useNotice();
   const [backups, setBackups] = useState<RemoteBackup[] | null>(null);
   const [points, setPoints] = useState<string[]>([]);
   const [restoring, setRestoring] = useState<{
@@ -83,14 +84,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
 
   return (
     <FullPage label="备份与恢复" onClose={onClose}>
-      {message && (
-        <p
-          role={message.error ? "alert" : "status"}
-          className={`rounded-lg px-3 py-2 text-xs break-words ${message.error ? "bg-error-container text-error" : "bg-surface-container text-primary"}`}
-        >
-          {message.text}
-        </p>
-      )}
+      <NoticeLine notice={message} />
       <PageSection title="WebDAV 账号">
         <div className="p-4 space-y-3">
           <label className="block space-y-1 text-xs text-secondary">

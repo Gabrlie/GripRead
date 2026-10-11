@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Header } from "../Layout/Header";
 import { PageLink, PageSection } from "../Layout/FullPage";
 import { Icon } from "../ui/Icon";
@@ -14,10 +14,11 @@ import { TocRulesPage } from "../Rules/TocRulesPage";
 import { BackupPage } from "../Cloud/BackupPage";
 import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatTime } from "../Cloud/format";
+import { APP_VERSION, AboutPage } from "./AboutPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
-type Page = "records" | "replace" | "toc" | "backup" | "cloud";
+type Page = "records" | "replace" | "toc" | "backup" | "cloud" | "about";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -25,13 +26,52 @@ const THEMES: [ThemeMode, string][] = [
   ["dark", "深色"],
 ];
 
-/** The app's paper tones: page colour, swatch colour, and accent. */
-const TONES: { id: PaperTone; name: string; paper: string; swatch: string; accent: string }[] = [
-  { id: "warm-tea", name: "柔雅暖茶", paper: "#fbf8f1", swatch: "#eee5d8", accent: "#925429" },
-  { id: "bone-white", name: "羊脂白", paper: "#faf8f5", swatch: "#eae6df", accent: "#2a3b4c" },
-  { id: "xuan-paper", name: "宣纸微黄", paper: "#f4ede1", swatch: "#e6d8c2", accent: "#a43d24" },
-  { id: "jade-green", name: "墨绿温润", paper: "#edf1eb", swatch: "#d5e0d3", accent: "#225e41" },
+/** The app's paper tones: page, swatch, and accent colours, light then dark. */
+const TONES: {
+  id: PaperTone;
+  name: string;
+  light: [string, string, string];
+  dark: [string, string, string];
+}[] = [
+  {
+    id: "warm-tea",
+    name: "柔雅暖茶",
+    light: ["#fbf8f1", "#eee5d8", "#925429"],
+    dark: ["#25221e", "#342e27", "#d49960"],
+  },
+  {
+    id: "bone-white",
+    name: "羊脂白",
+    light: ["#faf8f5", "#eae6df", "#2a3b4c"],
+    dark: ["#1f2124", "#2f333a", "#96aec6"],
+  },
+  {
+    id: "xuan-paper",
+    name: "宣纸微黄",
+    light: ["#f4ede1", "#e6d8c2", "#a43d24"],
+    dark: ["#252019", "#383025", "#cc745a"],
+  },
+  {
+    id: "jade-green",
+    name: "墨绿温润",
+    light: ["#edf1eb", "#d5e0d3", "#225e41"],
+    dark: ["#1b231d", "#28352c", "#6ab38a"],
+  },
 ];
+
+/** CSS variables for a tone's swatch; the `dark:` classes pick the night set. */
+function toneStyle(tone: (typeof TONES)[number]) {
+  const [paper, swatch, accent] = tone.light;
+  const [nightPaper, nightSwatch, nightAccent] = tone.dark;
+  return {
+    "--tone-paper": paper,
+    "--tone-swatch": swatch,
+    "--tone-accent": accent,
+    "--tone-paper-dark": nightPaper,
+    "--tone-swatch-dark": nightSwatch,
+    "--tone-accent-dark": nightAccent,
+  } as CSSProperties;
+}
 
 /**
  * Legado's 我的 page for a local reader: reading statistics, the app's
@@ -151,31 +191,25 @@ export function SettingsView() {
             <div className="space-y-2">
               <span className="text-sm">纸张色调</span>
               <div role="radiogroup" aria-label="纸张色调" className="grid grid-cols-4 gap-2">
-                {TONES.map((tone) => (
-                  <button
-                    key={tone.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={value.paperTone === tone.id}
-                    onClick={() => store.set({ paperTone: tone.id })}
-                    className="flex flex-col items-center gap-1 rounded-xl p-1.5 border border-black/5"
-                    style={{
-                      background: tone.paper,
-                      boxShadow:
-                        value.paperTone === tone.id ? `0 0 0 2px ${tone.accent}` : undefined,
-                    }}
-                  >
-                    <span
-                      className="w-full h-7 rounded-lg flex items-center justify-center"
-                      style={{ background: tone.swatch, color: tone.accent }}
+                {TONES.map((tone) => {
+                  const selected = value.paperTone === tone.id;
+                  return (
+                    <button
+                      key={tone.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => store.set({ paperTone: tone.id })}
+                      style={toneStyle(tone)}
+                      className={`flex flex-col items-center gap-1 rounded-xl p-1.5 border border-black/5 dark:border-white/10 bg-[var(--tone-paper)] dark:bg-[var(--tone-paper-dark)] text-[var(--tone-accent)] dark:text-[var(--tone-accent-dark)] ${selected ? "ring-2 ring-[var(--tone-accent)] dark:ring-[var(--tone-accent-dark)]" : ""}`}
                     >
-                      {value.paperTone === tone.id && <Icon name="check" size={15} />}
-                    </span>
-                    <span className="text-[11px]" style={{ color: tone.accent }}>
-                      {tone.name}
-                    </span>
-                  </button>
-                ))}
+                      <span className="w-full h-7 rounded-lg flex items-center justify-center bg-[var(--tone-swatch)] dark:bg-[var(--tone-swatch-dark)]">
+                        {selected && <Icon name="check" size={15} />}
+                      </span>
+                      <span className="text-[11px]">{tone.name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <label className="flex items-center justify-between gap-3 text-sm">
@@ -232,25 +266,14 @@ export function SettingsView() {
           />
         </PageSection>
 
-        <PageSection title="关于">
-          <div className="flex items-center gap-3 px-4 py-3">
-            <Icon name="auto_stories" size={18} className="text-primary shrink-0" />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm">手不释卷 · GripRead</span>
-              <span className="block text-[11px] text-secondary">
-                v0.1.0 · 本地优先的小说阅读器
-              </span>
-            </span>
-          </div>
+        <PageSection>
+          <PageLink
+            icon="info"
+            label="关于"
+            detail={`手不释卷 · GripRead ${APP_VERSION}`}
+            onClick={() => setPage("about")}
+          />
         </PageSection>
-
-        <p role="status" className="text-xs text-secondary text-center">
-          {state.saving
-            ? "正在保存偏好设置…"
-            : state.error
-              ? "偏好设置尚未保存"
-              : "偏好设置已保存到本地"}
-        </p>
       </main>
 
       {page === "records" && (
@@ -267,6 +290,7 @@ export function SettingsView() {
       )}
       {page === "toc" && <TocRulesPage service={runtime.services.reader} onClose={close} />}
       {page === "backup" && <BackupPage onClose={close} />}
+      {page === "about" && <AboutPage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

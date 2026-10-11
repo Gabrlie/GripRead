@@ -30,14 +30,18 @@ interface ReaderTopBarProps {
   replaceEnabled: boolean;
   onToggleReplace: () => void;
   conversion: ChineseConversion;
-  onConversion: (conversion: ChineseConversion) => void;
+  onOpenConversion: () => void;
+  /** The bottom bar configuration. */
+  onOpenTools: () => void;
+  /** The book detail page; the title opens it too. */
+  onOpenDetail: () => void;
 }
 
-const CONVERSIONS: [ChineseConversion, string][] = [
-  ["off", "不转换"],
-  ["to_simplified", "繁转简"],
-  ["to_traditional", "简转繁"],
-];
+const CONVERSION_LABELS: Record<ChineseConversion, string> = {
+  off: "不转换",
+  to_simplified: "繁转简",
+  to_traditional: "简转繁",
+};
 
 /** Legado's read menu title bar: book and chapter, TXT tools, and More. */
 export function ReaderTopBar({
@@ -53,7 +57,9 @@ export function ReaderTopBar({
   replaceEnabled,
   onToggleReplace,
   conversion,
-  onConversion,
+  onOpenConversion,
+  onOpenTools,
+  onOpenDetail,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -84,12 +90,17 @@ export function ReaderTopBar({
         >
           <Icon name="arrow_back" size={20} />
         </Button>
-        <div className="flex-1 min-w-0 px-1">
+        <button
+          type="button"
+          aria-label="书籍详情"
+          className="flex-1 min-w-0 px-1 text-left rounded-lg"
+          onClick={onOpenDetail}
+        >
           <h1 className="font-title-editorial truncate text-[15px] font-semibold leading-tight">
             {title}
           </h1>
           <p className="text-[11px] text-secondary truncate leading-tight mt-0.5">{subtitle}</p>
-        </div>
+        </button>
         {action("rules", "TXT目录规则", "toc_rule")}
         {action("encoding", "设置编码", "translate")}
         <DropdownMenu>
@@ -120,24 +131,21 @@ export function ReaderTopBar({
               <Icon name="find_replace" size={15} />
               替换规则
             </DropdownMenuItem>
-            <div
-              role="group"
-              aria-label="简繁转换"
-              className="border-t border-surface-variant/40 mt-1 pt-1"
-            >
-              <p className="px-2 py-1 text-[11px] text-secondary">简繁转换</p>
-              {CONVERSIONS.map(([value, label]) => (
-                <DropdownMenuItem
-                  key={value}
-                  role="menuitemradio"
-                  aria-checked={conversion === value}
-                  onClick={() => onConversion(value)}
-                >
-                  <Icon name={conversion === value ? "check" : "translate"} size={15} />
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </div>
+            <DropdownMenuItem onClick={onOpenConversion}>
+              <Icon name="translate" size={15} />
+              简繁转换
+              <span className="ml-auto pl-3 text-[11px] text-secondary">
+                {CONVERSION_LABELS[conversion]}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenTools}>
+              <Icon name="tune" size={15} />
+              底部工具栏
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenDetail}>
+              <Icon name="info" size={15} />
+              书籍详情
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -498,6 +498,53 @@ describe("reader directory and search operation ownership", () => {
     );
   });
 
+  it("keeps automatic turning running while its panel is shown, hidden, or the page is turned", async () => {
+    const app = runtime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "自动翻页" }));
+    await userEvent.click(await screen.findByRole("button", { name: "开始自动翻页" }));
+    const panel = await screen.findByRole("region", { name: "自动翻页" });
+    expect(within(panel).getByRole("status").textContent).toContain("自动翻页中");
+    // A tap on the centre hides the panel and another shows it again.
+    tapSurface();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "自动翻页" })).toBeNull());
+    tapSurface();
+    const shown = await screen.findByRole("region", { name: "自动翻页" });
+    expect(within(shown).getByRole("status").textContent).toContain("自动翻页中");
+    // A manual turn restarts the countdown instead of pausing.
+    tapSurface(0.9, 0.5);
+    await waitFor(() =>
+      expect(screen.getByTestId("reader-page").getAttribute("data-start")).not.toBe("0"),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("region", { name: "自动翻页" })).getByRole("status").textContent,
+      ).toContain("自动翻页中"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "暂停" }));
+    expect(
+      within(screen.getByRole("region", { name: "自动翻页" })).getByRole("status").textContent,
+    ).toContain("已暂停");
+  });
+
+  it("configures the bottom bar and 简繁 from the top bar's More menu", async () => {
+    const app = runtime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "底部工具栏" }));
+    const dialog = await screen.findByRole("dialog", { name: "底部工具栏" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "移除 界面" }));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "底部工具栏" })).toBeNull());
+    expect(screen.queryByRole("button", { name: /^界面$/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /简繁转换/ }));
+    await userEvent.click(await screen.findByRole("radio", { name: /简转繁/ }));
+    await waitFor(() =>
+      expect(app.settings.getSnapshot().value?.style.chineseConversion).toBe("to_traditional"),
+    );
+  });
+
   it("turns from a tap on the margin beside the text", async () => {
     const app = runtime();
     await view(app);

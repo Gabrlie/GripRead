@@ -72,6 +72,9 @@ import { TocRuleDialog } from "./dialogs/TocRuleDialog";
 import { EncodingDialog } from "./dialogs/EncodingDialog";
 import { AutomaticDialog } from "./dialogs/AutomaticDialog";
 import { AutoPagePanel } from "./dialogs/AutoPagePanel";
+import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
+import { ConversionDialog } from "./dialogs/ConversionDialog";
+import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 const noopSubscribe = () => () => {};
@@ -295,6 +298,9 @@ export function ReaderView() {
    * AutoReadDialog). While turning runs, the panel hides after a while.
    */
   const [autoSession, setAutoSession] = useState(false);
+  // Read by handlers defined before the session state is current.
+  const autoSessionLive = useRef(autoSession);
+  autoSessionLive.current = autoSession;
   const [autoPanel, setAutoPanel] = useState(false);
   const [autoActivity, setAutoActivity] = useState(0);
   useEffect(() => {
@@ -420,19 +426,38 @@ export function ReaderView() {
   useEffect(() => {
     if (takeReaderPage() === "contents") openPanel("contents");
   }, [openPanel, takeReaderPage]);
+  /**
+   * Manual reading stops the automatic countdown; during a running automatic
+   * session the returned function starts it again afterwards (Legado), so a
+   * manual turn never leaves turning paused by surprise.
+   */
+  const automaticRunning = useRef(false);
+  automaticRunning.current = automaticTurn.running;
+  const autoSessionRef = autoSessionLive;
+  const startAutomatic = automaticTurn.start;
+  const interruptAutomatic = useCallback(() => {
+    const resume = autoSessionRef.current && automaticRunning.current;
+    void pauseAutomatic();
+    return resume ? startAutomatic : () => undefined;
+  }, [pauseAutomatic, startAutomatic]);
   const turn = useCallback(
     (direction: "next" | "previous", point?: { x: number; y: number }) => {
-      void pauseAutomatic();
+      const resume = interruptAutomatic();
       adapter.current?.aim(point ?? null);
       if (effectiveMode === "scroll") {
         if (scrollBox.current)
           scrollBox.current.scrollTop +=
             scrollBox.current.clientHeight * (direction === "next" ? 0.9 : -0.9);
+        resume();
         return;
       }
-      if (controller) run(() => (direction === "next" ? controller.next() : controller.previous()));
+      if (controller)
+        run(async () => {
+          await (direction === "next" ? controller.next() : controller.previous());
+          resume();
+        });
     },
-    [controller, effectiveMode, pauseAutomatic, run],
+    [controller, effectiveMode, interruptAutomatic, run],
   );
 
   const close = useCallback(() => {
@@ -472,6 +497,7 @@ export function ReaderView() {
       });
       if (epoch !== sessionEpoch.current) return;
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setNotice("已添加书签");
     });
   }, [
     bookId,
@@ -501,11 +527,37 @@ export function ReaderView() {
     else if (tool === "bookmark") addBookmark();
   };
 
+  /**
+   * Leaving scroll mode records the passage at the top of the scroll view
+   * now, while its text is still laid out; afterwards the page layout has
+   * replaced it.
+   */
+  const changePreferences = (patch: Parameters<typeof settingsStore.set>[0]) => {
+    if (
+      effectiveMode === "scroll" &&
+      patch.readingMode !== undefined &&
+      patch.readingMode !== "scroll"
+    )
+      synchronizeScroll.current?.();
+    settingsStore.set(patch);
+  };
+
   /** A bookmark being added from selected text, or a bookmark whose note is edited. */
   const [noteDraft, setNoteDraft] = useState<
     { excerpt: string; offset: number } | { excerpt: string; bookmark: Bookmark } | null
   >(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Dialogs opened from the top bar's 更多 menu, and the book detail page. */
+  const [dialog, setDialog] = useState<"conversion" | "tools" | "detail" | null>(null);
+  // 更新目录 reports its outcome once the directory has been read again.
+  const refreshingDirectory = useRef(false);
+  useEffect(() => {
+    if (!refreshingDirectory.current || tools.loading) return;
+    refreshingDirectory.current = false;
+    setNotice(
+      tools.error ? `目录更新失败：${tools.error}` : `目录已更新，共 ${tools.toc.length} 章`,
+    );
+  }, [tools.loading, tools.error, tools.toc]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 2_000);
@@ -838,8 +890,6 @@ export function ReaderView() {
       else if (action === "menu") setControls(true);
       else if (action === "next" || action === "previous") {
         turn(action, point);
-        // A manual turn pauses automatic turning; the panel shows it.
-        if (autoSession) setAutoPanel(true);
       } else if (action === "next-chapter" || action === "previous-chapter") {
         void pauseAutomatic();
         if (controller)
@@ -855,12 +905,13 @@ export function ReaderView() {
       const current = controller?.getSnapshot();
       if (!controller || !current || current.loading) return false;
       if (direction === "next" ? !current.hasAfter : !current.hasBefore) return false;
-      void pauseAutomatic();
       const presentation = adapter.current;
       if (!presentation?.followsDrag) {
+        // The release turns through `turn`, which handles automatic turning.
         swipe.current = direction;
         return true;
       }
+      const resume = interruptAutomatic();
       presentation.beginDrag(start);
       run(async () => {
         try {
@@ -873,6 +924,7 @@ export function ReaderView() {
           presentation.skipNextAnimation();
           await (direction === "next" ? controller.previous() : controller.next());
         }
+        resume();
       });
       return true;
     },
@@ -948,13 +1000,20 @@ export function ReaderView() {
           onOpenPanel={openPanel}
           canBookmark={Boolean(page) && !closing}
           onAddBookmark={addBookmark}
-          onRefreshDirectory={reloadTools}
+          onRefreshDirectory={() => {
+            refreshingDirectory.current = true;
+            setNotice("正在更新目录…");
+            reloadTools();
+          }}
           replaceEnabled={useReplaceRules}
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
           conversion={style?.chineseConversion ?? "off"}
-          onConversion={(chineseConversion) =>
-            style && settingsStore.set({ style: { ...style, chineseConversion } })
-          }
+          onOpenConversion={() => setDialog("conversion")}
+          onOpenTools={() => setDialog("tools")}
+          onOpenDetail={() => {
+            void pauseAutomatic();
+            setDialog("detail");
+          }}
         />
       </div>
       <ReaderSurface
@@ -965,7 +1024,10 @@ export function ReaderView() {
         animationBox={animationBox}
         style={typeStyle}
         acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}
-        onInteract={() => void pauseAutomatic()}
+        onInteract={() => {
+          // Showing or hiding the automatic panel does not stop turning.
+          if (!autoSession) void pauseAutomatic();
+        }}
         gestures={gestures}
         zones={style?.tapZones as TapZones | undefined}
         margins={style?.margins}
@@ -1001,7 +1063,10 @@ export function ReaderView() {
             synchronize={synchronizeScroll}
             highlight={search.highlight}
             headings={headings}
-            onInteract={() => void pauseAutomatic()}
+            onInteract={() => {
+              // Showing or hiding the automatic panel does not stop turning.
+              if (!autoSession) void pauseAutomatic();
+            }}
             onUserScroll={() => {
               if (panelRef.current === null) setControls(false);
             }}
@@ -1136,7 +1201,7 @@ export function ReaderView() {
           initialView={panel === "settings" ? "more" : "main"}
           preferences={preferences}
           night={night}
-          onChange={settingsStore.set}
+          onChange={changePreferences}
           fonts={runtime.services.settings}
           onPreview={setPreviewing}
           onClose={closePanel}
@@ -1258,6 +1323,38 @@ export function ReaderView() {
               applyTransformsRef.current();
             }
           }}
+        />
+      )}
+      {dialog === "conversion" && style && (
+        <ConversionDialog
+          value={style.chineseConversion}
+          onChange={(chineseConversion) =>
+            settingsStore.set({ style: { ...style, chineseConversion } })
+          }
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "tools" && style && (
+        <BottomToolsDialog
+          tools={style.bottomTools}
+          onChange={(bottomTools) => settingsStore.set({ style: { ...style, bottomTools } })}
+          onClose={() => {
+            setDialog(null);
+            void settingsStore.flush().catch(() => undefined);
+          }}
+        />
+      )}
+      {dialog === "detail" && (
+        <BookDetailPage
+          book={
+            libraryState.books.find((item) => item.book.id === activeBook.book.id) ?? activeBook
+          }
+          inReader
+          onOpen={(target) => {
+            setDialog(null);
+            if (target === "contents") openPanel("contents");
+          }}
+          onClose={() => setDialog(null)}
         />
       )}
       {replaceDraft && (

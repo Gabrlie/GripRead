@@ -115,7 +115,7 @@ export function ContentsPage({
       aria-modal="true"
       aria-label="目录"
       data-open=""
-      className="fixed inset-0 z-[55] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
+      className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
       <header className="shrink-0 border-b border-surface-variant/30">
         <div className="h-14 px-2 flex items-center gap-1 max-w-3xl mx-auto w-full">

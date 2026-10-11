@@ -302,6 +302,33 @@ describe("ReaderController", () => {
     expect(controller.getSnapshot().page?.startOffset).toBe(window.startOffset);
     controller.dispose();
   });
+  it("returns from scroll reading to the page holding the last scrolled position", async () => {
+    const text = Array.from({ length: 400 }, (_, index) => `line ${index}\n`).join("");
+    const controller = new ReaderController(serviceFor({ book: text }), {
+      measurer: { measure: (window) => paginateText(window.text, window.startOffset, 40) },
+      maxUnits: 300,
+    });
+    await controller.open("book");
+    await controller.next();
+    await controller.next();
+    await controller.setMode("scroll");
+    // Scroll far enough that earlier windows are evicted.
+    let position = 0;
+    for (let i = 0; i < 6; i++) {
+      const window = controller.getSnapshot().scroll!;
+      position = window.endOffset - 20;
+      controller.updateScrollPosition(position, window.endOffset);
+      await controller.extendScroll("forward");
+    }
+    const window = controller.getSnapshot().scroll!;
+    position = window.startOffset + Math.floor((window.endOffset - window.startOffset) / 2);
+    controller.updateScrollPosition(position, position + 100);
+    await controller.setMode("single");
+    const page = controller.getSnapshot().page!;
+    expect(page.startOffset).toBeLessThanOrEqual(position);
+    expect(page.endOffset).toBeGreaterThan(position);
+    controller.dispose();
+  });
   it("loads bounded windows, turns across their boundary, and saves the current locator", async () => {
     const service = serviceFor({ book: "abcdef" });
     const adapter = adapterSpy();
