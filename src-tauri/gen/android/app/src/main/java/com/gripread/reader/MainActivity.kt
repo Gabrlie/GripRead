@@ -28,6 +28,7 @@ class MainActivity : TauriActivity() {
   private var webView: WebView? = null
   private var tts: TextToSpeech? = null
   @Volatile private var ttsReady = false
+  @Volatile private var ttsStatus = "pending"
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -95,8 +96,9 @@ class MainActivity : TauriActivity() {
     super.onDestroy()
   }
 
-  private fun speechEvent(type: String, id: String) {
-    val detail = JSONObject().put("type", type).put("id", id).toString()
+  private fun speechEvent(type: String, id: String, start: Int = -1, end: Int = -1, code: Int = 0) {
+    val detail = JSONObject().put("type", type).put("id", id)
+      .put("start", start).put("end", end).put("code", code).toString()
     webView?.post {
       webView?.evaluateJavascript(
         "window.dispatchEvent(new CustomEvent('gripread-tts', { detail: $detail }))",
@@ -113,17 +115,28 @@ class MainActivity : TauriActivity() {
   private inner class SpeechBridge {
     private fun engine(): TextToSpeech {
       tts?.let { return it }
-      val created = TextToSpeech(this@MainActivity) { status ->
+      lateinit var created: TextToSpeech
+      created = TextToSpeech(this@MainActivity) { status ->
         ttsReady = status == TextToSpeech.SUCCESS
-        if (ttsReady) tts?.language = Locale.getDefault()
-        speechEvent(if (ttsReady) "ready" else "unavailable", "")
+        if (ttsReady) {
+          // Prefer the device language, then Chinese; otherwise keep the engine's default voice.
+          val chosen = listOf(Locale.getDefault(), Locale.SIMPLIFIED_CHINESE, Locale.CHINESE).firstOrNull {
+            created.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE
+          }
+          if (chosen != null) created.language = chosen
+        }
+        ttsStatus = if (ttsReady) "ready" else "unavailable"
+        speechEvent(ttsStatus, "", code = status)
       }
       created.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String) = speechEvent("start", utteranceId)
         override fun onDone(utteranceId: String) = speechEvent("done", utteranceId)
+        override fun onRangeStart(utteranceId: String, start: Int, end: Int, frame: Int) =
+          speechEvent("range", utteranceId, start, end)
         @Deprecated("Deprecated in Java")
         override fun onError(utteranceId: String) = speechEvent("error", utteranceId)
-        override fun onError(utteranceId: String, errorCode: Int) = speechEvent("error", utteranceId)
+        override fun onError(utteranceId: String, errorCode: Int) =
+          speechEvent("error", utteranceId, code = errorCode)
       })
       tts = created
       return created
@@ -151,10 +164,30 @@ class MainActivity : TauriActivity() {
         for (index in 0 until list.length()) {
           val item = list.getJSONObject(index)
           val mode = if (flush && index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-          speech.speak(item.getString("text"), mode, null, item.getString("id"))
+          val id = item.getString("id")
+          if (speech.speak(item.getString("text"), mode, null, id) != TextToSpeech.SUCCESS) {
+            speechEvent("error", id, code = -1)
+          }
         }
       }
     }
+
+    /** Opens the system text-to-speech settings to install or choose an engine. */
+    @JavascriptInterface
+    fun openSettings() {
+      runOnUiThread {
+        try {
+          startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+          startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
+        }
+      }
+    }
+
+    /** `pending` until the engine answers, then `ready` or `unavailable`. */
+    @JavascriptInterface
+    fun status(): String = ttsStatus
+
 
     @JavascriptInterface
     fun stop() {

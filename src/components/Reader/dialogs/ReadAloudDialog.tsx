@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SpeechVoice } from "../../../services/speech";
+import type { SpeechStatus, SpeechVoice } from "../../../services/speech";
 import type { ReadAloudSnapshot } from "../../../reader/read-aloud";
 import { Button } from "../../ui/button";
 import { Dialog, DialogHeader, DialogTitle, SheetContent } from "../../ui/dialog";
@@ -20,7 +20,8 @@ const TIMERS: [number | null, string][] = [
  */
 export function ReadAloudDialog({
   snapshot,
-  available,
+  status: readStatus,
+  onOpenSettings,
   rate,
   pitch,
   voice,
@@ -34,7 +35,9 @@ export function ReadAloudDialog({
   onClose,
 }: {
   snapshot: ReadAloudSnapshot;
-  available: boolean;
+  /** The engine's state, read again while it is starting. */
+  status: () => SpeechStatus;
+  onOpenSettings?: () => void;
   rate: number;
   pitch: number;
   voice: string | null;
@@ -53,9 +56,16 @@ export function ReadAloudDialog({
 }) {
   const [voices, setVoices] = useState<SpeechVoice[]>([]);
   const [timer, setTimer] = useState<number | null>(null);
+  const [status, setStatus] = useState(readStatus);
   useEffect(() => {
-    void loadVoices().then(setVoices, () => setVoices([]));
-  }, [loadVoices]);
+    if (status !== "pending") return;
+    const poll = window.setInterval(() => setStatus(readStatus()), 300);
+    return () => window.clearInterval(poll);
+  }, [readStatus, status]);
+  useEffect(() => {
+    if (status === "ready") void loadVoices().then(setVoices, () => setVoices([]));
+  }, [loadVoices, status]);
+  const available = status !== "unavailable";
   const playing = snapshot.state === "playing";
   const idle = snapshot.state === "idle";
   const value = (next: number | readonly number[]) =>
@@ -67,9 +77,33 @@ export function ReadAloudDialog({
           <DialogTitle className="font-title-editorial text-base">朗读</DialogTitle>
         </DialogHeader>
         {!available ? (
-          <p className="text-sm text-secondary">这台设备没有可用的语音引擎。</p>
+          <div className="space-y-3 pb-2">
+            <p className="text-sm text-secondary">
+              语音引擎无法启动。请在系统设置中安装或选择文字转语音引擎，并下载中文语音数据。
+            </p>
+            {onOpenSettings && (
+              <Button variant="outline" size="sm" onClick={onOpenSettings}>
+                打开语音设置
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="space-y-4 pb-2">
+            {status === "pending" && (
+              <p role="status" className="text-xs text-secondary">
+                正在启动语音引擎…
+              </p>
+            )}
+            {snapshot.failed && (
+              <div role="alert" className="text-xs text-error space-y-1.5">
+                <p>语音引擎没能朗读这段文字，可能缺少中文语音数据。</p>
+                {onOpenSettings && (
+                  <Button variant="outline" size="sm" onClick={onOpenSettings}>
+                    打开语音设置
+                  </Button>
+                )}
+              </div>
+            )}
             {snapshot.current && (
               <p className="text-xs text-secondary line-clamp-2 break-words">
                 {snapshot.current.text}

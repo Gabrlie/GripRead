@@ -382,6 +382,10 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       this.releaseHold();
       return;
     }
+    if (effect !== "curl") {
+      await this.presentShift(effect, forward, drag, width);
+      return;
+    }
     const ratio = this.host.ownerDocument.defaultView?.devicePixelRatio || 1;
     const outgoing = this.rasterize(this.previousSpread, this.takeOutgoingChrome(), rect, ratio);
     const incoming = this.rasterize(this.currentSpread, this.captureChrome(), rect, ratio);
@@ -403,11 +407,15 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.overlay = canvas;
     this.updateVisibility();
 
-    // Curl lifts the corner nearest the touch; drags from the middle third
-    // stay level with an edge (Legado SimulationPageDelegate).
+    // Curl lifts the corner nearest the touch (Legado SimulationPageDelegate).
+    // Taps in the middle third turn level with an edge; a drag from there
+    // starts level and folds toward the top or bottom corner as the finger
+    // moves up or down.
     const origin = drag?.start ?? aim;
     const top = forward && origin !== null && origin.y < height / 2;
     const corner = { x: width, y: top ? 0 : height };
+    const middle =
+      forward && origin !== null && origin.y > height / 3 && origin.y < (height * 2) / 3;
     const level = (y: number) => {
       if (!forward) return height;
       if (origin && origin.y > height / 3 && origin.y < height / 2) return 0.1;
@@ -438,36 +446,93 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       y: curlFrom.y + (curlTo.y - curlFrom.y) * progress,
     });
     /** Curl touch point under the finger during a drag. */
-    const fingerTouch = (point: Point) =>
-      forward
-        ? { x: Math.min(width - 1, point.x), y: level(point.y) }
-        : curlTouch(dragProgress(point));
+    const fingerTouch = (point: Point) => {
+      if (!forward) return curlTouch(dragProgress(point));
+      const x = Math.min(width - 1, point.x);
+      if (!middle || !drag) return { x, y: level(point.y) };
+      // Moving up lifts the bottom corner toward the top left, and down the top.
+      const rise = point.y - drag.start.y;
+      corner.y = flat.y = away.y = rise < 0 ? height : 0;
+      return { x, y: Math.min(height, Math.max(0, corner.y + rise)) };
+    };
 
     const draw = (progress: number, touch?: Point) => {
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-      if (effect === "curl") {
-        drawCurl(
-          context,
-          { ...frame, background: outgoing.background, width, height },
-          curlGeometry(touch ?? curlTouch(progress), corner, width),
-        );
-      } else {
-        drawShift(
-          context,
-          effect,
-          forward,
-          progress,
-          outgoing.canvas,
-          incoming.canvas,
-          width,
-          height,
-        );
-      }
+      drawCurl(
+        context,
+        { ...frame, background: outgoing.background, width, height },
+        curlGeometry(touch ?? curlTouch(progress), corner, width),
+      );
       // The canvas now shows the outgoing page; the held copy can go.
       this.releaseHold();
     };
+    await this.animateTurn(canvas, drag, dragProgress, draw, {
+      touch: fingerTouch,
+      commit: curlTo,
+      cancel: forward ? flat : away,
+    });
+  }
 
+  /**
+   * Slide and cover move copies of the two screens built by the same text
+   * renderer as the page, so glyphs, numerals, and backgrounds stay exactly
+   * as laid out while they move (Legado SlidePageDelegate, CoverPageDelegate).
+   */
+  private async presentShift(
+    effect: "slide" | "cover",
+    forward: boolean,
+    drag: Drag | null,
+    width: number,
+  ): Promise<void> {
+    const document = this.host.ownerDocument;
+    const surface = document.createElement("div");
+    Object.assign(surface.style, { position: "absolute", inset: "0", overflow: "hidden" });
+    const outgoing = this.screenElement(this.previousSpread, this.takeOutgoingChrome());
+    const incoming = this.screenElement(this.currentSpread, this.captureChrome());
+    for (const layer of [outgoing, incoming]) layer.style.willChange = "transform";
+    // Cover moves the upper page: the outgoing one forward, the incoming one back.
+    const above = forward ? outgoing : incoming;
+    if (effect === "cover") above.style.zIndex = "1";
+    surface.append(outgoing, incoming);
+    this.mount.append(surface);
+    this.overlay = surface;
+    this.updateVisibility();
+    const draw = (progress: number) => {
+      const offset = progress * width;
+      if (effect === "slide") {
+        const outgoingX = forward ? -offset : offset;
+        outgoing.style.transform = `translate3d(${outgoingX}px,0,0)`;
+        incoming.style.transform = `translate3d(${forward ? outgoingX + width : outgoingX - width}px,0,0)`;
+      } else {
+        const aboveX = forward ? -offset : offset - width;
+        above.style.transform = `translate3d(${aboveX}px,0,0)`;
+        const edge = aboveX + width;
+        above.style.boxShadow =
+          edge > 0 && edge < width ? "6px 0 24px rgb(17 17 17 / 0.35)" : "none";
+      }
+      this.releaseHold();
+    };
+    const dragProgress = (point: Point) => {
+      const start = drag?.start ?? point;
+      const moved = forward ? start.x - point.x : point.x - start.x;
+      return Math.min(1, Math.max(0, moved / width));
+    };
+    await this.animateTurn(surface, drag, dragProgress, draw);
+  }
+
+  /**
+   * Runs a turn on `surface`: a programmatic turn eases from 0 to 1; a drag
+   * follows the finger, and on release runs to the end or back to the start
+   * at Legado's speed. Curl additionally interpolates its touch point.
+   */
+  private async animateTurn(
+    surface: HTMLElement,
+    drag: Drag | null,
+    dragProgress: (point: Point) => number,
+    draw: (progress: number, touch?: Point) => void,
+    curl?: { touch: (point: Point) => Point; commit: Point; cancel: Point },
+  ): Promise<void> {
     const finished = this.finished();
     const duration = Math.max(1, this.options.turnDuration ?? 300);
     const run = (
@@ -480,7 +545,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       const started = this.now();
       const span = Math.max(80, duration * Math.abs(to - from));
       const step = (time: number) => {
-        if (this.overlay !== canvas) return;
+        if (this.overlay !== surface) return;
         const linear = Math.min(1, (time - started) / span);
         // Programmatic turns decelerate; releasing a drag continues linearly.
         const eased = drag ? linear : 1 - (1 - linear) ** 3;
@@ -510,19 +575,24 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       const commit = drag.release === true;
       const from = dragProgress(drag.point);
       const to = commit ? 1 : 0;
-      const target = effect === "curl" ? (commit ? curlTo : forward ? flat : away) : undefined;
-      run(from, to, effect === "curl" ? fingerTouch(drag.point) : undefined, target, () => {
-        if (!commit) this.cancelled = true;
-      });
+      run(
+        from,
+        to,
+        curl?.touch(drag.point),
+        curl ? (commit ? curl.commit : curl.cancel) : undefined,
+        () => {
+          if (!commit) this.cancelled = true;
+        },
+      );
     };
     drag.wake = () => {
-      if (this.overlay !== canvas) return;
+      if (this.overlay !== surface) return;
       if (drag.release !== null) {
         drag.wake = null;
         settle();
         return;
       }
-      draw(dragProgress(drag.point), effect === "curl" ? fingerTouch(drag.point) : undefined);
+      draw(dragProgress(drag.point), curl?.touch(drag.point));
     };
     drag.wake();
     await finished;
@@ -656,44 +726,6 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     });
     element.style.pointerEvents = "none";
     return element;
-  }
-}
-
-/**
- * Slide moves both pages together; cover moves only the upper page with a
- * shadow on its trailing edge (Legado SlidePageDelegate, CoverPageDelegate).
- */
-function drawShift(
-  context: CanvasRenderingContext2D,
-  effect: "slide" | "cover",
-  forward: boolean,
-  progress: number,
-  outgoing: CanvasImageSource,
-  incoming: CanvasImageSource,
-  width: number,
-  height: number,
-) {
-  const offset = progress * width;
-  if (effect === "slide") {
-    const outgoingX = forward ? -offset : offset;
-    context.drawImage(outgoing, outgoingX, 0, width, height);
-    context.drawImage(incoming, forward ? outgoingX + width : outgoingX - width, 0, width, height);
-    return;
-  }
-  // Cover: forward slides the outgoing page off the incoming one; backward
-  // slides the incoming page in over the outgoing one.
-  const [below, above, aboveX] = forward
-    ? [incoming, outgoing, -offset]
-    : [outgoing, incoming, offset - width];
-  context.drawImage(below, 0, 0, width, height);
-  context.drawImage(above, aboveX, 0, width, height);
-  const edge = aboveX + width;
-  if (edge > 0 && edge < width) {
-    const shadow = context.createLinearGradient(edge, 0, edge + 30, 0);
-    shadow.addColorStop(0, "rgba(17,17,17,0.4)");
-    shadow.addColorStop(1, "rgba(17,17,17,0)");
-    context.fillStyle = shadow;
-    context.fillRect(edge, 0, 30, height);
   }
 }
 

@@ -149,38 +149,96 @@ export interface CurlFrame {
   height: number;
 }
 
+type Orientation = "left-right" | "right-left" | "top-bottom" | "bottom-top";
+
+/** Android's GradientDrawable: `from` at the side the orientation starts on. */
+function gradientRect(
+  context: CanvasRenderingContext2D,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+  orientation: Orientation,
+  from: string,
+  to: string,
+) {
+  const [x0, y0, x1, y1] =
+    orientation === "left-right"
+      ? [left, 0, right, 0]
+      : orientation === "right-left"
+        ? [right, 0, left, 0]
+        : orientation === "top-bottom"
+          ? [0, top, 0, bottom]
+          : [0, bottom, 0, top];
+  const gradient = context.createLinearGradient(x0, y0, x1, y1);
+  gradient.addColorStop(0, from);
+  gradient.addColorStop(1, to);
+  context.fillStyle = gradient;
+  context.fillRect(
+    Math.min(left, right),
+    Math.min(top, bottom),
+    Math.abs(right - left),
+    Math.abs(bottom - top),
+  );
+}
+
+/** Android's `canvas.rotate(degrees, px, py)`. */
+function rotateAt(context: CanvasRenderingContext2D, degrees: number, x: number, y: number) {
+  context.translate(x, y);
+  context.rotate((degrees * Math.PI) / 180);
+  context.translate(-x, -y);
+}
+
+const toDegrees = (radians: number) => (radians * 180) / Math.PI;
+
+// Legado's shadow colors (0xAARRGGBB): the next page's edge, the lifted
+// page's outline, and the fold on its back.
+const BACK_SHADOW = ["rgba(17,17,17,0.6)", "rgba(17,17,17,0)"] as const;
+const FRONT_SHADOW = ["rgba(17,17,17,0.5)", "rgba(17,17,17,0)"] as const;
+const FOLDER_SHADOW = ["rgba(51,51,51,0)", "rgba(51,51,51,0.69)"] as const;
+/** Width of the lifted page's outline shadow, as in Legado. */
+const FRONT_WIDTH = 25;
+
 /** Draws one curl frame in CSS pixels; the caller scales for device pixels. */
 export function drawCurl(context: CanvasRenderingContext2D, frame: CurlFrame, g: CurlGeometry) {
   const { width, height } = frame;
+  const maxLength = Math.hypot(width, height);
   const full = new Path2D();
   full.rect(0, 0, width, height);
   const lifted = curlPath(g);
+  const outside = new Path2D(full);
+  outside.addPath(lifted);
+  // The top-right and bottom-left corners mirror the other two.
+  const rtOrLb =
+    (g.corner.x === 0 && g.corner.y === height) || (g.corner.x === width && g.corner.y === 0);
   context.clearRect(0, 0, width, height);
 
   // Current page outside the lifted region.
   context.save();
-  const outside = new Path2D(full);
-  outside.addPath(lifted);
   context.clip(outside, "evenodd");
   context.drawImage(frame.current, 0, 0, width, height);
   context.restore();
 
   // Next page inside the lifted region, with a shadow along the fold.
-  const degrees = Math.atan2(g.control1.x - g.corner.x, g.control2.y - g.corner.y);
+  const degrees = toDegrees(Math.atan2(g.control1.x - g.corner.x, g.control2.y - g.corner.y));
   context.save();
   context.clip(lifted);
   context.clip(revealPath(g));
   context.drawImage(frame.next, 0, 0, width, height);
-  context.translate(g.start1.x, g.start1.y);
-  context.rotate(-degrees);
+  rotateAt(context, degrees, g.start1.x, g.start1.y);
   const reach = g.touchToCorner / 4;
-  const leftward = g.corner.x > 0;
-  const shadow = context.createLinearGradient(0, 0, leftward ? -reach : reach, 0);
-  shadow.addColorStop(0, "rgba(0,0,0,0.28)");
-  shadow.addColorStop(1, "rgba(0,0,0,0)");
-  context.fillStyle = shadow;
-  context.fillRect(leftward ? -reach : 0, -height * 2, reach, height * 4);
+  gradientRect(
+    context,
+    rtOrLb ? g.start1.x : g.start1.x - reach,
+    g.start1.y,
+    rtOrLb ? g.start1.x + reach : g.start1.x,
+    g.start1.y + maxLength,
+    rtOrLb ? "left-right" : "right-left",
+    ...BACK_SHADOW,
+  );
   context.restore();
+
+  drawFrontShadow(context, g, outside, rtOrLb, maxLength, height);
 
   // Back of the current page: the same bitmap mirrored across the fold line.
   const distance = Math.hypot(g.corner.x - g.control1.x, g.control2.y - g.corner.y);
@@ -192,31 +250,107 @@ export function drawCurl(context: CanvasRenderingContext2D, frame: CurlFrame, g:
     context.clip(backPath(g));
     context.fillStyle = frame.background;
     context.fillRect(0, 0, width, height);
+    context.save();
     context.translate(g.control1.x, g.control1.y);
     context.transform(1 - 2 * f9 * f9, 2 * f8 * f9, 2 * f8 * f9, 1 - 2 * f8 * f8, 0, 0);
     context.translate(-g.control1.x, -g.control1.y);
     context.globalAlpha = 0.28;
     context.drawImage(frame.current, 0, 0, width, height);
     context.restore();
-
     // Fold shading on the back side.
-    context.save();
-    context.clip(lifted);
-    context.clip(backPath(g));
-    const middle = { x: (g.start1.x + g.control1.x) / 2, y: (g.start2.y + g.control2.y) / 2 };
-    const depth = Math.max(
-      8,
-      Math.min(Math.abs(middle.x - g.control1.x), Math.abs(middle.y - g.control2.y)),
+    const fold = Math.min(
+      Math.abs((g.start1.x + g.control1.x) / 2 - g.control1.x),
+      Math.abs((g.start2.y + g.control2.y) / 2 - g.control2.y),
     );
-    context.translate(g.start1.x, g.start1.y);
-    context.rotate(-degrees);
-    const fold = context.createLinearGradient(leftward ? 0 : 0, 0, leftward ? depth : -depth, 0);
-    fold.addColorStop(0, "rgba(0,0,0,0.18)");
-    fold.addColorStop(1, "rgba(0,0,0,0)");
-    context.fillStyle = fold;
-    context.fillRect(leftward ? 0 : -depth, -height * 2, depth, height * 4);
+    rotateAt(context, degrees, g.start1.x, g.start1.y);
+    gradientRect(
+      context,
+      rtOrLb ? g.start1.x - 1 : g.start1.x - fold - 1,
+      g.start1.y,
+      rtOrLb ? g.start1.x + fold + 1 : g.start1.x + 1,
+      g.start1.y + maxLength,
+      rtOrLb ? "left-right" : "right-left",
+      ...FOLDER_SHADOW,
+    );
     context.restore();
   }
+}
+
+/**
+ * The shadow the lifted page casts on the current page along its two
+ * outer edges, from the touch point to each bezier control point
+ * (Legado's drawCurrentPageShadow).
+ */
+function drawFrontShadow(
+  context: CanvasRenderingContext2D,
+  g: CurlGeometry,
+  outside: Path2D,
+  rtOrLb: boolean,
+  maxLength: number,
+  height: number,
+) {
+  const angle = rtOrLb
+    ? Math.PI / 4 - Math.atan2(g.control1.y - g.touch.y, g.touch.x - g.control1.x)
+    : Math.PI / 4 - Math.atan2(g.touch.y - g.control1.y, g.touch.x - g.control1.x);
+  const d1 = FRONT_WIDTH * Math.SQRT2 * Math.cos(angle);
+  const d2 = FRONT_WIDTH * Math.SQRT2 * Math.sin(angle);
+  const tip = { x: g.touch.x + d1, y: rtOrLb ? g.touch.y + d2 : g.touch.y - d2 };
+  const edge = (control: Point, start: Point) => {
+    const path = new Path2D();
+    path.moveTo(tip.x, tip.y);
+    path.lineTo(g.touch.x, g.touch.y);
+    path.lineTo(control.x, control.y);
+    path.lineTo(start.x, start.y);
+    path.closePath();
+    return path;
+  };
+
+  context.save();
+  context.clip(outside, "evenodd");
+  context.clip(edge(g.control1, g.start1));
+  rotateAt(
+    context,
+    toDegrees(Math.atan2(g.touch.x - g.control1.x, g.control1.y - g.touch.y)),
+    g.control1.x,
+    g.control1.y,
+  );
+  gradientRect(
+    context,
+    rtOrLb ? g.control1.x : g.control1.x - FRONT_WIDTH,
+    g.control1.y - maxLength,
+    rtOrLb ? g.control1.x + FRONT_WIDTH : g.control1.x + 1,
+    g.control1.y,
+    rtOrLb ? "left-right" : "right-left",
+    ...FRONT_SHADOW,
+  );
+  context.restore();
+
+  context.save();
+  context.clip(outside, "evenodd");
+  context.clip(edge(g.control2, g.start2));
+  rotateAt(
+    context,
+    toDegrees(Math.atan2(g.control2.y - g.touch.y, g.control2.x - g.touch.x)),
+    g.control2.x,
+    g.control2.y,
+  );
+  const top = rtOrLb ? g.control2.y : g.control2.y - FRONT_WIDTH;
+  const bottom = rtOrLb ? g.control2.y + FRONT_WIDTH : g.control2.y + 1;
+  const reach = Math.hypot(g.control2.x, g.control2.y < 0 ? g.control2.y - height : g.control2.y);
+  const [left, right] =
+    reach > maxLength
+      ? [g.control2.x - FRONT_WIDTH - reach, g.control2.x + maxLength - reach]
+      : [g.control2.x - maxLength, g.control2.x];
+  gradientRect(
+    context,
+    left,
+    top,
+    right,
+    bottom,
+    rtOrLb ? "top-bottom" : "bottom-top",
+    ...FRONT_SHADOW,
+  );
+  context.restore();
 }
 
 /**
@@ -314,6 +448,7 @@ export function rasterizePage(
       };
       metrics.set(font, fontMetrics);
     }
+    const tabular = parentStyle?.fontVariantNumeric.includes("tabular-nums") ?? false;
     let offset = 0;
     for (const character of text) {
       const start = offset;
@@ -329,12 +464,38 @@ export function rasterizePage(
         origin.top +
         (lineHeight - (fontMetrics.ascent + fontMetrics.descent)) / 2 +
         fontMetrics.ascent;
-      context.fillText(character, rect.left - origin.left, baseline);
+      const advance = context.measureText(character).width;
+      context.fillText(
+        character,
+        glyphLeft(character, rect.left - origin.left, rect.width, advance, tabular),
+        baseline,
+      );
     }
   }
   range.detach?.();
   context.globalAlpha = 1;
   return canvas;
+}
+
+/** Opening CJK punctuation; the browser trims its leading half when compressed. */
+const OPENING = /^[「『（《〈【〔〖〘〚｛［“‘(\[{]$/u;
+
+/**
+ * Where a glyph starts inside its laid-out box. Canvas cannot apply CSS font
+ * features, so a box can differ from the plain glyph: tabular digits are
+ * centered in their fixed width, and compressed punctuation keeps the side
+ * the browser kept (the right half of opening marks, the left of others).
+ */
+export function glyphLeft(
+  character: string,
+  left: number,
+  box: number,
+  advance: number,
+  tabular: boolean,
+): number {
+  if (advance < box && tabular && /^\d$/u.test(character)) return left + (box - advance) / 2;
+  if (advance > box + 0.5 && OPENING.test(character)) return left + box - advance;
+  return left;
 }
 
 function fontOf(style: CSSStyleDeclaration): string {

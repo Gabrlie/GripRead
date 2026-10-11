@@ -5,7 +5,15 @@ import { useCallback, useRef, useState } from "react";
  * pages, the chapter rule and encoding dialogs, and the 界面 style sheet.
  */
 export type ReaderPanel =
-  "contents" | "search" | "rules" | "encoding" | "style" | "automatic" | "replace" | "aloud";
+  | "contents"
+  | "search"
+  | "rules"
+  | "encoding"
+  | "style"
+  | "settings"
+  | "automatic"
+  | "replace"
+  | "aloud";
 
 /** Accessible labels of the menu buttons that open each top-level panel. */
 export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
@@ -14,6 +22,7 @@ export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
   rules: "TXT目录规则",
   encoding: "设置编码",
   style: "界面",
+  settings: "设置",
   automatic: "自动翻页",
   replace: "更多",
   aloud: "朗读",

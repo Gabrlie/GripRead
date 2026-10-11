@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import type { ReaderService } from "../../../services/contracts";
-import { copyText } from "../../../services/system";
-import type { ReplaceRule } from "../../../types/generated";
-import { Button } from "../../ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
-import { Icon } from "../../ui/Icon";
-import { Input } from "../../ui/input";
-import { Switch } from "../../ui/switch";
+import type { ReaderService } from "../../services/contracts";
+import { copyText } from "../../services/system";
+import type { ReplaceRule } from "../../types/generated";
+import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Icon } from "../ui/Icon";
+import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 
-const EMPTY_RULE: ReplaceRule = {
+export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
   name: "",
   group: "",
@@ -23,20 +23,19 @@ const EMPTY_RULE: ReplaceRule = {
 /**
  * Legado's 替换净化 rule list: enable, edit, test, reorder, delete, and
  * import or export rules shared by every book. `onChanged` reports that the
- * text of open books may need the rules applied again.
+ * text of open books may need the rules applied again. Opened from a book,
+ * it also shows that book's own switch.
  */
 export function ReplaceRulesPage({
   service,
-  enabledForBook,
-  onToggleBook,
+  book,
   onChanged,
   onClose,
 }: {
   service: ReaderService;
   /** This book's own 替换净化 switch. */
-  enabledForBook: boolean;
-  onToggleBook: (enabled: boolean) => void;
-  onChanged: () => void;
+  book?: { enabled: boolean; onToggle: (enabled: boolean) => void };
+  onChanged?: () => void;
   onClose: () => void;
 }) {
   const [rules, setRules] = useState<ReplaceRule[]>([]);
@@ -56,7 +55,7 @@ export function ReplaceRulesPage({
         () => {
           setError(null);
           if (done) setMessage(done);
-          onChanged();
+          onChanged?.();
         },
         (failure: unknown) => setError(String(failure)),
       );
@@ -79,7 +78,7 @@ export function ReplaceRulesPage({
         <Button
           variant="ghost"
           size="icon"
-          aria-label="返回阅读"
+          aria-label="返回"
           className="h-9 w-9 rounded-full text-secondary"
           onClick={onClose}
         >
@@ -91,7 +90,7 @@ export function ReplaceRulesPage({
           size="icon"
           aria-label="添加规则"
           className="h-9 w-9 rounded-full text-secondary"
-          onClick={() => setEditing(EMPTY_RULE)}
+          onClick={() => setEditing(EMPTY_REPLACE_RULE)}
         >
           <Icon name="add" size={20} />
         </Button>
@@ -117,19 +116,21 @@ export function ReplaceRulesPage({
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-3xl mx-auto w-full p-3 space-y-2">
-          <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-container-low px-4 py-3 text-sm">
-            <span>
-              本书使用替换规则
-              <span className="block text-[11px] text-secondary">
-                规则作用于每一行正文，修改后重新生成本书文本，阅读位置和书签会随之调整。
+          {book && (
+            <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-container-low px-4 py-3 text-sm">
+              <span>
+                本书使用替换规则
+                <span className="block text-[11px] text-secondary">
+                  规则作用于每一行正文，修改后重新生成本书文本，阅读位置和书签会随之调整。
+                </span>
               </span>
-            </span>
-            <Switch
-              aria-label="本书使用替换规则"
-              checked={enabledForBook}
-              onCheckedChange={onToggleBook}
-            />
-          </label>
+              <Switch
+                aria-label="本书使用替换规则"
+                checked={book.enabled}
+                onCheckedChange={book.onToggle}
+              />
+            </label>
+          )}
           {error && (
             <p role="alert" className="text-xs text-error break-words px-1">
               {error}
@@ -197,7 +198,7 @@ export function ReplaceRulesPage({
         </div>
       </div>
       {editing && (
-        <RuleEditor
+        <ReplaceRuleEditor
           rule={editing}
           service={service}
           onSave={(rule) =>
@@ -236,7 +237,8 @@ export function ReplaceRulesPage({
   );
 }
 
-function RuleEditor({
+/** Adds or edits one rule, with a test against sample text. */
+export function ReplaceRuleEditor({
   rule: initial,
   service,
   onSave,

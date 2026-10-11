@@ -7,18 +7,21 @@ export interface SelectionActions {
   bookmark: (selection: ReaderSelection) => void;
   search: (selection: ReaderSelection) => void;
   share: (selection: ReaderSelection) => void;
+  replace: (selection: ReaderSelection) => void;
 }
 
 const ACTIONS: { key: keyof SelectionActions; label: string; icon: string }[] = [
   { key: "copy", label: "复制", icon: "content_copy" },
   { key: "bookmark", label: "书签", icon: "bookmark_add" },
   { key: "search", label: "搜索", icon: "search" },
+  { key: "replace", label: "替换", icon: "find_replace" },
   { key: "share", label: "分享", icon: "share" },
 ];
 
 /**
  * Legado's text action menu: after a long press selects text on the page, a
- * floating bar offers copy, bookmark (with a note), search, and share. It
+ * floating bar offers copy, bookmark (with a note), search, a replace rule
+ * for the selected text, and share. It
  * waits until the selection stops changing, so dragging a handle does not
  * make it jump.
  */

@@ -698,6 +698,31 @@ pub struct BookReplaceRequest {
     pub enabled: bool,
 }
 
+/// A button of the reading menu's bottom bar.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReaderTool {
+    Search,
+    AutoPage,
+    ReadAloud,
+    Contents,
+    Style,
+    Night,
+    Bookmark,
+    ReplaceRules,
+    TocRules,
+    Encoding,
+    MoreSettings,
+}
+
+pub const MAX_BOTTOM_TOOLS: usize = 7;
+
+/// Legado's bottom menu.
+pub fn default_bottom_tools() -> Vec<ReaderTool> {
+    use ReaderTool::*;
+    vec![Search, AutoPage, ReadAloud, Contents, Style, Night]
+}
+
 /// How automatic page turning advances paginated text (Legado 自动翻页).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -796,8 +821,6 @@ pub struct ReadingStyle {
     pub volume_keys: bool,
     /// Row-major nine tap zones.
     pub tap_zones: Vec<TapAction>,
-    /// Screen brightness from 0 to 1 while reading; `None` follows the system.
-    pub brightness: Option<f64>,
     pub orientation: ScreenOrientation,
     /// The reading menu uses the page colours instead of the app theme.
     pub menu_follows_page: bool,
@@ -808,6 +831,8 @@ pub struct ReadingStyle {
     pub speech_pitch: f64,
     /// An installed system voice; `None` uses the engine default.
     pub speech_voice: Option<String>,
+    /// The tool buttons of the reading menu's bottom bar, in order.
+    pub bottom_tools: Vec<ReaderTool>,
 }
 
 impl Default for ReadingStyle {
@@ -881,7 +906,6 @@ impl Default for ReadingStyle {
             tap_zones: vec![
                 Previous, Previous, Next, Previous, Menu, Next, Previous, Next, Next,
             ],
-            brightness: None,
             orientation: ScreenOrientation::Auto,
             menu_follows_page: false,
             auto_page_mode: AutoPageMode::Reveal,
@@ -889,6 +913,7 @@ impl Default for ReadingStyle {
             speech_rate: 1.0,
             speech_pitch: 1.0,
             speech_voice: None,
+            bottom_tools: default_bottom_tools(),
         }
     }
 }
@@ -957,8 +982,14 @@ impl ReadingStyle {
         if self.tap_zones.len() != 9 {
             return Err(AppError::invalid_argument("tap zones need nine actions"));
         }
-        if let Some(brightness) = self.brightness {
-            range(brightness, 0.0, 1.0, "brightness")?;
+        if self.bottom_tools.is_empty() || self.bottom_tools.len() > MAX_BOTTOM_TOOLS {
+            return Err(AppError::invalid_argument(format!(
+                "the bottom bar needs 1 to {MAX_BOTTOM_TOOLS} tools"
+            )));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if !self.bottom_tools.iter().all(|tool| seen.insert(*tool)) {
+            return Err(AppError::invalid_argument("bottom bar tools repeat"));
         }
         range(self.speech_rate, 0.3, 3.0, "speech_rate")?;
         range(self.speech_pitch, 0.5, 2.0, "speech_pitch")?;

@@ -7,6 +7,7 @@ function fakeEngine() {
   const spoken: SpeechItem[][] = [];
   const engine: SpeechEngine = {
     available: () => true,
+    status: () => "ready",
     speak: vi.fn((items: SpeechItem[], _options, flush: boolean) => {
       if (flush) spoken.length = 0;
       spoken.push(items);
@@ -19,9 +20,11 @@ function fakeEngine() {
     },
   };
   const queue = () => spoken.flat();
-  const emit = (type: SpeechEvent["type"], index: number) =>
+  const emit = (type: "start" | "done" | "error", index: number) =>
     listener?.({ type, id: queue()[index].id });
-  return { engine, queue, emit };
+  const range = (index: number, start: number, end: number) =>
+    listener?.({ type: "range", id: queue()[index].id, start, end });
+  return { engine, queue, emit, range };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -32,8 +35,8 @@ describe("read-aloud", () => {
   it("splits the loaded text into spoken paragraphs from an offset", () => {
     const paragraphs = windowParagraphs("一\n\n  二 \n三", 100, 102, 5);
     expect(paragraphs).toEqual([
-      { start: 103, end: 107, text: "二" },
-      { start: 108, end: 109, text: "三" },
+      { start: 103, end: 107, text: "二", textStart: 105 },
+      { start: 108, end: 109, text: "三", textStart: 108 },
     ]);
   });
 
@@ -61,7 +64,7 @@ describe("read-aloud", () => {
     expect(queue()).toHaveLength(12);
     expect(queue()[0].text).toBe("第0段。");
     emit("start", 0);
-    expect(highlight).toHaveBeenLastCalledWith({ start: 0, end: 4 });
+    expect(highlight).toHaveBeenLastCalledWith({ start: 0, end: 4 }, null);
     // The fifth paragraph starts beyond the first page: the page turns.
     emit("start", 5);
     await flush();
@@ -79,8 +82,77 @@ describe("read-aloud", () => {
     reader.sleepAfter(30, 0);
     expect(reader.getSnapshot().stopsAt).toBe(30 * 60_000);
     reader.stop();
-    expect(highlight).toHaveBeenLastCalledWith(null);
-    expect(reader.getSnapshot()).toEqual({ state: "idle", current: null, stopsAt: null });
+    expect(highlight).toHaveBeenLastCalledWith(null, null);
+    expect(reader.getSnapshot()).toEqual({
+      state: "idle",
+      current: null,
+      stopsAt: null,
+      failed: false,
+    });
+    reader.dispose();
+  });
+
+  it("marks the spoken words and turns when they pass the page end", async () => {
+    const { engine, range, emit } = fakeEngine();
+    const long = "　　一二三四五六七八九十";
+    let end = 6;
+    const highlight = vi.fn();
+    const next = vi.fn(async () => {
+      end = long.length;
+      return true;
+    });
+    const reader = new ReadAloud(
+      engine,
+      {
+        paragraphs: (offset, limit) => windowParagraphs(long, 0, offset, limit),
+        pageStart: () => 0,
+        pageEnd: () => end,
+        next,
+        highlight,
+      },
+      { rate: 1, pitch: 1, voice: null },
+    );
+    reader.start();
+    await flush();
+    emit("start", 0);
+    // Utterance offsets count from the spoken text, after the indent.
+    range(0, 1, 3);
+    expect(highlight).toHaveBeenLastCalledWith({ start: 0, end: 12 }, { start: 3, end: 5 });
+    await flush();
+    expect(next).not.toHaveBeenCalled();
+    // The same paragraph continues on the next page.
+    range(0, 5, 6);
+    await flush();
+    expect(next).toHaveBeenCalledTimes(1);
+    reader.dispose();
+  });
+
+  it("loads more text when the loaded text runs out", async () => {
+    const { engine, queue, emit } = fakeEngine();
+    let loaded = "第一段";
+    const next = vi.fn(async () => {
+      loaded = "第一段\n第二段";
+      return true;
+    });
+    const reader = new ReadAloud(
+      engine,
+      {
+        paragraphs: (offset, limit) => windowParagraphs(loaded, 0, offset, limit),
+        pageStart: () => 0,
+        pageEnd: () => Number.POSITIVE_INFINITY,
+        next,
+        highlight: () => undefined,
+      },
+      { rate: 1, pitch: 1, voice: null },
+    );
+    reader.start();
+    await flush();
+    emit("start", 0);
+    emit("done", 0);
+    await flush();
+    await flush();
+    expect(next).toHaveBeenCalled();
+    expect(queue().map((item) => item.text)).toEqual(["第二段"]);
     reader.dispose();
   });
 

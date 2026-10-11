@@ -4,10 +4,13 @@ import type {
   InfoSlot,
   ReaderAsset,
   ReaderPreferences,
+  ReaderTool,
   ReadingStyle,
   StylePreset,
   TapAction,
 } from "../../../types/generated";
+import { DEFAULT_READING_STYLE } from "../../../types/generated";
+import { ALL_READER_TOOLS, MAX_BOTTOM_TOOLS, READER_TOOLS } from "../reader-tools";
 import type { SettingsService } from "../../../services/contracts";
 import { useRuntime } from "../../../application/runtime";
 import { Button } from "../../ui/button";
@@ -24,6 +27,8 @@ import {
 } from "../../ui/dialog";
 
 interface StylePanelProps {
+  /** The view shown first; the bottom bar's 设置 tool opens 更多设置. */
+  initialView?: "main" | "more";
   /** True while a view needs the page unobstructed, such as margins. */
   onPreview?: (previewing: boolean) => void;
   preferences: ReaderPreferences | null;
@@ -156,6 +161,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * titles, preset editing, and more settings. Changes preview immediately.
  */
 export function StylePanel({
+  initialView = "main",
   preferences,
   night,
   onChange,
@@ -163,7 +169,7 @@ export function StylePanel({
   onClose,
   onPreview,
 }: StylePanelProps) {
-  const [view, setView] = useState<View>("main");
+  const [view, setView] = useState<View>(initialView);
   useEffect(() => {
     onPreview?.(view === "margins");
     return () => onPreview?.(false);
@@ -367,18 +373,6 @@ function MainView({
         {preferences.readingMode === "double" && (
           <p className="text-[11px] text-secondary">窄屏自动显示单页，展开后恢复双页。</p>
         )}
-      </Section>
-      <Section title="简繁转换">
-        <Choice
-          label="简繁转换"
-          options={[
-            ["off", "不转换"],
-            ["to_simplified", "繁转简"],
-            ["to_traditional", "简转繁"],
-          ]}
-          value={style.chineseConversion}
-          onChange={(chineseConversion) => setStyle({ chineseConversion })}
-        />
       </Section>
       <Section title={`背景样式（${night ? "夜间" : "日间"}，长按或点铅笔编辑）`}>
         <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
@@ -695,6 +689,10 @@ function MoreView({
           ))}
         </div>
       </div>
+      <BottomToolsEditor
+        tools={style.bottomTools}
+        onChange={(bottomTools) => setStyle({ bottomTools })}
+      />
       <Section title="点击区域">
         <div className="grid grid-cols-3 gap-1.5">
           {style.tapZones.map((action, index) => (
@@ -746,6 +744,96 @@ function MoreView({
         </Button>
       </Section>
     </div>
+  );
+}
+
+/**
+ * The bottom bar's buttons: shown ones in order, with move and remove, then
+ * the remaining tools to add.
+ */
+function BottomToolsEditor({
+  tools,
+  onChange,
+}: {
+  tools: ReaderTool[];
+  onChange: (tools: ReaderTool[]) => void;
+}) {
+  const move = (index: number, step: -1 | 1) => {
+    const next = [...tools];
+    [next[index], next[index + step]] = [next[index + step], next[index]];
+    onChange(next);
+  };
+  const hidden = ALL_READER_TOOLS.filter((tool) => !tools.includes(tool));
+  const full = tools.length >= MAX_BOTTOM_TOOLS;
+  return (
+    <Section title={`底部工具栏（最多 ${MAX_BOTTOM_TOOLS} 个）`}>
+      <ul aria-label="底部工具栏按钮" className="space-y-1">
+        {tools.map((tool, index) => (
+          <li
+            key={tool}
+            className="flex items-center gap-2 rounded-lg bg-surface-container px-2 py-1 text-xs"
+          >
+            <Icon name={READER_TOOLS[tool].icon} size={15} className="text-secondary" />
+            <span className="flex-1">{READER_TOOLS[tool].label}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`上移 ${READER_TOOLS[tool].label}`}
+              className="h-7 w-7 text-secondary"
+              disabled={index === 0}
+              onClick={() => move(index, -1)}
+            >
+              <Icon name="arrow_upward" size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`下移 ${READER_TOOLS[tool].label}`}
+              className="h-7 w-7 text-secondary"
+              disabled={index === tools.length - 1}
+              onClick={() => move(index, 1)}
+            >
+              <Icon name="arrow_downward" size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`移除 ${READER_TOOLS[tool].label}`}
+              className="h-7 w-7 text-secondary"
+              disabled={tools.length <= 1}
+              onClick={() => onChange(tools.filter((item) => item !== tool))}
+            >
+              <Icon name="close" size={14} />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {hidden.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" aria-label="可添加的按钮">
+          {hidden.map((tool) => (
+            <button
+              key={tool}
+              type="button"
+              disabled={full}
+              aria-label={`添加 ${READER_TOOLS[tool].label}`}
+              onClick={() => onChange([...tools, tool])}
+              className="h-7 px-2.5 rounded-full text-[11px] border border-surface-variant flex items-center gap-1 disabled:opacity-40"
+            >
+              <Icon name="add" size={12} />
+              {READER_TOOLS[tool].label}
+            </button>
+          ))}
+        </div>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-[11px]"
+        onClick={() => onChange(DEFAULT_READING_STYLE.bottomTools)}
+      >
+        恢复默认
+      </Button>
+    </Section>
   );
 }
 

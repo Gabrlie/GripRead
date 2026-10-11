@@ -13,7 +13,16 @@ export interface SpeechOptions {
   voice: string | null;
 }
 
-export type SpeechEvent = { type: "start" | "done" | "error"; id: string };
+/**
+ * Progress of a queued item. `range` reports the UTF-16 range of its text
+ * being spoken, where the engine supports it.
+ */
+export type SpeechEvent =
+  | { type: "start" | "done" | "error"; id: string }
+  | { type: "range"; id: string; start: number; end: number };
+
+/** `pending` until the engine has started, `unavailable` without one. */
+export type SpeechStatus = "pending" | "ready" | "unavailable";
 
 export interface SpeechVoice {
   name: string;
@@ -22,6 +31,9 @@ export interface SpeechVoice {
 
 export interface SpeechEngine {
   available(): boolean;
+  status(): SpeechStatus;
+  /** Opens the system speech settings, where the platform has them. */
+  openSettings?: () => void;
   /** Queues items in order; `flush` first drops anything still queued. */
   speak(items: SpeechItem[], options: SpeechOptions, flush: boolean): void;
   stop(): void;
@@ -32,6 +44,8 @@ export interface SpeechEngine {
 interface AndroidSpeechBridge {
   prepare(): void;
   ready(): boolean;
+  status?(): string;
+  openSettings?(): void;
   speak(items: string, rate: number, pitch: number, voice: string, flush: boolean): void;
   stop(): void;
   voices(): string;
@@ -54,8 +68,14 @@ function androidEngine(bridge: AndroidSpeechBridge): SpeechEngine {
       };
       window.addEventListener("gripread-tts", handle);
     });
+  const status = (): SpeechStatus => {
+    const value = bridge.status?.() ?? (bridge.ready() ? "ready" : "pending");
+    return value === "ready" || value === "unavailable" ? value : "pending";
+  };
   return {
-    available: () => true,
+    available: () => status() !== "unavailable",
+    status,
+    openSettings: bridge.openSettings && (() => bridge.openSettings?.()),
     speak: (items, options, flush) =>
       void whenReady().then(() =>
         bridge.speak(
@@ -78,11 +98,11 @@ function androidEngine(bridge: AndroidSpeechBridge): SpeechEngine {
     onEvent: (listener) => {
       const handle = (event: Event) => {
         const detail = (event as CustomEvent<SpeechEvent>).detail;
-        if (
-          detail &&
-          (detail.type === "start" || detail.type === "done" || detail.type === "error")
-        )
-          listener(detail);
+        if (!detail) return;
+        if (detail.type === "range") {
+          if (detail.start >= 0) listener(detail);
+        } else if (detail.type === "start" || detail.type === "done" || detail.type === "error")
+          listener({ type: detail.type, id: detail.id });
       };
       window.addEventListener("gripread-tts", handle);
       return () => window.removeEventListener("gripread-tts", handle);
@@ -97,6 +117,7 @@ function webEngine(): SpeechEngine {
   let generation = 0;
   return {
     available: () => Boolean(synthesis),
+    status: () => (synthesis ? "ready" : "unavailable"),
     speak: (items, options, flush) => {
       if (!synthesis) return;
       if (flush) {
@@ -114,6 +135,14 @@ function webEngine(): SpeechEngine {
         utterance.onstart = () => current === generation && emit({ type: "start", id: item.id });
         utterance.onend = () => current === generation && emit({ type: "done", id: item.id });
         utterance.onerror = () => current === generation && emit({ type: "error", id: item.id });
+        utterance.onboundary = (event) =>
+          current === generation &&
+          emit({
+            type: "range",
+            id: item.id,
+            start: event.charIndex,
+            end: event.charIndex + Math.max(1, event.charLength ?? 1),
+          });
         synthesis.speak(utterance);
       }
     },

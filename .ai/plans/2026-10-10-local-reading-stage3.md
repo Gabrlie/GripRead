@@ -1,6 +1,6 @@
 # Local reading, stage 3
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
@@ -30,4 +30,4 @@ N4: Rust tests for line-wise rules with Java replacement syntax and offset maps,
 
 ## Handoff
 
-In progress. N1–N4 are implemented on the host; next is the Android debug APK and device results. The [text transforms decision](../notes/implemented/2026-10-10-text-transforms.md) records the N4 storage model.
+Completed. The debug APK built from N4 went to device acceptance; its findings are addressed by [stage 4](2026-10-11-local-reading-stage4.md). The [text transforms decision](../notes/implemented/2026-10-10-text-transforms.md) records the N4 storage model.

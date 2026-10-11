@@ -57,7 +57,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[68dvh] flex flex-col gap-2.5 p-4">
+      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[80dvh] flex flex-col gap-2.5 p-4">
         <DialogHeader>
           <DialogTitle>
             {view.kind === "edit"
@@ -164,7 +164,7 @@ function RuleList({
   return (
     <>
       <div
-        className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1 space-y-1"
+        className="max-h-[min(38dvh,20rem)] min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
         role="radiogroup"
         aria-label="本书目录规则"
       >

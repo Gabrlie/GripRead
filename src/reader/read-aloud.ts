@@ -4,7 +4,15 @@ import type { SpeechEngine, SpeechItem, SpeechOptions } from "../services/speech
 export interface ReadAloudParagraph {
   start: number;
   end: number;
+  /** The spoken text: the line without surrounding blanks. */
   text: string;
+  /** Absolute offset where `text` begins, after the line's indent. */
+  textStart: number;
+}
+
+export interface ReadAloudRange {
+  start: number;
+  end: number;
 }
 
 /** What read-aloud needs from the open book. */
@@ -14,9 +22,16 @@ export interface ReadAloudSource {
   /** The start and exclusive end of the visible page/spread. */
   pageStart(): number;
   pageEnd(): number;
-  /** Turns one page/spread forward; `false` at the end of the book. */
+  /**
+   * Turns one page/spread forward, or loads more text while scrolling;
+   * `false` at the end of the book.
+   */
   next(): Promise<boolean>;
-  highlight(range: { start: number; end: number } | null): void;
+  /**
+   * Marks the paragraph being read and, when the engine reports progress
+   * within it, the words being spoken; `null` clears both.
+   */
+  highlight(paragraph: ReadAloudRange | null, spoken: ReadAloudRange | null): void;
 }
 
 export type ReadAloudState = "idle" | "playing" | "paused";
@@ -26,19 +41,27 @@ export interface ReadAloudSnapshot {
   current: ReadAloudParagraph | null;
   /** When the sleep timer stops reading, as epoch milliseconds. */
   stopsAt: number | null;
+  /** The engine reported an error for something it was asked to speak. */
+  failed: boolean;
 }
 
 const BATCH = 12;
 
 /**
  * Legado's 朗读: speaks paragraph by paragraph from the visible page,
- * highlights the paragraph being read, turns pages as reading passes them,
- * and continues into later text. A batch is queued ahead, so the engine
+ * highlights the paragraph being read and, where the engine reports it, the
+ * words being spoken, turns pages as the spoken words pass the page end, and
+ * continues into later text. A batch is queued ahead, so the engine
  * keeps speaking while the page is in the background; the next batch is
  * queued before the current one runs out.
  */
 export class ReadAloud {
-  private snapshot: ReadAloudSnapshot = { state: "idle", current: null, stopsAt: null };
+  private snapshot: ReadAloudSnapshot = {
+    state: "idle",
+    current: null,
+    stopsAt: null,
+    failed: false,
+  };
   private listeners = new Set<() => void>();
   private generation = 0;
   private queued: { id: string; paragraph: ReadAloudParagraph }[] = [];
@@ -54,7 +77,12 @@ export class ReadAloud {
   ) {
     this.unsubscribe = engine.onEvent((event) => {
       if (event.type === "start") this.started(event.id);
-      else this.finished(event.id);
+      else if (event.type === "range") this.spoke(event.id, event.start, event.end);
+      else {
+        if (event.type === "error" && this.live(event.id) >= 0 && !this.snapshot.failed)
+          this.update({ failed: true });
+        this.finished(event.id);
+      }
     });
   }
 
@@ -87,7 +115,7 @@ export class ReadAloud {
   }
 
   public start(): void {
-    this.update({ state: "playing" });
+    this.update({ state: "playing", failed: false });
     void this.queueFrom(this.source.pageStart(), true);
   }
 
@@ -110,7 +138,7 @@ export class ReadAloud {
     clearTimeout(this.timer);
     this.timer = undefined;
     this.queued = [];
-    this.source.highlight(null);
+    this.source.highlight(null, null);
     this.update({ state: "idle", current: null, stopsAt: null });
   }
 
@@ -151,12 +179,14 @@ export class ReadAloud {
     const generation = flush ? ++this.generation : this.generation;
     let paragraphs = this.source.paragraphs(offset, BATCH);
     if (!paragraphs.length && flush) {
-      // The loaded text ends here; later text arrives once the page turns.
+      // The loaded text ends here; later text arrives once the page turns
+      // or scrolling loads it.
       if (!(await this.source.next()) || generation !== this.generation) {
         if (generation === this.generation) this.stop();
         return;
       }
-      paragraphs = this.source.paragraphs(this.source.pageStart(), BATCH);
+      paragraphs = this.source.paragraphs(offset, BATCH);
+      if (!paragraphs.length) paragraphs = this.source.paragraphs(this.source.pageStart(), BATCH);
     }
     if (generation !== this.generation || this.snapshot.state !== "playing") return;
     if (!paragraphs.length) {
@@ -188,17 +218,34 @@ export class ReadAloud {
     if (index < 0) return;
     const paragraph = this.queued[index].paragraph;
     this.update({ current: paragraph });
-    this.source.highlight({ start: paragraph.start, end: paragraph.end });
-    // Follow the reading onto later pages.
-    this.turning = this.turning.then(async () => {
-      for (let turns = 0; turns < 4 && paragraph.start >= this.source.pageEnd(); turns += 1) {
-        if (!(await this.source.next())) break;
-      }
-    });
+    this.source.highlight({ start: paragraph.start, end: paragraph.end }, null);
+    this.follow(paragraph.textStart);
     if (!this.refilled && index >= this.queued.length - 2) {
       this.refilled = true;
       void this.queueFrom(this.queued.at(-1)!.paragraph.end, false);
     }
+  }
+
+  /** The engine reached `start`–`end` of an utterance's text. */
+  private spoke(id: string, start: number, end: number): void {
+    const index = this.live(id);
+    if (index < 0 || start < 0) return;
+    const paragraph = this.queued[index].paragraph;
+    const spoken = {
+      start: Math.min(paragraph.end, paragraph.textStart + start),
+      end: Math.min(paragraph.end, paragraph.textStart + Math.max(start + 1, end)),
+    };
+    this.source.highlight({ start: paragraph.start, end: paragraph.end }, spoken);
+    this.follow(spoken.start);
+  }
+
+  /** Turns pages until `offset` is on screen. */
+  private follow(offset: number): void {
+    this.turning = this.turning.then(async () => {
+      for (let turns = 0; turns < 4 && offset >= this.source.pageEnd(); turns += 1) {
+        if (!(await this.source.next())) break;
+      }
+    });
   }
 
   private finished(id: string): void {
@@ -221,8 +268,15 @@ export function windowParagraphs(
   while (index < text.length && result.length < limit) {
     const newline = text.indexOf("\n", index);
     const end = newline < 0 ? text.length : newline;
-    const spoken = text.slice(index, end).trim();
-    if (spoken) result.push({ start: windowStart + index, end: windowStart + end, text: spoken });
+    const line = text.slice(index, end);
+    const spoken = line.trim();
+    if (spoken)
+      result.push({
+        start: windowStart + index,
+        end: windowStart + end,
+        text: spoken,
+        textStart: windowStart + index + (line.length - line.trimStart().length),
+      });
     index = end + 1;
   }
   return result;

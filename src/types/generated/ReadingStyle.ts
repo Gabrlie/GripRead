@@ -3,6 +3,7 @@ import type { AutoPageMode } from "./AutoPageMode";
 import type { ChineseConversion } from "./ChineseConversion";
 import type { InfoBar } from "./InfoBar";
 import type { Margins } from "./Margins";
+import type { ReaderTool } from "./ReaderTool";
 import type { ScreenOrientation } from "./ScreenOrientation";
 import type { StylePreset } from "./StylePreset";
 import type { TapAction } from "./TapAction";
@@ -48,11 +49,7 @@ fontAssetId: string | null, keepScreenOn: boolean, hideSystemBars: boolean, volu
 /**
  * Row-major nine tap zones.
  */
-tapZones: Array<TapAction>, 
-/**
- * Screen brightness from 0 to 1 while reading; `None` follows the system.
- */
-brightness: number | null, orientation: ScreenOrientation, 
+tapZones: Array<TapAction>, orientation: ScreenOrientation, 
 /**
  * The reading menu uses the page colours instead of the app theme.
  */
@@ -64,4 +61,8 @@ speechRate: number, speechPitch: number,
 /**
  * An installed system voice; `None` uses the engine default.
  */
-speechVoice: string | null, };
+speechVoice: string | null, 
+/**
+ * The tool buttons of the reading menu's bottom bar, in order.
+ */
+bottomTools: Array<ReaderTool>, };

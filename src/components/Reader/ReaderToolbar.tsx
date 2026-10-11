@@ -9,6 +9,8 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import type { ReaderPanel } from "./use-reader-panel";
+import type { ChineseConversion, ReaderTool } from "../../types/generated";
+import { READER_TOOLS } from "./reader-tools";
 
 const hiddenClass = (visible: boolean, hidden: string) =>
   `transition-transform duration-300 motion-reduce:transition-none ${visible ? "translate-y-0" : hidden}`;
@@ -27,7 +29,15 @@ interface ReaderTopBarProps {
   /** Legado's per-book 替换净化 switch. */
   replaceEnabled: boolean;
   onToggleReplace: () => void;
+  conversion: ChineseConversion;
+  onConversion: (conversion: ChineseConversion) => void;
 }
+
+const CONVERSIONS: [ChineseConversion, string][] = [
+  ["off", "不转换"],
+  ["to_simplified", "繁转简"],
+  ["to_traditional", "简转繁"],
+];
 
 /** Legado's read menu title bar: book and chapter, TXT tools, and More. */
 export function ReaderTopBar({
@@ -42,6 +52,8 @@ export function ReaderTopBar({
   onRefreshDirectory,
   replaceEnabled,
   onToggleReplace,
+  conversion,
+  onConversion,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -108,6 +120,24 @@ export function ReaderTopBar({
               <Icon name="find_replace" size={15} />
               替换规则
             </DropdownMenuItem>
+            <div
+              role="group"
+              aria-label="简繁转换"
+              className="border-t border-surface-variant/40 mt-1 pt-1"
+            >
+              <p className="px-2 py-1 text-[11px] text-secondary">简繁转换</p>
+              {CONVERSIONS.map(([value, label]) => (
+                <DropdownMenuItem
+                  key={value}
+                  role="menuitemradio"
+                  aria-checked={conversion === value}
+                  onClick={() => onConversion(value)}
+                >
+                  <Icon name={conversion === value ? "check" : "translate"} size={15} />
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -124,14 +154,16 @@ interface ReaderBottomBarProps {
   progressDisabled: boolean;
   onProgressDraft: () => void;
   onProgressCommit: (percent: number) => void;
-  onOpenPanel: (panel: ReaderPanel) => void;
+  /** The configured tool buttons, in order. */
+  tools: readonly ReaderTool[];
+  onTool: (tool: ReaderTool) => void;
   night: boolean;
-  onToggleNight: () => void;
 }
 
 /**
  * Legado's bottom menu: previous chapter, in-chapter progress, next chapter,
- * then search, automatic page turning, contents, 界面, and day/night.
+ * then the tool buttons chosen in 更多设置 (by default search, automatic page
+ * turning, read-aloud, contents, 界面, and day/night).
  */
 export function ReaderBottomBar({
   visible,
@@ -141,9 +173,9 @@ export function ReaderBottomBar({
   progressDisabled,
   onProgressDraft,
   onProgressCommit,
-  onOpenPanel,
+  tools,
+  onTool,
   night,
-  onToggleNight,
 }: ReaderBottomBarProps) {
   const [draft, setDraft] = useState<number | null>(null);
   const tool = (label: string, icon: string, onClick: () => void) => (
@@ -205,12 +237,13 @@ export function ReaderBottomBar({
           </Button>
         </div>
         <div className="flex items-center justify-around">
-          {tool("搜索", "search", () => onOpenPanel("search"))}
-          {tool("自动翻页", "schedule", () => onOpenPanel("automatic"))}
-          {tool("朗读", "headphones", () => onOpenPanel("aloud"))}
-          {tool("目录", "list", () => onOpenPanel("contents"))}
-          {tool("界面", "format_size", () => onOpenPanel("style"))}
-          {tool(night ? "日间" : "夜间", night ? "light_mode" : "dark_mode", onToggleNight)}
+          {tools.map((item) => {
+            const { label, icon } =
+              item === "night" && night
+                ? { label: "日间", icon: "light_mode" }
+                : READER_TOOLS[item];
+            return <span key={item}>{tool(label, icon, () => onTool(item))}</span>;
+          })}
         </div>
       </div>
     </div>

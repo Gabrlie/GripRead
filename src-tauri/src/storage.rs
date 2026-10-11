@@ -3595,6 +3595,17 @@ impl Storage {
         )?;
         Ok(())
     }
+    /// Built-in shelf tabs (全部 and the reading states) or a user group.
+    fn shelf_group_exists(&self, id: &str) -> Result<bool, AppError> {
+        if matches!(id, "all" | "reading" | "unread" | "finished") {
+            return Ok(true);
+        }
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )?)
+    }
     pub fn get_shelf_preferences(&self) -> Result<ShelfPreferences, AppError> {
         let json: Option<String> = self
             .conn
@@ -3608,13 +3619,7 @@ impl Storage {
             .map(|json| serde_json::from_str(&json))
             .transpose()?
             .unwrap_or_default();
-        if value.group_id != "all"
-            && !self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
-                params![value.group_id],
-                |row| row.get::<_, bool>(0),
-            )?
-        {
+        if !self.shelf_group_exists(&value.group_id)? {
             value.group_id = "all".into();
         }
         Ok(value)
@@ -3623,13 +3628,7 @@ impl Storage {
         &self,
         value: &ShelfPreferences,
     ) -> Result<ShelfPreferences, AppError> {
-        if value.group_id != "all"
-            && !self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_groups WHERE id = ?1)",
-                params![value.group_id],
-                |row| row.get::<_, bool>(0),
-            )?
-        {
+        if !self.shelf_group_exists(&value.group_id)? {
             return Err(AppError::new(
                 ErrorCode::NotFound,
                 "shelf group does not exist",
@@ -7336,6 +7335,44 @@ mod tests {
             storage.save_settings(&invalid).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+        // Styles saved with a session brightness load without it, and the
+        // bottom bar gets Legado's buttons.
+        let mut saved = serde_json::to_value(ReaderPreferences::default()).unwrap();
+        let style = saved["style"].as_object_mut().unwrap();
+        style.remove("bottomTools");
+        style.insert("brightness".into(), serde_json::json!(0.4));
+        storage
+            .conn
+            .execute(
+                "UPDATE reader_preferences SET preferences_json = ?1 WHERE id = 1",
+                params![saved.to_string()],
+            )
+            .unwrap();
+        let loaded = storage.get_settings().unwrap();
+        assert_eq!(
+            loaded.style.bottom_tools,
+            crate::models::default_bottom_tools()
+        );
+        use crate::models::ReaderTool;
+        for tools in [
+            vec![],
+            vec![ReaderTool::Search, ReaderTool::Search],
+            vec![ReaderTool::Search; 8],
+        ] {
+            let mut invalid = loaded.clone();
+            invalid.style.bottom_tools = tools;
+            assert_eq!(
+                storage.save_settings(&invalid).unwrap_err().code,
+                ErrorCode::InvalidArgument
+            );
+        }
+        let mut custom = loaded.clone();
+        custom.style.bottom_tools = vec![ReaderTool::Bookmark, ReaderTool::MoreSettings];
+        storage.save_settings(&custom).unwrap();
+        assert_eq!(
+            storage.get_settings().unwrap().style.bottom_tools,
+            custom.style.bottom_tools
+        );
     }
 
     #[test]
@@ -8340,6 +8377,14 @@ mod tests {
         assert_eq!(storage.list_library_books().unwrap().len(), 1);
         storage.delete_group(&group.id).unwrap();
         assert_eq!(storage.get_shelf_preferences().unwrap().group_id, "all");
+        for tab in ["reading", "unread", "finished"] {
+            let saved = ShelfPreferences {
+                group_id: tab.into(),
+                ..prefs.clone()
+            };
+            storage.save_shelf_preferences(&saved).unwrap();
+            assert_eq!(storage.get_shelf_preferences().unwrap().group_id, tab);
+        }
     }
 
     #[test]

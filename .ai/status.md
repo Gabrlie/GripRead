@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [local reading stage 3 task](plans/2026-10-10-local-reading-stage3.md) is in progress: device fixes, the reading-state bookshelf, reading polish, replace rules, 简繁 conversion, and read-aloud, delivered as one Android build.
+The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is in progress: fixes from stage 3 device acceptance, a rebuilt settings page, backup and restore, and a WebDAV cloud bookshelf, delivered as one Android build.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-N1–N4 are implemented on the host; build the Android APK and collect device results. The macOS native suite needs a run on macOS.
+D1 is implemented on the host; next are the settings page (D2) and backup with the cloud bookshelf (D3). The macOS native suite needs a run on macOS.

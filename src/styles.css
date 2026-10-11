@@ -656,8 +656,18 @@ html.shelf-hide-scrollbar body::-webkit-scrollbar,
   display: none;
 }
 
+/* Read-aloud progress (src/components/Reader/speech-highlight.ts). */
+::highlight(gripread-speech) {
+  background-color: color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+::highlight(gripread-speech-word) {
+  background-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
+}
+
 .reader-prose {
   text-align: justify;
+  /* Full-width punctuation like Legado; the curl rasterizer draws plain glyphs. */
+  text-spacing-trim: space-all;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;

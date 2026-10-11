@@ -18,21 +18,39 @@ import {
   emptyReaderSnapshot,
 } from "../../reader";
 import type { ReaderSnapshot } from "../../reader";
-import type { Bookmark, TxtEncoding, TxtEncodingInfo } from "../../types/generated";
+import type {
+  Bookmark,
+  ReaderTool,
+  ReplaceRule,
+  TxtEncoding,
+  TxtEncodingInfo,
+} from "../../types/generated";
 import { Button } from "../ui/button";
 import { useAutomaticTurn } from "./use-automatic-turn";
 import { useReadingTime } from "./use-reading-time";
 import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
-import { ReplaceRulesPage } from "./pages/ReplaceRulesPage";
+import { EMPTY_REPLACE_RULE, ReplaceRuleEditor, ReplaceRulesPage } from "../Rules/ReplaceRulesPage";
 import { Icon } from "../ui/Icon";
 import { ReadAloudDialog } from "./dialogs/ReadAloudDialog";
-import { ReadAloud, windowParagraphs, type ReadAloudSnapshot } from "../../reader/read-aloud";
+import {
+  ReadAloud,
+  windowParagraphs,
+  type ReadAloudRange,
+  type ReadAloudSnapshot,
+} from "../../reader/read-aloud";
+import { clearSpeech, paintSpeech, speechHighlightSupported } from "./speech-highlight";
 import { speechEngine } from "../../services/speech";
 
 const NO_SUBSCRIBE = () => () => undefined;
-const IDLE_SNAPSHOT: ReadAloudSnapshot = { state: "idle", current: null, stopsAt: null };
+const IDLE_SNAPSHOT: ReadAloudSnapshot = {
+  state: "idle",
+  current: null,
+  stopsAt: null,
+  failed: false,
+};
 const IDLE_ALOUD = () => IDLE_SNAPSHOT;
 const loadVoices = () => speechEngine().voices();
+const speechStatus = () => speechEngine().status();
 import { BookmarkNoteDialog } from "./dialogs/BookmarkNoteDialog";
 import { useReaderActions } from "./use-reader-actions";
 import { canShowSpread, useReaderLayout, syncMeasureBox } from "./use-reader-layout";
@@ -53,6 +71,7 @@ import { SearchPage, SearchResultBar } from "./pages/SearchPage";
 import { TocRuleDialog } from "./dialogs/TocRuleDialog";
 import { EncodingDialog } from "./dialogs/EncodingDialog";
 import { AutomaticDialog } from "./dialogs/AutomaticDialog";
+import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 const noopSubscribe = () => () => {};
@@ -106,9 +125,24 @@ export function ReaderView() {
       ? "single"
       : (preferences?.readingMode ?? "single");
   useEffect(() => {
-    const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    // Android WebViews can report the old size in the resize event of a
+    // rotation, so the root element's observed size decides as well.
+    const root = document.documentElement;
+    const resize = () =>
+      setViewport((current) => {
+        const width = root.clientWidth || window.innerWidth;
+        const height = root.clientHeight || window.innerHeight;
+        return current.width === width && current.height === height ? current : { width, height };
+      });
+    const observer = new ResizeObserver(resize);
+    observer.observe(root);
     window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("orientationchange", resize);
+    };
   }, []);
   /** The search result being read, while the result bar is shown. */
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
@@ -184,8 +218,10 @@ export function ReaderView() {
     system.setKeepScreenOn(true);
     return () => system.setKeepScreenOn(false);
   }, [bookId, keepScreenOn]);
-  // Legado's brightness and screen orientation apply only while reading.
-  const brightness = style?.brightness ?? null;
+  // Brightness set from the reading menu lasts for this reading session only;
+  // it and the screen orientation return to the system on leaving.
+  const [brightness, setBrightness] = useState<number | null>(null);
+  useEffect(() => setBrightness(null), [bookId]);
   const orientation = style?.orientation ?? "auto";
   useEffect(() => {
     if (!bookId) return;
@@ -206,7 +242,8 @@ export function ReaderView() {
       // Results stay for the result bar; only a running search stops.
       if (closed === "search") cancelSearch();
       // Previewed adjustments are written at once when their panel closes.
-      if (closed === "style") void settingsStore.flush().catch(() => undefined);
+      if (closed === "style" || closed === "settings")
+        void settingsStore.flush().catch(() => undefined);
     },
     [cancelSearch, settingsStore],
   );
@@ -252,6 +289,23 @@ export function ReaderView() {
         : undefined,
   });
   const pauseAutomatic = automaticTurn.pause;
+  /**
+   * From starting automatic turning until leaving it, a tap on the menu zone
+   * shows the automatic panel instead of the reading menu (Legado
+   * AutoReadDialog). While turning runs, the panel hides after a while.
+   */
+  const [autoSession, setAutoSession] = useState(false);
+  const [autoPanel, setAutoPanel] = useState(false);
+  const [autoActivity, setAutoActivity] = useState(0);
+  useEffect(() => {
+    setAutoSession(false);
+    setAutoPanel(false);
+  }, [bookId]);
+  useEffect(() => {
+    if (!autoPanel || !automaticTurn.running) return;
+    const timer = window.setTimeout(() => setAutoPanel(false), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [autoPanel, automaticTurn.running, autoActivity]);
   const openPanel = useCallback(
     (next: ReaderPanel) => {
       void pauseAutomatic();
@@ -299,18 +353,57 @@ export function ReaderView() {
         },
         next: async () => {
           const snapshot = controller.getSnapshot();
-          if (snapshot.mode === "scroll" || !snapshot.hasAfter) return false;
+          if (snapshot.mode === "scroll") {
+            // Scrolling reads on into text loaded after the current window.
+            if (!snapshot.scroll?.hasAfter) return false;
+            await controller.extendScroll("forward");
+            return true;
+          }
+          if (!snapshot.hasAfter) return false;
           adapter.current?.skipNextAnimation();
           await controller.next();
           return true;
         },
-        highlight: (range) => search.setHighlight(range),
+        highlight: (paragraph, spoken) => {
+          speechMark.current = paragraph ? { paragraph, spoken } : null;
+          if (speechHighlightSupported()) paintSpeechRef.current();
+          else search.setHighlight(paragraph);
+        },
       },
       speechOptionsRef.current,
     );
     // The search highlight setter is stable for the session.
   }, [controller]);
   useEffect(() => () => readAloud?.dispose(), [readAloud]);
+  /** What read-aloud marks; painted again whenever the text re-renders. */
+  const speechMark = useRef<{ paragraph: ReadAloudRange; spoken: ReadAloudRange | null } | null>(
+    null,
+  );
+  const paintSpeechRef = useRef(() => {});
+  paintSpeechRef.current = () => {
+    const root = gestureBox.current;
+    if (!root || !speechHighlightSupported()) return;
+    const mark = speechMark.current;
+    if (!mark) {
+      clearSpeech();
+      return;
+    }
+    const focus = paintSpeech(root, mark.paragraph, mark.spoken);
+    // Scrolling follows the reading, keeping it in the upper part of the screen.
+    const box = scrollBox.current;
+    if (focus && box && effectiveMode === "scroll") {
+      const view = box.getBoundingClientRect();
+      if (focus.bottom > view.bottom - view.height * 0.2 || focus.top < view.top)
+        box.scrollTo({
+          top: box.scrollTop + focus.top - view.top - view.height * 0.3,
+          behavior: reducedMotion ? "auto" : "smooth",
+        });
+    }
+  };
+  useLayoutEffect(() => {
+    paintSpeechRef.current();
+  }, [state.page, state.pages, state.scroll, state.scrollRevision, effectiveMode]);
+  useEffect(() => () => clearSpeech(), [bookId]);
   useEffect(() => {
     readAloud?.setOptions(speechOptions);
   }, [readAloud, speechOptions.rate, speechOptions.pitch, speechOptions.voice]);
@@ -390,6 +483,24 @@ export function ReaderView() {
     state.page,
   ]);
 
+  const useTool = (tool: ReaderTool) => {
+    const panels: Partial<Record<ReaderTool, ReaderPanel>> = {
+      search: "search",
+      "auto-page": "automatic",
+      "read-aloud": "aloud",
+      contents: "contents",
+      style: "style",
+      "replace-rules": "replace",
+      "toc-rules": "rules",
+      encoding: "encoding",
+      "more-settings": "settings",
+    };
+    const target = panels[tool];
+    if (target) openPanel(target);
+    else if (tool === "night") settingsStore.set({ theme: night ? "light" : "dark" });
+    else if (tool === "bookmark") addBookmark();
+  };
+
   /** A bookmark being added from selected text, or a bookmark whose note is edited. */
   const [noteDraft, setNoteDraft] = useState<
     { excerpt: string; offset: number } | { excerpt: string; bookmark: Bookmark } | null
@@ -447,9 +558,19 @@ export function ReaderView() {
           (result) => result === "copied" && setNotice("已复制，可粘贴分享"),
           () => undefined,
         ),
+      // Legado's 替换: a plain-text rule for the selection, scoped to this book.
+      replace: (selection) =>
+        setReplaceDraft({
+          ...EMPTY_REPLACE_RULE,
+          name: selection.text.slice(0, 20),
+          pattern: selection.text,
+          isRegex: false,
+          scope: activeBook?.book.title ?? "",
+        }),
     }),
-    [openPanel, search],
+    [activeBook?.book.title, openPanel, search],
   );
+  const [replaceDraft, setReplaceDraft] = useState<ReplaceRule | null>(null);
   // The reader's selection menu replaces the WebView's own toolbar.
   useEffect(() => {
     if (!bookId) return;
@@ -608,7 +729,9 @@ export function ReaderView() {
   }, [controller, reducedMotion, preferences?.pageTurnEffect]);
   useLayoutEffect(() => {
     if (!controller) return;
-    synchronizeScroll.current?.();
+    // The scroll text already reported its position while scrolling; by now
+    // the new mode's layout is committed, so reading it again would record
+    // an earlier line (setMode keeps the last reported position).
     void pauseAutomatic();
     if (pageBox.current && measureBox.current)
       syncMeasureBox(pageBox.current, measureBox.current, effectiveMode === "double" ? 2 : 1);
@@ -662,6 +785,7 @@ export function ReaderView() {
         event.preventDefault();
         // Like Android back in Legado: hide the reading menu before leaving.
         if (controls) setControls(false);
+        else if (autoPanel) setAutoPanel(false);
         else void close();
       } else if (["ArrowRight", "PageDown", " "].includes(event.key)) {
         event.preventDefault();
@@ -673,22 +797,24 @@ export function ReaderView() {
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [panel, closePanel, closing, close, turn, controls]);
+  }, [panel, closePanel, closing, close, turn, controls, autoPanel]);
 
-  // Volume keys turn pages while a book is open (Legado 音量键翻页).
+  // Volume keys turn pages while a book is open (Legado 音量键翻页). With the
+  // reading menu or a tool open, or while reading aloud, they change the
+  // volume again.
   const turnRef = useRef(turn);
   turnRef.current = turn;
+  const volumeTurns =
+    Boolean(bookId) && volumeKeys && !controls && panel === null && aloud.state !== "playing";
   useEffect(() => {
-    if (!bookId || !volumeKeys) return;
+    if (!volumeTurns) return;
     system.setVolumeKeys(true);
-    const unsubscribe = system.onVolumeKey((direction) => {
-      if (panelRef.current === null) turnRef.current(direction);
-    });
+    const unsubscribe = system.onVolumeKey((direction) => turnRef.current(direction));
     return () => {
       unsubscribe();
       system.setVolumeKeys(false);
     };
-  }, [bookId, volumeKeys]);
+  }, [volumeTurns]);
   // Hidden system bars return with the reading menu.
   useEffect(() => {
     if (!bookId || !hideBars) return;
@@ -708,9 +834,13 @@ export function ReaderView() {
         setControls(false);
         return;
       }
-      if (action === "menu") setControls(true);
-      else if (action === "next" || action === "previous") turn(action, point);
-      else if (action === "next-chapter" || action === "previous-chapter") {
+      if (action === "menu" && autoSession) setAutoPanel((shown) => !shown);
+      else if (action === "menu") setControls(true);
+      else if (action === "next" || action === "previous") {
+        turn(action, point);
+        // A manual turn pauses automatic turning; the panel shows it.
+        if (autoSession) setAutoPanel(true);
+      } else if (action === "next-chapter" || action === "previous-chapter") {
         void pauseAutomatic();
         if (controller)
           run(() => controller.seekChapter(action === "next-chapter" ? "next" : "previous"));
@@ -821,6 +951,10 @@ export function ReaderView() {
           onRefreshDirectory={reloadTools}
           replaceEnabled={useReplaceRules}
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
+          conversion={style?.chineseConversion ?? "off"}
+          onConversion={(chineseConversion) =>
+            style && settingsStore.set({ style: { ...style, chineseConversion } })
+          }
         />
       </div>
       <ReaderSurface
@@ -951,9 +1085,7 @@ export function ReaderView() {
           <ReaderBrightnessBar
             visible={controls && panel === null && searchIndex === null && !previewing}
             value={brightness}
-            onChange={(value) =>
-              style && settingsStore.set({ style: { ...style, brightness: value } })
-            }
+            onChange={setBrightness}
           />
         )}
       </div>
@@ -981,9 +1113,9 @@ export function ReaderView() {
             void pauseAutomatic();
             if (controller) run(() => controller.seekChapterProgress(target / 100));
           }}
-          onOpenPanel={openPanel}
+          tools={style?.bottomTools ?? []}
+          onTool={useTool}
           night={night}
-          onToggleNight={() => settingsStore.set({ theme: night ? "light" : "dark" })}
         />
       </div>
       {searchIndex !== null && panel === null && (
@@ -999,8 +1131,9 @@ export function ReaderView() {
           }}
         />
       )}
-      {panel === "style" && (
+      {(panel === "style" || panel === "settings") && (
         <StylePanel
+          initialView={panel === "settings" ? "more" : "main"}
           preferences={preferences}
           night={night}
           onChange={settingsStore.set}
@@ -1068,7 +1201,8 @@ export function ReaderView() {
       {panel === "aloud" && readAloud && (
         <ReadAloudDialog
           snapshot={aloud}
-          available={readAloud.available()}
+          status={speechStatus}
+          onOpenSettings={speechEngine().openSettings}
           rate={speechOptions.rate}
           pitch={speechOptions.pitch}
           voice={speechOptions.voice}
@@ -1115,8 +1249,7 @@ export function ReaderView() {
       {panel === "replace" && (
         <ReplaceRulesPage
           service={runtime.services.reader}
-          enabledForBook={useReplaceRules}
-          onToggleBook={toggleBookReplace}
+          book={{ enabled: useReplaceRules, onToggle: toggleBookReplace }}
           onChanged={() => (replaceChanged.current = true)}
           onClose={() => {
             closePanel();
@@ -1125,6 +1258,21 @@ export function ReaderView() {
               applyTransformsRef.current();
             }
           }}
+        />
+      )}
+      {replaceDraft && (
+        <ReplaceRuleEditor
+          rule={replaceDraft}
+          service={runtime.services.reader}
+          onSave={async (rule) => {
+            await runtime.services.reader.saveReplaceRule(rule);
+            setReplaceDraft(null);
+            setNotice("已添加替换规则");
+            // A book with 替换净化 off turns it on to show the new rule.
+            if (useReplaceRules) applyTransformsRef.current();
+            else toggleBookReplace(true);
+          }}
+          onClose={() => setReplaceDraft(null)}
         />
       )}
       {panel === "search" && (
@@ -1195,7 +1343,36 @@ export function ReaderView() {
             closePanel();
             setControls(false);
             automaticTurn.start();
+            setAutoSession(true);
+            setAutoPanel(true);
           }}
+        />
+      )}
+      {autoSession && autoPanel && panel === null && !controls && (
+        <AutoPagePanel
+          running={automaticTurn.running}
+          scroll={effectiveMode === "scroll"}
+          seconds={preferences?.autoPageSeconds ?? 8}
+          speed={preferences?.autoScrollSpeed ?? 40}
+          mode={style?.autoPageMode ?? "reveal"}
+          onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
+          onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
+          onMode={(autoPageMode) =>
+            style && settingsStore.set({ style: { ...style, autoPageMode } })
+          }
+          onPause={() => void pauseAutomatic()}
+          onResume={() => automaticTurn.start()}
+          onMenu={() => {
+            void pauseAutomatic();
+            setAutoPanel(false);
+            setControls(true);
+          }}
+          onExit={() => {
+            void pauseAutomatic();
+            setAutoSession(false);
+            setAutoPanel(false);
+          }}
+          onActivity={() => setAutoActivity((count) => count + 1)}
         />
       )}
     </div>
