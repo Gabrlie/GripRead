@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-D1 is implemented on the host; next are the settings page (D2) and backup with the cloud bookshelf (D3). The macOS native suite needs a run on macOS.
+D1–D3 are implemented on the host; next is the Android APK and device results. The macOS native suite needs a run on macOS.

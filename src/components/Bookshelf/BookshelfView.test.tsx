@@ -10,6 +10,7 @@ import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type { ImportStatus, LibraryBook } from "../../types/generated";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
+import { syncServiceMocks } from "../../test/sync";
 afterEach(() => {
   cleanup();
   vi.clearAllTimers();
@@ -121,6 +122,7 @@ function runtime(books: LibraryBook[] = []) {
       saveShelfPreferences: vi.fn(async (value) => value),
       ...fontServiceMocks(),
     },
+    sync: syncServiceMocks(),
   } satisfies AppServices);
 }
 function view(app: AppRuntime) {

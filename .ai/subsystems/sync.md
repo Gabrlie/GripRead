@@ -38,6 +38,8 @@ Shelf removal propagates without deleting cloud originals. Cache cleanup stays l
 
 Create automatic snapshots daily when portable data changed, retaining the latest 7 automatic snapshots. Keep manual backups separately from automatic rotation. Snapshots contain versioned portable records and settings, not cached content or credentials.
 
+A backup is one JSON document described by the [portable backup decision](../notes/implemented/2026-10-11-portable-backups.md): book records keyed by the SHA-256 of each book's original file, with progress, bookmarks, reading time, placement, and metadata, plus groups, chapter and replace rules, and preferences without device fonts or background images. Backups go to `Backups/` as `manual-<UTC stamp>.json` or `auto-<UTC stamp>.json`, or to a file the reader picks. Restoring merges: matching books take the backup's metadata and placement, the newer position, the union of bookmarks, and the larger time of each day; records for books not on the device wait until a book with the same original file is imported. The cloud bookshelf uploads original files to `Books/` and records their hashes in `Books/index.json`; downloading fetches the complete file into the ordinary import, which matches it to the same book instead of adding a copy. The WebDAV password stays in local storage.
+
 Preview a backup, create a local recovery point, then apply the selected restoration as new synchronization changes. Reject unreadable or incompatible snapshots without damaging current state. Restore does not delete cloud originals or overwrite remote records as an unversioned database replacement.
 
 ## Acceptance

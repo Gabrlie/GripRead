@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { BookCover } from "./BookCover";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
+import { describeError } from "../Cloud/format";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -35,6 +36,8 @@ export function BookDetailPage({
   const { state: shelf, store: shelfStore } = useShelf();
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [cloudNotice, setCloudNotice] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -201,6 +204,37 @@ export function BookDetailPage({
               ))}
             </dl>
           </section>
+          {cloudNotice && (
+            <p role="status" className="text-xs text-primary break-words px-1">
+              {cloudNotice}
+            </p>
+          )}
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={uploading}
+            onClick={() => {
+              setUploading(true);
+              setCloudNotice(null);
+              runtime.services.sync
+                .uploadBooks([book.book.id])
+                .then(
+                  (report) =>
+                    setCloudNotice(
+                      report.uploaded
+                        ? "已上传到云书架。"
+                        : report.skipped
+                          ? "云书架已有这本书。"
+                          : `上传失败：${report.failed.join("；")}`,
+                    ),
+                  (failure: unknown) => setCloudNotice(describeError(failure)),
+                )
+                .finally(() => setUploading(false));
+            }}
+          >
+            <Icon name="cloud" size={16} />
+            {uploading ? "正在上传…" : "上传到云书架"}
+          </Button>
           <Button
             variant="ghost"
             className="w-full text-error"

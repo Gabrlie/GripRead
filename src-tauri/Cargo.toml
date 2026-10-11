@@ -44,6 +44,7 @@ thiserror = "2.0.20"
 uuid = { version = "1.24.1", features = ["v4", "serde"] }
 fancy-regex = "0.19.2"
 aho-corasick = "1.1.5"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 # Debug builds are installed on devices for acceptance. Optimize dependencies
 # (decoding, encoding detection, hashing, regex, SQLite) so imports and reads

@@ -32,6 +32,14 @@ import type {
   ReadingStats,
   PickedFile,
   ReplaceRule,
+  WebDavSettings,
+  SaveWebDavRequest,
+  RemoteBackup,
+  BackupSource,
+  BackupPreview,
+  RestoreReport,
+  CloudBook,
+  CloudUploadReport,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -127,8 +135,35 @@ export interface SettingsService {
   /** Also clears the font from saved preferences when it was selected. */
   deleteFont(id: string): Promise<void>;
 }
+/** WebDAV backups and the cloud bookshelf (Sync specification). */
+export interface SyncService {
+  getWebDav(): Promise<WebDavSettings>;
+  saveWebDav(request: SaveWebDavRequest): Promise<WebDavSettings>;
+  /** Checks an address and account; `password: null` uses the saved one. */
+  testWebDav(request: SaveWebDavRequest): Promise<void>;
+  backupNow(): Promise<RemoteBackup>;
+  /** The daily automatic backup; `null` when it is not due or not enabled. */
+  runAutomaticBackup(): Promise<RemoteBackup | null>;
+  listBackups(): Promise<RemoteBackup[]>;
+  deleteBackup(name: string): Promise<void>;
+  listRecoveryPoints(): Promise<string[]>;
+  /** Picks a backup file; `null` when cancelled. */
+  pickBackupFile(): Promise<BackupSource | null>;
+  previewBackup(source: BackupSource): Promise<BackupPreview>;
+  /** Writes a local recovery point, then merges the backup into the library. */
+  restoreBackup(source: BackupSource): Promise<RestoreReport>;
+  /** Saves the current records to a file the reader picks; `false` when cancelled. */
+  exportBackupFile(): Promise<boolean>;
+  listCloudBooks(): Promise<CloudBook[]>;
+  /** Uploads the original files of these books (every shelf book when empty). */
+  uploadBooks(bookIds: string[]): Promise<CloudUploadReport>;
+  /** Downloads a cloud book completely, for the ordinary import. */
+  downloadCloudBook(name: string): Promise<PickedFile>;
+  deleteCloudBook(name: string): Promise<void>;
+}
 export interface AppServices {
   library: LibraryService;
   reader: ReaderService;
   settings: SettingsService;
+  sync: SyncService;
 }

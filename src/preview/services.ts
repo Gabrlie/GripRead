@@ -18,6 +18,7 @@ import type {
   TxtTocRule,
 } from "../types/generated";
 import { DEFAULT_READING_STYLE } from "../types/generated";
+import type { CloudBook, RemoteBackup, WebDavSettings } from "../types/generated";
 
 const BOOK_ID = "preview-book";
 const VERSION = "preview-v1";
@@ -113,6 +114,48 @@ const PREFERENCES: ReaderPreferences = {
 
 export function previewServices(): AppServices {
   let preferences = { ...PREFERENCES };
+  let webdav: WebDavSettings = {
+    url: "https://dav.jianguoyun.com/dav/",
+    username: "reader@example.com",
+    hasPassword: true,
+    autoBackup: true,
+    lastBackupAt: Date.now() - 3_600_000,
+    lastError: null,
+  };
+  let backups: RemoteBackup[] = [
+    {
+      name: "auto-20261011-080000.json",
+      size: 18_204,
+      modified: Date.now() - 3_600_000,
+      automatic: true,
+    },
+    {
+      name: "manual-20261009-213000.json",
+      size: 17_980,
+      modified: Date.now() - 2 * 86_400_000,
+      automatic: false,
+    },
+  ];
+  let cloud: CloudBook[] = [
+    {
+      name: "云海问道.txt",
+      title: "云海问道",
+      author: null,
+      size: 52_000,
+      sourceSha256: "preview",
+      uploadedAt: Date.now() - 86_400_000,
+      localBookId: "preview-book",
+    },
+    {
+      name: "山河故人.txt",
+      title: "山河故人",
+      author: "佚名",
+      size: 1_204_000,
+      sourceSha256: "other",
+      uploadedAt: Date.now() - 3 * 86_400_000,
+      localBookId: null,
+    },
+  ];
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
   let position: ReaderLocator | null = contextFor(ENTRIES[3].locator.offset);
   let settings: BookTocSettings = { ruleId: null, splitLongChapters: false };
@@ -337,6 +380,64 @@ export function previewServices(): AppServices {
       pickBackgroundImage: async () => null,
       readFont: unsupported,
       deleteFont: unsupported,
+    },
+    sync: {
+      getWebDav: async () => webdav,
+      saveWebDav: async (request) =>
+        (webdav = {
+          ...webdav,
+          url: request.url,
+          username: request.username,
+          hasPassword: webdav.hasPassword || Boolean(request.password),
+          autoBackup: request.autoBackup,
+        }),
+      testWebDav: async () => undefined,
+      backupNow: async () => {
+        const backup = {
+          name: `manual-${Date.now()}.json`,
+          size: 18_000,
+          modified: Date.now(),
+          automatic: false,
+        };
+        backups = [backup, ...backups];
+        webdav = { ...webdav, lastBackupAt: Date.now() };
+        return backup;
+      },
+      runAutomaticBackup: async () => null,
+      listBackups: async () => backups,
+      deleteBackup: async (name) => {
+        backups = backups.filter((backup) => backup.name !== name);
+      },
+      listRecoveryPoints: async () => [],
+      pickBackupFile: async () => null,
+      previewBackup: async () => ({
+        createdAt: Date.now() - 86_400_000,
+        device: "Android",
+        books: 3,
+        booksOnDevice: 1,
+        bookmarks: 4,
+        groups: 1,
+        replaceRules: 2,
+        tocRules: 0,
+        hasPreferences: true,
+      }),
+      restoreBackup: async () => ({
+        groupsCreated: 1,
+        rulesRestored: 2,
+        preferencesRestored: true,
+        booksRestored: 1,
+        booksPending: 2,
+        positionsRestored: 1,
+        bookmarksAdded: 4,
+        recoveryPoint: "recovery-1.json",
+      }),
+      exportBackupFile: async () => false,
+      listCloudBooks: async () => cloud,
+      uploadBooks: async () => ({ uploaded: 0, skipped: 1, failed: [] }),
+      downloadCloudBook: unsupported,
+      deleteCloudBook: async (name) => {
+        cloud = cloud.filter((book) => book.name !== name);
+      },
     },
   };
 }

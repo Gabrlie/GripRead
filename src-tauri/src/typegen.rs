@@ -64,6 +64,18 @@ const IPC_TYPES: &[&str] = &[
     "ScreenOrientation",
     "AutoPageMode",
     "ReaderTool",
+    "WebDavSettings",
+    "SaveWebDavRequest",
+    "RemoteBackup",
+    "CloudBook",
+    "CloudUploadReport",
+    "BackupPreview",
+    "RestoreReport",
+    "BackupSource",
+    "BackupSourceRequest",
+    "NameRequest",
+    "BookIdListRequest",
+    "OptionalPathRequest",
     "ShelfState",
     "ShelfPlacement",
     "MoveBookRequest",
@@ -181,6 +193,18 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ScreenOrientation>(&config)?;
     export_all::<AutoPageMode>(&config)?;
     export_all::<ReaderTool>(&config)?;
+    export_all::<WebDavSettings>(&config)?;
+    export_all::<SaveWebDavRequest>(&config)?;
+    export_all::<RemoteBackup>(&config)?;
+    export_all::<CloudBook>(&config)?;
+    export_all::<CloudUploadReport>(&config)?;
+    export_all::<BackupPreview>(&config)?;
+    export_all::<RestoreReport>(&config)?;
+    export_all::<BackupSource>(&config)?;
+    export_all::<BackupSourceRequest>(&config)?;
+    export_all::<NameRequest>(&config)?;
+    export_all::<BookIdListRequest>(&config)?;
+    export_all::<OptionalPathRequest>(&config)?;
     export_all::<ShelfState>(&config)?;
     export_all::<ShelfPlacement>(&config)?;
     export_all::<MoveBookRequest>(&config)?;

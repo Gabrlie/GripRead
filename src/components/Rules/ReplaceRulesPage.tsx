@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { usePageLayer } from "../Layout/use-page-layer";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
@@ -31,8 +32,11 @@ export function ReplaceRulesPage({
   book,
   onChanged,
   onClose,
+  backCloses = false,
 }: {
   service: ReaderService;
+  /** The Android back gesture closes the page (outside the reader, which handles it). */
+  backCloses?: boolean;
   /** This book's own 替换净化 switch. */
   book?: { enabled: boolean; onToggle: (enabled: boolean) => void };
   onChanged?: () => void;
@@ -43,6 +47,7 @@ export function ReplaceRulesPage({
   const [message, setMessage] = useState<string | null>(null);
   const [editing, setEditing] = useState<ReplaceRule | null>(null);
   const [importing, setImporting] = useState(false);
+  const layer = usePageLayer(backCloses ? onClose : () => undefined);
   const load = () =>
     service.listReplaceRules().then(setRules, (failure: unknown) => setError(String(failure)));
   useEffect(() => {
@@ -68,6 +73,7 @@ export function ReplaceRulesPage({
   };
   return (
     <div
+      ref={backCloses ? layer : undefined}
       role="dialog"
       aria-modal="true"
       aria-label="替换净化"

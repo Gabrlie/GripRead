@@ -19,6 +19,7 @@ import type {
 } from "../../types/generated";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
 import { DEFAULT_READING_STYLE } from "../../types/generated";
+import { syncServiceMocks } from "../../test/sync";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -232,6 +233,7 @@ function runtime() {
       saveShelfPreferences: vi.fn(async (value) => value),
       ...fontServiceMocks(),
     },
+    sync: syncServiceMocks(),
   } satisfies AppServices);
 }
 

@@ -20,6 +20,12 @@ class OpenDocumentArgs {
   lateinit var uri: String
 }
 
+@InvokeArg
+class CreateDocumentArgs {
+  lateinit var name: String
+  lateinit var mime: String
+}
+
 /**
  * Opens a picked document for the Rust import worker (src-tauri/src/documents.rs).
  * The descriptor is detached, so Rust owns and closes it.
@@ -44,6 +50,37 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
       invoke.resolve(result)
     } catch (error: Exception) {
       invoke.reject(error.message ?: "The document cannot be opened")
+    }
+  }
+
+  /** Opens the system "save as" screen; the callback returns a writable descriptor. */
+  @Command
+  fun createDocument(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(CreateDocumentArgs::class.java)
+      val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+        .addCategory(Intent.CATEGORY_OPENABLE)
+        .setType(args.mime)
+        .putExtra(Intent.EXTRA_TITLE, args.name)
+      startActivityForResult(invoke, intent, "documentCreated")
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "The save screen cannot be opened")
+    }
+  }
+
+  @ActivityCallback
+  fun documentCreated(invoke: Invoke, result: ActivityResult) {
+    val uri = result.data?.data
+    if (result.resultCode != Activity.RESULT_OK || uri == null) {
+      invoke.resolve(JSObject())
+      return
+    }
+    try {
+      val descriptor = activity.contentResolver.openFileDescriptor(uri, "wt")
+        ?: throw IllegalStateException("The document provider returned no file")
+      invoke.resolve(JSObject().put("fd", descriptor.detachFd()))
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "The document cannot be written")
     }
   }
 

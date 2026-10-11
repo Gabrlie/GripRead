@@ -1,10 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type { AppServices } from "./contracts";
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  WebDavSettings,
+  SaveWebDavRequest,
+  RemoteBackup,
+  BackupSource,
+  BackupSourceRequest,
+  BackupPreview,
+  RestoreReport,
+  CloudBook,
+  CloudUploadReport,
+  NameRequest,
+  BookIdListRequest,
+  OptionalPathRequest,
   Book,
   UpdateBookRequest,
   ShelfPreferences,
@@ -374,5 +386,62 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("delete_reader_font", {
         request: { id } satisfies ReaderAssetRequest,
       }),
+  },
+  sync: {
+    getWebDav: () => invokeCommand<WebDavSettings>("get_webdav_settings"),
+    saveWebDav: (request) =>
+      invokeCommand<WebDavSettings>("save_webdav_settings", {
+        request: request satisfies SaveWebDavRequest,
+      }),
+    testWebDav: (request) =>
+      invokeCommand<void>("test_webdav", { request: request satisfies SaveWebDavRequest }),
+    backupNow: () => invokeCommand<RemoteBackup>("backup_to_webdav"),
+    runAutomaticBackup: () => invokeCommand<RemoteBackup | null>("run_automatic_backup"),
+    listBackups: () => invokeCommand<RemoteBackup[]>("list_remote_backups"),
+    deleteBackup: (name) =>
+      invokeCommand<void>("delete_remote_backup", { request: { name } satisfies NameRequest }),
+    listRecoveryPoints: () => invokeCommand<string[]>("list_recovery_points"),
+    pickBackupFile: async () => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "GripRead 备份", extensions: ["json"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return null;
+      return { kind: "file", name: selected } satisfies BackupSource;
+    },
+    previewBackup: (source) =>
+      invokeCommand<BackupPreview>("preview_backup", {
+        request: { source } satisfies BackupSourceRequest,
+      }),
+    restoreBackup: (source) =>
+      invokeCommand<RestoreReport>("restore_backup", {
+        request: { source } satisfies BackupSourceRequest,
+      }),
+    exportBackupFile: async () => {
+      // Android shows its own "save as" screen (DocumentPlugin.kt).
+      const android = /Android/i.test(navigator.userAgent);
+      const path = android
+        ? null
+        : await save({
+            defaultPath: `gripread-backup-${new Date().toISOString().slice(0, 10)}.json`,
+            filters: [{ name: "GripRead 备份", extensions: ["json"] }],
+          });
+      if (!android && path === null) return false;
+      return invokeCommand<boolean>("export_backup_file", {
+        request: { path } satisfies OptionalPathRequest,
+      });
+    },
+    listCloudBooks: () => invokeCommand<CloudBook[]>("list_cloud_books"),
+    uploadBooks: (bookIds) =>
+      invokeCommand<CloudUploadReport>("upload_cloud_books", {
+        request: { bookIds } satisfies BookIdListRequest,
+      }),
+    downloadCloudBook: (name) =>
+      invokeCommand<PickedFile>("download_cloud_book", {
+        request: { name } satisfies NameRequest,
+      }),
+    deleteCloudBook: (name) =>
+      invokeCommand<void>("delete_cloud_book", { request: { name } satisfies NameRequest }),
   },
 };

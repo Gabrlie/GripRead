@@ -113,6 +113,8 @@ function MainContent() {
   useEffect(() => runtime.library.connect(), [runtime]);
   useEffect(() => {
     void runtime.settings.load();
+    // The daily WebDAV backup; failures are shown in 设置 › 备份与恢复.
+    void runtime.services.sync.runAutomaticBackup().catch(() => undefined);
   }, [runtime]);
   useEffect(() => (settings.value ? applyTheme(settings.value) : undefined), [settings.value]);
   const backState = useRef({ activeTab, activeBook, closePending });

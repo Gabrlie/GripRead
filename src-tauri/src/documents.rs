@@ -303,6 +303,62 @@ pub fn list_txt_folder<R: Runtime>(
 #[cfg(target_os = "android")]
 struct DocumentPlugin<R: Runtime>(tauri::plugin::PluginHandle<R>);
 
+/// Writes `bytes` to a file the reader chooses: the system "save as" screen
+/// on Android, or `path` from the save dialog elsewhere. Returns whether a
+/// file was written (`false` when the screen was closed).
+#[cfg(target_os = "android")]
+pub fn save_document<R: Runtime>(
+    app: &AppHandle<R>,
+    _path: Option<&str>,
+    name: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<bool, AppError> {
+    use std::os::fd::FromRawFd;
+    use tauri::Manager;
+    #[derive(serde::Serialize)]
+    struct Payload<'a> {
+        name: &'a str,
+        mime: &'a str,
+    }
+    #[derive(serde::Deserialize)]
+    struct Response {
+        fd: Option<i32>,
+    }
+    let plugin = app.state::<DocumentPlugin<R>>();
+    let response: Response = plugin
+        .0
+        .run_mobile_plugin("createDocument", Payload { name, mime })
+        .map_err(|error| AppError::new(ErrorCode::InvalidPath, error.to_string()))?;
+    let Some(fd) = response.fd else {
+        return Ok(false);
+    };
+    // SAFETY: the Kotlin plugin detaches the descriptor and transfers its
+    // ownership to this process; it is closed when the File is dropped.
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(true)
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn save_document<R: Runtime>(
+    _app: &AppHandle<R>,
+    path: Option<&str>,
+    _name: &str,
+    _mime: &str,
+    bytes: &[u8],
+) -> Result<bool, AppError> {
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    let target = Path::new(path);
+    let partial = target.with_extension("part");
+    fs::write(&partial, bytes)?;
+    fs::rename(&partial, target)?;
+    Ok(true)
+}
+
 /// Registers the Android document helper in `gen/android` (`DocumentPlugin.kt`).
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("gripread-documents")

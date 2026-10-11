@@ -30,7 +30,7 @@ interface TocRuleDialogProps {
   onClose: () => void;
 }
 
-const NEW_RULE: TxtTocRule = {
+export const NEW_TOC_RULE: TxtTocRule = {
   id: "",
   name: "",
   pattern: "",
@@ -93,7 +93,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
           />
         )}
         {view.kind === "edit" && (
-          <RuleEditor
+          <TocRuleEditor
             rule={view.rule}
             busy={props.busy}
             onTest={props.onTest}
@@ -110,7 +110,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
           />
         )}
         {view.kind === "import" && (
-          <RuleImport
+          <TocRuleImport
             busy={props.busy}
             onCancel={() => setView({ kind: "list" })}
             onImport={(json) =>
@@ -269,7 +269,7 @@ function RuleList({
         />
       </label>
       <div className="flex flex-wrap gap-2 pt-1">
-        <Button size="sm" disabled={busy} onClick={() => onEdit(NEW_RULE)}>
+        <Button size="sm" disabled={busy} onClick={() => onEdit(NEW_TOC_RULE)}>
           <Icon name="add" size={14} />
           新建
         </Button>
@@ -296,7 +296,8 @@ function RuleList({
   );
 }
 
-function RuleEditor({
+/** Edits one chapter rule, testing it against its example. */
+export function TocRuleEditor({
   rule,
   busy,
   onTest,
@@ -382,7 +383,8 @@ function RuleEditor({
   );
 }
 
-function RuleImport({
+/** Pastes a rule export from Legado or GripRead. */
+export function TocRuleImport({
   busy,
   onCancel,
   onImport,

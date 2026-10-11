@@ -1,3 +1,4 @@
+mod cloud;
 pub mod commands;
 pub mod documents;
 pub mod error;
@@ -9,6 +10,7 @@ mod transform;
 pub mod txt;
 pub mod txt_toc;
 pub mod typegen;
+mod webdav;
 
 use commands::{
     add_bookmark, cancel_import, cancel_search, cancel_txt_decode, create_group, delete_bookmark,
@@ -25,6 +27,12 @@ use commands::{
     add_reading_time, clear_book_cover, delete_reader_font, import_reader_background,
     import_reader_font, list_reader_fonts, list_txt_folder, move_book, read_reader_font,
     reading_stats, set_book_cover, update_bookmark_note,
+};
+use commands::{
+    backup_to_webdav, delete_cloud_book, delete_remote_backup, download_cloud_book,
+    export_backup_file, get_webdav_settings, list_cloud_books, list_recovery_points,
+    list_remote_backups, preview_backup, restore_backup, run_automatic_backup,
+    save_webdav_settings, test_webdav, upload_cloud_books,
 };
 use commands::{
     delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
@@ -170,7 +178,22 @@ pub fn run() {
             import_replace_rules,
             export_replace_rules,
             test_replace_rule,
-            set_book_replace_rules
+            set_book_replace_rules,
+            get_webdav_settings,
+            save_webdav_settings,
+            test_webdav,
+            backup_to_webdav,
+            run_automatic_backup,
+            list_remote_backups,
+            delete_remote_backup,
+            list_recovery_points,
+            preview_backup,
+            restore_backup,
+            export_backup_file,
+            list_cloud_books,
+            upload_cloud_books,
+            download_cloud_book,
+            delete_cloud_book
         ])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")

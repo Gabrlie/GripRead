@@ -1108,3 +1108,134 @@ impl Default for ShelfPreferences {
 pub struct SaveShelfPreferencesRequest {
     pub preferences: ShelfPreferences,
 }
+
+/// This device's WebDAV account (Legado WebDav 设置). The password is kept in
+/// local storage only; it is never returned or written into backups.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSettings {
+    /// The server address, such as `https://dav.jianguoyun.com/dav/`; empty when not set up.
+    pub url: String,
+    pub username: String,
+    pub has_password: bool,
+    /// Back up once a day when the records changed, keeping seven automatic backups.
+    pub auto_backup: bool,
+    pub last_backup_at: Option<i64>,
+    /// Why the last automatic backup failed.
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWebDavRequest {
+    pub url: String,
+    pub username: String,
+    /// `None` keeps the saved password.
+    pub password: Option<String>,
+    pub auto_backup: bool,
+}
+
+/// A backup file in the WebDAV backup folder.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBackup {
+    pub name: String,
+    pub size: u64,
+    pub modified: Option<i64>,
+    /// Made by the daily automatic backup, which keeps only the latest seven.
+    pub automatic: bool,
+}
+
+/// A book file on the cloud bookshelf.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudBook {
+    /// The file name in the cloud book folder.
+    pub name: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub size: u64,
+    /// SHA-256 of the file, when it was uploaded by GripRead.
+    pub source_sha256: Option<String>,
+    pub uploaded_at: Option<i64>,
+    /// The local book with the same file, if any.
+    pub local_book_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudUploadReport {
+    pub uploaded: u32,
+    /// Books already on the cloud bookshelf.
+    pub skipped: u32,
+    /// Titles that could not be uploaded, with the reason.
+    pub failed: Vec<String>,
+}
+
+/// What a backup holds and how much of it matches this library.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupPreview {
+    pub created_at: i64,
+    pub device: String,
+    pub books: u32,
+    /// Books of the backup that are on this device.
+    pub books_on_device: u32,
+    pub bookmarks: u32,
+    pub groups: u32,
+    pub replace_rules: u32,
+    /// User chapter rules (built-in rules are only switched and ordered).
+    pub toc_rules: u32,
+    pub has_preferences: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreReport {
+    pub groups_created: u32,
+    pub rules_restored: u32,
+    pub preferences_restored: bool,
+    pub books_restored: u32,
+    /// Books not on this device; their records apply when they are imported.
+    pub books_pending: u32,
+    pub positions_restored: u32,
+    pub bookmarks_added: u32,
+    /// The local recovery point written before restoring.
+    pub recovery_point: String,
+}
+
+/// Where a backup comes from or goes to.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "name")]
+pub enum BackupSource {
+    /// A file in the WebDAV backup folder.
+    Remote(String),
+    /// A local recovery point.
+    Recovery(String),
+    /// A file the reader picked.
+    File(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSourceRequest {
+    pub source: BackupSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NameRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookIdListRequest {
+    pub book_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionalPathRequest {
+    pub path: Option<String>,
+}

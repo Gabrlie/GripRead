@@ -33,7 +33,10 @@ use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+mod portable;
+pub use portable::{backup_digest, parse_backup, BackupDocument, StoredWebDav};
+
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -780,6 +783,28 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        // Schema 13: backup records waiting for their book to be imported,
+        // and this device's WebDAV account and backup state.
+        if current < 13 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE pending_book_restores (
+                    source_sha256 TEXT PRIMARY KEY NOT NULL,
+                    record_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE sync_settings (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    settings_json TEXT NOT NULL
+                 );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -6252,7 +6277,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
     }
 
     #[test]
@@ -7219,7 +7244,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -7387,7 +7412,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -8118,6 +8143,145 @@ mod tests {
     }
 
     #[test]
+    fn backups_restore_records_by_source_and_wait_for_missing_books() {
+        let root = TestRoot::new();
+        let text = "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。";
+        let source = write_source(&root.0, "backup.txt", text.as_bytes());
+        let other = write_source(&root.0, "other.txt", "另一本书\n正文".as_bytes());
+        let mut storage = Storage::open(&root.0.join("first")).unwrap();
+        let id = import(&mut storage, &source, "first").book.id;
+        let other_id = import(&mut storage, &other, "other").book.id;
+        let at = |storage: &Storage, id: &str, needle: &str| {
+            let context = storage.content_read_context(id).unwrap();
+            let verified = verify_content_context(&context).unwrap();
+            let text = read_verified_text(&context, &verified).unwrap();
+            let offset = text[..text.find(needle).unwrap()].encode_utf16().count() as u64;
+            resolve_offset_from_context(
+                &ResolveOffsetRequest {
+                    book_id: id.into(),
+                    content_version: context.record.asset.content_version.clone(),
+                    resource_id: context.record.asset.id.clone(),
+                    offset,
+                },
+                &context,
+                &verified,
+            )
+            .unwrap()
+        };
+        storage.save_position(&at(&storage, &id, "后来")).unwrap();
+        storage
+            .add_bookmark(&BookmarkRequest {
+                book_id: id.clone(),
+                locator: at(&storage, &id, "头发"),
+                excerpt: "头发".into(),
+                note: Some("记一笔".into()),
+            })
+            .unwrap();
+        let group = storage.create_group("收藏").unwrap();
+        storage
+            .move_book(&id, &ShelfPlacement::Group(group.id))
+            .unwrap();
+        storage
+            .move_book(&other_id, &ShelfPlacement::State(ShelfState::Finished))
+            .unwrap();
+        storage.add_reading_time(&id, "2026-10-11", 300).unwrap();
+        storage
+            .update_book(&UpdateBookRequest {
+                book_id: id.clone(),
+                title: "云海".into(),
+                author: Some("作者".into()),
+                intro: Some("简介".into()),
+            })
+            .unwrap();
+        let backup = storage.export_backup("Linux").unwrap();
+        assert_eq!(backup.books.len(), 2);
+        // Positions carry only a short context for finding them again.
+        assert!(backup
+            .books
+            .iter()
+            .flat_map(|book| &book.bookmarks)
+            .all(|mark| {
+                mark.locator.context_before.chars().count() <= 32
+                    && mark.locator.context_after.chars().count() <= 32
+            }));
+        let backup = parse_backup(&serde_json::to_vec(&backup).unwrap()).unwrap();
+
+        // Another device has one of the two books, converted to traditional
+        // characters, so its text differs and positions are found by context.
+        let mut second = Storage::open(&root.0.join("second")).unwrap();
+        let mut preferences = second.get_settings().unwrap();
+        preferences.style.chinese_conversion = crate::models::ChineseConversion::ToTraditional;
+        second.save_settings(&preferences).unwrap();
+        let local = import(&mut second, &source, "second").book.id;
+        second.set_txt_encoding(&local, TxtEncoding::Auto).unwrap();
+        second.add_reading_time(&local, "2026-10-11", 900).unwrap();
+        let preview = second.preview_backup(&backup).unwrap();
+        assert_eq!(
+            (preview.books, preview.books_on_device, preview.bookmarks),
+            (2, 1, 1)
+        );
+        let report = second.restore_backup(&backup).unwrap();
+        assert_eq!(report.books_restored, 1);
+        assert_eq!(report.books_pending, 1);
+        assert_eq!(report.groups_created, 1);
+        assert!(report.preferences_restored);
+        let book = second.get_book(&local).unwrap();
+        assert_eq!(
+            (book.title.as_str(), book.author.as_deref()),
+            ("云海", Some("作者"))
+        );
+        let window = second.read_content_window(&local, None, 200).unwrap();
+        // Restored preferences turned conversion off again, but the text is
+        // only rewritten when the book is next opened.
+        assert!(window.text.contains("後來"));
+        let saved = second.saved_position(&local).unwrap().unwrap();
+        assert!(window
+            .text
+            .encode_utf16()
+            .skip(saved.offset as usize)
+            .take(2)
+            .eq("後來".encode_utf16()));
+        let marks = second.list_bookmarks(&local).unwrap();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].note, "记一笔");
+        assert!(window
+            .text
+            .encode_utf16()
+            .skip(marks[0].locator.offset as usize)
+            .take(2)
+            .eq("頭髮".encode_utf16()));
+        let groups = second.list_groups().unwrap();
+        assert!(groups
+            .iter()
+            .any(|g| g.name == "收藏" && g.book_ids == vec![local.clone()]));
+        // The larger time of each day is kept.
+        assert_eq!(
+            second.reading_stats("2026-10-11").unwrap().today_seconds,
+            900
+        );
+        // Restoring again adds nothing twice.
+        let again = second.restore_backup(&backup).unwrap();
+        assert_eq!((again.bookmarks_added, again.groups_created), (0, 0));
+        assert_eq!(second.list_bookmarks(&local).unwrap().len(), 1);
+
+        // The missing book takes its records when it is imported.
+        assert_eq!(second.pending_restore_count().unwrap(), 1);
+        let arrived = import(&mut second, &other, "arrived").book.id;
+        assert!(second.apply_pending_restore(&arrived).unwrap());
+        assert_eq!(second.pending_restore_count().unwrap(), 0);
+        assert!(second
+            .list_library_books()
+            .unwrap()
+            .iter()
+            .any(|book| book.book.id == arrived && book.shelf_state == Some(ShelfState::Finished)));
+        // Recovery points keep what was there before.
+        let point = second.write_recovery_point("Linux").unwrap();
+        assert_eq!(second.list_recovery_points().unwrap(), vec![point.clone()]);
+        assert_eq!(second.read_recovery_point(&point).unwrap().books.len(), 2);
+        assert!(second.read_recovery_point("../x.json").is_err());
+    }
+
+    #[test]
     fn replace_rules_and_chinese_conversion_rewrite_text_and_relocate_positions() {
         let root = TestRoot::new();
         let text = "第一章 开始\n广告：点击这里\n头发里的云\n第二章 结束\n后来门开了。";
@@ -8527,7 +8691,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -8595,7 +8759,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(

@@ -253,6 +253,13 @@ pub async fn start_import(
                         Err(error) if attempt == 0 && duplicate_validation_retry(&error) => {
                             continue;
                         }
+                        Ok(imported) => {
+                            // Backup records restored before the book was here.
+                            if let Err(error) = guard.apply_pending_restore(&imported.book.id) {
+                                eprintln!("Unable to apply restored records: {}", error.message);
+                            }
+                            return Ok(imported);
+                        }
                         result => return result,
                     }
                 }
@@ -1788,6 +1795,244 @@ pub async fn set_book_replace_rules(
 ) -> Result<(), AppError> {
     with_storage(&state, move |storage| {
         storage.set_book_replace_rules(&request.book_id, request.enabled)
+    })
+    .await
+}
+
+/// The platform recorded in backups, for display when restoring.
+fn device_name() -> &'static str {
+    match std::env::consts::OS {
+        "android" => "Android",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "ios" => "iOS",
+        other => other,
+    }
+}
+
+/// Runs WebDAV work off the async runtime; it locks storage only briefly.
+async fn with_cloud<T: Send + 'static>(
+    state: &State<'_, AppState>,
+    operation: impl FnOnce(&Mutex<Storage>, &std::path::Path) -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    let storage = Arc::clone(&state.storage);
+    let root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || operation(&storage, &root))
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, format!("cloud worker stopped: {error}")))?
+}
+
+fn merged_webdav(
+    storage: &Storage,
+    request: &crate::models::SaveWebDavRequest,
+) -> Result<crate::storage::StoredWebDav, AppError> {
+    let mut settings = storage.stored_webdav()?;
+    let url = request.url.trim().to_string();
+    if !url.is_empty() && !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::invalid_argument(
+            "the WebDAV address must start with https:// or http://",
+        ));
+    }
+    settings.url = url;
+    settings.username = request.username.trim().to_string();
+    if let Some(password) = &request.password {
+        settings.password = password.clone();
+    }
+    settings.auto_backup = request.auto_backup;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn get_webdav_settings(
+    state: State<'_, AppState>,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    with_storage(&state, |storage| Ok(storage.stored_webdav()?.view())).await
+}
+
+#[tauri::command]
+pub async fn save_webdav_settings(
+    request: crate::models::SaveWebDavRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    with_storage(&state, move |storage| {
+        let settings = merged_webdav(storage, &request)?;
+        storage.save_stored_webdav(&settings)?;
+        Ok(settings.view())
+    })
+    .await
+}
+
+/// Checks an address and account before saving them.
+#[tauri::command]
+pub async fn test_webdav(
+    request: crate::models::SaveWebDavRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_cloud(&state, move |storage, _| {
+        let settings = merged_webdav(&*lock_storage(storage)?, &request)?;
+        crate::cloud::client(&settings)?.check()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn backup_to_webdav(
+    state: State<'_, AppState>,
+) -> Result<crate::models::RemoteBackup, AppError> {
+    with_cloud(&state, |storage, _| {
+        crate::cloud::backup_now(storage, device_name(), false)
+    })
+    .await
+}
+
+/// The daily automatic backup, called at startup; `None` when not due.
+#[tauri::command]
+pub async fn run_automatic_backup(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::models::RemoteBackup>, AppError> {
+    with_cloud(&state, |storage, _| {
+        crate::cloud::automatic_backup(storage, device_name())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_remote_backups(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::RemoteBackup>, AppError> {
+    with_cloud(&state, |storage, _| crate::cloud::list_backups(storage)).await
+}
+
+#[tauri::command]
+pub async fn delete_remote_backup(
+    request: crate::models::NameRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::cloud::delete_backup(storage, &request.name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_recovery_points(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    with_storage(&state, |storage| storage.list_recovery_points()).await
+}
+
+fn read_backup_source<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    storage: &Mutex<Storage>,
+    root: &std::path::Path,
+    source: &crate::models::BackupSource,
+) -> Result<crate::storage::BackupDocument, AppError> {
+    use crate::models::BackupSource;
+    match source {
+        BackupSource::Remote(name) => crate::cloud::fetch_backup(storage, name),
+        BackupSource::Recovery(name) => lock_storage(storage)?.read_recovery_point(name),
+        BackupSource::File(path) => {
+            let operation_id = Uuid::new_v4().to_string();
+            let (path, _, _staged) =
+                crate::documents::resolve_named_source(app, root, path, &operation_id)?;
+            if std::fs::metadata(&path)?.len() > 64 * 1024 * 1024 {
+                return Err(AppError::invalid_argument("the backup file is too large"));
+            }
+            crate::storage::parse_backup(&std::fs::read(&path)?)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn preview_backup(
+    request: crate::models::BackupSourceRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::BackupPreview, AppError> {
+    with_cloud(&state, move |storage, root| {
+        let document = read_backup_source(&app, storage, root, &request.source)?;
+        lock_storage(storage)?.preview_backup(&document)
+    })
+    .await
+}
+
+/// Writes a recovery point, then merges the backup into the library.
+#[tauri::command]
+pub async fn restore_backup(
+    request: crate::models::BackupSourceRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<crate::models::RestoreReport, AppError> {
+    with_cloud(&state, move |storage, root| {
+        let document = read_backup_source(&app, storage, root, &request.source)?;
+        let mut guard = lock_storage(storage)?;
+        let recovery_point = guard.write_recovery_point(device_name())?;
+        let mut report = guard.restore_backup(&document)?;
+        report.recovery_point = recovery_point;
+        Ok(report)
+    })
+    .await
+}
+
+/// Saves the current records to a file the reader picks (`path` comes from
+/// the desktop save dialog; Android shows its own screen). `false`: cancelled.
+#[tauri::command]
+pub async fn export_backup_file(
+    request: crate::models::OptionalPathRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<bool, AppError> {
+    with_cloud(&state, move |storage, _| {
+        let document = lock_storage(storage)?.export_backup(device_name())?;
+        let bytes = serde_json::to_vec(&document)?;
+        let name = format!("gripread-backup-{}.json", document.created_at);
+        crate::documents::save_document(
+            &app,
+            request.path.as_deref(),
+            &name,
+            "application/json",
+            &bytes,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_cloud_books(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::CloudBook>, AppError> {
+    with_cloud(&state, |storage, _| crate::cloud::list_cloud_books(storage)).await
+}
+
+#[tauri::command]
+pub async fn upload_cloud_books(
+    request: crate::models::BookIdListRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::CloudUploadReport, AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::cloud::upload_books(storage, &request.book_ids)
+    })
+    .await
+}
+
+/// Downloads a cloud book for import; the import matches it to the shelf.
+#[tauri::command]
+pub async fn download_cloud_book(
+    request: crate::models::NameRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::PickedFile, AppError> {
+    with_cloud(&state, move |storage, root| {
+        crate::cloud::download_cloud_book(storage, root, &request.name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_cloud_book(
+    request: crate::models::NameRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_cloud(&state, move |storage, _| {
+        crate::cloud::delete_cloud_book(storage, &request.name)
     })
     .await
 }

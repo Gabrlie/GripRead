@@ -18,6 +18,7 @@ import { Button } from "../ui/button";
 import { LibraryManager } from "./LibraryManager";
 import { BookDetailPage } from "./BookDetailPage";
 import { ReadingRecordsPage } from "./ReadingRecordsPage";
+import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
@@ -32,13 +33,14 @@ type ShelfBook = {
   missing: boolean;
 };
 export function BookshelfView() {
-  const { shelf, setShelf, openReader } = useApp();
+  const { shelf, setShelf, openReader, setActiveTab } = useApp();
   const { state, store } = useLibrary();
   const { state: groupState, store: groupStore } = useShelf();
   const preferences = useShelfPreferences();
   const [manager, setManager] = useState<"removed" | "sort" | null>(null);
   const [infoBook, setInfoBook] = useState<LibraryBook | null>(null);
   const [records, setRecords] = useState(false);
+  const [cloud, setCloud] = useState(false);
   const runtime = useRuntime();
   const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
   useEffect(() => {
@@ -246,6 +248,7 @@ export function BookshelfView() {
             { icon: "swap_vert", label: "书架排序", onSelect: () => setManager("sort") },
             { icon: "label", label: "分组管理", onSelect: () => setIsGroupModalOpen(true) },
             { icon: "schedule", label: "阅读记录", onSelect: () => setRecords(true) },
+            { icon: "cloud", label: "云书架", onSelect: () => setCloud(true) },
             { icon: "delete", label: "已移出书籍", onSelect: () => setManager("removed") },
           ]}
         />
@@ -465,6 +468,15 @@ export function BookshelfView() {
           onOpenBook={(book) => {
             setRecords(false);
             setInfoBook(book);
+          }}
+        />
+      )}
+      {cloud && (
+        <CloudShelfPage
+          onClose={() => setCloud(false)}
+          onSetUp={() => {
+            setCloud(false);
+            setActiveTab("settings");
           }}
         />
       )}
