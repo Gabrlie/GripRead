@@ -11,6 +11,7 @@ import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
+import { Toaster } from "./components/ui/toast";
 import {
   dismissWithEscape,
   flushWhenHidden,
@@ -262,6 +263,7 @@ function MainContent() {
         )}
       </div>
       <ImportModal />
+      <Toaster />
     </div>
   );
 }

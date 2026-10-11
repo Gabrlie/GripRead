@@ -11,6 +11,7 @@ import type { LibraryBook } from "../../types/generated";
 import { READING_GROUPS, shelfGroupOf, type ShelfChapterLabels } from "../../application/shelf";
 import { Header } from "../Layout/Header";
 import { Icon } from "../ui/Icon";
+import { toast } from "../ui/toast";
 import { Card, CardContent } from "../ui/card";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
@@ -35,6 +36,20 @@ type ShelfBook = {
 export function BookshelfView() {
   const { shelf, setShelf, openReader, setActiveTab } = useApp();
   const { state, store } = useLibrary();
+  // 移到回收站 offers 撤销 for a few seconds in the floating toast.
+  const lastRemoved = state.lastRemoved;
+  useEffect(() => {
+    if (!lastRemoved) return;
+    toast({
+      text: `已移到回收站：${lastRemoved.title}`,
+      action: {
+        label: "撤销",
+        run: () => void store.restore(lastRemoved.id).catch(() => undefined),
+      },
+    });
+    const timer = window.setTimeout(store.dismissUndo, 6_000);
+    return () => window.clearTimeout(timer);
+  }, [lastRemoved, store]);
   const { state: groupState, store: groupStore } = useShelf();
   const preferences = useShelfPreferences();
   const [manager, setManager] = useState<"removed" | "sort" | null>(null);
@@ -369,30 +384,6 @@ export function BookshelfView() {
               }
             >
               重试
-            </Button>
-          </div>
-        )}
-        {state.lastRemoved && (
-          <div
-            role="status"
-            className="text-xs text-secondary rounded-xl bg-surface-container p-3 mb-3 flex items-center gap-2"
-          >
-            <span className="flex-1 truncate">已移出：{state.lastRemoved.title}</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={state.managing}
-              onClick={() => void store.restore(state.lastRemoved!.id).catch(() => undefined)}
-            >
-              撤销
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="关闭撤销提示"
-              onClick={store.dismissUndo}
-            >
-              <Icon name="close" size={14} />
             </Button>
           </div>
         )}

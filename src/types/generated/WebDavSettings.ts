@@ -3,13 +3,13 @@ import type { RestoreCategory } from "./RestoreCategory";
 
 /**
  * This device's WebDAV account (Legado WebDav 设置). The password is kept in
- * local storage only; it is never returned or written into backups.
+ * local storage only, shown on request in settings, and never written into backups.
  */
 export type WebDavSettings = { 
 /**
  * The server address; empty uses 坚果云.
  */
-url: string, username: string, hasPassword: boolean, 
+url: string, username: string, password: string, 
 /**
  * The folder under the address (Legado 子文件夹); empty uses `GripRead`.
  */

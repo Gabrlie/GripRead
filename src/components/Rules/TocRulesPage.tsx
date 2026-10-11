@@ -7,7 +7,7 @@ import { NEW_TOC_RULE, TocRuleEditor, TocRuleImport } from "../Reader/dialogs/To
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { NoticeLine, useNotice } from "../ui/notice";
+import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 
 /**
@@ -24,13 +24,12 @@ export function TocRulesPage({
   onClose: () => void;
 }) {
   const [rules, setRules] = useState<TxtTocRule[]>([]);
-  const [message, setMessage] = useNotice();
   const [editing, setEditing] = useState<TxtTocRule | null>(null);
   const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => service.listTxtTocRules().then(setRules), [service]);
   useEffect(() => {
-    void load().catch((error: unknown) => setMessage({ text: String(error), error: true }));
+    void load().catch((error: unknown) => toast({ text: String(error), error: true }));
   }, [load]);
   /** Runs a change and reloads; `work` may return the message to show. */
   const change = async (work: () => Promise<unknown>, done?: string) => {
@@ -39,10 +38,10 @@ export function TocRulesPage({
       const result = await work();
       await load();
       const text = typeof result === "string" && !done ? result : done;
-      setMessage(text ? { text } : null);
+      if (text) toast(text);
       return true;
     } catch (error) {
-      setMessage({ text: String(error), error: true });
+      toast({ text: String(error), error: true });
       return false;
     } finally {
       setBusy(false);
@@ -91,7 +90,6 @@ export function TocRulesPage({
       <p className="px-1 text-[11px] text-secondary">
         开启的规则参与自动识别，排在前面的优先；每本书使用的规则在阅读界面的目录规则中选择。
       </p>
-      <NoticeLine notice={message} />
       <ul
         aria-label="目录规则"
         className="rounded-xl bg-surface-container-low divide-y divide-surface-variant/30"

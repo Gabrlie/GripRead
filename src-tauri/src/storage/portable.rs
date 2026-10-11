@@ -78,6 +78,10 @@ pub struct PortableBook {
     /// The book's own cover; the image travels in the cloud `Covers/` folder.
     #[serde(default)]
     pub cover: Option<CoverRef>,
+    /// Kept by this device when the book was deleted, so the 恢复忽略列表
+    /// does not apply when the same book returns.
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A cover image by content: `Covers/<sha256>.<ext>` on WebDAV, and the same
@@ -250,7 +254,7 @@ impl StoredWebDav {
         WebDavSettings {
             url: self.url.clone(),
             username: self.username.clone(),
-            has_password: !self.password.is_empty(),
+            password: self.password.clone(),
             folder: self.folder.clone(),
             device_name: self.device_name.clone(),
             local_folder: self
@@ -655,6 +659,7 @@ impl Storage {
             .book_cover_file(&shelf.book_id)?
             .map(|(_, cover)| cover);
         Ok(PortableBook {
+            local: false,
             cover,
             source_sha256: shelf.source_sha256.clone(),
             title,
@@ -919,6 +924,46 @@ impl Storage {
         Ok(report)
     }
 
+    /// Before a book is deleted: keeps its records for when the same file is
+    /// imported again, and its reading time in the totals. Returns whether
+    /// the book had an original file to recognize it by.
+    pub(crate) fn keep_records_for_reimport(&self, book_id: &str) -> Result<bool, AppError> {
+        let source: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT t.source_sha256 FROM txt_assets t JOIN book_assets a ON a.id = t.asset_id
+                 WHERE a.book_id = ?1 LIMIT 1",
+                params![book_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten()
+            .filter(|source: &String| !source.is_empty());
+        let Some(source) = source else {
+            return Ok(false);
+        };
+        let mut record = self.portable_book(&ShelfBook {
+            book_id: book_id.into(),
+            source_sha256: source.clone(),
+        })?;
+        record.local = true;
+        self.conn.execute(
+            "INSERT INTO pending_book_restores(source_sha256, record_json, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_sha256) DO UPDATE SET record_json = excluded.record_json,
+                created_at = excluded.created_at",
+            params![source, serde_json::to_string(&record)?, now_millis()],
+        )?;
+        self.conn.execute(
+            "INSERT INTO retired_reading_time(source_sha256, day, seconds)
+             SELECT ?2, day, seconds FROM reading_time WHERE book_id = ?1
+             ON CONFLICT(source_sha256, day) DO UPDATE SET
+                seconds = MAX(retired_reading_time.seconds, excluded.seconds)",
+            params![book_id, source],
+        )?;
+        Ok(true)
+    }
+
     /// Applies records restored before this book was on the device.
     pub fn apply_pending_restore(&mut self, book_id: &str) -> Result<bool, AppError> {
         let source: Option<String> = self
@@ -977,6 +1022,11 @@ impl Storage {
             "DELETE FROM pending_book_restores WHERE source_sha256 = ?1",
             params![source],
         )?;
+        // Its reading time is the book's own again.
+        self.conn.execute(
+            "DELETE FROM retired_reading_time WHERE source_sha256 = ?1",
+            params![source],
+        )?;
         Ok(true)
     }
 
@@ -987,10 +1037,11 @@ impl Storage {
         book: &PortableBook,
     ) -> Result<(bool, u32), AppError> {
         let settings = self.stored_webdav()?;
-        let info = !settings.ignores(RestoreCategory::BookInfo);
-        let progress = !settings.ignores(RestoreCategory::Progress);
-        let marks = !settings.ignores(RestoreCategory::Bookmarks);
-        let time = !settings.ignores(RestoreCategory::ReadingTime);
+        let wanted = |category| book.local || !settings.ignores(category);
+        let info = wanted(RestoreCategory::BookInfo);
+        let progress = wanted(RestoreCategory::Progress);
+        let marks = wanted(RestoreCategory::Bookmarks);
+        let time = wanted(RestoreCategory::ReadingTime);
         let title = book.title.trim();
         {
             let tx = self.conn.transaction()?;

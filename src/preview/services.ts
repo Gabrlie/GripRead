@@ -117,7 +117,7 @@ export function previewServices(): AppServices {
   let webdav: WebDavSettings = {
     url: "",
     username: "reader@example.com",
-    hasPassword: true,
+    password: "secret",
     folder: "",
     deviceName: "",
     localFolder: null,
@@ -400,7 +400,7 @@ export function previewServices(): AppServices {
         (webdav = {
           ...webdav,
           ...request,
-          hasPassword: webdav.hasPassword || Boolean(request.password),
+          password: request.password ?? webdav.password,
           configured: Boolean(request.url || request.username),
         }),
       testWebDav: async () => ({ latencyMs: 1240, slow: true }),

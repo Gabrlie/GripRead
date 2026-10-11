@@ -32,6 +32,7 @@ import { useReadingTime } from "./use-reading-time";
 import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
 import { EMPTY_REPLACE_RULE, ReplaceRuleEditor, ReplaceRulesPage } from "../Rules/ReplaceRulesPage";
 import { Icon } from "../ui/Icon";
+import { toast } from "../ui/toast";
 import { ReadAloudDialog } from "./dialogs/ReadAloudDialog";
 import {
   ReadAloud,
@@ -71,7 +72,6 @@ import { ContentsPage } from "./pages/ContentsPage";
 import { SearchPage, SearchResultBar } from "./pages/SearchPage";
 import { TocRuleDialog } from "./dialogs/TocRuleDialog";
 import { EncodingDialog } from "./dialogs/EncodingDialog";
-import { AutomaticDialog } from "./dialogs/AutomaticDialog";
 import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
@@ -281,17 +281,6 @@ export function ReaderView() {
       );
     },
     turn: () => controller?.next() ?? Promise.resolve(),
-    reveal:
-      effectiveMode !== "scroll" && (style?.autoPageMode ?? "reveal") === "reveal"
-        ? {
-            begin: () => {
-              adapter.current?.beginReveal();
-              adapter.current?.skipNextAnimation();
-            },
-            progress: (fraction) => adapter.current?.setReveal(fraction),
-            end: () => adapter.current?.endReveal(),
-          }
-        : undefined,
   });
   const pauseAutomatic = automaticTurn.pause;
   /**
@@ -561,7 +550,7 @@ export function ReaderView() {
       });
       if (epoch !== sessionEpoch.current) return;
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setNotice("已添加书签");
+      toast("已添加书签");
     });
   }, [
     bookId,
@@ -576,7 +565,6 @@ export function ReaderView() {
   const useTool = (tool: ReaderTool) => {
     const panels: Partial<Record<ReaderTool, ReaderPanel>> = {
       search: "search",
-      "auto-page": "automatic",
       "read-aloud": "aloud",
       contents: "contents",
       style: "style",
@@ -589,6 +577,22 @@ export function ReaderView() {
     if (target) openPanel(target);
     else if (tool === "night") settingsStore.set({ theme: night ? "light" : "dark" });
     else if (tool === "bookmark") addBookmark();
+    else if (tool === "auto-page") startAutomaticSession();
+  };
+  /**
+   * 自动翻页 starts at once with the interval and page animation already
+   * chosen; its floating panel adjusts or stops it.
+   */
+  const startAutomaticSession = () => {
+    setControls(false);
+    setAutoPanel(true);
+    if (autoSession && automaticTurn.running) return;
+    if (!canStartAutomatic) {
+      toast(state.hasAfter ? "现在还不能自动翻页，请稍后再试" : "已经到书的末尾了");
+      return;
+    }
+    setAutoSession(true);
+    automaticTurn.start();
   };
 
   /**
@@ -610,7 +614,6 @@ export function ReaderView() {
   const [noteDraft, setNoteDraft] = useState<
     { excerpt: string; offset: number } | { excerpt: string; bookmark: Bookmark } | null
   >(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const answerCloudProgress = (jump: boolean) => {
     const prompt = cloudProgress;
     setCloudProgress(null);
@@ -620,7 +623,7 @@ export function ReaderView() {
       void pauseAutomatic();
       run(async () => {
         await controller.seek(prompt.locator);
-        setNotice(`已同步 ${prompt.deviceName || "其他设备"} 的进度`);
+        toast(`已同步 ${prompt.deviceName || "其他设备"} 的进度`);
       });
     }
   };
@@ -631,15 +634,8 @@ export function ReaderView() {
   useEffect(() => {
     if (!refreshingDirectory.current || tools.loading) return;
     refreshingDirectory.current = false;
-    setNotice(
-      tools.error ? `目录更新失败：${tools.error}` : `目录已更新，共 ${tools.toc.length} 章`,
-    );
+    toast(tools.error ? `目录更新失败：${tools.error}` : `目录已更新，共 ${tools.toc.length} 章`);
   }, [tools.loading, tools.error, tools.toc]);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 2_000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
   const saveNote = useCallback(
     async (note: string) => {
       const draft = noteDraft;
@@ -666,7 +662,7 @@ export function ReaderView() {
         note,
       });
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setNotice("已添加书签");
+      toast("已添加书签");
     },
     [bookId, noteDraft, runtime.services.reader, setBookmarks, state.contentWindow],
   );
@@ -674,8 +670,8 @@ export function ReaderView() {
     () => ({
       copy: (selection) =>
         void copyText(selection.text).then(
-          () => setNotice("已复制"),
-          () => setNotice("复制失败"),
+          () => toast("已复制"),
+          () => toast("复制失败"),
         ),
       bookmark: (selection) => setNoteDraft({ excerpt: selection.text, offset: selection.start }),
       search: (selection) => {
@@ -684,7 +680,7 @@ export function ReaderView() {
       },
       share: (selection) =>
         void system.share(selection.text).then(
-          (result) => result === "copied" && setNotice("已复制，可粘贴分享"),
+          (result) => result === "copied" && toast("已复制，可粘贴分享"),
           () => undefined,
         ),
       // Legado's 替换: a plain-text rule for the selection, scoped to this book.
@@ -1079,7 +1075,7 @@ export function ReaderView() {
           onAddBookmark={addBookmark}
           onRefreshDirectory={() => {
             refreshingDirectory.current = true;
-            setNotice("正在更新目录…");
+            toast("正在更新目录…");
             reloadTools();
           }}
           replaceEnabled={useReplaceRules}
@@ -1332,14 +1328,6 @@ export function ReaderView() {
           onClose={() => setNoteDraft(null)}
         />
       )}
-      {notice && (
-        <div
-          role="status"
-          className="fixed bottom-[calc(5rem+var(--safe-bottom))] left-1/2 -translate-x-1/2 z-[60] rounded-full bg-inverse-surface text-inverse-on-surface text-xs px-4 py-2 shadow-md"
-        >
-          {notice}
-        </div>
-      )}
       {panel === "aloud" && readAloud && (
         <ReadAloudDialog
           snapshot={aloud}
@@ -1448,7 +1436,7 @@ export function ReaderView() {
           onSave={async (rule) => {
             await runtime.services.reader.saveReplaceRule(rule);
             setReplaceDraft(null);
-            setNotice("已添加替换规则");
+            toast("已添加替换规则");
             // A book with 替换净化 off turns it on to show the new rule.
             if (useReplaceRules) applyTransformsRef.current();
             else toggleBookReplace(true);
@@ -1504,43 +1492,14 @@ export function ReaderView() {
           onClose={closePanel}
         />
       )}
-      {panel === "automatic" && (
-        <AutomaticDialog
-          onClose={closePanel}
-          scroll={effectiveMode === "scroll"}
-          speed={preferences?.autoScrollSpeed ?? 40}
-          onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
-          seconds={preferences?.autoPageSeconds ?? 8}
-          disabledInterval={!preferences}
-          running={automaticTurn.running}
-          canStart={canStartAutomatic}
-          onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
-          mode={style?.autoPageMode ?? "reveal"}
-          onMode={(autoPageMode) =>
-            style && settingsStore.set({ style: { ...style, autoPageMode } })
-          }
-          onPause={() => void pauseAutomatic()}
-          onStart={() => {
-            closePanel();
-            setControls(false);
-            automaticTurn.start();
-            setAutoSession(true);
-            setAutoPanel(true);
-          }}
-        />
-      )}
       {autoSession && autoPanel && panel === null && !controls && (
         <AutoPagePanel
           running={automaticTurn.running}
           scroll={effectiveMode === "scroll"}
           seconds={preferences?.autoPageSeconds ?? 8}
           speed={preferences?.autoScrollSpeed ?? 40}
-          mode={style?.autoPageMode ?? "reveal"}
           onInterval={(autoPageSeconds) => settingsStore.set({ autoPageSeconds })}
           onSpeed={(autoScrollSpeed) => settingsStore.set({ autoScrollSpeed })}
-          onMode={(autoPageMode) =>
-            style && settingsStore.set({ style: { ...style, autoPageMode } })
-          }
           onPause={() => void pauseAutomatic()}
           onResume={() => automaticTurn.start()}
           onMenu={() => {

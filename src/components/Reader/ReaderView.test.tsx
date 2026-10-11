@@ -52,9 +52,6 @@ vi.mock("../../reader", async () => {
         return false;
       }
       skipNextAnimation() {}
-      beginReveal() {}
-      setReveal() {}
-      endReveal() {}
       setEffect() {}
       setPages() {}
       present() {}
@@ -503,8 +500,8 @@ describe("reader directory and search operation ownership", () => {
   it("keeps automatic turning running while its panel is shown, hidden, or the page is turned", async () => {
     const app = runtime();
     await view(app);
+    // The tool starts turning at once and shows its panel.
     await userEvent.click(screen.getByRole("button", { name: "自动翻页" }));
-    await userEvent.click(await screen.findByRole("button", { name: "开始自动翻页" }));
     const panel = await screen.findByRole("region", { name: "自动翻页" });
     expect(within(panel).getByRole("status").textContent).toContain("自动翻页中");
     // A tap on the centre hides the panel and another shows it again.

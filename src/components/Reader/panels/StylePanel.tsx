@@ -12,7 +12,7 @@ import type { SettingsService } from "../../../services/contracts";
 import { useRuntime } from "../../../application/runtime";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
-import { NoticeLine, useNotice } from "../../ui/notice";
+import { toast } from "../../ui/toast";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import {
@@ -438,12 +438,11 @@ function TextView({
 }) {
   const style = preferences.style;
   const [assets, setAssets] = useState<ReaderAsset[] | null>(null);
-  const [message, setMessage] = useNotice();
   useEffect(() => {
     let cancelled = false;
     fonts.listFonts().then(
       (list) => !cancelled && setAssets(list),
-      (error: unknown) => !cancelled && setMessage({ text: String(error), error: true }),
+      (error: unknown) => !cancelled && toast({ text: String(error), error: true }),
     );
     return () => {
       cancelled = true;
@@ -494,7 +493,7 @@ function TextView({
                       setAssets((list) => list?.filter((item) => item.id !== asset.id) ?? null);
                       if (style.fontAssetId === asset.id) setStyle({ fontAssetId: null });
                     },
-                    (error: unknown) => setMessage({ text: String(error), error: true }),
+                    (error: unknown) => toast({ text: String(error), error: true }),
                   )
                 }
               >
@@ -513,16 +512,15 @@ function TextView({
                 if (!asset) return;
                 setAssets((list) => [...(list ?? []), asset]);
                 setStyle({ fontAssetId: asset.id });
-                setMessage(`已导入 ${asset.name}`);
+                toast(`已导入 ${asset.name}`);
               },
-              (error: unknown) => setMessage({ text: String(error), error: true }),
+              (error: unknown) => toast({ text: String(error), error: true }),
             )
           }
         >
           <Icon name="add" size={14} />
           导入字体（TTF/OTF/WOFF）
         </Button>
-        <NoticeLine notice={message} />
       </Section>
       <Range
         label="字重"

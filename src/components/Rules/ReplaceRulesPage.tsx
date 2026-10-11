@@ -5,7 +5,7 @@ import type { ReplaceRule } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { NoticeLine, useNotice } from "../ui/notice";
+import { toast } from "../ui/toast";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
@@ -45,7 +45,6 @@ export function ReplaceRulesPage({
 }) {
   const [rules, setRules] = useState<ReplaceRule[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useNotice();
   const [editing, setEditing] = useState<ReplaceRule | null>(null);
   const [importing, setImporting] = useState(false);
   const layer = usePageLayer(backCloses ? onClose : () => undefined);
@@ -60,7 +59,7 @@ export function ReplaceRulesPage({
       .then(
         () => {
           setError(null);
-          if (done) setMessage(done);
+          if (done) toast(done);
           onChanged?.();
         },
         (failure: unknown) => setError(String(failure)),
@@ -113,7 +112,7 @@ export function ReplaceRulesPage({
               .exportReplaceRules()
               .then(copyText)
               .then(
-                () => setMessage("全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。"),
+                () => toast("全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。"),
                 (failure: unknown) => setError(String(failure)),
               )
           }
@@ -143,7 +142,6 @@ export function ReplaceRulesPage({
               {error}
             </p>
           )}
-          <NoticeLine notice={message} />
           {rules.length === 0 && (
             <p className="text-sm text-secondary px-1 py-6 text-center">
               还没有替换规则。可以添加，或导入阅读（Legado）导出的规则。

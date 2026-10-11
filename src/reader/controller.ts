@@ -448,6 +448,9 @@ export class ReaderController {
   /** DOM layout reports visible scalar boundaries, never pixel-based persisted positions. */
   public updateScrollPosition(start: number, end: number): void {
     const window = this.snapshot.scroll;
+    // A scroll view still on screen while another mode takes over reports
+    // its reflowed layout, not the reader's place.
+    if (this.mode !== "scroll") return;
     if (this.disposed || !window || start < window.startOffset || start >= window.endOffset) return;
     if (!isUtf16ScalarBoundary(window.text, start - window.startOffset)) return;
     end = Math.min(window.endOffset, Math.max(start + 1, end));

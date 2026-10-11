@@ -16,7 +16,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { NoticeLine, useNotice } from "../ui/notice";
+import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { describeError, formatSize, formatTime } from "./format";
 
@@ -40,7 +40,7 @@ function draftOf(settings: WebDavSettings): Draft {
   return {
     url: settings.url,
     username: settings.username,
-    password: "",
+    password: settings.password,
     folder: settings.folder,
     deviceName: settings.deviceName,
     autoBackup: settings.autoBackup,
@@ -63,11 +63,11 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<WebDavSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useNotice();
   const [latency, setLatency] = useState<WebDavCheck | null>(null);
   const [backups, setBackups] = useState<RemoteBackup[] | null>(null);
   const [points, setPoints] = useState<string[]>([]);
   const [ignoring, setIgnoring] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [restoring, setRestoring] = useState<{
     source: BackupSource;
     label: string;
@@ -87,16 +87,16 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     setPoints(await sync.listRecoveryPoints().catch(() => []));
   }, [sync]);
   useEffect(() => {
-    void load().catch((error: unknown) => setMessage({ text: describeError(error), error: true }));
-  }, [load, setMessage]);
+    void load().catch((error: unknown) => toast({ text: describeError(error), error: true }));
+  }, [load]);
 
   const run = async (label: string, work: () => Promise<string | void>) => {
     setBusy(label);
     try {
       const text = await work();
-      if (text) setMessage(text);
+      if (text) toast(text);
     } catch (error) {
-      setMessage({ text: describeError(error), error: true });
+      toast({ text: describeError(error), error: true });
     } finally {
       setBusy(null);
     }
@@ -104,7 +104,9 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   if (!settings || !draft)
     return (
       <FullPage label="备份与恢复" onClose={onClose}>
-        <NoticeLine notice={message} />
+        <p role="status" className="text-sm text-secondary px-1">
+          正在读取…
+        </p>
       </FullPage>
     );
 
@@ -112,7 +114,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     ...from,
     url: from.url.trim(),
     username: from.username.trim(),
-    password: from.password ? from.password : null,
+    password: from.password,
     deviceName: from.deviceName.trim() || deviceFallback,
   });
   /** Switches save at once, without the typed but unsaved account fields. */
@@ -125,7 +127,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   const accountChanged =
     draft.url.trim() !== settings.url ||
     draft.username.trim() !== settings.username ||
-    draft.password !== "" ||
+    draft.password !== settings.password ||
     draft.folder.trim() !== settings.folder ||
     draft.deviceName.trim() !== settings.deviceName;
   const configured = settings.configured;
@@ -135,7 +137,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     });
   const field = (
     label: string,
-    key: "url" | "username" | "password" | "folder" | "deviceName",
+    key: "url" | "username" | "folder" | "deviceName",
     placeholder: string,
     extra?: Partial<ComponentProps<typeof Input>>,
   ) => (
@@ -157,17 +159,32 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
 
   return (
     <FullPage label="备份与恢复" onClose={onClose}>
-      <NoticeLine notice={message} />
       <PageSection title="WebDAV 账号">
         <div className="p-4 space-y-3">
           {field("服务器地址", "url", "留空使用坚果云", { inputMode: "url" })}
           {field("账号", "username", "", { autoComplete: "username" })}
-          {field(
-            "密码",
-            "password",
-            settings.hasPassword ? "已保存，留空则不修改" : "坚果云请填写第三方应用密码",
-            { type: "password", autoComplete: "current-password" },
-          )}
+          <label className="block space-y-1 text-xs text-secondary">
+            密码
+            <span className="relative block">
+              <Input
+                type={showPassword ? "text" : "password"}
+                value={draft.password}
+                autoComplete="current-password"
+                placeholder="坚果云请填写第三方应用密码"
+                className="pr-10"
+                onChange={(event) => setDraft({ ...draft, password: event.target.value })}
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                aria-pressed={showPassword}
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-secondary"
+                onClick={() => setShowPassword((shown) => !shown)}
+              >
+                <Icon name={showPassword ? "visibility_off" : "visibility"} size={16} />
+              </button>
+            </span>
+          </label>
           {field("子文件夹", "folder", "GripRead")}
           {field("设备名称", "deviceName", deviceFallback)}
           <p className="text-[11px] text-secondary">

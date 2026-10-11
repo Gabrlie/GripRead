@@ -6,7 +6,7 @@ export function unconfiguredWebDav(): WebDavSettings {
   return {
     url: "",
     username: "",
-    hasPassword: false,
+    password: "",
     folder: "",
     deviceName: "",
     localFolder: null,

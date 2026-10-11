@@ -16,6 +16,8 @@ Milestones, each committed separately:
 
 - (D4, second device round) The automatic panel never pauses on its own, menu dialogs for the bottom bar and 简繁, book detail from the reader, scroll position captured when leaving scroll mode, dialogs above full-screen pages, dark swatches, an About page, self-dismissing notices, the 回收站 and two kinds of deletion, cloud marks and a reorganized detail page, cloud names with authors and indexed information and covers, a configurable WebDAV folder and device name, a local backup folder, the 恢复忽略列表, latency checks, and Legado's 同步阅读进度 and 同步增强.
 
+- (D5, third device round) One floating toast for every notice, deleted books keeping progress and reading time for their return, a plainer default cover, the scroll anchor kept through width changes, automatic turning started directly with the 界面 animation (the reveal mode is gone), and a viewable WebDAV password.
+
 Causal replication of the other records (the rest of [Sync](../subsystems/sync.md)), online sources, RSS, and EPUB remain excluded.
 
 ## Interfaces
@@ -37,6 +39,8 @@ D2/D3: Rust tests for backup export and restore across a converted copy (metadat
 
 D4: Rust tests for deletion, 回收站 matching and cloud marks, `书名 - 作者` naming with indexed information and covers applied on pull, restore-ignore categories and backup covers, device names and a custom folder in paths, latency checks, and progress sync (own uploads ignored, each new remote version asked once, no question when already there) against the in-process WebDAV server; a controller test for leaving scroll mode after evicted windows; frontend tests for the automatic panel, the More dialogs, the cloud progress prompt and upload on leaving, upload-before-fetch ordering, the device name default, cloud marks, and confirmed deletion; phone screenshots of the detail page and its removal menu, 备份与恢复 with a latency warning, the ignore list, dark settings, and About. The scroll-to-page regression did not reproduce in the preview even with scrolling and evicted windows; the fix captures the scroll position when the mode is chosen, and device confirmation is pending.
 
+D5: Rust test for a deleted book keeping its totals and returning with its position and time despite the ignore list; frontend tests for the toast and for automatic turning started from the tool; a preview run narrowing and restoring the scroll view keeping paragraph 3607 at the top and switching to the page holding it; screenshots of the default cover, the toast, and the visible password.
+
 ## Handoff
 
-In progress: D1–D4 are implemented on the host; next is the Android APK and device results.
+In progress: D1–D5 are implemented on the host; next is the Android APK and device results.

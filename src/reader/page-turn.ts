@@ -88,8 +88,6 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   private outgoingChrome: HTMLElement[] | null = null;
   private cancelled = false;
   private skipNext = false;
-  /** Legado's 自动翻页 reveal: the outgoing screen, clipped from the top. */
-  private reveal: { copy: HTMLElement; line: HTMLElement } | null = null;
 
   public constructor(host: HTMLElement, options: PageTurnAdapterOptions = {}) {
     if (!host) throw new TypeError("PageTurnAdapter requires an overlay host");
@@ -290,54 +288,9 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.cancel();
   }
 
-  /**
-   * Covers the screen with a copy of the current page before an automatic
-   * turn, so the next page can be uncovered from the top by `setReveal`.
-   * Navigation cancels do not remove it; `endReveal` does.
-   */
-  public beginReveal(): void {
-    this.endReveal();
-    if (this.disposed || !this.currentSpread.length) return;
-    const copy = this.screenElement(this.currentSpread, this.captureChrome());
-    copy.style.zIndex = "2";
-    copy.dataset.reveal = "true";
-    const line = copy.ownerDocument.createElement("div");
-    line.setAttribute("aria-hidden", "true");
-    Object.assign(line.style, {
-      position: "absolute",
-      left: "0",
-      right: "0",
-      top: "0",
-      height: "1px",
-      zIndex: "3",
-      background: "var(--reader-fg, currentColor)",
-      opacity: "0.45",
-      boxShadow: "0 1px 4px rgb(0 0 0 / 0.25)",
-    });
-    this.mount.append(copy, line);
-    this.reveal = { copy, line };
-    this.updateVisibility();
-  }
-
-  /** Uncovers the incoming page down to `progress` (0–1) of the screen height. */
-  public setReveal(progress: number): void {
-    if (!this.reveal) return;
-    const percent = Math.min(100, Math.max(0, progress * 100));
-    this.reveal.copy.style.clipPath = `inset(${percent}% 0 0 0)`;
-    this.reveal.line.style.top = `calc(${percent}% - 1px)`;
-  }
-
-  public endReveal(): void {
-    this.reveal?.copy.remove();
-    this.reveal?.line.remove();
-    this.reveal = null;
-    this.updateVisibility();
-  }
-
   public dispose(): void {
     if (this.disposed) return;
     this.cancel();
-    this.endReveal();
     this.disposed = true;
     this.pages = [];
     this.previousPage = null;
@@ -645,7 +598,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   }
 
   private updateVisibility(): void {
-    this.mount.style.visibility = this.held || this.overlay || this.reveal ? "visible" : "hidden";
+    this.mount.style.visibility = this.held || this.overlay ? "visible" : "hidden";
   }
 
   private takeOutgoingChrome(): HTMLElement[] {

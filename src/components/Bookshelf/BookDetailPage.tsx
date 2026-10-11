@@ -11,7 +11,7 @@ import { BookCover } from "./BookCover";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { describeError } from "../Cloud/format";
-import { NoticeLine, useNotice } from "../ui/notice";
+import { toast } from "../ui/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,7 +72,6 @@ export function BookDetailPage({
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
-  const [notice, setNotice] = useNotice();
   const [confirm, setConfirm] = useState<"delete" | "delete-cloud" | null>(null);
   const removed = book.removedAt !== null;
   const [expanded, setExpanded] = useState(false);
@@ -99,8 +98,8 @@ export function BookDetailPage({
     setCloudBusy(true);
     work()
       .then(
-        (text) => setNotice(text),
-        (failure: unknown) => setNotice({ text: describeError(failure), error: true }),
+        (text) => toast(text),
+        (failure: unknown) => toast({ text: describeError(failure), error: true }),
       )
       .finally(() => {
         setCloudBusy(false);
@@ -265,7 +264,6 @@ export function BookDetailPage({
               </DropdownMenu>
             )}
           </div>
-          <NoticeLine notice={notice} />
           {removed && (
             <p className="text-xs text-secondary">这本书在回收站里，移回书架后继续阅读。</p>
           )}
@@ -363,12 +361,8 @@ export function BookDetailPage({
             </DialogHeader>
             <p className="text-sm text-secondary">
               {confirm === "delete"
-                ? "从应用中彻底删除《" +
-                  book.book.title +
-                  "》和它的进度、书签、阅读记录，云书架上的文件保留。手机里原来的 TXT 文件不受影响。"
-                : "删除《" +
-                  book.book.title +
-                  "》在应用中的全部记录，并删除云书架上的文件。手机里原来的 TXT 文件不受影响。"}
+                ? `从书架和应用存储中删除《${book.book.title}》，云书架上的文件保留。进度、书签和阅读时长会保留，以后再导入或下载同一本书时自动恢复。`
+                : `从书架和应用存储中删除《${book.book.title}》，并删除云书架上的文件。进度、书签和阅读时长会保留，以后再导入同一本书时自动恢复。`}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>

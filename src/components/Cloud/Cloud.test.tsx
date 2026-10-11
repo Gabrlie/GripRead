@@ -16,7 +16,7 @@ function runtime() {
     ...unconfiguredWebDav(),
     url: "https://dav.example.com/dav/",
     username: "reader",
-    hasPassword: true,
+    password: "secret",
     autoBackup: true,
     configured: true,
   });

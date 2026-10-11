@@ -16,6 +16,8 @@ The cloud bookshelf stores original files under `GripRead/Books/` with an index 
 
 Schema 14 adds `cloud_books` (what the device last saw in the cloud, for shelf marks), `pending_book_metadata` (index information applied when a downloaded book is imported), and `progress_sync` (per book: the remote version last uploaded or answered, the local revision, and the last uploaded position). Covers travel by content hash in `Covers/` and are cached locally before they are applied, so a pending book can take its cover later. Progress records identify the writing device by a random id stored with the account, which is how a device recognizes its own uploads regardless of server latency or clock skew.
 
+Deleting a book stores its portable record as a pending restore flagged as local (so the 恢复忽略列表 does not apply when it returns), and schema 15's `retired_reading_time` keeps its reading time in the totals until the same file is imported again.
+
 The WebDAV client uses `ureq` with rustls and ring, which builds for Android without CMake.
 
 ## Alternatives considered

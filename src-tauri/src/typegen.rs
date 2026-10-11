@@ -62,7 +62,6 @@ const IPC_TYPES: &[&str] = &[
     "TestReplaceRuleRequest",
     "BookReplaceRequest",
     "ScreenOrientation",
-    "AutoPageMode",
     "ReaderTool",
     "ProgressPrompt",
     "UploadProgressRequest",
@@ -197,7 +196,6 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<TestReplaceRuleRequest>(&config)?;
     export_all::<BookReplaceRequest>(&config)?;
     export_all::<ScreenOrientation>(&config)?;
-    export_all::<AutoPageMode>(&config)?;
     export_all::<ReaderTool>(&config)?;
     export_all::<ProgressPrompt>(&config)?;
     export_all::<UploadProgressRequest>(&config)?;

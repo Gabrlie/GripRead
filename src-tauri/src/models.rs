@@ -725,17 +725,6 @@ pub fn default_bottom_tools() -> Vec<ReaderTool> {
     vec![Search, AutoPage, ReadAloud, Contents, Style, Night]
 }
 
-/// How automatic page turning advances paginated text (Legado 自动翻页).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum AutoPageMode {
-    /// The next page is uncovered from the top, behind a moving line.
-    #[default]
-    Reveal,
-    /// The page turns with the selected animation at each interval.
-    Turn,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TitleMode {
@@ -826,7 +815,6 @@ pub struct ReadingStyle {
     pub orientation: ScreenOrientation,
     /// The reading menu uses the page colours instead of the app theme.
     pub menu_follows_page: bool,
-    pub auto_page_mode: AutoPageMode,
     pub chinese_conversion: ChineseConversion,
     /// Read-aloud speed and pitch, where 1 is the engine's normal value.
     pub speech_rate: f64,
@@ -910,7 +898,6 @@ impl Default for ReadingStyle {
             ],
             orientation: ScreenOrientation::Auto,
             menu_follows_page: false,
-            auto_page_mode: AutoPageMode::Reveal,
             chinese_conversion: ChineseConversion::Off,
             speech_rate: 1.0,
             speech_pitch: 1.0,
@@ -1137,14 +1124,14 @@ pub enum RestoreCategory {
 }
 
 /// This device's WebDAV account (Legado WebDav 设置). The password is kept in
-/// local storage only; it is never returned or written into backups.
+/// local storage only, shown on request in settings, and never written into backups.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WebDavSettings {
     /// The server address; empty uses 坚果云.
     pub url: String,
     pub username: String,
-    pub has_password: bool,
+    pub password: String,
     /// The folder under the address (Legado 子文件夹); empty uses `GripRead`.
     pub folder: String,
     /// Names this device in backups and progress (Legado 设备名称); empty uses the platform.

@@ -5,7 +5,7 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { NoticeLine, useNotice } from "../ui/notice";
+import { toast } from "../ui/toast";
 import { describeError, formatSize, formatTime } from "./format";
 
 /**
@@ -28,7 +28,6 @@ export function CloudShelfPage({
   const [books, setBooks] = useState<CloudBook[] | null>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useNotice();
   const [removing, setRemoving] = useState<CloudBook | null>(null);
 
   const refresh = useCallback(async () => {
@@ -39,7 +38,7 @@ export function CloudShelfPage({
   useEffect(() => {
     setBusy("load");
     refresh()
-      .catch((error: unknown) => setMessage({ text: describeError(error), error: true }))
+      .catch((error: unknown) => toast({ text: describeError(error), error: true }))
       .finally(() => setBusy(null));
   }, [refresh]);
   // A book downloaded from here appears on the shelf after its import.
@@ -49,12 +48,12 @@ export function CloudShelfPage({
 
   const run = async (label: string, work: () => Promise<string | void>) => {
     setBusy(label);
-    setMessage(null);
+
     try {
       const text = await work();
-      if (text) setMessage({ text });
+      if (text) toast({ text });
     } catch (error) {
-      setMessage({ text: describeError(error), error: true });
+      toast({ text: describeError(error), error: true });
     } finally {
       setBusy(null);
     }
@@ -93,7 +92,6 @@ export function CloudShelfPage({
         )
       }
     >
-      <NoticeLine notice={message} />
       {configured === false && (
         <div className="rounded-xl bg-surface-container-low p-4 space-y-3 text-sm">
           <p>云书架使用 WebDAV 保存书籍文件。请先设置 WebDAV 账号。</p>

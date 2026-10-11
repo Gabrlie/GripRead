@@ -1,38 +1,14 @@
 import { useState } from "react";
 import { useImage } from "../../application/runtime";
-import { Icon } from "../ui/Icon";
 
+/** Muted paper tones with a matching ink, like a plain cloth-bound book. */
 const LOCAL_COVER_PALETTES = [
-  {
-    bg: "bg-gradient-to-br from-[#8b3a2b] via-[#6d2517] to-[#451209]",
-    badge: "text-[#fcd8d0]",
-    text: "text-[#ffede9]",
-  }, // 朱砂熟赭
-  {
-    bg: "bg-gradient-to-br from-[#1e4d3a] via-[#143829] to-[#0a2016]",
-    badge: "text-[#c8eedc]",
-    text: "text-[#e8f8f0]",
-  }, // 竹青碧玉
-  {
-    bg: "bg-gradient-to-br from-[#244263] via-[#182f48] to-[#0c1a29]",
-    badge: "text-[#cfe2f8]",
-    text: "text-[#eef5fc]",
-  }, // 砚墨霁蓝
-  {
-    bg: "bg-gradient-to-br from-[#855323] via-[#633a12] to-[#3a1f06]",
-    badge: "text-[#fde4c8]",
-    text: "text-[#fef4ea]",
-  }, // 暖茶琥珀
-  {
-    bg: "bg-gradient-to-br from-[#53315e] via-[#3d2047] to-[#25102d]",
-    badge: "text-[#ebd4f5]",
-    text: "text-[#f8f0fc]",
-  }, // 绛紫云锦
-  {
-    bg: "bg-gradient-to-br from-[#3b474e] via-[#2a343a] to-[#161c20]",
-    badge: "text-[#d7e3ea]",
-    text: "text-[#f0f5f8]",
-  }, // 金石苍青
+  { paper: "#ece3d2", ink: "#5b4632" }, // 米白
+  { paper: "#d8e2da", ink: "#33503f" }, // 青瓷
+  { paper: "#d9e0e8", ink: "#34465a" }, // 雾蓝
+  { paper: "#e9d8c6", ink: "#6a4128" }, // 浅赭
+  { paper: "#e1dfda", ink: "#3d3d3b" }, // 灰墨
+  { paper: "#ede1c0", ink: "#68511f" }, // 杏黄
 ];
 
 function getCoverTheme(title: string) {
@@ -63,20 +39,18 @@ export function BookCover({ title, assetId }: { title: string; assetId?: string 
   return (
     <div
       aria-hidden="true"
-      className={`w-full h-full flex flex-col justify-between p-2 sm:p-2.5 ${theme.bg} shadow-inner select-none relative overflow-hidden border-l-2 border-white/20`}
+      className="w-full h-full p-[7%] select-none relative overflow-hidden"
+      style={{ background: theme.paper, color: theme.ink }}
     >
-      <div className="flex items-center justify-between w-full opacity-85">
-        <Icon name="auto_stories" size={14} className={theme.badge} />
-        <span className={`text-[9px] font-mono font-semibold tracking-wider ${theme.badge}`}>
-          TXT
-        </span>
-      </div>
-      <div className="flex flex-col gap-0.5 mt-auto">
-        <span
-          className={`text-[10px] sm:text-[11px] font-title-editorial font-semibold line-clamp-3 leading-snug tracking-tight ${theme.text}`}
-        >
+      {/* A thin inner frame, with a short rule under the title. */}
+      <div
+        className="w-full h-full rounded-[2px] border flex flex-col items-center justify-center gap-[8%] px-[8%] text-center"
+        style={{ borderColor: `${theme.ink}40` }}
+      >
+        <span className="font-title-editorial font-semibold text-[11px] sm:text-xs leading-snug line-clamp-4 break-all">
           {cleanTitle}
         </span>
+        <span className="block h-px w-1/4" style={{ background: `${theme.ink}66` }} />
       </div>
     </div>
   );

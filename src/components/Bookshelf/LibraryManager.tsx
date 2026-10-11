@@ -38,7 +38,7 @@ export function LibraryManager({
           <DialogDescription className="text-xs text-secondary">
             {mode === "sort"
               ? "排序和书架布局自动保存。"
-              : "恢复后继续使用原来的进度、书签和分组；删除后从应用中彻底去除，云书架上的文件保留。"}
+              : "恢复后继续使用原来的进度、书签和分组；删除后从应用存储中去除，云书架上的文件保留；进度和阅读时长会保留，再导入同一本书时恢复。"}
           </DialogDescription>
         </DialogHeader>
         {(state.managementError || preferences.state.error) && (

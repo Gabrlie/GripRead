@@ -48,9 +48,21 @@ export function ReaderScrollText({
   /** Only user-visible scrolling reveals the indicator, not re-renders. */
   const scrolled = useRef(false);
   const report = useRef<() => void>(() => {});
+  /**
+   * The passage at the top of the view and how far its line sits above the
+   * edge. A width change (such as a dialog's scroll lock) reflows the text;
+   * the view then returns to this passage instead of reporting whatever
+   * line the reflow pushed to the top.
+   */
+  const anchor = useRef<{ offset: number; delta: number } | null>(null);
   report.current = () => {
     if (!body.current || !viewport.current) return;
     const offsets = visibleOffsets(body.current, viewport.current);
+    const top = rectAtOffset(body.current, offsets.start);
+    anchor.current = {
+      offset: content.startOffset + offsets.start,
+      delta: top ? top.top - viewport.current.getBoundingClientRect().top : 0,
+    };
     controller.updateScrollPosition(
       content.startOffset + offsets.start,
       content.startOffset + offsets.end,
@@ -139,7 +151,17 @@ export function ReaderScrollText({
       cancelAnimationFrame(frame.current);
       frame.current = requestAnimationFrame(() => report.current());
     };
+    let width = box.clientWidth;
     const observer = new ResizeObserver(() => {
+      const current = previous.current;
+      const kept = anchor.current;
+      if (box.clientWidth !== width && current && kept && body.current) {
+        const local = kept.offset - current.startOffset;
+        const rect =
+          local >= 0 && local < current.text.length ? rectAtOffset(body.current, local) : null;
+        if (rect) box.scrollTop += rect.top - box.getBoundingClientRect().top - kept.delta;
+      }
+      width = box.clientWidth;
       cancelAnimationFrame(frame.current);
       frame.current = requestAnimationFrame(() => report.current());
     });

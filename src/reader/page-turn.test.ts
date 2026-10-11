@@ -180,25 +180,3 @@ describe("PageTurnAdapter", () => {
     adapter.dispose();
   });
 });
-
-describe("automatic reveal", () => {
-  it("keeps the outgoing page over turns and uncovers it from the top", async () => {
-    const { host, adapter, first, second, pages } = setup();
-    adapter.setPages(pages, 0);
-    await adapter.present(first, "open", context(pages, 0));
-    adapter.beginReveal();
-    const copy = host.querySelector<HTMLElement>('[data-reveal="true"]');
-    expect(copy?.textContent).toContain("first page");
-    // The automatic turn cancels presentation first; the cover stays.
-    adapter.cancel();
-    adapter.skipNextAnimation();
-    adapter.setPages(pages, 1);
-    await adapter.present(second, "next", context(pages, 1));
-    adapter.setReveal(0.25);
-    expect(host.querySelector<HTMLElement>('[data-reveal="true"]')?.style.clipPath).toBe(
-      "inset(25% 0 0 0)",
-    );
-    adapter.endReveal();
-    expect(host.querySelector('[data-reveal="true"]')).toBeNull();
-  });
-});

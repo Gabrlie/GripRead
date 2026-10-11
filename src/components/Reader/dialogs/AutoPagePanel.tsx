@@ -1,8 +1,4 @@
-import {
-  AUTO_SCROLL_SPEED_MAX,
-  AUTO_SCROLL_SPEED_MIN,
-  type AutoPageMode,
-} from "../../../types/generated";
+import { AUTO_SCROLL_SPEED_MAX, AUTO_SCROLL_SPEED_MIN } from "../../../types/generated";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
 
@@ -14,10 +10,8 @@ interface AutoPagePanelProps {
   scroll: boolean;
   seconds: number;
   speed: number;
-  mode: AutoPageMode;
   onInterval: (seconds: number) => void;
   onSpeed: (speed: number) => void;
-  onMode: (mode: AutoPageMode) => void;
   onPause: () => void;
   onResume: () => void;
   onMenu: () => void;
@@ -29,7 +23,8 @@ interface AutoPagePanelProps {
 /**
  * Legado's AutoReadDialog while automatic turning is on: a tap on the page
  * shows this panel instead of the reading menu. It reports whether turning
- * runs, adjusts the interval (or scroll speed) and the turning style, pauses
+ * runs (with the page animation chosen in 界面), adjusts the interval or
+ * scroll speed, pauses
  * or resumes, opens the reading menu, and leaves automatic turning. It does
  * not block the page, so turning continues while it is shown.
  */
@@ -38,10 +33,8 @@ export function AutoPagePanel({
   scroll,
   seconds,
   speed,
-  mode,
   onInterval,
   onSpeed,
-  onMode,
   onPause,
   onResume,
   onMenu,
@@ -121,27 +114,6 @@ export function AutoPagePanel({
           <Icon name="add" size={15} />
         </Button>
       </div>
-      {!scroll && (
-        <div role="radiogroup" aria-label="翻页方式" className="flex gap-2">
-          {(
-            [
-              ["reveal", "覆盖"],
-              ["turn", "翻页动画"],
-            ] as const
-          ).map(([option, label]) => (
-            <button
-              key={option}
-              type="button"
-              role="radio"
-              aria-checked={mode === option}
-              onClick={() => onMode(option)}
-              className={`flex-1 h-7 rounded-full text-xs border ${mode === option ? "bg-primary text-on-primary border-primary" : "border-surface-variant"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
       <div className="flex gap-2">
         <Button className="flex-1" onClick={running ? onPause : onResume}>
           <Icon name={running ? "pause" : "play"} size={16} />
