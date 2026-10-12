@@ -8,9 +8,9 @@ Implement Legado text-source behavior after the local reading milestone. Legado 
 
 ## Interfaces
 
-`SourceAdapter` exposes source import, search, book details, table of contents, chapter content, update checks, and capability reports. Persist original source JSON separately from normalized metadata. Accept files, URLs, and pasted JSON, including single sources and source arrays; preserve unknown configuration fields.
+`SourceService` (in the [service contracts](../../src/services/contracts.ts)) lists, imports (preview first, then the chosen sources), edits, groups, orders, switches, exports, debugs, logs in to, and checks sources; debug lines and check progress arrive as `source-debug` and `source-check` events. Storage keeps each source's original JSON with unknown fields preserved, plus columns for sorting and filtering; `lastUpdateTime` decides whether an import is an update. Imports accept files, URLs, and pasted JSON, single sources or arrays; only text sources are imported, and the others are counted as skipped. The source cache (script `cache`, source variables, login information and headers) and the cookie jar are local tables that never leave the device.
 
-Report imported-but-unverified sources separately from runtime results. A capability can be supported, partially supported, unsupported, or unverified. Network failure is distinct from an unsupported rule. A successful import is not proof that search or chapter extraction works.
+Report imported-but-unverified sources separately from runtime results. A capability can be supported, partially supported, unsupported, or unverified. Network failure is distinct from an unsupported rule. A successful import is not proof that search or chapter extraction works. A check records Legado's failure groups (网站失效, js失效, 校验超时, 搜索失效, 发现失效, 详情失效, 目录失效, 正文失效) and an error comment, and clears them when a later check succeeds.
 
 ## Behavior
 

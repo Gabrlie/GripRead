@@ -6,6 +6,7 @@ pub mod m1_txt;
 pub mod models;
 mod progress_sync;
 mod relocation;
+pub mod source_commands;
 pub mod sources;
 pub mod storage;
 mod transform;
@@ -42,6 +43,14 @@ use commands::{
     list_replace_rules, order_replace_rules, save_replace_rule, set_book_replace_rules,
     test_replace_rule,
 };
+use source_commands::{
+    cancel_source_operation, change_book_sources_group, check_book_sources, clear_source_cookies,
+    debug_book_source, delete_book_sources, export_book_sources, fetch_source_text,
+    get_book_source, get_source_login_form, get_source_variable, import_book_sources,
+    list_book_sources, login_book_source, move_book_sources, preview_source_import,
+    save_book_source, set_book_sources_switch, set_source_variable, SourceOperations,
+};
+use source_commands::{export_book_sources_file, read_source_file};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 
@@ -81,6 +90,7 @@ pub fn run() {
                 .ok_or("native-test builds require an isolated GRIPREAD_TEST_DATA_DIR")?;
             app.manage(AppState::new(data_dir)?);
             app.manage(ExitPermission::default());
+            app.manage(SourceOperations::default());
             #[cfg(target_os = "macos")]
             {
                 // AppKit's predefined Quit invokes terminate: directly and
@@ -117,6 +127,27 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_book_sources,
+            get_book_source,
+            preview_source_import,
+            import_book_sources,
+            save_book_source,
+            delete_book_sources,
+            set_book_sources_switch,
+            change_book_sources_group,
+            move_book_sources,
+            export_book_sources,
+            fetch_source_text,
+            get_source_login_form,
+            login_book_source,
+            get_source_variable,
+            set_source_variable,
+            clear_source_cookies,
+            debug_book_source,
+            check_book_sources,
+            cancel_source_operation,
+            read_source_file,
+            export_book_sources_file,
             start_import,
             get_import_status,
             cancel_import,

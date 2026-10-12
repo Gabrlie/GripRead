@@ -17,6 +17,7 @@ import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { ReadingRecordsPage } from "../Bookshelf/ReadingRecordsPage";
 import { ReplaceRulesPage } from "../Rules/ReplaceRulesPage";
 import { TocRulesPage } from "../Rules/TocRulesPage";
+import { SourceManagePage } from "../Sources/SourceManagePage";
 import { BackupPage } from "../Cloud/BackupPage";
 import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatTime } from "../Cloud/format";
@@ -24,7 +25,7 @@ import { APP_VERSION, AboutPage } from "./AboutPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
-type Page = "records" | "replace" | "toc" | "backup" | "cloud" | "about";
+type Page = "records" | "sources" | "replace" | "toc" | "backup" | "cloud" | "about";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -235,6 +236,12 @@ export function SettingsView() {
 
         <PageSection title="规则">
           <PageLink
+            icon="public"
+            label="书源管理"
+            detail="导入、编辑、校验阅读（Legado）书源"
+            onClick={() => setPage("sources")}
+          />
+          <PageLink
             icon="find_replace"
             label="替换净化"
             detail="替换或删除正文中的文字，所有书共用"
@@ -299,6 +306,9 @@ export function SettingsView() {
           }}
           onClose={() => setDetail(null)}
         />
+      )}
+      {page === "sources" && (
+        <SourceManagePage service={runtime.services.sources} onClose={close} />
       )}
       {page === "replace" && (
         <ReplaceRulesPage service={runtime.services.reader} onClose={close} backCloses />

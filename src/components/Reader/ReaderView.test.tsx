@@ -20,6 +20,7 @@ import type {
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
 import { DEFAULT_READING_STYLE } from "../../types/generated";
 import { syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
+import { sourceServiceMocks } from "../../test/sources";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -233,6 +234,7 @@ function runtime() {
       ...fontServiceMocks(),
     },
     sync: syncServiceMocks(),
+    sources: sourceServiceMocks(),
   } satisfies AppServices);
 }
 

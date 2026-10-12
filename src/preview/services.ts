@@ -18,6 +18,7 @@ import type {
   TxtTocRule,
 } from "../types/generated";
 import { DEFAULT_READING_STYLE } from "../types/generated";
+import { createMemorySourceService, PREVIEW_SOURCES } from "./sources";
 import type { CloudBook, RemoteBackup, WebDavSettings } from "../types/generated";
 
 const BOOK_ID = "preview-book";
@@ -457,5 +458,6 @@ export function previewServices(): AppServices {
       fetchProgress: async () => null,
       acknowledgeProgress: async () => undefined,
     },
+    sources: createMemorySourceService(PREVIEW_SOURCES),
   };
 }

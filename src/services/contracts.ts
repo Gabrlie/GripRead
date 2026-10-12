@@ -42,6 +42,18 @@ import type {
   CloudUploadReport,
   WebDavCheck,
   ProgressPrompt,
+  BookSourceSummary,
+  BookSourceDetail,
+  SourceImportPreview,
+  ImportSourcesRequest,
+  SourceSwitch,
+  SourceLoginForm,
+  SourceLoginRequest,
+  SourceScriptReport,
+  DebugSourceRequest,
+  SourceDebugEvent,
+  CheckSourcesRequest,
+  SourceCheckEvent,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -173,9 +185,44 @@ export interface SyncService {
   fetchProgress(bookId: string): Promise<ProgressPrompt | null>;
   acknowledgeProgress(bookId: string, deviceId: string, revision: number): Promise<void>;
 }
+/** Legado book sources: management, login, debugging, and checks (Sources specification). */
+export interface SourceService {
+  listSources(): Promise<BookSourceSummary[]>;
+  getSource(url: string): Promise<BookSourceDetail>;
+  /** What importing this JSON would add or update; nothing is saved. */
+  previewImport(json: string): Promise<SourceImportPreview>;
+  importSources(request: ImportSourcesRequest): Promise<BookSourceSummary[]>;
+  /** Downloads source JSON from an address (网络导入). */
+  fetchText(url: string): Promise<string>;
+  /** Picks a source file and reads it; `null` when cancelled. */
+  pickSourceFile(): Promise<string | null>;
+  /** Saves an edited source; `previousUrl` is its address before editing. */
+  saveSource(json: string, previousUrl?: string | null): Promise<BookSourceSummary>;
+  deleteSources(urls: string[]): Promise<void>;
+  setSwitch(urls: string[], which: SourceSwitch, on: boolean): Promise<void>;
+  changeGroup(urls: string[], group: string, add: boolean): Promise<void>;
+  moveSources(urls: string[], top: boolean): Promise<void>;
+  /** The sources as Legado export JSON; every source when `urls` is empty. */
+  exportSources(urls: string[]): Promise<string>;
+  /** Saves sources to a file the reader picks; `false` when cancelled. */
+  exportSourcesFile(urls: string[]): Promise<boolean>;
+  getLoginForm(url: string): Promise<SourceLoginForm>;
+  login(request: SourceLoginRequest): Promise<SourceScriptReport>;
+  getVariable(url: string): Promise<string | null>;
+  setVariable(url: string, value: string | null): Promise<void>;
+  clearCookies(url: string): Promise<void>;
+  /** Starts a debug run; lines arrive through `onDebug`. */
+  debug(request: DebugSourceRequest): Promise<void>;
+  onDebug(listener: (event: SourceDebugEvent) => void): Promise<Unsubscribe>;
+  /** Starts checking sources; progress arrives through `onCheck`. */
+  check(request: CheckSourcesRequest): Promise<void>;
+  onCheck(listener: (event: SourceCheckEvent) => void): Promise<Unsubscribe>;
+  cancel(operationId: string): Promise<CancelResult>;
+}
 export interface AppServices {
   library: LibraryService;
   reader: ReaderService;
   settings: SettingsService;
   sync: SyncService;
+  sources: SourceService;
 }

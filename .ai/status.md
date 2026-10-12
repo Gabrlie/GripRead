@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-S1, the rule engine, is implemented; S2, source storage and management, is next. The macOS native suite needs a run on macOS.
+S1 (the rule engine) and S2 (source management) are implemented; S3, search and discover, is next. The macOS native suite needs a run on macOS.

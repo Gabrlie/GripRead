@@ -5,6 +5,27 @@ export type { LibraryService, ReaderService, SettingsService, AppServices } from
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  BookSourceSummary,
+  BookSourceDetail,
+  SourceImportPreview,
+  ImportSourcesRequest,
+  PreviewSourceImportRequest,
+  SourceUrlRequest,
+  SourceUrlsRequest,
+  SetSourcesSwitchRequest,
+  SourceGroupRequest,
+  MoveSourcesRequest,
+  SaveBookSourceRequest,
+  FetchTextRequest,
+  ExportSourcesFileRequest,
+  SourceLoginForm,
+  SourceLoginRequest,
+  SourceScriptReport,
+  SourceVariableRequest,
+  DebugSourceRequest,
+  SourceDebugEvent,
+  CheckSourcesRequest,
+  SourceCheckEvent,
   WebDavSettings,
   SaveWebDavRequest,
   RemoteBackup,
@@ -477,6 +498,102 @@ export const tauriServices: AppServices = {
     acknowledgeProgress: (bookId, deviceId, revision) =>
       invokeCommand<void>("acknowledge_book_progress", {
         request: { bookId, deviceId, revision } satisfies AcknowledgeProgressRequest,
+      }),
+  },
+  sources: {
+    listSources: () => invokeCommand<BookSourceSummary[]>("list_book_sources"),
+    getSource: (url) =>
+      invokeCommand<BookSourceDetail>("get_book_source", {
+        request: { url } satisfies SourceUrlRequest,
+      }),
+    previewImport: (json) =>
+      invokeCommand<SourceImportPreview>("preview_source_import", {
+        request: { json } satisfies PreviewSourceImportRequest,
+      }),
+    importSources: (request) =>
+      invokeCommand<BookSourceSummary[]>("import_book_sources", {
+        request: request satisfies ImportSourcesRequest,
+      }),
+    fetchText: (url) =>
+      invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),
+    pickSourceFile: async () => {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "书源", extensions: ["json", "txt"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return null;
+      return invokeCommand<string>("read_source_file", {
+        request: { path: selected } satisfies PathRequest,
+      });
+    },
+    saveSource: (json, previousUrl) =>
+      invokeCommand<BookSourceSummary>("save_book_source", {
+        request: { json, previousUrl: previousUrl ?? null } satisfies SaveBookSourceRequest,
+      }),
+    deleteSources: (urls) =>
+      invokeCommand<void>("delete_book_sources", { request: { urls } satisfies SourceUrlsRequest }),
+    setSwitch: (urls, which, on) =>
+      invokeCommand<void>("set_book_sources_switch", {
+        request: { urls, switch: which, on } satisfies SetSourcesSwitchRequest,
+      }),
+    changeGroup: (urls, group, add) =>
+      invokeCommand<void>("change_book_sources_group", {
+        request: { urls, group, add } satisfies SourceGroupRequest,
+      }),
+    moveSources: (urls, top) =>
+      invokeCommand<void>("move_book_sources", {
+        request: { urls, top } satisfies MoveSourcesRequest,
+      }),
+    exportSources: (urls) =>
+      invokeCommand<string>("export_book_sources", {
+        request: { urls } satisfies SourceUrlsRequest,
+      }),
+    exportSourcesFile: async (urls) => {
+      // Android shows its own "save as" screen (DocumentPlugin.kt).
+      const android = /Android/i.test(navigator.userAgent);
+      const path = android
+        ? null
+        : await save({
+            defaultPath: "bookSource.json",
+            filters: [{ name: "书源", extensions: ["json"] }],
+          });
+      if (!android && path === null) return false;
+      return invokeCommand<boolean>("export_book_sources_file", {
+        request: { path, urls } satisfies ExportSourcesFileRequest,
+      });
+    },
+    getLoginForm: (url) =>
+      invokeCommand<SourceLoginForm>("get_source_login_form", {
+        request: { url } satisfies SourceUrlRequest,
+      }),
+    login: (request) =>
+      invokeCommand<SourceScriptReport>("login_book_source", {
+        request: request satisfies SourceLoginRequest,
+      }),
+    getVariable: (url) =>
+      invokeCommand<string | null>("get_source_variable", {
+        request: { url } satisfies SourceUrlRequest,
+      }),
+    setVariable: (url, value) =>
+      invokeCommand<void>("set_source_variable", {
+        request: { url, value } satisfies SourceVariableRequest,
+      }),
+    clearCookies: (url) =>
+      invokeCommand<void>("clear_source_cookies", { request: { url } satisfies SourceUrlRequest }),
+    debug: (request) =>
+      invokeCommand<void>("debug_book_source", { request: request satisfies DebugSourceRequest }),
+    onDebug: (listener) =>
+      listen<SourceDebugEvent>("source-debug", (event) => listener(event.payload)),
+    check: (request) =>
+      invokeCommand<void>("check_book_sources", {
+        request: request satisfies CheckSourcesRequest,
+      }),
+    onCheck: (listener) =>
+      listen<SourceCheckEvent>("source-check", (event) => listener(event.payload)),
+    cancel: (operationId) =>
+      invokeCommand<CancelResult>("cancel_source_operation", {
+        request: { operationId } satisfies ImportOperationRequest,
       }),
   },
 };

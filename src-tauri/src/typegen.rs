@@ -118,6 +118,31 @@ const IPC_TYPES: &[&str] = &[
     "ShelfSort",
     "ShelfPreferences",
     "SaveShelfPreferencesRequest",
+    "BookSourceSummary",
+    "BookSourceDetail",
+    "SourceImportStatus",
+    "SourceImportItem",
+    "SourceImportPreview",
+    "PreviewSourceImportRequest",
+    "ImportSourcesRequest",
+    "SourceUrlRequest",
+    "SourceUrlsRequest",
+    "SourceSwitch",
+    "SetSourcesSwitchRequest",
+    "SourceGroupRequest",
+    "MoveSourcesRequest",
+    "SaveBookSourceRequest",
+    "FetchTextRequest",
+    "SourceLoginRow",
+    "SourceLoginForm",
+    "SourceLoginRequest",
+    "SourceScriptReport",
+    "SourceVariableRequest",
+    "DebugSourceRequest",
+    "SourceDebugEvent",
+    "CheckSourcesRequest",
+    "SourceCheckEvent",
+    "ExportSourcesFileRequest",
 ];
 
 pub fn generated_types() -> Result<String, AppError> {
@@ -238,6 +263,31 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<LibraryBook>(&config)?;
     export_all::<LibraryGroup>(&config)?;
     export_all::<CreateGroupRequest>(&config)?;
+    export_all::<BookSourceSummary>(&config)?;
+    export_all::<BookSourceDetail>(&config)?;
+    export_all::<SourceImportStatus>(&config)?;
+    export_all::<SourceImportItem>(&config)?;
+    export_all::<SourceImportPreview>(&config)?;
+    export_all::<PreviewSourceImportRequest>(&config)?;
+    export_all::<ImportSourcesRequest>(&config)?;
+    export_all::<SourceUrlRequest>(&config)?;
+    export_all::<SourceUrlsRequest>(&config)?;
+    export_all::<SourceSwitch>(&config)?;
+    export_all::<SetSourcesSwitchRequest>(&config)?;
+    export_all::<SourceGroupRequest>(&config)?;
+    export_all::<MoveSourcesRequest>(&config)?;
+    export_all::<SaveBookSourceRequest>(&config)?;
+    export_all::<FetchTextRequest>(&config)?;
+    export_all::<SourceLoginRow>(&config)?;
+    export_all::<SourceLoginForm>(&config)?;
+    export_all::<SourceLoginRequest>(&config)?;
+    export_all::<SourceScriptReport>(&config)?;
+    export_all::<SourceVariableRequest>(&config)?;
+    export_all::<DebugSourceRequest>(&config)?;
+    export_all::<SourceDebugEvent>(&config)?;
+    export_all::<CheckSourcesRequest>(&config)?;
+    export_all::<SourceCheckEvent>(&config)?;
+    export_all::<ExportSourcesFileRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;

@@ -10,6 +10,7 @@ import { AppRuntime } from "./runtime";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../test/toc";
 import { DEFAULT_READING_STYLE } from "../types/generated";
 import { syncServiceMocks } from "../test/sync";
+import { sourceServiceMocks } from "../test/sources";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -103,7 +104,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     saveShelfPreferences: vi.fn(async (value) => value),
     ...fontServiceMocks(),
   };
-  return { library, reader, settings, sync: syncServiceMocks() };
+  return { library, reader, settings, sync: syncServiceMocks(), sources: sourceServiceMocks() };
 }
 
 const book: Book = {

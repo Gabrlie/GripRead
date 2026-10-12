@@ -864,7 +864,7 @@ fn lock_storage(storage: &Mutex<Storage>) -> Result<std::sync::MutexGuard<'_, St
 }
 
 /// Runs a short storage operation off the async runtime.
-async fn with_storage<T: Send + 'static>(
+pub(crate) async fn with_storage<T: Send + 'static>(
     state: &State<'_, AppState>,
     operation: impl FnOnce(&mut Storage) -> Result<T, AppError> + Send + 'static,
 ) -> Result<T, AppError> {

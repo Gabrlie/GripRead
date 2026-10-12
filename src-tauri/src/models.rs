@@ -1324,3 +1324,251 @@ pub struct AcknowledgeProgressRequest {
     pub device_id: String,
     pub revision: u64,
 }
+
+// Book sources (Legado `BookSource`). The source JSON itself stays as text
+// on the boundary; these are the views pages list and the requests they send.
+
+/// One book source as the 书源管理 list shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookSourceSummary {
+    /// `bookSourceUrl`, the source's identity.
+    pub url: String,
+    pub name: String,
+    /// Groups separated by `,` or `;` as Legado stores them.
+    pub group: String,
+    pub enabled: bool,
+    pub enabled_explore: bool,
+    pub has_explore: bool,
+    pub has_search: bool,
+    /// The source has a login form or script.
+    pub has_login: bool,
+    pub custom_order: i64,
+    pub weight: i64,
+    pub last_update_time: i64,
+    pub respond_time: i64,
+    pub comment: String,
+}
+
+/// A source with its full JSON, for the editor.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookSourceDetail {
+    pub summary: BookSourceSummary,
+    /// The source JSON, pretty-printed, with fields GripRead does not use kept.
+    pub json: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceImportStatus {
+    /// Not on this device.
+    New,
+    /// On this device with an older `lastUpdateTime`.
+    Update,
+    /// On this device and not newer.
+    Existing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceImportItem {
+    pub url: String,
+    pub name: String,
+    pub group: String,
+    pub status: SourceImportStatus,
+}
+
+/// What an import would do, before anything is saved.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceImportPreview {
+    pub items: Vec<SourceImportItem>,
+    /// Audio, image, and file sources, which GripRead does not read.
+    pub skipped: u32,
+    /// Entries that are not usable sources, with the reason.
+    pub invalid: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSourceImportRequest {
+    /// One source object or an array, as Legado exports them.
+    pub json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSourcesRequest {
+    pub json: String,
+    /// The sources to save; others in the JSON are left out.
+    pub urls: Vec<String>,
+    /// Keep the name, groups, and enabled switches of sources already here.
+    pub keep_name: bool,
+    pub keep_group: bool,
+    pub keep_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceUrlRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceUrlsRequest {
+    pub urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceSwitch {
+    /// The source takes part in search.
+    Enabled,
+    /// The source's 发现 categories are shown.
+    Explore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSourcesSwitchRequest {
+    pub urls: Vec<String>,
+    pub switch: SourceSwitch,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceGroupRequest {
+    pub urls: Vec<String>,
+    pub group: String,
+    /// Add the group, or remove it.
+    pub add: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveSourcesRequest {
+    pub urls: Vec<String>,
+    /// To the top of the manual order, or to the bottom.
+    pub top: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBookSourceRequest {
+    pub json: String,
+    /// The source's address before editing, when it was changed.
+    pub previous_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchTextRequest {
+    pub url: String,
+}
+
+/// One row of a source's `loginUi`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceLoginRow {
+    pub name: String,
+    /// `text`, `password`, `button`, or `toggle`/`select` with `chars`.
+    pub kind: String,
+    pub action: Option<String>,
+    pub default_value: Option<String>,
+    /// Choices for `select` and `toggle` rows.
+    pub chars: Vec<String>,
+}
+
+/// A source's login form and what is already saved for it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceLoginForm {
+    pub rows: Vec<SourceLoginRow>,
+    #[ts(type = "Record<string, string>")]
+    pub values: std::collections::BTreeMap<String, String>,
+    /// The source logs in only through a web page, which needs WebView.
+    pub browser_only: bool,
+    pub login_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceLoginRequest {
+    pub url: String,
+    #[ts(type = "Record<string, string>")]
+    pub values: std::collections::BTreeMap<String, String>,
+    /// A button row's action, instead of the source's `login()`.
+    pub action: Option<String>,
+}
+
+/// What a source script did, for login buttons and source actions.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceScriptReport {
+    pub result: String,
+    pub logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceVariableRequest {
+    pub url: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSourceRequest {
+    pub operation_id: String,
+    pub url: String,
+    /// A search keyword, or a book or explore address to start from.
+    pub key: String,
+}
+
+/// One line of a source debug run, streamed as `source-debug`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDebugEvent {
+    pub operation_id: String,
+    pub line: String,
+    /// The run ended; `error` says why when it failed.
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckSourcesRequest {
+    pub operation_id: String,
+    pub urls: Vec<String>,
+    /// The search keyword; empty uses each source's `checkKeyWord` or 我的.
+    pub keyword: String,
+}
+
+/// Progress of a source check, streamed as `source-check`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCheckEvent {
+    pub operation_id: String,
+    pub url: String,
+    pub name: String,
+    /// What is being checked, or the outcome.
+    pub message: String,
+    /// This source's check finished; `ok` tells how.
+    pub finished: bool,
+    pub ok: bool,
+    pub checked: u32,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSourcesFileRequest {
+    /// The file chosen in the save dialog; Android asks with its own screen.
+    pub path: Option<String>,
+    /// The sources to export; every source when empty.
+    pub urls: Vec<String>,
+}
