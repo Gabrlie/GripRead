@@ -67,17 +67,22 @@ export function useOnlineCover(
   service: SourceService,
   sourceUrl: string,
   url: string | null | undefined,
+  visible = true,
 ): string | null {
   const [image, setImage] = useState<string | null>(null);
   useEffect(() => {
     setImage(null);
-    if (!url || !sourceUrl) return;
+    if (!url || !sourceUrl || !visible) return;
     const key = `${sourceUrl}\n${url}`;
     let pending = covers.get(key);
     if (!pending) {
       pending = service.cover(sourceUrl, url).then(
         (bytes) => URL.createObjectURL(new Blob([bytes])),
-        () => null,
+        () => {
+          // A failure is not kept here: the device cache decides when to retry.
+          covers.delete(key);
+          return null;
+        },
       );
       covers.set(key, pending);
     }
@@ -86,7 +91,7 @@ export function useOnlineCover(
     return () => {
       active = false;
     };
-  }, [service, sourceUrl, url]);
+  }, [service, sourceUrl, url, visible]);
   return image;
 }
 

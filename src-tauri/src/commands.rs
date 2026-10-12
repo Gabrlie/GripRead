@@ -907,9 +907,16 @@ async fn for_online_book<T: Send + 'static>(
     if !online {
         return Ok(None);
     }
-    crate::source_commands::on_engine_thread(move || work(&storage))
-        .await?
-        .map(Some)
+    let started = std::time::Instant::now();
+    let outcome = crate::source_commands::on_engine_thread(move || work(&storage)).await?;
+    // 详细日志 times every online reading step, to find what stutters.
+    if crate::app_log::detailed() {
+        crate::app_log::detail(
+            "reader",
+            format!("网络书籍操作 {} ms", started.elapsed().as_millis()),
+        );
+    }
+    outcome.map(Some)
 }
 
 /// Runs a short storage operation off the async runtime.

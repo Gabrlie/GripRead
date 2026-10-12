@@ -58,3 +58,29 @@ export function captureUncaughtErrors() {
     appLog.write("error", "ui", `未处理的错误：${text}`);
   });
 }
+
+/** The page or panel on top, to say where a long task happened. */
+function topLayer(): string {
+  const layers = document.querySelectorAll('[role="dialog"][data-open]');
+  const top = layers[layers.length - 1];
+  return top?.getAttribute("aria-label") ?? "主界面";
+}
+
+/** Records page work that blocked the screen for over 100 ms (详细日志). */
+export function captureLongTasks() {
+  if (typeof PerformanceObserver === "undefined") return;
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries())
+        if (entry.duration >= 100)
+          appLog.write(
+            "detail",
+            "ui",
+            `界面卡顿 ${Math.round(entry.duration)} ms（${topLayer()}）`,
+          );
+    });
+    observer.observe({ type: "longtask", buffered: false });
+  } catch {
+    // Long tasks are not reported on this WebView.
+  }
+}

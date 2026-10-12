@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 
 import { App } from "./App";
 import { applySystemInsets } from "./services/insets";
-import { captureUncaughtErrors } from "./services/log";
+import { captureLongTasks, captureUncaughtErrors } from "./services/log";
 import "@fontsource-variable/literata/wght.css";
 import "@fontsource-variable/noto-serif-sc/wght.css";
 import "@fontsource-variable/hanken-grotesk/wght.css";
@@ -12,6 +12,7 @@ import "./styles.css";
 async function start() {
   applySystemInsets();
   captureUncaughtErrors();
+  captureLongTasks();
   if (import.meta.env.MODE === "native-test") {
     await import("@wdio/tauri-plugin");
   }

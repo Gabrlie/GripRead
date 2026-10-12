@@ -325,7 +325,10 @@ fn analyze_book_list(
     let env = scope.env().clone();
     let base_url = response.url.clone();
     let rule = AnalyzeRule::new(env.clone());
-    rule.set_rule_data(Some(Rc::new(RefCell::new(variables.clone()))));
+    // The list's variables: what the bookList script stores with java.put is
+    // passed on to every book, as Legado's BookList does.
+    let list_data = Rc::new(RefCell::new(variables.clone()));
+    rule.set_rule_data(Some(list_data.clone()));
     rule.set_content(Val::Str(response.body.clone()), Some(&base_url));
     rule.set_redirect_url(&base_url);
     let is_redirect = split_url_option(&url.url).0 != response.url;
@@ -353,6 +356,7 @@ fn analyze_book_list(
         list_text = rest.to_string();
     }
     let items = rule.get_elements(scope, &list_text)?;
+    let variables = list_data.borrow().clone();
     env.log(format!("列表 {} 项", items.len()));
     if items.is_empty() && env.source.book_url_pattern().is_none() {
         return Ok(
@@ -455,9 +459,13 @@ fn search_item(
     book.borrow_mut().latest_chapter_title = last_chapter;
     let intro = html_format(&rule_string(scope, rule, &rules.intro, false)?);
     book.borrow_mut().intro = intro;
+    // Legado reads the cover as text and resolves it only when there is one;
+    // an empty cover must not become the page's own address.
     if !rules.cover_url.is_empty() {
-        let cover = rule_string(scope, rule, &rules.cover_url, true)?;
-        book.borrow_mut().cover_url = cover;
+        let cover = rule_string(scope, rule, &rules.cover_url, false)?;
+        if !cover.trim().is_empty() {
+            book.borrow_mut().cover_url = absolute_url(base_url, cover.trim());
+        }
     }
     let mut book_url = if rules.book_url.is_empty() {
         String::new()
@@ -603,9 +611,9 @@ fn analyze_book_info(
     }
     let cover_rule = info("coverUrl");
     if !cover_rule.is_empty() {
-        let cover = rule.get_url(scope, &cover_rule)?;
-        if !cover.is_empty() {
-            book.borrow_mut().cover_url = cover;
+        let cover = rule.get_string(scope, &cover_rule)?;
+        if !cover.trim().is_empty() {
+            book.borrow_mut().cover_url = absolute_url(&rule.redirect_url(), cover.trim());
         }
     }
     let toc_rule = info("tocUrl");

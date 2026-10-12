@@ -301,6 +301,8 @@ export function SearchResultRow({
   onOpen: () => void;
 }) {
   const first = result.origins[0];
+  // The cover is fetched through the source that gave it.
+  const covered = result.origins.find((origin) => origin.coverUrl) ?? first;
   return (
     <li>
       <button
@@ -311,8 +313,8 @@ export function SearchResultRow({
         <span className="w-12 h-16 shrink-0 rounded overflow-hidden bg-surface-container">
           <OnlineCover
             service={service}
-            sourceUrl={first?.sourceUrl ?? ""}
-            url={result.coverUrl}
+            sourceUrl={covered?.sourceUrl ?? ""}
+            url={covered?.coverUrl ?? result.coverUrl}
             title={result.name}
           />
         </span>

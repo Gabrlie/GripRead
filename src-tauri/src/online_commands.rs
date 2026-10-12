@@ -598,29 +598,47 @@ fn cover_bytes(
     }
     let _slot = CoverSlot::take();
     let source = load_source(storage, source_url)?;
+    let decode = source.cover_decode_js().filter(|js| !js.trim().is_empty());
     let control = Control::new(Default::default(), Some(Instant::now() + COVER_TIMEOUT));
     let session = session_for(storage, source, control).map_err(engine_error)?;
     let fetched = session.run_with_rule(|scope, rule| {
-        let address = AnalyzeUrl::new(
-            rule,
-            scope,
-            url,
-            None,
-            None,
-            &session.env().source.url(),
-            None,
-        )?;
-        let response = address.get_str_response(session.env())?;
-        let image = response.bytes.len() > 64
-            && !response.body.trim_start().starts_with('<')
-            && response.is_success();
-        if !image {
-            return Err(SourceError::network(format!(
+        let page = session.env().source.url();
+        let mut address = AnalyzeUrl::new(rule, scope, url, None, None, &page, None)?;
+        let mut response = address.get_str_response(session.env())?;
+        // Image hosts that refuse other sites' pages want the source as Referer.
+        let has_referer = address
+            .headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("referer"));
+        if (!response.is_success() || !is_image(&response.bytes)) && !has_referer {
+            address.headers.push(("Referer".to_string(), page.clone()));
+            if let Ok(retried) = address.get_str_response(session.env()) {
+                response = retried;
+            }
+        }
+        let mut bytes = response.bytes;
+        // Legado's coverDecodeJs: `result` is the image's bytes; it returns
+        // the decoded bytes.
+        if let Some(js) = &decode {
+            let input = crate::sources::value::Val::Json(serde_json::Value::Array(
+                bytes
+                    .iter()
+                    .map(|byte| serde_json::Value::from(*byte as i8))
+                    .collect(),
+            ));
+            let output = rule.eval_js(scope, js, &input)?;
+            bytes = decoded_bytes(&output).unwrap_or(bytes);
+        }
+        if !response.code.to_string().starts_with('2') && !is_image(&bytes) {
+            return Err(SourceError::rule(format!(
                 "封面下载失败（{}）",
                 response.code
             )));
         }
-        Ok(response.bytes)
+        if !is_image(&bytes) {
+            return Err(SourceError::rule("封面不是图片".to_string()));
+        }
+        Ok(bytes)
     });
     match fetched {
         Ok(bytes) => {
@@ -628,10 +646,64 @@ fn cover_bytes(
             Ok(bytes)
         }
         Err(error) => {
-            lock()?.record_cover_failure(&key)?;
-            crate::app_log::detail("source", format!("封面下载失败 {url}：{}", error.message));
+            // Only a definite answer waits before asking again; a timeout or
+            // dropped connection is tried again next time.
+            if error.kind == crate::sources::error::SourceErrorKind::Rule {
+                lock()?.record_cover_failure(&key)?;
+            }
+            crate::app_log::warn("source", format!("封面下载失败 {url}：{}", error.message));
             Err(engine_error(error))
         }
+    }
+}
+
+/// Whether bytes start like an image the WebView shows.
+pub(crate) fn is_image(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        [0xff, 0xd8, 0xff, ..]
+            | [0x89, b'P', b'N', b'G', ..]
+            | [b'G', b'I', b'F', b'8', ..]
+            | [b'B', b'M', ..]
+            | [
+                b'R',
+                b'I',
+                b'F',
+                b'F',
+                _,
+                _,
+                _,
+                _,
+                b'W',
+                b'E',
+                b'B',
+                b'P',
+                ..
+            ]
+            | [_, _, _, _, b'f', b't', b'y', b'p', ..]
+            | [b'<', b's', b'v', b'g', ..]
+    ) || bytes.starts_with(b"<?xml") && bytes.windows(4).take(256).any(|window| window == b"<svg")
+}
+
+/// The bytes a coverDecodeJs script returned (an array of byte values).
+fn decoded_bytes(value: &crate::sources::value::Val) -> Option<Vec<u8>> {
+    use crate::sources::value::Val;
+    match value {
+        Val::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_f64().map(|byte| byte as i64 as u8))
+            .collect(),
+        Val::List(items) => items
+            .iter()
+            .map(|item| {
+                item.to_text()
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|byte| byte as i64 as u8)
+            })
+            .collect(),
+        _ => None,
     }
 }
 
@@ -681,6 +753,176 @@ fn image_extension(bytes: &[u8]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn covers_are_recognised_by_their_bytes() {
+        assert!(is_image(&[0xff, 0xd8, 0xff, 0xe0, 0]));
+        assert!(is_image(b"\x89PNG\r\n"));
+        assert!(is_image(b"RIFF\0\0\0\0WEBPVP8"));
+        assert!(is_image(b"\0\0\0\x20ftypavif"));
+        assert!(!is_image(b"<html><body>403</body></html>"));
+        assert!(!is_image(b""));
+        let decoded = decoded_bytes(&crate::sources::value::Val::Json(serde_json::json!([
+            -1, -40, 1
+        ])));
+        assert_eq!(decoded, Some(vec![0xff, 0xd8, 1]));
+    }
+
+    /// Explore → details → contents for sources named `GRIPREAD_SOURCE_NAME`,
+    /// the way 发现 opens a book, printing each step's fields.
+    #[test]
+    #[ignore]
+    fn live_explore_detail() {
+        let path = std::env::var("GRIPREAD_SOURCES").expect("GRIPREAD_SOURCES");
+        let only = std::env::var("GRIPREAD_SOURCE_NAME").expect("GRIPREAD_SOURCE_NAME");
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let dir =
+                    std::env::temp_dir().join(format!("gripread-explore-{}", uuid::Uuid::new_v4()));
+                std::fs::create_dir_all(&dir).unwrap();
+                let storage = Arc::new(Mutex::new(crate::storage::Storage::open(&dir).unwrap()));
+                let text = std::fs::read_to_string(path).unwrap();
+                for raw in crate::sources::model::parse_sources(&text).unwrap() {
+                    let name = raw["bookSourceName"].as_str().unwrap_or("").to_string();
+                    if !name.contains(&only) {
+                        continue;
+                    }
+                    storage
+                        .lock()
+                        .unwrap()
+                        .save_book_source(&raw.to_string(), None)
+                        .unwrap();
+                    let url = raw["bookSourceUrl"].as_str().unwrap_or("").to_string();
+                    let source = load_source(&storage, &url).unwrap();
+                    let session = session_for(&storage, source, Control::unlimited()).unwrap();
+                    let kinds = session.explore_kinds().unwrap_or_default();
+                    let Some(kind) = kinds.iter().find_map(|kind| kind.url.clone()) else {
+                        eprintln!("{name}: 没有发现分类");
+                        continue;
+                    };
+                    let books = match session.explore(&kind, 1) {
+                        Ok(books) => books,
+                        Err(error) => {
+                            eprintln!("{name}: 发现失败 {}", error.message);
+                            continue;
+                        }
+                    };
+                    let Some(first) = books.into_iter().next() else {
+                        eprintln!("{name}: 发现为空");
+                        continue;
+                    };
+                    let listed = online_book(&first);
+                    eprintln!(
+                        "{name}: 列表 《{}》 cover={} url={} toc={}",
+                        listed.name, listed.cover_url, listed.book_url, listed.toc_url
+                    );
+                    // The page sends the listed book back to the details step.
+                    let book = Rc::new(RefCell::new(book_data(&listed)));
+                    match session.book_info(&book, false) {
+                        Ok(()) => {
+                            let info = online_book(&book.borrow());
+                            eprintln!(
+                                "{name}: 详情 cover={} toc={} intro={}",
+                                info.cover_url,
+                                info.toc_url,
+                                info.intro.chars().take(20).collect::<String>()
+                            );
+                        }
+                        Err(error) => eprintln!("{name}: 详情失败 {}", error.message),
+                    }
+                    match session.chapters(&book) {
+                        Ok(chapters) => eprintln!("{name}: 目录 {} 章", chapters.len()),
+                        Err(error) => eprintln!("{name}: 目录失败 {}", error.message),
+                    }
+                }
+                let _ = std::fs::remove_dir_all(dir);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// For each source in `GRIPREAD_SOURCES` (optionally only those whose
+    /// name contains `GRIPREAD_SOURCE_NAME`): search, then explore page 1,
+    /// then fetch up to three covers the way the app does, printing why each
+    /// one fails. A tool for cover problems on live sites.
+    #[test]
+    #[ignore]
+    fn live_cover_report() {
+        let path = std::env::var("GRIPREAD_SOURCES").expect("GRIPREAD_SOURCES");
+        let only = std::env::var("GRIPREAD_SOURCE_NAME").unwrap_or_default();
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let dir =
+                    std::env::temp_dir().join(format!("gripread-covers-{}", uuid::Uuid::new_v4()));
+                std::fs::create_dir_all(&dir).unwrap();
+                let storage = Arc::new(Mutex::new(crate::storage::Storage::open(&dir).unwrap()));
+                let text = std::fs::read_to_string(path).unwrap();
+                for raw in crate::sources::model::parse_sources(&text).unwrap() {
+                    let name = raw["bookSourceName"].as_str().unwrap_or("").to_string();
+                    if !only.is_empty() && !name.contains(&only) {
+                        continue;
+                    }
+                    storage
+                        .lock()
+                        .unwrap()
+                        .save_book_source(&raw.to_string(), None)
+                        .unwrap();
+                    let url = raw["bookSourceUrl"].as_str().unwrap_or("").to_string();
+                    let Ok(source) = load_source(&storage, &url) else {
+                        continue;
+                    };
+                    let key = source
+                        .rule("ruleSearch", "checkKeyWord")
+                        .unwrap_or_else(|| "我的".into());
+                    let control = Control::new(
+                        Default::default(),
+                        Some(Instant::now() + Duration::from_secs(40)),
+                    );
+                    let Ok(session) = session_for(&storage, source, control) else {
+                        continue;
+                    };
+                    let mut books = session.search(&key, 1).unwrap_or_default();
+                    if books.is_empty() {
+                        if let Some(kind) = session
+                            .explore_kinds()
+                            .ok()
+                            .and_then(|kinds| kinds.into_iter().find_map(|kind| kind.url))
+                        {
+                            books = session.explore(&kind, 1).unwrap_or_default();
+                        }
+                    }
+                    if books.is_empty() {
+                        eprintln!("{name}: 没有书");
+                        continue;
+                    }
+                    for book in books.iter().take(3) {
+                        if book.cover_url.is_empty() {
+                            eprintln!("{name}: 《{}》没有封面地址", book.name);
+                            continue;
+                        }
+                        let outcome = cover_bytes(&storage, &url, &book.cover_url);
+                        match outcome {
+                            Ok(bytes) => eprintln!(
+                                "{name}: ok {} 字节 {:02x?} {}",
+                                bytes.len(),
+                                &bytes[..bytes.len().min(4)],
+                                book.cover_url
+                            ),
+                            Err(error) => {
+                                eprintln!("{name}: 失败 {} — {}", error.message, book.cover_url)
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_dir_all(dir);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     fn book(source: &str, name: &str, author: &str) -> OnlineBook {
         OnlineBook {

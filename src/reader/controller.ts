@@ -9,6 +9,7 @@ import type { ReaderService } from "../services/contracts";
 import { isUtf16ScalarBoundary, windowStartsMidLine } from "./pagination";
 import { continuesLine } from "./render";
 import { ReaderPositions } from "./positions";
+import { appLog } from "../services/log";
 import { chapterRanges, chapterAt, type ReaderChapter } from "./chapters";
 import type { ReaderMeasurer, ReaderPage } from "./pagination";
 import type {
@@ -890,12 +891,20 @@ export class ReaderController {
       window.endOffset,
     ];
     const pages: ReaderDisplayedPage[] = [];
+    const started = performance.now();
     for (let index = 0; index + 1 < cuts.length; index++) {
       const slice = sliceWindow(window, cuts[index], cuts[index + 1]);
       const measured = await Promise.resolve(this.measurer.measure(slice, direction));
       this.assertCurrent(epoch);
       pages.push(...normalizePages(slice, measured));
     }
+    const spent = performance.now() - started;
+    if (spent >= 50)
+      appLog.write(
+        "detail",
+        "reader",
+        `排版 ${window.text.length} 字用了 ${Math.round(spent)} ms，${pages.length} 页`,
+      );
     return { window, pages };
   }
 

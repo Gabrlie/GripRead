@@ -1,13 +1,13 @@
 //! Kept copies of what sources return, so pages show at once and the
 //! network is asked again only when a copy is old: cover images on disk by
-//! source and address (kept until the cache is cleared; a failure is retried
-//! after an hour), and a book's details and contents by source and book
+//! source and address (kept until the cache is cleared; a definite failure is
+//! retried after ten minutes), and a book's details and contents by source and book
 //! address.
 
 use super::*;
 
 /// A failed cover is not asked for again sooner than this.
-const COVER_RETRY_MS: i64 = 3_600_000;
+const COVER_RETRY_MS: i64 = 600_000;
 
 pub fn cover_key(source_url: &str, url: &str) -> String {
     sha256_bytes(format!("{source_url}\n{url}").as_bytes())
