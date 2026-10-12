@@ -49,6 +49,7 @@ const entry: LibraryBook = {
   coverAssetId: null,
   useReplaceRules: true,
   inCloud: false,
+  online: null,
 };
 const chapters: TocEntry[] = [
   tocEntry(0, "第一章", entry.locator!),
@@ -248,7 +249,7 @@ describe("shelf chapter snapshots", () => {
     const missing: LibraryBook = {
       ...entry,
       book: { ...entry.book, contentVersion: "v2" },
-      asset: { ...entry.asset, contentVersion: "v2", availability: "missing" },
+      asset: { ...entry.asset!, contentVersion: "v2", availability: "missing" },
     };
     await store.load([missing]);
     expect(reader.listToc).toHaveBeenCalledOnce();

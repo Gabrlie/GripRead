@@ -83,6 +83,7 @@ const book = (
   coverAssetId: null,
   useReplaceRules: true,
   inCloud: false,
+  online: null,
 });
 afterEach(() => vi.useRealTimers());
 describe("application-owned import", () => {
@@ -102,7 +103,7 @@ describe("application-owned import", () => {
       totalBytes: 1,
       result: {
         book: entry.book,
-        asset: entry.asset,
+        asset: entry.asset!,
         duplicate: false,
         sourceByteLength: 1,
       },
@@ -407,9 +408,9 @@ describe("application-owned import", () => {
     const entry = book("book", "标题", 1, null);
     const result: ImportResult = {
       book: entry.book,
-      asset: entry.asset,
+      asset: entry.asset!,
       duplicate: true,
-      sourceByteLength: entry.asset.byteLength,
+      sourceByteLength: entry.asset!.byteLength,
     };
     vi.mocked(service.listBooks).mockResolvedValue([entry]);
     vi.mocked(service.listRemovedBooks).mockResolvedValue([entry]);

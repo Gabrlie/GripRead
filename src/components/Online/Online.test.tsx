@@ -18,7 +18,9 @@ describe("online search", () => {
   it("shows merged results as sources answer and opens a book with its sources", async () => {
     const sources = service();
     const search = vi.spyOn(sources, "search");
-    render(<SearchPage service={sources} onClose={() => undefined} />);
+    const add = vi.spyOn(sources, "addOnlineBook");
+    const onRead = vi.fn();
+    render(<SearchPage service={sources} onRead={onRead} onClose={() => undefined} />);
     await userEvent.type(screen.getByRole("textbox", { name: "书名或作者" }), "剑来");
     await userEvent.click(screen.getByRole("button", { name: "搜索" }));
     expect(search).toHaveBeenCalledWith(
@@ -34,16 +36,41 @@ describe("online search", () => {
     await userEvent.click(within(results).getAllByRole("button")[0]);
     expect(await screen.findByRole("dialog", { name: "书籍详情" })).toBeTruthy();
     expect(await screen.findByText("换源（2）")).toBeTruthy();
-    expect(await screen.findByText("目录（23 章）")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    await userEvent.click(await screen.findByRole("button", { name: /目录（23 章）/ }));
     const toc = await screen.findByRole("dialog", { name: "目录" });
     expect(within(toc).getByText("共 23 章")).toBeTruthy();
     await userEvent.click(within(toc).getByRole("button", { name: "返回" }));
     expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "试读" }));
-    expect(await screen.findByText(/第1章 剑来的第1章的第 1 段预览正文/)).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "下一章" }));
-    expect(await screen.findByText(/第2章 剑来的第2章的第 1 段预览正文/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "加入书架" }));
+    expect(add).toHaveBeenLastCalledWith(expect.objectContaining({ onShelf: true }));
+    expect(await screen.findByRole("button", { name: "移出书架" })).toBeTruthy();
+    expect(screen.getByText("已在书架")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "阅读" }));
+    await vi.waitFor(() => expect(onRead).toHaveBeenCalledOnce());
+    const [book, chapter, from] = onRead.mock.calls[0];
+    expect(book.online.onShelf).toBe(true);
+    expect(chapter).toBeNull();
+    expect(from).toMatchObject({ view: "search", key: "剑来", origin: 0 });
+    expect(from.event.results.length).toBe(2);
+  });
+
+  it("reads a chapter chosen in the contents without adding the book", async () => {
+    const sources = service();
+    const add = vi.spyOn(sources, "addOnlineBook");
+    const onRead = vi.fn();
+    render(<SearchPage service={sources} onRead={onRead} onClose={() => undefined} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "书名或作者" }), "雪中");
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
+    const results = await screen.findByRole("list", { name: "搜索结果" });
+    await userEvent.click((await within(results).findAllByRole("button"))[0]);
+    await userEvent.click(await screen.findByRole("button", { name: /目录（23 章）/ }));
+    const toc = await screen.findByRole("dialog", { name: "目录" });
+    await userEvent.click(within(toc).getByRole("button", { name: /第3章/ }));
+    await vi.waitFor(() => expect(onRead).toHaveBeenCalledOnce());
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ onShelf: false }));
+    expect(onRead.mock.calls[0][1]).toBe(3);
   });
 
   it("keeps the keyword history and searches a remembered keyword", async () => {

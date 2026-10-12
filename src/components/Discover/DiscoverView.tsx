@@ -9,8 +9,15 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { useRuntime } from "../../application/runtime";
+import { useOptionalApp } from "../../context/AppContext";
+import type { OnlineReturn } from "../../application/online";
 import { sourceGroups, splitGroups } from "../../application/sources";
-import type { BookSourceSummary, ExploreKind, SearchScope } from "../../types/generated";
+import type {
+  BookSourceSummary,
+  ExploreKind,
+  LibraryBook,
+  SearchScope,
+} from "../../types/generated";
 import { SearchPage } from "../Online/SearchPage";
 import { ExploreListPage } from "../Online/ExploreListPage";
 import { SourceManagePage } from "../Sources/SourceManagePage";
@@ -31,15 +38,44 @@ function kindBasis(kind: ExploreKind): string | undefined {
 export function DiscoverView() {
   const runtime = useRuntime();
   const service = runtime.services.sources;
+  const app = useOptionalApp();
+  // Coming back from reading an online book restores the page it came from.
+  const [back, setBack] = useState(() => app?.takeOnlineReturn() ?? null);
   const [sources, setSources] = useState<BookSourceSummary[] | null>(null);
   const [filter, setFilter] = useState("");
   const [group, setGroup] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [kinds, setKinds] = useState<Record<string, ExploreKind[] | "loading" | string>>({});
-  const [opened, setOpened] = useState<{ source: BookSourceSummary; kind: ExploreKind } | null>(
-    null,
+  const [opened, setOpened] = useState<{
+    source: Pick<BookSourceSummary, "url" | "name">;
+    kind: ExploreKind;
+  } | null>(
+    back?.view === "explore"
+      ? { source: { url: back.sourceUrl, name: back.sourceName }, kind: back.kind }
+      : null,
   );
-  const [searching, setSearching] = useState<SearchScope | null>(null);
+  const [searching, setSearching] = useState<SearchScope | null>(
+    back?.view === "search" ? back.scope : null,
+  );
+
+  /** Opens a kept online book, at a chapter when one was chosen. */
+  const read = (book: LibraryBook, chapter: number | null, from: OnlineReturn) => {
+    if (!app) return;
+    const open = () => app.openReader(book, undefined, from);
+    if (chapter === null) {
+      open();
+      return;
+    }
+    void runtime.services.reader
+      .resolveOffset({
+        bookId: book.book.id,
+        contentVersion: "",
+        resourceId: `chapter-${chapter}`,
+        offset: 0,
+      })
+      .then((locator) => runtime.services.reader.saveReaderLocator(locator))
+      .then(open, (failure: unknown) => toast({ text: String(failure), error: true }));
+  };
   const [managing, setManaging] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -247,11 +283,26 @@ export function DiscoverView() {
           sourceUrl={opened.source.url}
           sourceName={opened.source.name}
           kind={opened.kind}
-          onClose={() => setOpened(null)}
+          restored={back?.view === "explore" ? back : undefined}
+          onRead={read}
+          onClose={() => {
+            setBack(null);
+            setOpened(null);
+          }}
         />
       )}
       {searching && (
-        <SearchPage service={service} initialScope={searching} onClose={() => setSearching(null)} />
+        <SearchPage
+          service={service}
+          initialScope={searching}
+          initialKey={back?.view === "search" ? back.key : ""}
+          restored={back?.view === "search" ? back : undefined}
+          onRead={read}
+          onClose={() => {
+            setBack(null);
+            setSearching(null);
+          }}
+        />
       )}
       {managing && (
         <SourceManagePage

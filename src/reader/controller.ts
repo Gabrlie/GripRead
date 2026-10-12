@@ -368,7 +368,38 @@ export class ReaderController {
     const { chapters, chapter } = this.snapshot;
     const index = chapters.indexOf(chapter!);
     const target = chapters[index + (direction === "next" ? 1 : -1)];
-    return target ? this.seekChapterOffset(target.start, false) : Promise.resolve();
+    if (target) return this.seekChapterOffset(target.start, false);
+    // A book read chapter by chapter keeps each chapter in its own resource.
+    const window = this.snapshot.contentWindow;
+    const resource = direction === "next" ? window?.nextResourceId : window?.previousResourceId;
+    return window && resource ? this.seekResource(window.bookId, resource) : Promise.resolve();
+  }
+
+  /** Open a neighbouring chapter resource at its start. */
+  private seekResource(bookId: string, resourceId: string): Promise<void> {
+    if (this.disposed) return Promise.reject(abortError());
+    const epoch = ++this.epoch;
+    this.adapter?.cancel?.();
+    return this.schedule(epoch, async () => {
+      this.setLoading(true);
+      const measured = await this.readResource(bookId, resourceId, "forward", epoch);
+      this.windows = [measured];
+      this.currentWindowIndex = 0;
+      this.currentPageIndex = 0;
+      this.suppressPositionSave = false;
+      this.snapshot = { ...this.snapshot, positionWarning: null };
+      await this.presentCurrent("seek", epoch);
+    });
+  }
+
+  /** A neighbouring resource from its start, or ending at its end. */
+  private async readResource(
+    bookId: string,
+    resourceId: string,
+    direction: WindowDirection,
+    epoch: number,
+  ): Promise<MeasuredWindow> {
+    return this.readAndMeasure(bookId, null, direction, epoch, undefined, resourceId);
   }
 
   public seekChapterProgress(progress: number): Promise<void> {
@@ -491,6 +522,8 @@ export class ReaderController {
     if (this.scrollRead) return this.scrollRead;
     const windows = this.scrollWindows;
     const edge = direction === "forward" ? windows.at(-1) : windows[0];
+    // Scrolling stays inside one chapter resource; the scroll view offers
+    // the neighbouring chapter at its ends.
     if (!edge || (direction === "forward" ? !edge.hasAfter : !edge.hasBefore))
       return Promise.resolve();
     const epoch = this.epoch;
@@ -669,7 +702,19 @@ export class ReaderController {
     const current = this.activeMeasuredWindow();
     const page = this.currentPage();
     if (!current || !page) return;
-    if (!page.hasAfter) return;
+    if (!page.hasAfter) {
+      const next = current.window.nextResourceId;
+      if (!next) return;
+      this.suppressPositionSave = false;
+      this.clearPositionWarning();
+      this.setLoading(true);
+      const measured = await this.readResource(current.window.bookId, next, "forward", epoch);
+      this.assertCurrent(epoch);
+      this.windows = [measured];
+      this.currentWindowIndex = 0;
+      this.currentPageIndex = 0;
+      return;
+    }
     this.suppressPositionSave = false;
     this.clearPositionWarning();
 
@@ -734,7 +779,19 @@ export class ReaderController {
     const current = this.activeMeasuredWindow();
     const page = this.currentPage();
     if (!current || !page) return;
-    if (!page.hasBefore) return;
+    if (!page.hasBefore) {
+      const previous = current.window.previousResourceId;
+      if (!previous) return;
+      this.suppressPositionSave = false;
+      this.clearPositionWarning();
+      this.setLoading(true);
+      const measured = await this.readResource(current.window.bookId, previous, "backward", epoch);
+      this.assertCurrent(epoch);
+      this.windows = [measured];
+      this.currentWindowIndex = 0;
+      this.currentPageIndex = Math.max(0, measured.pages.length - 1);
+      return;
+    }
     this.suppressPositionSave = false;
     this.clearPositionWarning();
 
@@ -772,6 +829,7 @@ export class ReaderController {
     direction: WindowDirection,
     epoch: number,
     backwardAnchor?: number,
+    resourceId?: string,
   ): Promise<MeasuredWindow> {
     this.assertCurrent(epoch);
     const window = await this.service.readContentWindow({
@@ -779,9 +837,10 @@ export class ReaderController {
       locator,
       maxUnits: this.maxUnits,
       direction,
+      ...(resourceId ? { resourceId } : {}),
     });
     this.assertCurrent(epoch);
-    validateWindowResponse(window, bookId, locator, direction, backwardAnchor);
+    validateWindowResponse(window, bookId, locator, direction, backwardAnchor, resourceId);
 
     // A locator at the exact end of a non-empty book has no forward text.
     // Re-read a suffix ending at that exclusive anchor so the last page can
@@ -884,8 +943,12 @@ export class ReaderController {
       contentWindow: measured.window,
       pageIndex: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,
       pageCount: measured.pages.length,
-      hasBefore: displayed?.hasBefore ?? measured.window.hasBefore,
-      hasAfter: visible.at(-1)?.hasAfter ?? measured.window.hasAfter,
+      hasBefore:
+        (displayed?.hasBefore ?? measured.window.hasBefore) ||
+        Boolean(measured.window.previousResourceId),
+      hasAfter:
+        (visible.at(-1)?.hasAfter ?? measured.window.hasAfter) ||
+        Boolean(measured.window.nextResourceId),
       loading: false,
       error: null,
     };
@@ -1150,10 +1213,22 @@ function validateWindowResponse(
   locator: ReaderLocator | null,
   direction: WindowDirection,
   backwardAnchor?: number,
+  resourceId?: string,
 ): void {
   validateWindow(window);
   if (window.bookId !== requestedBookId) {
     throw new ReaderProtocolError("content window belongs to another book");
+  }
+  if (resourceId !== undefined && locator === null) {
+    // A neighbouring resource is read from its start or up to its end.
+    if (window.resourceId !== resourceId) {
+      throw new ReaderProtocolError("content window has a different resource");
+    }
+    const edge = direction === "forward" ? window.startOffset : window.endOffset;
+    if (edge !== (direction === "forward" ? 0 : window.totalLength)) {
+      throw new ReaderProtocolError("resource window does not start or end at its edge");
+    }
+    return;
   }
   if (locator) {
     if (locator.bookId !== requestedBookId) {

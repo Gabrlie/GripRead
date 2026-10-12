@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { SourceService } from "../../services/contracts";
-import type { ExploreKind, OnlineBook, OnlineSearchResult } from "../../types/generated";
+import type {
+  ExploreKind,
+  LibraryBook,
+  OnlineBook,
+  OnlineSearchResult,
+} from "../../types/generated";
+import type { OnlineReturn } from "../../application/online";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { OnlineBookPage } from "./OnlineBookPage";
@@ -25,12 +31,17 @@ export function ExploreListPage({
   sourceUrl,
   sourceName,
   kind,
+  restored,
+  onRead,
   onClose,
 }: {
   service: SourceService;
   sourceUrl: string;
   sourceName: string;
   kind: ExploreKind;
+  /** The book page to show again after reading. */
+  restored?: { result: OnlineSearchResult; origin: number };
+  onRead?: (book: LibraryBook, chapter: number | null, from: OnlineReturn) => void;
   onClose: () => void;
 }) {
   const [books, setBooks] = useState<OnlineBook[]>([]);
@@ -38,7 +49,9 @@ export function ExploreListPage({
   const [loading, setLoading] = useState(false);
   const [ended, setEnded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<OnlineBook | null>(null);
+  const [opened, setOpened] = useState<{ result: OnlineSearchResult; origin: number } | null>(
+    restored ?? null,
+  );
   const [attempt, setAttempt] = useState(0);
   const sentinel = useRef<HTMLDivElement>(null);
 
@@ -96,7 +109,7 @@ export function ExploreListPage({
             key={book.bookUrl}
             service={service}
             result={asResult(book)}
-            onOpen={() => setOpened(book)}
+            onOpen={() => setOpened({ result: asResult(book), origin: 0 })}
           />
         ))}
       </ul>
@@ -122,7 +135,20 @@ export function ExploreListPage({
       {opened && (
         <OnlineBookPage
           service={service}
-          result={asResult(opened)}
+          result={opened.result}
+          initialOrigin={opened.origin}
+          onRead={
+            onRead &&
+            ((book, origin, chapter) =>
+              onRead(book, chapter, {
+                view: "explore",
+                sourceUrl,
+                sourceName,
+                kind,
+                result: opened.result,
+                origin,
+              }))
+          }
           onClose={() => setOpened(null)}
         />
       )}

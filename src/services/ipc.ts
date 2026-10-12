@@ -111,6 +111,13 @@ import type {
   ReaderAsset,
   ReaderAssetRequest,
   PathRequest,
+  AddOnlineBookRequest,
+  UpdateOnlineTocRequest,
+  OnlineTocEvent,
+  CacheOnlineChaptersRequest,
+  OnlineCacheEvent,
+  SetOnlineBookFlagRequest,
+  FindOnlineBookRequest,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -636,5 +643,49 @@ export const tauriServices: AppServices = {
       invokeCommand<ArrayBuffer>("online_cover", {
         request: { sourceUrl, url } satisfies OnlineCoverRequest,
       }),
+    addOnlineBook: (request) =>
+      invokeCommand<LibraryBook>("add_online_book", {
+        request: request satisfies AddOnlineBookRequest,
+      }),
+    findOnlineBook: (name, author) =>
+      invokeCommand<LibraryBook | null>("find_online_book", {
+        request: { name, author } satisfies FindOnlineBookRequest,
+      }),
+    getLibraryBook: (bookId) =>
+      invokeCommand<LibraryBook>("get_library_book", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    setOnShelf: (bookId, on) =>
+      invokeCommand<void>("set_online_on_shelf", {
+        request: { bookId, on } satisfies SetOnlineBookFlagRequest,
+      }),
+    setCanUpdate: (bookId, on) =>
+      invokeCommand<void>("set_online_can_update", {
+        request: { bookId, on } satisfies SetOnlineBookFlagRequest,
+      }),
+    leaveOnlineBook: (bookId) =>
+      invokeCommand<boolean>("leave_online_book", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    listOnlineChapters: (bookId) =>
+      invokeCommand<OnlineChapter[]>("list_online_chapters", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    clearOnlineCache: (bookId) =>
+      invokeCommand<void>("clear_online_cache", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    updateToc: (request) =>
+      invokeCommand<void>("update_online_toc", {
+        request: request satisfies UpdateOnlineTocRequest,
+      }),
+    onTocUpdate: (listener) =>
+      listen<OnlineTocEvent>("online-toc", (event) => listener(event.payload)),
+    cacheChapters: (request) =>
+      invokeCommand<void>("cache_online_chapters", {
+        request: request satisfies CacheOnlineChaptersRequest,
+      }),
+    onCache: (listener) =>
+      listen<OnlineCacheEvent>("online-cache", (event) => listener(event.payload)),
   },
 };

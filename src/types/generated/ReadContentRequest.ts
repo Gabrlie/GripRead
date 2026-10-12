@@ -2,4 +2,9 @@
 import type { ReaderLocator } from "./ReaderLocator";
 import type { WindowDirection } from "./WindowDirection";
 
-export type ReadContentRequest = { bookId: string, locator: ReaderLocator | null, maxUnits: number, direction: WindowDirection, };
+export type ReadContentRequest = { bookId: string, locator: ReaderLocator | null, maxUnits: number, direction: WindowDirection, 
+/**
+ * Without a locator: the resource to read from its start (forward) or
+ * its end (backward), for moving into a neighbouring chapter.
+ */
+resourceId?: string, };

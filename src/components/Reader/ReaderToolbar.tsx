@@ -35,6 +35,8 @@ interface ReaderTopBarProps {
   onOpenTools: () => void;
   /** The book detail page; the title opens it too. */
   onOpenDetail: () => void;
+  /** TXT目录规则 and 设置编码 apply to local TXT books only. */
+  txtTools?: boolean;
 }
 
 const CONVERSION_LABELS: Record<ChineseConversion, string> = {
@@ -60,6 +62,7 @@ export function ReaderTopBar({
   onOpenConversion,
   onOpenTools,
   onOpenDetail,
+  txtTools = true,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -101,8 +104,8 @@ export function ReaderTopBar({
           </h1>
           <p className="text-[11px] text-secondary truncate leading-tight mt-0.5">{subtitle}</p>
         </button>
-        {action("rules", "TXT目录规则", "toc_rule")}
-        {action("encoding", "设置编码", "translate")}
+        {txtTools && action("rules", "TXT目录规则", "toc_rule")}
+        {txtTools && action("encoding", "设置编码", "translate")}
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="更多"

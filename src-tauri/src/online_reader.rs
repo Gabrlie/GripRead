@@ -1,0 +1,702 @@
+//! Reading online books chapter by chapter. Each chapter is a reader
+//! resource (`chapter-<n>`) whose text is its title line and the content
+//! the source gave, kept on the device once fetched. Replace rules and 简繁
+//! apply when a chapter is read. Positions are offsets inside one chapter;
+//! the reader moves to a neighbouring resource at a chapter's edge.
+
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use sha2::{Digest, Sha256};
+
+use crate::error::{AppError, ErrorCode};
+use crate::models::{
+    ContentWindow, OnlineChapter, ReadContentRequest, ReaderLocator, ResolveOffsetRequest,
+    SearchMatch, SearchRequest, SearchResponse, TocEntry, TocListing, WindowDirection,
+};
+use crate::online_commands::{book_data, chapter_data};
+use crate::source_commands::{engine_error, load_source, session_for, spawn_engine};
+use crate::sources::context::Control;
+use crate::sources::web_book::chapter_absolute_url;
+use crate::storage::{chapter_resource, resource_chapter, Storage};
+use crate::transform;
+
+const CONTEXT_UNITS: usize = 32;
+const FETCH_TIMEOUT: Duration = Duration::from_secs(90);
+/// Legado's 预下载章节数: chapters fetched ahead of the one being read.
+const PRE_DOWNLOAD_AHEAD: u32 = 10;
+/// A chapter that failed this many times is skipped by pre-download.
+const PRE_DOWNLOAD_FAILURES: u32 = 3;
+
+type Shared = Arc<Mutex<Storage>>;
+
+fn lock(storage: &Shared) -> Result<std::sync::MutexGuard<'_, Storage>, AppError> {
+    storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
+}
+
+/// A chapter's displayed text with what identifies it.
+pub struct ChapterText {
+    pub index: u32,
+    pub count: u32,
+    pub version: String,
+    pub units: Vec<u16>,
+}
+
+/// The chapter's text as the source gave it, from the device or fetched now.
+pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String, AppError> {
+    let (record, chapter, chapters, path) = {
+        let guard = lock(storage)?;
+        let record = guard.online_record(book_id)?;
+        let chapter = guard
+            .online_chapter(book_id, index)?
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+        let path = guard.online_chapter_path(book_id, &chapter);
+        let chapters = guard.online_chapters(book_id)?;
+        (record, chapter, chapters, path)
+    };
+    if let Ok(text) = fs::read_to_string(&path) {
+        return Ok(text);
+    }
+    if chapter.is_volume && chapter.url.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let source = load_source(storage, &record.book.source_url)?;
+    let control = Control::new(Default::default(), Some(Instant::now() + FETCH_TIMEOUT));
+    let session = session_for(storage, source, control).map_err(engine_error)?;
+    let book = Rc::new(RefCell::new(book_data(&record.book)));
+    let urls: Vec<String> = chapters
+        .iter()
+        .map(|item| chapter_absolute_url(&chapter_data(item)))
+        .collect();
+    let next = chapters
+        .iter()
+        .skip(index as usize + 1)
+        .find(|item| !item.is_volume)
+        .map(|item| chapter_absolute_url(&chapter_data(item)));
+    let content = session
+        .content(&book, &chapter_data(&chapter), next.as_deref(), &urls)
+        .map_err(engine_error)?;
+    write_cache(&path, &content.text)?;
+    Ok(content.text)
+}
+
+fn write_cache(path: &Path, text: &str) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let partial = path.with_extension("part");
+    fs::write(&partial, text)?;
+    fs::rename(&partial, path)?;
+    Ok(())
+}
+
+/// The chapter as the reader shows it: the title line, then the content,
+/// with the book's replace rules and 简繁 applied.
+pub fn chapter_text(storage: &Shared, book_id: &str, index: u32) -> Result<ChapterText, AppError> {
+    let raw = raw_chapter(storage, book_id, index)?;
+    let (chapter, count, transform) = {
+        let guard = lock(storage)?;
+        let chapter = guard
+            .online_chapter(book_id, index)?
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+        (
+            chapter,
+            guard.online_chapter_count(book_id)?,
+            guard.book_transform(book_id)?,
+        )
+    };
+    let body = raw.trim_matches('\n');
+    let joined = if body.is_empty() {
+        chapter.title.clone()
+    } else {
+        format!("{}\n{}", chapter.title, body)
+    };
+    let text = transform::apply(&joined, &transform).0;
+    Ok(ChapterText {
+        index,
+        count,
+        version: chapter_version(book_id, &chapter),
+        units: text.encode_utf16().collect(),
+    })
+}
+
+/// Stable while the chapter keeps its address; a changed transform only
+/// moves offsets slightly, which positions tolerate by clamping.
+fn chapter_version(book_id: &str, chapter: &OnlineChapter) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(book_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(chapter.url.as_bytes());
+    hasher.update([0]);
+    hasher.update(chapter.title.as_bytes());
+    let digest = hasher.finalize();
+    format!("online-{}", hex::encode(&digest[..8]))
+}
+
+fn is_low_surrogate(unit: u16) -> bool {
+    (0xdc00..=0xdfff).contains(&unit)
+}
+
+/// Moves `offset` back off the second half of a surrogate pair.
+fn floor_boundary(units: &[u16], offset: usize) -> usize {
+    let offset = offset.min(units.len());
+    if offset > 0 && offset < units.len() && is_low_surrogate(units[offset]) {
+        offset - 1
+    } else {
+        offset
+    }
+}
+
+fn ceil_boundary(units: &[u16], offset: usize) -> usize {
+    let offset = offset.min(units.len());
+    if offset > 0 && offset < units.len() && is_low_surrogate(units[offset]) {
+        offset + 1
+    } else {
+        offset
+    }
+}
+
+fn text_of(units: &[u16]) -> String {
+    String::from_utf16_lossy(units)
+}
+
+fn locator_in(book_id: &str, chapter: &ChapterText, offset: usize) -> ReaderLocator {
+    let offset = floor_boundary(&chapter.units, offset);
+    let before = ceil_boundary(&chapter.units, offset.saturating_sub(CONTEXT_UNITS));
+    let after = floor_boundary(&chapter.units, offset + CONTEXT_UNITS);
+    ReaderLocator {
+        book_id: book_id.to_string(),
+        content_version: chapter.version.clone(),
+        resource_id: chapter_resource(chapter.index),
+        offset: offset as u64,
+        context_before: text_of(&chapter.units[before..offset]),
+        context_after: text_of(&chapter.units[offset..after]),
+    }
+}
+
+fn window_of(book_id: &str, chapter: &ChapterText, start: usize, end: usize) -> ContentWindow {
+    let total = chapter.units.len();
+    ContentWindow {
+        book_id: book_id.to_string(),
+        resource_id: chapter_resource(chapter.index),
+        content_version: chapter.version.clone(),
+        text: text_of(&chapter.units[start..end]),
+        start_offset: start as u64,
+        end_offset: end as u64,
+        total_length: total as u64,
+        has_before: start > 0,
+        has_after: end < total,
+        locator: locator_in(book_id, chapter, start),
+        previous_resource_id: (chapter.index > 0).then(|| chapter_resource(chapter.index - 1)),
+        next_resource_id: (chapter.index + 1 < chapter.count)
+            .then(|| chapter_resource(chapter.index + 1)),
+        resource_index: Some(chapter.index),
+        resource_count: Some(chapter.count),
+    }
+}
+
+/// `read_content_window` for an online book.
+pub fn read_window(
+    storage: &Shared,
+    request: &ReadContentRequest,
+) -> Result<ContentWindow, AppError> {
+    let book_id = &request.book_id;
+    let resource = request
+        .locator
+        .as_ref()
+        .map(|locator| locator.resource_id.clone())
+        .or_else(|| request.resource_id.clone());
+    let index = match resource {
+        Some(resource) => resource_chapter(&resource)
+            .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?,
+        None => 0,
+    };
+    let chapter = chapter_text(storage, book_id, index)?;
+    if let Some(locator) = &request.locator {
+        if locator.content_version != chapter.version {
+            return Err(AppError::new(
+                ErrorCode::ContentVersionMismatch,
+                "章节已经变化，请从目录重新打开",
+            ));
+        }
+    }
+    let total = chapter.units.len();
+    let max = (request.max_units.max(1) as usize).min(1_000_000);
+    let (start, end) = match request.direction {
+        WindowDirection::Forward => {
+            let start = floor_boundary(
+                &chapter.units,
+                request.locator.as_ref().map_or(0, |l| l.offset as usize),
+            );
+            let mut end = floor_boundary(&chapter.units, start + max);
+            if end <= start && start < total {
+                end = ceil_boundary(&chapter.units, start + 1);
+            }
+            (start, end)
+        }
+        WindowDirection::Backward => {
+            let end = ceil_boundary(
+                &chapter.units,
+                request
+                    .locator
+                    .as_ref()
+                    .map_or(total, |l| l.offset as usize),
+            );
+            (ceil_boundary(&chapter.units, end.saturating_sub(max)), end)
+        }
+    };
+    let end = end.min(total);
+    let start = start.min(end);
+    {
+        let guard = lock(storage)?;
+        guard.clear_online_new_chapters(book_id)?;
+    }
+    pre_download(storage.clone(), book_id.clone(), index);
+    Ok(window_of(book_id, &chapter, start, end))
+}
+
+/// `resolve_reader_offset` for an online book.
+pub fn resolve_offset(
+    storage: &Shared,
+    request: &ResolveOffsetRequest,
+) -> Result<ReaderLocator, AppError> {
+    let index = resource_chapter(&request.resource_id)
+        .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?;
+    let chapter = chapter_text(storage, &request.book_id, index)?;
+    Ok(locator_in(
+        &request.book_id,
+        &chapter,
+        request.offset as usize,
+    ))
+}
+
+/// `resolve_reader_locator` for an online book: the chapter at that share
+/// of the contents, at its start.
+pub fn resolve_progress(
+    storage: &Shared,
+    book_id: &str,
+    progress: f64,
+) -> Result<ReaderLocator, AppError> {
+    let count = lock(storage)?.online_chapter_count(book_id)?;
+    if count == 0 {
+        return Err(AppError::new(ErrorCode::NotFound, "目录为空"));
+    }
+    let index = ((progress.clamp(0.0, 1.0) * count as f64) as u32).min(count - 1);
+    let chapter = chapter_text(storage, book_id, index)?;
+    Ok(locator_in(book_id, &chapter, 0))
+}
+
+/// The contents for the reader: one entry per chapter, at its start.
+pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
+    let guard = lock(storage)?;
+    let chapters = guard.online_chapters(book_id)?;
+    let cached = guard.cached_online_chapters(book_id)?;
+    let entries = chapters
+        .iter()
+        .map(|chapter| TocEntry {
+            ordinal: chapter.index as u64,
+            title: chapter.title.clone(),
+            volume: chapter.is_volume,
+            // Unknown until the chapter is read; cached chapters count 1.
+            length: u64::from(cached.contains(&chapter.index)),
+            locator: ReaderLocator {
+                book_id: book_id.to_string(),
+                content_version: chapter_version(book_id, chapter),
+                resource_id: chapter_resource(chapter.index),
+                offset: 0,
+                context_before: String::new(),
+                context_after: String::new(),
+            },
+        })
+        .collect();
+    Ok(TocListing {
+        entries,
+        rule_id: None,
+        rule_name: String::new(),
+        settings: Default::default(),
+    })
+}
+
+/// In-book search over the chapters kept on the device.
+pub fn search(storage: &Shared, request: &SearchRequest) -> Result<SearchResponse, AppError> {
+    let (count, cached) = {
+        let guard = lock(storage)?;
+        (
+            guard.online_chapter_count(&request.book_id)?,
+            guard.cached_online_chapters(&request.book_id)?,
+        )
+    };
+    let pattern = if request.regex {
+        Some(
+            fancy_regex::RegexBuilder::new(&request.query)
+                .case_insensitive(!request.case_sensitive)
+                .build()
+                .map_err(|error| AppError::invalid_argument(format!("正则表达式无效：{error}")))?,
+        )
+    } else {
+        None
+    };
+    let needle = if request.case_sensitive {
+        request.query.clone()
+    } else {
+        request.query.to_lowercase()
+    };
+    if needle.is_empty() {
+        return Err(AppError::invalid_argument("搜索内容不能为空"));
+    }
+    let limit = request.limit.max(1) as usize;
+    let mut matches = Vec::new();
+    // The cursor is the chapter to continue from.
+    let mut index = request.cursor.unwrap_or(0) as u32;
+    while index < count && matches.len() < limit {
+        if cached.contains(&index) {
+            let chapter = chapter_text(storage, &request.book_id, index)?;
+            let text = text_of(&chapter.units);
+            for (start, end) in find_all(&text, &needle, pattern.as_ref(), request.case_sensitive) {
+                let unit_start = text[..start].encode_utf16().count();
+                let unit_end = unit_start + text[start..end].encode_utf16().count();
+                let excerpt_start = floor_boundary(&chapter.units, unit_start.saturating_sub(20));
+                let excerpt_end = floor_boundary(&chapter.units, unit_end + 40);
+                matches.push(SearchMatch {
+                    ordinal: matches.len() as u64,
+                    locator: locator_in(&request.book_id, &chapter, unit_start),
+                    excerpt: text_of(&chapter.units[excerpt_start..excerpt_end]),
+                    match_start: unit_start as u64,
+                    match_end: unit_end as u64,
+                });
+            }
+        }
+        index += 1;
+    }
+    Ok(SearchResponse {
+        content_version: String::new(),
+        matches,
+        next_cursor: (index < count).then_some(index as u64),
+        has_more: index < count,
+    })
+}
+
+fn find_all(
+    text: &str,
+    needle: &str,
+    pattern: Option<&fancy_regex::Regex>,
+    case_sensitive: bool,
+) -> Vec<(usize, usize)> {
+    if let Some(pattern) = pattern {
+        return pattern
+            .find_iter(text)
+            .flatten()
+            .filter(|found| found.end() > found.start())
+            .map(|found| (found.start(), found.end()))
+            .collect();
+    }
+    let haystack = if case_sensitive {
+        text.to_string()
+    } else {
+        text.to_lowercase()
+    };
+    // Lowercasing keeps byte positions for the scripts novels use.
+    if haystack.len() != text.len() {
+        return Vec::new();
+    }
+    haystack
+        .match_indices(needle)
+        .map(|(start, found)| (start, start + found.len()))
+        .collect()
+}
+
+fn running() -> &'static Mutex<HashSet<String>> {
+    static RUNNING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    RUNNING.get_or_init(Default::default)
+}
+
+fn failures() -> &'static Mutex<std::collections::HashMap<(String, u32), u32>> {
+    static FAILURES: OnceLock<Mutex<std::collections::HashMap<(String, u32), u32>>> =
+        OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+/// Fetches the chapters after `index` in the background, one book at a time.
+fn pre_download(storage: Shared, book_id: String, index: u32) {
+    if !running()
+        .lock()
+        .map(|mut set| set.insert(book_id.clone()))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let started = spawn_engine({
+        let book_id = book_id.clone();
+        move || {
+            let wanted: Vec<u32> = {
+                let Ok(guard) = storage.lock() else {
+                    return;
+                };
+                let count = guard.online_chapter_count(&book_id).unwrap_or(0);
+                let cached = guard.cached_online_chapters(&book_id).unwrap_or_default();
+                (index + 1..(index + 1 + PRE_DOWNLOAD_AHEAD).min(count))
+                    .filter(|next| !cached.contains(next))
+                    .collect()
+            };
+            for next in wanted {
+                let skipped = failures()
+                    .lock()
+                    .map(|map| {
+                        map.get(&(book_id.clone(), next)).copied().unwrap_or(0)
+                            >= PRE_DOWNLOAD_FAILURES
+                    })
+                    .unwrap_or(true);
+                if skipped {
+                    continue;
+                }
+                if raw_chapter(&storage, &book_id, next).is_err() {
+                    if let Ok(mut map) = failures().lock() {
+                        *map.entry((book_id.clone(), next)).or_default() += 1;
+                    }
+                }
+            }
+            if let Ok(mut set) = running().lock() {
+                set.remove(&book_id);
+            }
+        }
+    });
+    if started.is_err() {
+        if let Ok(mut set) = running().lock() {
+            set.remove(&book_id);
+        }
+    }
+}
+
+/// Fetches chapters `start..end` that are not kept yet, for 离线缓存.
+/// Reports each finished chapter; stops when `stop` says so.
+pub fn cache_range(
+    storage: &Shared,
+    book_id: &str,
+    start: u32,
+    end: u32,
+    stop: &dyn Fn() -> bool,
+    report: &dyn Fn(u32, u32, u32),
+) -> Result<(), AppError> {
+    let (count, cached) = {
+        let guard = lock(storage)?;
+        (
+            guard.online_chapter_count(book_id)?,
+            guard.cached_online_chapters(book_id)?,
+        )
+    };
+    let end = end.min(count);
+    let wanted: Vec<u32> = (start..end)
+        .filter(|index| !cached.contains(index))
+        .collect();
+    let total = wanted.len() as u32;
+    let (mut done, mut failed) = (0, 0);
+    for index in wanted {
+        if stop() {
+            break;
+        }
+        match raw_chapter(storage, book_id, index) {
+            Ok(_) => done += 1,
+            Err(_) => failed += 1,
+        }
+        report(done, failed, total);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::OnlineBook;
+    use crate::sources::test_server::{start, Request, Response};
+
+    struct Dir(std::path::PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn site() -> String {
+        start(|request: &Request| match request.path.as_str() {
+            "/c/1.html" => Response::html(r#"<div id="content">第一段<br>第二段</div>"#),
+            "/c/2.html" => Response::html(r#"<div id="content">第三段</div>"#),
+            _ => Response::not_found(),
+        })
+    }
+
+    fn library(base: &str) -> (Dir, Shared, String) {
+        let dir =
+            Dir(std::env::temp_dir().join(format!("gripread-online-{}", uuid::Uuid::new_v4())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let mut storage = Storage::open(&dir.0).unwrap();
+        storage
+            .save_book_source(
+                &serde_json::json!({
+                    "bookSourceUrl": base,
+                    "bookSourceName": "甲站",
+                    "ruleContent": {"content": "id.content@html"}
+                })
+                .to_string(),
+                None,
+            )
+            .unwrap();
+        let book = OnlineBook {
+            source_url: base.to_string(),
+            source_name: "甲站".into(),
+            name: "剑来".into(),
+            author: "烽火".into(),
+            kind: String::new(),
+            cover_url: String::new(),
+            intro: "简介".into(),
+            word_count: String::new(),
+            latest_chapter_title: "第二章".into(),
+            book_url: format!("{base}/book/7/"),
+            toc_url: format!("{base}/book/7/"),
+            variables: String::new(),
+            reverse_toc: false,
+        };
+        let chapter = |index: u32, title: &str, url: &str, volume: bool| OnlineChapter {
+            index,
+            title: title.into(),
+            url: url.into(),
+            base_url: format!("{base}/book/7/"),
+            is_volume: volume,
+            is_vip: false,
+            is_pay: false,
+            tag: String::new(),
+            variables: String::new(),
+        };
+        let chapters = vec![
+            chapter(0, "第一卷", "", true),
+            chapter(1, "第一章 惊蛰", "/c/1.html", false),
+            chapter(2, "第二章 开门", "/c/2.html", false),
+        ];
+        let id = storage.add_online_book(&book, &chapters, false).unwrap();
+        (dir, Arc::new(Mutex::new(storage)), id)
+    }
+
+    fn request(
+        book_id: &str,
+        locator: Option<ReaderLocator>,
+        resource: Option<&str>,
+        direction: WindowDirection,
+    ) -> ReadContentRequest {
+        ReadContentRequest {
+            book_id: book_id.to_string(),
+            locator,
+            max_units: 4,
+            direction,
+            resource_id: resource.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn chapters_read_as_resources_and_stay_on_the_device() {
+        let base = site();
+        let (_dir, storage, id) = library(&base);
+        // A shelf listing leaves out a book only being read.
+        assert!(storage
+            .lock()
+            .unwrap()
+            .list_library_books()
+            .unwrap()
+            .is_empty());
+        assert!(storage
+            .lock()
+            .unwrap()
+            .library_book(&id)
+            .unwrap()
+            .online
+            .is_some());
+
+        let volume = read_window(
+            &storage,
+            &request(&id, None, None, WindowDirection::Forward),
+        )
+        .unwrap();
+        assert_eq!(volume.text, "第一卷");
+        assert_eq!(volume.previous_resource_id, None);
+        assert_eq!(volume.next_resource_id.as_deref(), Some("chapter-1"));
+
+        let first = read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        assert_eq!(first.text, "第一章 ");
+        assert!(first.has_after);
+        assert_eq!(first.resource_index, Some(1));
+        let rest = read_window(
+            &storage,
+            &request(
+                &id,
+                Some(ReaderLocator {
+                    offset: 4,
+                    ..first.locator.clone()
+                }),
+                None,
+                WindowDirection::Forward,
+            ),
+        )
+        .unwrap();
+        assert_eq!(rest.text, "惊蛰\n第");
+        // Backward from the resource's end reads its last units.
+        let end = read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Backward),
+        )
+        .unwrap();
+        assert_eq!(end.text, "\n第二段");
+        assert_eq!(end.end_offset, end.total_length);
+
+        let cached = storage.lock().unwrap().cached_online_chapters(&id).unwrap();
+        assert!(cached.contains(&1));
+        // A stale position names an older version of the chapter.
+        let stale = ReaderLocator {
+            content_version: "old".into(),
+            ..first.locator.clone()
+        };
+        let error = read_window(
+            &storage,
+            &request(&id, Some(stale), None, WindowDirection::Forward),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ContentVersionMismatch);
+
+        let toc = toc(&storage, &id).unwrap();
+        assert_eq!(toc.entries.len(), 3);
+        assert_eq!(toc.entries[2].locator.resource_id, "chapter-2");
+        let middle = resolve_progress(&storage, &id, 0.7).unwrap();
+        assert_eq!(middle.resource_id, "chapter-2");
+
+        let found = search(
+            &storage,
+            &SearchRequest {
+                book_id: id.clone(),
+                query: "二段".into(),
+                case_sensitive: false,
+                regex: false,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(found.matches.len(), 1);
+        assert_eq!(found.matches[0].locator.resource_id, "chapter-1");
+
+        assert!(storage
+            .lock()
+            .unwrap()
+            .drop_unshelved_online_book(&id)
+            .unwrap());
+        assert!(!storage.lock().unwrap().online_cache_dir(&id).exists());
+    }
+}

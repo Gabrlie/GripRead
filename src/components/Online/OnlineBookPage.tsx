@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import type { SourceService } from "../../services/contracts";
-import type { OnlineBook, OnlineChapter, OnlineSearchResult } from "../../types/generated";
+import type {
+  LibraryBook,
+  OnlineBook,
+  OnlineChapter,
+  OnlineSearchResult,
+} from "../../types/generated";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import {
@@ -13,32 +18,50 @@ import { Icon } from "../ui/Icon";
 import { copyText } from "../../services/system";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
-import { ChapterPreviewPage } from "./ChapterPreviewPage";
 import { OnlineTocPage } from "./OnlineTocPage";
+
+/** Opens a kept online book in the reader, at a chapter when one is given. */
+export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
 
 /**
  * Legado's 书籍详情 for an online book: details from the chosen source, the
- * other sources that have it (换源), and its contents. Reading here
- * previews the chapters; adding to the shelf comes with online reading.
+ * other sources that have it (换源), its contents on their own page,
+ * 加入书架 or 移出书架, and 阅读.
  */
 export function OnlineBookPage({
   service,
   result,
+  initialOrigin = 0,
+  onRead,
   onClose,
 }: {
   service: SourceService;
   result: OnlineSearchResult;
+  initialOrigin?: number;
+  onRead?: OpenOnlineBook;
   onClose: () => void;
 }) {
-  const [originIndex, setOriginIndex] = useState(0);
+  const [originIndex, setOriginIndex] = useState(initialOrigin);
   const [book, setBook] = useState<OnlineBook | null>(null);
   const [chapters, setChapters] = useState<OnlineChapter[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showChapters, setShowChapters] = useState(false);
-  const [reading, setReading] = useState<number | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [kept, setKept] = useState<LibraryBook | null>(null);
+  const [busy, setBusy] = useState(false);
   const origin = result.origins[originIndex] ?? result.origins[0];
+
+  useEffect(() => {
+    let active = true;
+    void service.findOnlineBook(result.name, result.author).then(
+      (found) => active && setKept(found),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [service, result.name, result.author]);
 
   useEffect(() => {
     if (!origin) return;
@@ -63,7 +86,44 @@ export function OnlineBookPage({
 
   const shown = book ?? origin;
   if (!shown) return null;
-  const firstChapter = chapters?.findIndex((chapter) => !chapter.isVolume) ?? -1;
+  const onShelf = Boolean(kept?.online?.onShelf);
+  // The shelf's copy keeps its own source until it is switched (换源).
+  const keptHere = kept?.online?.book.sourceUrl === origin?.sourceUrl;
+
+  /** The book as kept on the device, adding it with these details when needed. */
+  const keep = async (shelf: boolean): Promise<LibraryBook> => {
+    if (kept && (keptHere || !book || !chapters)) return kept;
+    if (!book || !chapters) throw new Error("详情和目录还没有读取完");
+    const entry = await service.addOnlineBook({ book, chapters, onShelf: shelf });
+    if (shelf) setKept(entry);
+    return entry;
+  };
+
+  const act = (work: () => Promise<void>) => {
+    setBusy(true);
+    void work()
+      .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+      .finally(() => setBusy(false));
+  };
+
+  const read = (chapter: number | null) =>
+    act(async () => {
+      const entry = await keep(false);
+      onRead?.(entry, originIndex, chapter);
+    });
+
+  const toggleShelf = () =>
+    act(async () => {
+      if (onShelf && kept) {
+        await service.setOnShelf(kept.book.id, false);
+        await service.leaveOnlineBook(kept.book.id);
+        setKept(null);
+        toast("已移出书架");
+        return;
+      }
+      await keep(true);
+      toast("已加入书架");
+    });
 
   const actions = (
     <DropdownMenu>
@@ -128,6 +188,11 @@ export function OnlineBookPage({
           {shown.wordCount && <p className="text-[11px] text-secondary">{shown.wordCount}</p>}
           {shown.latestChapterTitle && (
             <p className="text-[11px] text-secondary truncate">最新：{shown.latestChapterTitle}</p>
+          )}
+          {onShelf && (
+            <p className="text-[11px] text-primary">
+              已在书架{keptHere ? "" : `（${kept?.online?.book.sourceName}）`}
+            </p>
           )}
         </div>
       </div>
@@ -201,17 +266,17 @@ export function OnlineBookPage({
         <Button
           variant="outline"
           className="flex-1"
-          disabled={!chapters}
-          onClick={() => setShowChapters(true)}
+          disabled={busy || (!onShelf && (!book || !chapters))}
+          onClick={toggleShelf}
         >
-          目录
+          {onShelf ? "移出书架" : "加入书架"}
         </Button>
         <Button
           className="flex-1"
-          disabled={!chapters || firstChapter < 0}
-          onClick={() => setReading(firstChapter)}
+          disabled={busy || !onRead || (!(onShelf && kept) && (!book || !chapters?.length))}
+          onClick={() => read(null)}
         >
-          试读
+          阅读
         </Button>
       </div>
 
@@ -221,18 +286,9 @@ export function OnlineBookPage({
           chapters={chapters}
           onChoose={(index) => {
             setShowChapters(false);
-            setReading(index);
+            read(index);
           }}
           onClose={() => setShowChapters(false)}
-        />
-      )}
-      {reading !== null && book && chapters && (
-        <ChapterPreviewPage
-          service={service}
-          book={book}
-          chapters={chapters}
-          index={reading}
-          onClose={() => setReading(null)}
         />
       )}
     </FullPage>

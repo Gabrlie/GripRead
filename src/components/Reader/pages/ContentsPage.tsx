@@ -31,6 +31,10 @@ interface ContentsPageProps {
   onOpenRules: () => void;
   onToggleSplit: () => void;
   onClose: () => void;
+  /** For a book read chapter by chapter: the chapter resource being read. */
+  resourceId?: string;
+  /** TXT目录规则 and 拆分超长章节 apply to local TXT books only. */
+  txtTools?: boolean;
 }
 
 /** Chapter counts in the form Legado shows, e.g. 3256字 or 1.2万字. */
@@ -62,6 +66,8 @@ export function ContentsPage({
   onOpenRules,
   onToggleSplit,
   onClose,
+  resourceId,
+  txtTools = true,
 }: ContentsPageProps) {
   const [tab, setTab] = useState<"toc" | "bookmarks">("toc");
   const [filter, setFilter] = useState<string | null>(null);
@@ -72,13 +78,15 @@ export function ContentsPage({
   const current = useRef<HTMLButtonElement>(null);
 
   const currentIndex = useMemo(() => {
+    if (resourceId !== undefined)
+      return toc.findIndex((entry) => entry.locator.resourceId === resourceId);
     let found = -1;
     for (let index = 0; index < toc.length; index += 1) {
       if (toc[index].locator.offset <= position) found = index;
       else break;
     }
     return found;
-  }, [toc, position]);
+  }, [toc, position, resourceId]);
 
   const rows = useMemo(() => {
     const query = filter?.trim();
@@ -159,22 +167,28 @@ export function ContentsPage({
               <Icon name="more_vert" size={19} />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={onOpenRules}>
-                <Icon name="toc_rule" size={15} />
-                TXT目录规则
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={busy} onClick={onToggleSplit}>
-                <Checkmark on={splitLongChapters} />
-                拆分超长章节
-              </DropdownMenuItem>
+              {txtTools && (
+                <DropdownMenuItem onClick={onOpenRules}>
+                  <Icon name="toc_rule" size={15} />
+                  TXT目录规则
+                </DropdownMenuItem>
+              )}
+              {txtTools && (
+                <DropdownMenuItem disabled={busy} onClick={onToggleSplit}>
+                  <Checkmark on={splitLongChapters} />
+                  拆分超长章节
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setReversed((value) => !value)}>
                 <Checkmark on={reversed} />
                 倒序显示
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
-                <Checkmark on={showLength} />
-                显示字数
-              </DropdownMenuItem>
+              {txtTools && (
+                <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
+                  <Checkmark on={showLength} />
+                  显示字数
+                </DropdownMenuItem>
+              )}
               {volumes.length > 0 && (
                 <DropdownMenuItem
                   onClick={() =>
@@ -280,7 +294,7 @@ export function ContentsPage({
             })}
           {tab === "toc" && !loading && !error && toc.length === 0 && (
             <p className="m-4 text-sm text-secondary">
-              没有识别到章节，可以在 TXT目录规则 中换一条规则。
+              {txtTools ? "没有识别到章节，可以在 TXT目录规则 中换一条规则。" : "目录为空。"}
             </p>
           )}
           {tab === "bookmarks" &&
@@ -309,7 +323,7 @@ export function ContentsPage({
                         </p>
                       )}
                       <p className="text-[11px] text-secondary">
-                        {chapterTitleAt(toc, bookmark.locator.offset)}
+                        {chapterTitleAt(toc, bookmark.locator, resourceId !== undefined)}
                         {stale ? " · 旧正文版本" : ""}
                       </p>
                     </button>
@@ -390,7 +404,10 @@ function Checkmark({ on }: { on: boolean }) {
   return on ? <Icon name="check" size={15} /> : <span aria-hidden="true" className="w-[15px]" />;
 }
 
-function chapterTitleAt(toc: TocEntry[], offset: number): string {
+function chapterTitleAt(toc: TocEntry[], locator: ReaderLocator, byResource: boolean): string {
+  if (byResource)
+    return toc.find((entry) => entry.locator.resourceId === locator.resourceId)?.title ?? "";
+  const offset = locator.offset;
   let title = "";
   for (const entry of toc) {
     if (entry.locator.offset <= offset) title = entry.title;

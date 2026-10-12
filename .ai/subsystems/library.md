@@ -44,6 +44,10 @@ Long-pressing a book opens its detail page after Legado's book information: cove
 
 The reader adds reading time per local day while the page is visible and the reader touched the screen, pressed a key, or turned a page within five minutes, or while automatic turning runs. The 阅读记录 page shows today's and total time, recent days, and time per book. Several files can be chosen at once, and 导入文件夹 imports every TXT in a folder and three levels of subfolders, one after another, with one summary notice.
 
+## Online books
+
+Online books are `books` rows with an `online_books` record (the source's details and switches) and an `online_chapters` table; they have no asset. Chapter texts are kept under the app's `online/<book id>/` folder as the source returned them, named by position and a hash of the title, and are fetched on first read, ten chapters ahead in the background (a chapter failing three times is skipped), or by 离线缓存 for the next 50 chapters or the rest. 更新目录 (shelf menu, book detail page, or reader menu) fetches the details and contents again for books that allow updates, a few at a time; the shelf marks the number of new chapters on the cover until the book is opened, and shows 更新失败 when the last update failed. The shelf matches an online book by name and author as Legado does. 移出书架 and 删除 delete an online book with its cache instead of moving it to the 回收站. The detail page shows the source, chapter and cached counts, the chapter read and the latest one, and offers 更新目录, 缓存, 允许更新, and 删除. Online books are not uploaded to the cloud bookshelf, and progress sync and backups for them come with source switching.
+
 ## Acceptance
 
 - Reimport identical content without duplicating its asset; preserve book identity when its local path changes.

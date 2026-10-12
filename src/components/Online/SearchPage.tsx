@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SourceService } from "../../services/contracts";
 import type {
   BookSourceSummary,
+  LibraryBook,
   OnlineSearchEvent,
   OnlineSearchResult,
   SearchScope,
 } from "../../types/generated";
 import {
   ALL_SOURCES,
+  type OnlineReturn,
   clearSearchHistory,
   describeScope,
   readSearchHistory,
@@ -30,19 +32,26 @@ export function SearchPage({
   service,
   initialScope = ALL_SOURCES,
   initialKey = "",
+  restored,
+  onRead,
   onClose,
 }: {
   service: SourceService;
   initialScope?: SearchScope;
   initialKey?: string;
+  /** The results and book page to show again after reading. */
+  restored?: { event: OnlineSearchEvent | null; result: OnlineSearchResult; origin: number };
+  onRead?: (book: LibraryBook, chapter: number | null, from: OnlineReturn) => void;
   onClose: () => void;
 }) {
   const [key, setKey] = useState(initialKey);
   const [scope, setScope] = useState<SearchScope>(initialScope);
   const [precise, setPrecise] = useState(false);
   const [history, setHistory] = useState(readSearchHistory);
-  const [event, setEvent] = useState<OnlineSearchEvent | null>(null);
-  const [opened, setOpened] = useState<OnlineSearchResult | null>(null);
+  const [event, setEvent] = useState<OnlineSearchEvent | null>(restored?.event ?? null);
+  const [opened, setOpened] = useState<{ result: OnlineSearchResult; origin: number } | null>(
+    restored ? { result: restored.result, origin: restored.origin } : null,
+  );
   const [choosingScope, setChoosingScope] = useState(false);
   const [sources, setSources] = useState<BookSourceSummary[]>([]);
   const operation = useRef<string | null>(null);
@@ -96,7 +105,7 @@ export function SearchPage({
   };
 
   useEffect(() => {
-    if (initialKey) start(initialKey);
+    if (initialKey && !restored) start(initialKey);
   }, []);
 
   const stop = () => {
@@ -229,7 +238,7 @@ export function SearchPage({
             key={`${result.name}\n${result.author}`}
             service={service}
             result={result}
-            onOpen={() => setOpened(result)}
+            onOpen={() => setOpened({ result, origin: 0 })}
           />
         ))}
       </ul>
@@ -248,7 +257,24 @@ export function SearchPage({
       )}
 
       {opened && (
-        <OnlineBookPage service={service} result={opened} onClose={() => setOpened(null)} />
+        <OnlineBookPage
+          service={service}
+          result={opened.result}
+          initialOrigin={opened.origin}
+          onRead={
+            onRead &&
+            ((book, origin, chapter) =>
+              onRead(book, chapter, {
+                view: "search",
+                scope,
+                key,
+                event: event && { ...event, done: true },
+                result: opened.result,
+                origin,
+              }))
+          }
+          onClose={() => setOpened(null)}
+        />
       )}
       {choosingScope && (
         <ScopeDialog

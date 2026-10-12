@@ -120,6 +120,7 @@ const entry: LibraryBook = {
   coverAssetId: null,
   useReplaceRules: true,
   inCloud: false,
+  online: null,
 };
 
 function deferred<T>() {
@@ -761,5 +762,114 @@ describe("reader directory and search operation ownership", () => {
     });
     await act(async () => app.readerFlush!());
     expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("online books", () => {
+  const chapters = ["第一章 惊蛰\n第一段。", "第二章 开门\n第二段。"];
+  const onlineLocator = (index: number, offset = 0): ReaderLocator => ({
+    bookId: "reader-book",
+    contentVersion: `c${index}`,
+    resourceId: `chapter-${index}`,
+    offset,
+    contextBefore: "",
+    contextAfter: "",
+  });
+  const onlineEntry: LibraryBook = {
+    ...entry,
+    asset: null,
+    totalLength: null,
+    online: {
+      book: {
+        sourceUrl: "https://a.com",
+        sourceName: "甲站",
+        name: "阅读测试",
+        author: "",
+        kind: "",
+        coverUrl: "",
+        intro: "",
+        wordCount: "",
+        latestChapterTitle: "第二章 开门",
+        bookUrl: "https://a.com/b/1",
+        tocUrl: "",
+        variables: "",
+        reverseToc: false,
+      },
+      totalChapters: 2,
+      newChapters: 0,
+      lastCheckTime: null,
+      updateError: null,
+      canUpdate: true,
+      onShelf: false,
+      readChapter: null,
+      readChapterTitle: "",
+      cachedChapters: 0,
+    },
+  };
+
+  function onlineRuntime() {
+    const app = runtime();
+    vi.mocked(app.services.reader.readContentWindow).mockImplementation(async (request) => {
+      const resource = request.locator?.resourceId ?? request.resourceId ?? "chapter-0";
+      const index = Number(resource.slice("chapter-".length));
+      const content = chapters[index];
+      const start = request.direction === "forward" ? (request.locator?.offset ?? 0) : 0;
+      return {
+        bookId: "reader-book",
+        resourceId: resource,
+        contentVersion: `c${index}`,
+        text: content.slice(start),
+        startOffset: start,
+        endOffset: content.length,
+        totalLength: content.length,
+        hasBefore: start > 0,
+        hasAfter: false,
+        locator: onlineLocator(index, start),
+        ...(index > 0 ? { previousResourceId: "chapter-0" } : {}),
+        ...(index < 1 ? { nextResourceId: "chapter-1" } : {}),
+        resourceIndex: index,
+        resourceCount: 2,
+      };
+    });
+    vi.mocked(app.services.reader.listToc).mockResolvedValue(
+      tocListing([
+        tocEntry(0, "第一章 惊蛰", onlineLocator(0)),
+        tocEntry(1, "第二章 开门", onlineLocator(1)),
+      ]),
+    );
+    return app;
+  }
+
+  it("reads on into the next chapter and hides the TXT tools", async () => {
+    navigation.activeBook = onlineEntry;
+    const app = onlineRuntime();
+    await view(app);
+    expect(screen.getByTestId("reader-page").textContent).toContain("第一段");
+    expect(screen.queryByRole("button", { name: "TXT目录规则" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "设置编码" })).toBeNull();
+    expect(app.services.library.getTxtEncoding).not.toHaveBeenCalled();
+    tapSurface();
+    tapSurface(0.9, 0.5);
+    await waitFor(() => expect(screen.getByTestId("reader-page").textContent).toContain("第二段"));
+    expect(app.services.reader.readContentWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({ resourceId: "chapter-1", locator: null }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    const current = await screen.findByRole("button", { name: /第二章 开门/ });
+    expect(current.getAttribute("aria-current")).toBe("location");
+  });
+
+  it("asks before leaving a book that is not on the shelf", async () => {
+    navigation.activeBook = onlineEntry;
+    const app = onlineRuntime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "返回书架" }));
+    expect(await screen.findByRole("dialog", { name: "加入书架" })).toBeTruthy();
+    expect(navigation.closeReader).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "不加入" }));
+    expect(navigation.closeReader).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(app.services.sources.leaveOnlineBook).toHaveBeenCalledWith("reader-book"),
+    );
   });
 });

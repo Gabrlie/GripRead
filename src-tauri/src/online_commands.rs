@@ -12,12 +12,15 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::commands::with_storage;
 use crate::commands::AppState;
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
-    ExploreBooksRequest, ExploreKindsRequest, OnlineBook, OnlineBookRequest, OnlineChapter,
-    OnlineContent, OnlineContentRequest, OnlineCoverRequest, OnlineSearchEvent, OnlineSearchResult,
-    SearchOnlineRequest, SourceFailure,
+    AddOnlineBookRequest, BookRequest, CacheOnlineChaptersRequest, ExploreBooksRequest,
+    ExploreKindsRequest, LibraryBook, OnlineBook, OnlineBookRequest, OnlineCacheEvent,
+    OnlineChapter, OnlineContent, OnlineContentRequest, OnlineCoverRequest, OnlineSearchEvent,
+    OnlineSearchResult, OnlineTocEvent, SearchOnlineRequest, SetOnlineBookFlagRequest,
+    SourceFailure, UpdateOnlineTocRequest,
 };
 use crate::source_commands::{
     engine_error, load_source, on_engine_thread, session_for, spawn_engine, SourceOperations,
@@ -33,6 +36,7 @@ const SEARCH_WORKERS: usize = 8;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const STEP_TIMEOUT: Duration = Duration::from_secs(90);
 const PAGE_CACHE_LIMIT: usize = 64;
+const UPDATE_WORKERS: usize = 4;
 
 /// A book's details page and contents page, as one source fetched them.
 type KeptPages = (String, Option<String>, Option<String>);
@@ -572,4 +576,254 @@ mod tests {
         assert_eq!(back.index, 3);
         assert_eq!(back.variables["cid"], "1");
     }
+}
+
+/// Puts an online book on the shelf with its contents, or opens it for
+/// reading only (`on_shelf` false), as Legado's 加入书架 and 阅读 do.
+#[tauri::command]
+pub async fn add_online_book(
+    request: AddOnlineBookRequest,
+    state: State<'_, AppState>,
+) -> Result<LibraryBook, AppError> {
+    with_storage(&state, move |storage| {
+        let id = storage.add_online_book(&request.book, &request.chapters, request.on_shelf)?;
+        storage.library_book(&id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn find_online_book(
+    request: crate::models::FindOnlineBookRequest,
+    state: State<'_, AppState>,
+) -> Result<Option<LibraryBook>, AppError> {
+    with_storage(&state, move |storage| {
+        storage
+            .find_online_book(&request.name, &request.author)?
+            .map(|id| storage.library_book(&id))
+            .transpose()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_library_book(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<LibraryBook, AppError> {
+    with_storage(&state, move |storage| {
+        storage.library_book(&request.book_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_online_on_shelf(
+    request: SetOnlineBookFlagRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.set_online_on_shelf(&request.book_id, request.on)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_online_can_update(
+    request: SetOnlineBookFlagRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.set_online_can_update(&request.book_id, request.on)
+    })
+    .await
+}
+
+/// Leaving a book read from search: it is dropped unless it was added.
+/// Returns whether it was dropped.
+#[tauri::command]
+pub async fn leave_online_book(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<bool, AppError> {
+    with_storage(&state, move |storage| {
+        if !storage.is_online_book(&request.book_id)? {
+            return Ok(false);
+        }
+        storage.drop_unshelved_online_book(&request.book_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_online_chapters(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<Vec<OnlineChapter>, AppError> {
+    with_storage(&state, move |storage| {
+        storage.online_chapters(&request.book_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_online_cache(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.clear_online_cache(&request.book_id)
+    })
+    .await
+}
+
+/// Fetches a book's details and contents again from its source.
+fn update_one(
+    storage: &Arc<Mutex<crate::storage::Storage>>,
+    book_id: &str,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<u32, AppError> {
+    let record = storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+        .online_record(book_id)?;
+    let source = load_source(storage, &record.book.source_url)?;
+    let control = Control::new(cancel, Some(Instant::now() + STEP_TIMEOUT));
+    let session = session_for(storage, source, control).map_err(engine_error)?;
+    let book = Rc::new(RefCell::new(book_data(&record.book)));
+    // Legado refreshes the details first, then the contents they point at.
+    session.book_info(&book, false).map_err(engine_error)?;
+    let chapters = session.chapters(&book).map_err(engine_error)?;
+    let updated = online_book(&book.borrow());
+    let chapters: Vec<OnlineChapter> = chapters.iter().map(online_chapter).collect();
+    storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+        .replace_online_toc(book_id, &updated, &chapters)
+}
+
+/// Legado's 更新目录 over shelf books, a few at a time, streaming
+/// `online-toc` per book and once when done.
+#[tauri::command]
+pub async fn update_online_toc(
+    request: UpdateOnlineTocRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    operations: State<'_, SourceOperations>,
+) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    let ids = if request.book_ids.is_empty() {
+        with_storage(&state, |storage| storage.updatable_online_books()).await?
+    } else {
+        request.book_ids.clone()
+    };
+    let cancel = operations.register(&request.operation_id);
+    let cancels = operations.cancels();
+    let total = ids.len() as u32;
+    let queue = Arc::new(Mutex::new(ids));
+    let updated = Arc::new(AtomicU32::new(0));
+    let running = Arc::new(AtomicU32::new(UPDATE_WORKERS as u32));
+    for _ in 0..UPDATE_WORKERS {
+        let (storage, cancel, cancels, queue, updated, running, app) = (
+            storage.clone(),
+            cancel.clone(),
+            cancels.clone(),
+            queue.clone(),
+            updated.clone(),
+            running.clone(),
+            app.clone(),
+        );
+        let id = request.operation_id.clone();
+        spawn_engine(move || {
+            loop {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let Some(book_id) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
+                    break;
+                };
+                let outcome = update_one(&storage, &book_id, cancel.clone());
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let (new_chapters, error) = match outcome {
+                    Ok(added) => (added, None),
+                    Err(error) => {
+                        if let Ok(guard) = storage.lock() {
+                            let _ = guard.record_online_update_error(&book_id, &error.message);
+                        }
+                        (0, Some(error.message))
+                    }
+                };
+                let done = updated.fetch_add(1, Ordering::AcqRel) + 1;
+                let _ = app.emit(
+                    "online-toc",
+                    OnlineTocEvent {
+                        operation_id: id.clone(),
+                        book_id,
+                        updated: done,
+                        total,
+                        new_chapters,
+                        error,
+                        done: false,
+                    },
+                );
+            }
+            if running.fetch_sub(1, Ordering::AcqRel) == 1 {
+                SourceOperations::finish(&cancels, &id);
+                let _ = app.emit(
+                    "online-toc",
+                    OnlineTocEvent {
+                        operation_id: id.clone(),
+                        book_id: String::new(),
+                        updated: updated.load(Ordering::Acquire),
+                        total,
+                        new_chapters: 0,
+                        error: None,
+                        done: true,
+                    },
+                );
+            }
+        })?;
+    }
+    Ok(())
+}
+
+/// Legado's 离线缓存: fetches a range of chapters in the background,
+/// streaming `online-cache` as each one finishes.
+#[tauri::command]
+pub async fn cache_online_chapters(
+    request: CacheOnlineChaptersRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    operations: State<'_, SourceOperations>,
+) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    let cancel = operations.register(&request.operation_id);
+    let cancels = operations.cancels();
+    spawn_engine(move || {
+        let event = |cached, failed, total, done| OnlineCacheEvent {
+            operation_id: request.operation_id.clone(),
+            book_id: request.book_id.clone(),
+            cached,
+            failed,
+            total,
+            done,
+        };
+        let last = std::cell::Cell::new((0, 0, 0));
+        let _ = crate::online_reader::cache_range(
+            &storage,
+            &request.book_id,
+            request.start,
+            request.end,
+            &|| cancel.load(Ordering::Acquire),
+            &|cached, failed, total| {
+                last.set((cached, failed, total));
+                let _ = app.emit("online-cache", event(cached, failed, total, false));
+            },
+        );
+        SourceOperations::finish(&cancels, &request.operation_id);
+        let (cached, failed, total) = last.get();
+        let _ = app.emit("online-cache", event(cached, failed, total, true));
+    })
 }

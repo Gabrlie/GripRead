@@ -16,6 +16,9 @@ interface Props {
   onUserScroll: () => void;
   run: (action: () => Promise<void>) => void;
   synchronize: RefObject<(() => void) | null>;
+  /** For a book read chapter by chapter: open the chapter before or after. */
+  onPreviousChapter?: () => void;
+  onNextChapter?: () => void;
 }
 
 export function ReaderScrollText({
@@ -28,6 +31,8 @@ export function ReaderScrollText({
   onUserScroll,
   run,
   synchronize,
+  onPreviousChapter,
+  onNextChapter,
 }: Props) {
   const body = useRef<HTMLDivElement>(null);
   const indicator = useRef<HTMLDivElement>(null);
@@ -191,6 +196,17 @@ export function ReaderScrollText({
         onTouchStart={onInteract}
         onTouchMove={onUserScroll}
       >
+        {!content.hasBefore && onPreviousChapter && (
+          <div className="max-w-2xl mx-auto pt-2 pb-4 flex justify-center">
+            <button
+              type="button"
+              onClick={onPreviousChapter}
+              className="h-8 px-4 rounded-full text-xs bg-surface-container text-secondary"
+            >
+              上一章
+            </button>
+          </div>
+        )}
         {/* The single-page text column; .reader-prose resets padding on its own element. */}
         <div
           className="max-w-2xl mx-auto"
@@ -208,6 +224,17 @@ export function ReaderScrollText({
             data-total={content.totalLength}
           />
         </div>
+        {!content.hasAfter && onNextChapter && (
+          <div className="max-w-2xl mx-auto py-6 flex justify-center">
+            <button
+              type="button"
+              onClick={onNextChapter}
+              className="h-9 px-6 rounded-full text-sm bg-primary text-on-primary"
+            >
+              下一章
+            </button>
+          </div>
+        )}
         {!content.hasAfter && <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />}
       </div>
       <div

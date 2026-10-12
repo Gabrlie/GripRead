@@ -157,6 +157,14 @@ const IPC_TYPES: &[&str] = &[
     "OnlineContentRequest",
     "OnlineContent",
     "OnlineCoverRequest",
+    "OnlineShelfInfo",
+    "AddOnlineBookRequest",
+    "FindOnlineBookRequest",
+    "UpdateOnlineTocRequest",
+    "OnlineTocEvent",
+    "CacheOnlineChaptersRequest",
+    "OnlineCacheEvent",
+    "SetOnlineBookFlagRequest",
 ];
 
 pub fn generated_types() -> Result<String, AppError> {
@@ -316,6 +324,14 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<OnlineContentRequest>(&config)?;
     export_all::<OnlineContent>(&config)?;
     export_all::<OnlineCoverRequest>(&config)?;
+    export_all::<OnlineShelfInfo>(&config)?;
+    export_all::<AddOnlineBookRequest>(&config)?;
+    export_all::<FindOnlineBookRequest>(&config)?;
+    export_all::<UpdateOnlineTocRequest>(&config)?;
+    export_all::<OnlineTocEvent>(&config)?;
+    export_all::<CacheOnlineChaptersRequest>(&config)?;
+    export_all::<OnlineCacheEvent>(&config)?;
+    export_all::<SetOnlineBookFlagRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;

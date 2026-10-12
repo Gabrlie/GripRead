@@ -187,6 +187,7 @@ describe("runtime durability flush", () => {
       coverAssetId: null,
       useReplaceRules: true,
       inCloud: false,
+      online: null,
     });
     await expect(first).rejects.toThrow("metadata unavailable");
     await expect(second).rejects.toThrow("archive unavailable");

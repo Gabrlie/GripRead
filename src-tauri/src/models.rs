@@ -138,6 +138,21 @@ pub struct ContentWindow {
     pub has_before: bool,
     pub has_after: bool,
     pub locator: ReaderLocator,
+    /// For a book read chapter by chapter: the chapter resources around
+    /// this one, which the reader moves into at the resource's edges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_resource_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_resource_id: Option<String>,
+    /// The chapter's position and count, for a book read chapter by chapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -154,6 +169,11 @@ pub struct ReadContentRequest {
     pub locator: Option<ReaderLocator>,
     pub max_units: u64,
     pub direction: WindowDirection,
+    /// Without a locator: the resource to read from its start (forward) or
+    /// its end (backward), for moving into a neighbouring chapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
@@ -453,7 +473,10 @@ pub struct SaveLocatorRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryBook {
     pub book: Book,
-    pub asset: BookAsset,
+    /// The managed text of a local book; online books have none.
+    pub asset: Option<BookAsset>,
+    /// Where an online book comes from and how far its contents reach.
+    pub online: Option<OnlineShelfInfo>,
     pub locator: Option<ReaderLocator>,
     pub total_length: Option<u64>,
     pub txt_encoding: Option<TxtEncodingInfo>,
@@ -467,6 +490,29 @@ pub struct LibraryBook {
     pub use_replace_rules: bool,
     /// The cloud bookshelf had this book's file when it was last seen.
     pub in_cloud: bool,
+}
+
+/// An online book on the shelf: its source, details, and contents state.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineShelfInfo {
+    /// The source's details as the reader last fetched them.
+    pub book: OnlineBook,
+    pub total_chapters: u32,
+    /// Chapters the last contents update added, shown as Legado's new mark.
+    pub new_chapters: u32,
+    pub last_check_time: Option<i64>,
+    /// The last contents update failed with this message.
+    pub update_error: Option<String>,
+    /// Legado's 允许更新: whether 更新目录 includes this book.
+    pub can_update: bool,
+    /// False for a book read from search without adding it to the shelf.
+    pub on_shelf: bool,
+    /// The chapter the saved position is in.
+    pub read_chapter: Option<u32>,
+    pub read_chapter_title: String,
+    /// Chapters whose text is kept on the device.
+    pub cached_chapters: u32,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -1597,6 +1643,72 @@ pub struct OnlineBook {
     pub variables: String,
     /// The details asked for the contents newest first.
     pub reverse_toc: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddOnlineBookRequest {
+    pub book: OnlineBook,
+    pub chapters: Vec<OnlineChapter>,
+    /// False opens it for reading without putting it on the shelf.
+    pub on_shelf: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FindOnlineBookRequest {
+    pub name: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOnlineTocRequest {
+    pub operation_id: String,
+    /// Empty updates every shelf book that allows updates.
+    pub book_ids: Vec<String>,
+}
+
+/// Progress of 更新目录, streamed as `online-toc`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineTocEvent {
+    pub operation_id: String,
+    pub book_id: String,
+    pub updated: u32,
+    pub total: u32,
+    pub new_chapters: u32,
+    pub error: Option<String>,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheOnlineChaptersRequest {
+    pub operation_id: String,
+    pub book_id: String,
+    /// Chapter positions to keep, from `start` up to but not including `end`.
+    pub start: u32,
+    pub end: u32,
+}
+
+/// Progress of 离线缓存, streamed as `online-cache`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineCacheEvent {
+    pub operation_id: String,
+    pub book_id: String,
+    pub cached: u32,
+    pub failed: u32,
+    pub total: u32,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetOnlineBookFlagRequest {
+    pub book_id: String,
+    pub on: bool,
 }
 
 /// Search results with the same name and author from several sources.

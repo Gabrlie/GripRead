@@ -866,3 +866,92 @@ describe("ReaderController", () => {
     expect(controller.getSnapshot().saveError).toBeNull();
   });
 });
+
+/** A book read chapter by chapter: each chapter is its own resource. */
+function chapteredService(chapters: string[]) {
+  const service = serviceFor({});
+  const windowIn = (index: number, start: number, end: number): ContentWindow => {
+    const content = chapters[index];
+    const locator: ReaderLocator = {
+      bookId: "online",
+      contentVersion: `v${index}`,
+      resourceId: `chapter-${index}`,
+      offset: start,
+      contextBefore: "",
+      contextAfter: "",
+    };
+    return {
+      bookId: "online",
+      resourceId: locator.resourceId,
+      contentVersion: locator.contentVersion,
+      text: content.slice(start, end),
+      startOffset: start,
+      endOffset: end,
+      totalLength: content.length,
+      hasBefore: start > 0,
+      hasAfter: end < content.length,
+      locator,
+      ...(index > 0 ? { previousResourceId: `chapter-${index - 1}` } : {}),
+      ...(index + 1 < chapters.length ? { nextResourceId: `chapter-${index + 1}` } : {}),
+      resourceIndex: index,
+      resourceCount: chapters.length,
+    };
+  };
+  service.readContentWindow = async (request) => {
+    service.requests.push(request);
+    const resource = request.locator?.resourceId ?? request.resourceId ?? "chapter-0";
+    const index = Number(resource.slice("chapter-".length));
+    const content = chapters[index];
+    const anchor =
+      request.locator?.offset ?? (request.direction === "backward" ? content.length : 0);
+    return request.direction === "backward"
+      ? windowIn(index, Math.max(0, anchor - request.maxUnits), anchor)
+      : windowIn(index, anchor, Math.min(content.length, anchor + request.maxUnits));
+  };
+  return service;
+}
+
+describe("ReaderController with chapter resources", () => {
+  it("turns into the next and previous chapter at a resource edge", async () => {
+    const service = chapteredService(["ab", "cde", "f"]);
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 8,
+    });
+    await controller.open("online");
+    const text = () => controller.getSnapshot().page?.text;
+    const resource = () => controller.getSnapshot().contentWindow?.resourceId;
+    expect(controller.getSnapshot().hasBefore).toBe(false);
+    await controller.next();
+    await controller.next();
+    expect([text(), resource()]).toEqual(["c", "chapter-1"]);
+    expect(service.requests.at(-1)).toMatchObject({ resourceId: "chapter-1", locator: null });
+    await controller.previous();
+    // Going back lands on the last page of the previous chapter.
+    expect([text(), resource()]).toEqual(["b", "chapter-0"]);
+    await controller.next();
+    await controller.next();
+    await controller.next();
+    await controller.next();
+    expect([text(), resource()]).toEqual(["f", "chapter-2"]);
+    expect(controller.getSnapshot().hasAfter).toBe(false);
+    await controller.next();
+    expect(text()).toBe("f");
+    expect(service.saves.at(-1)?.resourceId).toBe("chapter-2");
+  });
+
+  it("moves to the neighbouring chapter for 下一章 and 上一章", async () => {
+    const service = chapteredService(["ab", "cde", "f"]);
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 8,
+    });
+    await controller.open("online");
+    await controller.seekChapter("next");
+    expect(controller.getSnapshot().page?.text).toBe("c");
+    await controller.seekChapter("next");
+    expect(controller.getSnapshot().contentWindow?.resourceId).toBe("chapter-2");
+    await controller.seekChapter("previous");
+    expect(controller.getSnapshot().page?.text).toBe("c");
+  });
+});

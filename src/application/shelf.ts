@@ -47,6 +47,16 @@ export function chapterLabels(book: LibraryBook, entries: TocEntry[]): ShelfChap
     latest: currentEntries.at(-1)?.title ?? "全文",
   };
 }
+/** An online book's labels come from the chapter it is in and the source's latest. */
+export function onlineChapterLabels(book: LibraryBook): ShelfChapterLabels | null {
+  const online = book.online;
+  if (!online) return null;
+  return {
+    current: online.readChapterTitle || (book.locator ? "全文" : "尚未阅读"),
+    latest: online.book.latestChapterTitle || "",
+  };
+}
+
 /** The shelf's built-in groups: every book, then the three reading states. */
 export const READING_GROUPS: { id: "all" | ShelfState; name: string }[] = [
   { id: "all", name: "全部" },
@@ -62,6 +72,11 @@ export const READING_GROUPS: { id: "all" | ShelfState; name: string }[] = [
  */
 export function automaticState(book: LibraryBook, entries: TocEntry[] | null): ShelfState {
   const saved = book.locator;
+  if (book.online) {
+    if (!saved) return "unread";
+    const last = book.online.totalChapters - 1;
+    return last > 0 && (book.online.readChapter ?? 0) >= last ? "finished" : "reading";
+  }
   if (!saved || saved.contentVersion !== book.book.contentVersion)
     return saved ? "reading" : "unread";
   const current = (entries ?? []).filter(
@@ -246,7 +261,9 @@ export class ShelfStore {
     const results = await Promise.all(
       books.map(async (book) => {
         try {
-          if (book.asset.availability === "missing") throw new Error("文件缺失，无法读取目录");
+          // An online book's labels need no contents listing.
+          if (book.online) return { book, entries: [] as TocEntry[], error: null };
+          if (book.asset?.availability === "missing") throw new Error("文件缺失，无法读取目录");
           const { entries } = await this.reader.listToc(book.book.id);
           return { book, entries, error: null };
         } catch (error) {
@@ -270,16 +287,18 @@ export class ShelfStore {
       if (known) cache.set(id, known);
       automatic[id] = automaticState(book, known?.entries ?? null);
       if (error !== null) chapterErrors[id] = error;
-      chapters[id] = known
-        ? chapterLabels(book, known.entries)
-        : {
-            current: book.locator
-              ? book.locator.contentVersion === book.book.contentVersion
-                ? "目录读取失败"
-                : "待重新定位"
-              : "尚未阅读",
-            latest: "目录读取失败",
-          };
+      chapters[id] =
+        onlineChapterLabels(book) ??
+        (known
+          ? chapterLabels(book, known.entries)
+          : {
+              current: book.locator
+                ? book.locator.contentVersion === book.book.contentVersion
+                  ? "目录读取失败"
+                  : "待重新定位"
+                : "尚未阅读",
+              latest: "目录读取失败",
+            });
     }
     this.chapterCache = cache;
     this.update({ chapters, chapterErrors, automatic });

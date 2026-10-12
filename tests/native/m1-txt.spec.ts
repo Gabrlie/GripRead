@@ -149,7 +149,7 @@ describe("GripRead native M1 TXT tools", () => {
     ).toBe(false);
     const removed = await invoke<LibraryBook[]>("list_removed_books");
     expect(removed).toHaveLength(1);
-    expect(removed[0]?.asset.id).toBe(imported.asset.id);
+    expect(removed[0]?.asset?.id).toBe(imported.asset.id);
     expect(await invoke("get_shelf_preferences")).toEqual(preferences);
 
     await invoke("restore_book", { request: { bookId: imported.book.id } });

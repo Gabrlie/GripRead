@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { useShelfPreferences } from "../application/runtime";
 import type { ShelfSort, LibraryBook } from "../types/generated";
+import type { OnlineReturn } from "../application/online";
 export type NavTab = "bookshelf" | "discover" | "subscription" | "settings";
 export interface ShelfViewState {
   query: string;
@@ -13,8 +14,13 @@ interface Navigation {
   activeTab: NavTab;
   setActiveTab: (tab: NavTab) => void;
   activeBook: LibraryBook | null;
-  /** Opens a book, optionally straight on its contents page. */
-  openReader: (book: LibraryBook, page?: "contents") => void;
+  /**
+   * Opens a book, optionally straight on its contents page; `from` is the
+   * online page to come back to.
+   */
+  openReader: (book: LibraryBook, page?: "contents", from?: OnlineReturn) => void;
+  /** The online page the reader was opened from, once, for 发现 to restore. */
+  takeOnlineReturn: () => OnlineReturn | null;
   /** The page to open with the book, once; the reader takes it on mount. */
   takeReaderPage: () => "contents" | null;
   /** Leaves the reader; `toDetail` reopens the book's detail page. */
@@ -30,6 +36,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeBook, setActiveBook] = useState<LibraryBook | null>(null);
   const readerPage = useRef<"contents" | null>(null);
   const detailReturn = useRef<LibraryBook | null>(null);
+  const onlineReturn = useRef<OnlineReturn | null>(null);
+  const restoreOnline = useRef(false);
   const { state: preferences, store } = useShelfPreferences();
   const [transient, setTransient] = useState({ query: "", scroll: 0 });
   useEffect(() => {
@@ -58,10 +66,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeTab,
         setActiveTab,
         activeBook,
-        openReader: (book, page) => {
+        openReader: (book, page, from) => {
           setShelf({ scroll: window.scrollY });
           readerPage.current = page ?? null;
+          onlineReturn.current = from ?? null;
           setActiveBook(book);
+        },
+        takeOnlineReturn: () => {
+          if (!restoreOnline.current) return null;
+          restoreOnline.current = false;
+          const from = onlineReturn.current;
+          onlineReturn.current = null;
+          return from;
         },
         takeReaderPage: () => {
           const page = readerPage.current;
@@ -70,6 +86,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
         closeReader: (toDetail) => {
           detailReturn.current = toDetail ? activeBook : null;
+          if (onlineReturn.current) {
+            restoreOnline.current = true;
+            setActiveTab("discover");
+          }
           setActiveBook(null);
         },
         takeDetailReturn: () => {
@@ -84,6 +104,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       {children}
     </Context.Provider>
   );
+}
+/** The navigation when the app provides it; pages tested alone have none. */
+export function useOptionalApp(): Navigation | null {
+  return useContext(Context);
 }
 export function useApp() {
   const value = useContext(Context);

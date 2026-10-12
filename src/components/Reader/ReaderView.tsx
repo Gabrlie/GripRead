@@ -27,6 +27,7 @@ import type {
   TxtEncodingInfo,
 } from "../../types/generated";
 import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { useAutomaticTurn } from "./use-automatic-turn";
 import { useReadingTime } from "./use-reading-time";
 import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
@@ -77,8 +78,26 @@ import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
+import { updateOnlineToc } from "../../application/online";
+import type { ContentWindow } from "../../types/generated";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
+
+/**
+ * Whole-book progress in percent: within the text for a local book, and
+ * by chapter for a book read chapter by chapter.
+ */
+function bookProgressOf(
+  window: ContentWindow | null,
+  page: { endOffset: number; totalLength: number } | null,
+): number {
+  if (!page || !page.totalLength) return 0;
+  const within = page.endOffset / page.totalLength;
+  const count = window?.resourceCount;
+  if (count && window.resourceIndex !== undefined)
+    return ((window.resourceIndex + within) / count) * 100;
+  return within * 100;
+}
 const noopSubscribe = () => () => {};
 
 function safeExcerpt(text: string, maxUnits = 160): string {
@@ -271,7 +290,21 @@ export function ReaderView() {
         ? {
             speed: preferences?.autoScrollSpeed ?? 40,
             advance: (pixels: number) => {
-              if (scrollBox.current) scrollBox.current.scrollTop += pixels;
+              const box = scrollBox.current;
+              if (!box) return;
+              const before = box.scrollTop;
+              box.scrollTop += pixels;
+              // At a chapter's end, automatic scrolling opens the next one.
+              const window = controller?.getSnapshot().scroll;
+              if (
+                box.scrollTop === before &&
+                pixels > 0 &&
+                window &&
+                !window.hasAfter &&
+                window.nextResourceId &&
+                controller
+              )
+                run(() => controller.seekChapter("next"));
             },
           }
         : undefined,
@@ -360,7 +393,12 @@ export function ReaderView() {
           const snapshot = controller.getSnapshot();
           if (snapshot.mode === "scroll") {
             // Scrolling reads on into text loaded after the current window.
-            if (!snapshot.scroll?.hasAfter) return false;
+            if (!snapshot.scroll?.hasAfter) {
+              // A book read chapter by chapter goes on with the next one.
+              if (!snapshot.scroll?.nextResourceId) return false;
+              await controller.seekChapter("next");
+              return true;
+            }
             await controller.extendScroll("forward");
             return true;
           }
@@ -515,9 +553,17 @@ export function ReaderView() {
     [controller, effectiveMode, interruptAutomatic, run],
   );
 
+  // A book read from search is only kept if the reader adds it (Legado
+  // asks the same when leaving a book that is not on the shelf).
+  const shelfChoice = useRef<"add" | "leave" | null>(null);
+  const [askShelf, setAskShelf] = useState<{ toDetail: boolean } | null>(null);
   const close = useCallback(
     (toDetail = false) => {
       if (closing) return;
+      if (activeBook?.online && !activeBook.online.onShelf && shelfChoice.current === null) {
+        setAskShelf({ toDetail });
+        return;
+      }
       setClosing(true);
       synchronizeScroll.current?.();
       void pauseAutomatic();
@@ -533,11 +579,14 @@ export function ReaderView() {
           // Legado 同步阅读进度: leaving the reader uploads the position.
           if (leaving && progressSyncOn.current)
             void runtime.progressSync.upload(leaving, chapterTitle).catch(() => undefined);
+          if (leaving && shelfChoice.current === "leave")
+            void runtime.services.sources.leaveOnlineBook(leaving).catch(() => undefined);
           return runtime.library.refresh();
         })
         .catch(() => undefined);
     },
     [
+      activeBook,
       bookId,
       controller,
       closing,
@@ -1038,7 +1087,7 @@ export function ReaderView() {
     bookTitle: activeBook.book.title,
     chapterTitle: state.chapter?.title ?? "",
     chapterProgress: state.chapterProgress,
-    bookProgress: page && page.totalLength ? (page.endOffset / page.totalLength) * 100 : 0,
+    bookProgress: bookProgressOf(state.contentWindow, page),
   };
   const typeStyle = appearance.text;
   const seekTo = (locator: Bookmark["locator"]) => {
@@ -1089,10 +1138,26 @@ export function ReaderView() {
           canBookmark={Boolean(page) && !closing}
           onAddBookmark={addBookmark}
           onRefreshDirectory={() => {
+            if (activeBook.online) {
+              toast("正在更新目录…");
+              void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(
+                ([outcome]) => {
+                  if (outcome?.error)
+                    toast({ text: `目录更新失败：${outcome.error}`, error: true });
+                  else {
+                    refreshingDirectory.current = true;
+                    reloadTools();
+                  }
+                },
+                (failure: unknown) => toast({ text: String(failure), error: true }),
+              );
+              return;
+            }
             refreshingDirectory.current = true;
             toast("正在更新目录…");
             reloadTools();
           }}
+          txtTools={!activeBook.online}
           replaceEnabled={useReplaceRules}
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
           conversion={style?.chineseConversion ?? "off"}
@@ -1149,6 +1214,16 @@ export function ReaderView() {
             controller={controller}
             viewport={scrollBox}
             synchronize={synchronizeScroll}
+            onPreviousChapter={
+              state.scroll.previousResourceId
+                ? () => run(() => controller.seekChapter("previous"))
+                : undefined
+            }
+            onNextChapter={
+              state.scroll.nextResourceId
+                ? () => run(() => controller.seekChapter("next"))
+                : undefined
+            }
             highlight={search.highlight}
             headings={headings}
             onInteract={() => {
@@ -1299,7 +1374,7 @@ export function ReaderView() {
         <ContentsPage
           bookTitle={activeBook.book.title}
           toc={tools.toc}
-          ruleName={tools.tocRuleName}
+          ruleName={activeBook.online ? activeBook.online.book.sourceName : tools.tocRuleName}
           splitLongChapters={tools.tocSettings.splitLongChapters}
           position={page?.startOffset ?? state.scroll?.startOffset ?? 0}
           loading={tools.loading}
@@ -1323,6 +1398,8 @@ export function ReaderView() {
               setBookmarks((current) => current.filter((item) => item.id !== bookmark.id));
             })
           }
+          resourceId={activeBook.online ? state.contentWindow?.resourceId : undefined}
+          txtTools={!activeBook.online}
           onOpenRules={() => panels.push("rules")}
           onToggleSplit={() =>
             void tools.saveTocSettings({
@@ -1407,6 +1484,46 @@ export function ReaderView() {
       )}
       {cloudProgress && (
         <CloudProgressDialog prompt={cloudProgress} onAnswer={answerCloudProgress} />
+      )}
+      {askShelf && (
+        <Dialog open onOpenChange={(open) => !open && setAskShelf(null)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">加入书架</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm">《{activeBook.book.title}》还不在书架上，是否加入书架？</p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const { toDetail } = askShelf;
+                  shelfChoice.current = "leave";
+                  setAskShelf(null);
+                  close(toDetail);
+                }}
+              >
+                不加入
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const { toDetail } = askShelf;
+                  void runtime.services.sources.setOnShelf(activeBook.book.id, true).then(
+                    () => {
+                      shelfChoice.current = "add";
+                      setAskShelf(null);
+                      close(toDetail);
+                    },
+                    (failure: unknown) => toast({ text: String(failure), error: true }),
+                  );
+                }}
+              >
+                加入书架
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
       {dialog === "conversion" && style && (
         <ConversionDialog

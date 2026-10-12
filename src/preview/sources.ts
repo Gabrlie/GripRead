@@ -7,6 +7,9 @@ import type {
   SourceCheckEvent,
   SourceDebugEvent,
   SourceImportItem,
+  OnlineTocEvent,
+  OnlineCacheEvent,
+  LibraryBook,
 } from "../types/generated";
 
 type Raw = Record<string, unknown>;
@@ -72,6 +75,10 @@ export function createMemorySourceService(
   const cancelled = new Set<string>();
   const debugListeners = new Set<(event: SourceDebugEvent) => void>();
   const checkListeners = new Set<(event: SourceCheckEvent) => void>();
+  const tocListeners = new Set<(event: OnlineTocEvent) => void>();
+  const cacheListeners = new Set<(event: OnlineCacheEvent) => void>();
+  const kept = new Map<string, LibraryBook>();
+  const keptChapters = new Map<string, OnlineChapter[]>();
   const find = (url: string) => sources.find((raw) => raw.bookSourceUrl === url);
   const ordered = () =>
     [...sources].sort(
@@ -368,6 +375,108 @@ export function createMemorySourceService(
     }),
     cover: async () => {
       throw new Error("预览模式不加载封面");
+    },
+    addOnlineBook: async ({ book, chapters, onShelf }) => {
+      const existing = [...kept.values()].find(
+        (entry) =>
+          entry.online?.book.sourceUrl === book.sourceUrl &&
+          entry.online.book.bookUrl === book.bookUrl,
+      );
+      const id = existing?.book.id ?? `online-${kept.size + 1}`;
+      const entry: LibraryBook = {
+        book: {
+          id,
+          title: book.name,
+          author: book.author || null,
+          contentVersion: "online",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        asset: null,
+        online: {
+          book,
+          totalChapters: chapters.length,
+          newChapters: 0,
+          lastCheckTime: null,
+          updateError: null,
+          canUpdate: true,
+          onShelf: onShelf || Boolean(existing?.online?.onShelf),
+          readChapter: null,
+          readChapterTitle: "",
+          cachedChapters: 0,
+        },
+        locator: null,
+        totalLength: null,
+        txtEncoding: null,
+        lastReadAt: null,
+        removedAt: null,
+        shelfState: null,
+        coverAssetId: null,
+        useReplaceRules: true,
+        inCloud: false,
+      };
+      kept.set(id, entry);
+      keptChapters.set(id, chapters);
+      return entry;
+    },
+    findOnlineBook: async (name, author) =>
+      [...kept.values()].find(
+        (entry) =>
+          entry.online?.onShelf &&
+          entry.book.title === name &&
+          (entry.book.author ?? "") === author,
+      ) ?? null,
+    getLibraryBook: async (bookId) => {
+      const entry = kept.get(bookId);
+      if (!entry) throw new Error("书籍不存在");
+      return entry;
+    },
+    setOnShelf: async (bookId, on) => {
+      const entry = kept.get(bookId);
+      if (entry?.online) kept.set(bookId, { ...entry, online: { ...entry.online, onShelf: on } });
+    },
+    setCanUpdate: async (bookId, on) => {
+      const entry = kept.get(bookId);
+      if (entry?.online) kept.set(bookId, { ...entry, online: { ...entry.online, canUpdate: on } });
+    },
+    leaveOnlineBook: async (bookId) => {
+      const entry = kept.get(bookId);
+      if (!entry?.online || entry.online.onShelf) return false;
+      kept.delete(bookId);
+      return true;
+    },
+    listOnlineChapters: async (bookId) => keptChapters.get(bookId) ?? [],
+    clearOnlineCache: async () => undefined,
+    updateToc: async (request) => {
+      for (const listener of tocListeners)
+        listener({
+          operationId: request.operationId,
+          bookId: "",
+          updated: 0,
+          total: 0,
+          newChapters: 0,
+          error: null,
+          done: true,
+        });
+    },
+    onTocUpdate: async (listener) => {
+      tocListeners.add(listener);
+      return () => tocListeners.delete(listener);
+    },
+    cacheChapters: async (request) => {
+      for (const listener of cacheListeners)
+        listener({
+          operationId: request.operationId,
+          bookId: request.bookId,
+          cached: 0,
+          failed: 0,
+          total: 0,
+          done: true,
+        });
+    },
+    onCache: async (listener) => {
+      cacheListeners.add(listener);
+      return () => cacheListeners.delete(listener);
     },
   };
 }

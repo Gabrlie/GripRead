@@ -565,6 +565,13 @@ pub async fn ensure_text_transforms(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<Option<TxtDecodeTask>, AppError> {
+    // Online chapters take the current transform each time they are read.
+    if for_online_book(&state, &request.book_id, |_| Ok(()))
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
     let book_id = request.book_id.clone();
     let pending = with_storage(&state, move |storage| {
         storage.text_transform_pending(&book_id)
@@ -769,6 +776,14 @@ pub async fn list_toc(
     request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<TocListing, AppError> {
+    let book_id = request.book_id.clone();
+    if let Some(listing) = for_online_book(&state, &request.book_id, move |storage| {
+        crate::online_reader::toc(storage, &book_id)
+    })
+    .await?
+    {
+        return Ok(listing);
+    }
     let storage = Arc::clone(&state.storage);
     let builds = Arc::clone(&state.toc_builds);
     tauri::async_runtime::spawn_blocking(move || {
@@ -861,6 +876,29 @@ fn lock_storage(storage: &Mutex<Storage>) -> Result<std::sync::MutexGuard<'_, St
     storage
         .lock()
         .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
+}
+
+/// Runs `work` on an engine thread when `book_id` is an online book, which
+/// reads chapter by chapter from its source; `None` for a local book.
+async fn for_online_book<T: Send + 'static>(
+    state: &State<'_, AppState>,
+    book_id: &str,
+    work: impl FnOnce(&Arc<Mutex<Storage>>) -> Result<T, AppError> + Send + 'static,
+) -> Result<Option<T>, AppError> {
+    let storage = Arc::clone(&state.storage);
+    let id = book_id.to_string();
+    let online = {
+        let storage = Arc::clone(&storage);
+        tauri::async_runtime::spawn_blocking(move || lock_storage(&storage)?.is_online_book(&id))
+            .await
+            .map_err(|error| AppError::new(ErrorCode::Io, format!("worker stopped: {error}")))??
+    };
+    if !online {
+        return Ok(None);
+    }
+    crate::source_commands::on_engine_thread(move || work(&storage))
+        .await?
+        .map(Some)
 }
 
 /// Runs a short storage operation off the async runtime.
@@ -1017,6 +1055,14 @@ pub async fn add_bookmark(
     request: BookmarkRequest,
     state: State<'_, AppState>,
 ) -> Result<Bookmark, AppError> {
+    let online_request = request.clone();
+    if let Some(bookmark) = for_online_book(&state, &request.book_id, move |storage| {
+        lock_storage(storage)?.insert_bookmark(&online_request)
+    })
+    .await?
+    {
+        return Ok(bookmark);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         let context = {
@@ -1057,6 +1103,14 @@ pub async fn search_book(
     request: SearchRequest,
     state: State<'_, AppState>,
 ) -> Result<SearchResponse, AppError> {
+    let online_request = request.clone();
+    if let Some(response) = for_online_book(&state, &request.book_id, move |storage| {
+        crate::online_reader::search(storage, &online_request)
+    })
+    .await?
+    {
+        return Ok(response);
+    }
     let storage = Arc::clone(&state.storage);
     let cancel = if let Some(operation_id) = request.operation_id.as_deref() {
         if operation_id.trim().is_empty() {
@@ -1148,6 +1202,14 @@ pub async fn read_content_window(
     request: ReadContentRequest,
     state: State<'_, AppState>,
 ) -> Result<ContentWindow, AppError> {
+    let online_request = request.clone();
+    if let Some(window) = for_online_book(&state, &request.book_id, move |storage| {
+        crate::online_reader::read_window(storage, &online_request)
+    })
+    .await?
+    {
+        return Ok(window);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         let context = {
@@ -1174,6 +1236,14 @@ pub async fn resolve_reader_locator(
     request: ResolveLocatorRequest,
     state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
+    let (book_id, progress) = (request.book_id.clone(), request.progress);
+    if let Some(locator) = for_online_book(&state, &request.book_id, move |storage| {
+        crate::online_reader::resolve_progress(storage, &book_id, progress)
+    })
+    .await?
+    {
+        return Ok(locator);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         if !request.progress.is_finite() || !(0.0..=1.0).contains(&request.progress) {
@@ -1205,6 +1275,14 @@ pub async fn resolve_reader_offset(
     request: ResolveOffsetRequest,
     state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
+    let online_request = request.clone();
+    if let Some(locator) = for_online_book(&state, &request.book_id, move |storage| {
+        crate::online_reader::resolve_offset(storage, &online_request)
+    })
+    .await?
+    {
+        return Ok(locator);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         let context = storage
@@ -1227,6 +1305,21 @@ pub async fn save_reader_locator(
     request: SaveLocatorRequest,
     state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
+    let locator = request.locator.clone();
+    if let Some(saved) = for_online_book(&state, &request.locator.book_id, move |storage| {
+        let guard = lock_storage(storage)?;
+        let index = crate::storage::resource_chapter(&locator.resource_id)
+            .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?;
+        guard
+            .online_chapter(&locator.book_id, index)?
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+        guard.save_position_record(&locator)?;
+        Ok(locator)
+    })
+    .await?
+    {
+        return Ok(saved);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         let context = {
@@ -1408,6 +1501,16 @@ pub async fn update_book(
 }
 #[tauri::command]
 pub async fn remove_book(request: BookRequest, state: State<'_, AppState>) -> Result<(), AppError> {
+    // Legado deletes an online book outright; its text is only a cache.
+    let book_id = request.book_id.clone();
+    if for_online_book(&state, &request.book_id, move |storage| {
+        lock_storage(storage)?.delete_online_book(&book_id)
+    })
+    .await?
+    .is_some()
+    {
+        return Ok(());
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         storage
@@ -1962,6 +2065,15 @@ pub async fn delete_book(
     request: crate::models::DeleteBookRequest,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    let book_id = request.book_id.clone();
+    if for_online_book(&state, &request.book_id, move |storage| {
+        lock_storage(storage)?.delete_online_book(&book_id)
+    })
+    .await?
+    .is_some()
+    {
+        return Ok(());
+    }
     with_cloud(&state, move |storage, _| {
         if request.cloud {
             crate::cloud::delete_cloud_copy(storage, &request.book_id)?;
@@ -2130,6 +2242,13 @@ pub async fn upload_book_progress(
     request: crate::models::UploadProgressRequest,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
+    // Online books join progress sync with source switching.
+    if for_online_book(&state, &request.book_id, |_| Ok(()))
+        .await?
+        .is_some()
+    {
+        return Ok(false);
+    }
     with_cloud(&state, move |storage, _| {
         crate::progress_sync::upload(
             storage,
@@ -2147,6 +2266,12 @@ pub async fn fetch_book_progress(
     request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
+    if for_online_book(&state, &request.book_id, |_| Ok(()))
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
     with_cloud(&state, move |storage, _| {
         crate::progress_sync::fetch(storage, &request.book_id)
     })

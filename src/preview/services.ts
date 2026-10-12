@@ -225,6 +225,7 @@ export function previewServices(): AppServices {
     coverAssetId: null,
     useReplaceRules: true,
     inCloud: false,
+    online: null,
   });
   const window = (start: number, end: number): ContentWindow => ({
     bookId: BOOK_ID,

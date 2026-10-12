@@ -23,7 +23,8 @@ import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
-import { BookCover } from "./BookCover";
+import { LibraryCover } from "./LibraryCover";
+import { updateOnlineToc } from "../../application/online";
 
 type ShelfBook = {
   entry: LibraryBook;
@@ -102,9 +103,9 @@ export function BookshelfView() {
         entry,
         title: entry.book.title,
         author: entry.book.author ?? "作者未知",
-        lastReadChapter: entry.asset.availability === "missing" ? "文件缺失" : labels.current,
+        lastReadChapter: entry.asset?.availability === "missing" ? "文件缺失" : labels.current,
         latestChapter: labels.latest,
-        missing: entry.asset.availability === "missing",
+        missing: entry.asset?.availability === "missing",
       };
     });
   const handleAddLocal = () => {
@@ -119,6 +120,27 @@ export function BookshelfView() {
     void store.importFiles();
   };
   const handleUpdateToc = () => void store.refresh();
+  // Legado's 更新目录: every online shelf book that allows updates.
+  const [updating, setUpdating] = useState<string | null>(null);
+  const handleUpdateOnline = () => {
+    if (updating) return;
+    setUpdating("正在更新目录…");
+    void updateOnlineToc(runtime.services.sources, [], (event) => {
+      if (!event.done) setUpdating(`正在更新目录 ${event.updated}/${event.total}`);
+    })
+      .then((outcomes) => {
+        const added = outcomes.reduce((sum, item) => sum + item.newChapters, 0);
+        const failed = outcomes.filter((item) => item.error).length;
+        toast(
+          outcomes.length === 0
+            ? "书架上没有可以更新的网络书籍"
+            : `目录已更新：${added} 个新章节${failed ? `，${failed} 本失败` : ""}`,
+        );
+        return store.refresh();
+      })
+      .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+      .finally(() => setUpdating(null));
+  };
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });
   useEffect(() => {
     if (!state.loading && !state.error) void groupStore.load(state.books);
@@ -255,6 +277,16 @@ export function BookshelfView() {
                 state.importing ? store.requestImportDetails() : void store.importFolder(),
             },
             { icon: "sync", label: "刷新书架", onSelect: handleUpdateToc },
+            ...(state.books.some((entry) => entry.online)
+              ? [
+                  {
+                    icon: "refresh",
+                    label: "更新目录",
+                    detail: updating ?? undefined,
+                    onSelect: handleUpdateOnline,
+                  },
+                ]
+              : []),
             {
               icon: layoutMode === "grid" ? "view_list" : "grid_view",
               label: "书架布局",
@@ -543,8 +575,9 @@ function BookCardList({
       <CardContent className="p-0 flex gap-3.5 items-center">
         {/* Book Cover: Fixed 4:3 (portrait) aspect ratio, no hover scale, no corner badge */}
         <div className="relative w-20 aspect-[3/4] shrink-0 rounded-lg overflow-hidden bg-surface-container-high shadow-xs">
-          <BookCover title={book.title} assetId={book.entry.coverAssetId} />
+          <LibraryCover book={book.entry} title={book.title} />
           {book.entry.inCloud && <CloudMark />}
+          <NewChaptersMark book={book.entry} />
         </div>
 
         {/* Right Content: Strictly 4 lines with identical, uniform spacing */}
@@ -569,6 +602,14 @@ function BookCardList({
             <span className="truncate min-w-0 text-[11px] sm:text-xs">
               最新：{book.latestChapter || book.lastReadChapter || "第一章"}
             </span>
+            {book.entry.online?.updateError && (
+              <span
+                className="shrink-0 text-[10px] text-error"
+                title={book.entry.online.updateError}
+              >
+                更新失败
+              </span>
+            )}
           </div>
         </div>
       </CardContent>
@@ -602,14 +643,29 @@ function BookCardGrid({
       className="flex flex-col cursor-pointer transition-colors text-left"
     >
       <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-surface-container-high shadow-xs mb-1.5">
-        <BookCover title={book.title} assetId={book.entry.coverAssetId} />
+        <LibraryCover book={book.entry} title={book.title} />
         {book.entry.inCloud && <CloudMark />}
+        <NewChaptersMark book={book.entry} />
       </div>
       <h3 className="font-title-editorial text-xs font-semibold text-on-surface truncate">
         {book.title}
       </h3>
       <p className="text-[11px] text-secondary truncate mt-0.5">{book.author}</p>
     </div>
+  );
+}
+
+/** Legado's red count of chapters the last 更新目录 added to an online book. */
+function NewChaptersMark({ book }: { book: LibraryBook }) {
+  const count = book.online?.newChapters ?? 0;
+  if (!count) return null;
+  return (
+    <span
+      aria-label={`${count} 个新章节`}
+      className="absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full bg-error text-on-error text-[10px] leading-4 text-center shadow-xs"
+    >
+      {count > 99 ? "99+" : count}
+    </span>
   );
 }
 

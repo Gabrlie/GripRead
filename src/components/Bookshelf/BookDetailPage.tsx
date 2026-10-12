@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
 import { READING_GROUPS, shelfGroupOf } from "../../application/shelf";
 import type { BookInfo, LibraryBook, ShelfPlacement } from "../../types/generated";
@@ -8,6 +8,8 @@ import { Input } from "../ui/input";
 import { Icon } from "../ui/Icon";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { BookCover } from "./BookCover";
+import { LibraryCover } from "./LibraryCover";
+import { updateOnlineToc } from "../../application/online";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { describeError } from "../Cloud/format";
@@ -127,8 +129,12 @@ export function BookDetailPage({
   const automatic = shelf.automatic[id] ?? (book.locator ? "reading" : "unread");
   const current = shelfGroupOf(book, shelf.groups, automatic);
   const manual = book.shelfState !== null || shelf.groups.some((group) => group.id === current);
-  const progress =
-    book.locator && book.totalLength
+  const online = book.online;
+  const progress = online
+    ? book.locator && online.totalChapters
+      ? `${Math.min(100, (((online.readChapter ?? 0) + 1) / online.totalChapters) * 100).toFixed(1)}%`
+      : "未读"
+    : book.locator && book.totalLength
       ? `${Math.min(100, (book.locator.offset / book.totalLength) * 100).toFixed(1)}%`
       : "未读";
   const placements: { key: string; label: string; placement: ShelfPlacement }[] = [
@@ -145,17 +151,28 @@ export function BookDetailPage({
     })),
   ];
   const selectedKey = manual ? current : "automatic";
-  const rows: [string, string][] = [
-    ["作者", book.book.author || "作者未知"],
-    ["来源", "本地 TXT"],
-    ["文件大小", info ? formatSize(info.sourceByteLength) : "—"],
-    ["文本编码", book.txtEncoding ? ENCODING_NAMES[book.txtEncoding.detected] : "—"],
-    ["章节", info?.chapterCount != null ? `${info.chapterCount} 章` : "—"],
-    ["读至", labels?.current ?? (book.locator ? "全文" : "尚未阅读")],
-    ["最新章节", labels?.latest ?? "全文"],
-    ["阅读进度", progress],
-    ["阅读时长", info ? formatDuration(info.readingSeconds) : "—"],
-  ];
+  const rows: [string, string][] = online
+    ? [
+        ["作者", book.book.author || "作者未知"],
+        ["来源", online.book.sourceName],
+        ["章节", `${online.totalChapters} 章`],
+        ["已缓存", `${online.cachedChapters} 章`],
+        ["读至", online.readChapterTitle || (book.locator ? "全文" : "尚未阅读")],
+        ["最新章节", online.book.latestChapterTitle || "—"],
+        ["阅读进度", progress],
+        ["阅读时长", info ? formatDuration(info.readingSeconds) : "—"],
+      ]
+    : [
+        ["作者", book.book.author || "作者未知"],
+        ["来源", "本地 TXT"],
+        ["文件大小", info ? formatSize(info.sourceByteLength) : "—"],
+        ["文本编码", book.txtEncoding ? ENCODING_NAMES[book.txtEncoding.detected] : "—"],
+        ["章节", info?.chapterCount != null ? `${info.chapterCount} 章` : "—"],
+        ["读至", labels?.current ?? (book.locator ? "全文" : "尚未阅读")],
+        ["最新章节", labels?.latest ?? "全文"],
+        ["阅读进度", progress],
+        ["阅读时长", info ? formatDuration(info.readingSeconds) : "—"],
+      ];
   return (
     <div
       ref={page}
@@ -168,7 +185,7 @@ export function BookDetailPage({
       <header className="relative shrink-0 overflow-hidden pt-safe">
         {/* The cover, blurred, fills the header as in Legado. */}
         <div aria-hidden="true" className="absolute inset-0 scale-125 blur-2xl opacity-60">
-          <BookCover title={book.book.title} assetId={book.coverAssetId} />
+          <LibraryCover book={book} />
         </div>
         <div aria-hidden="true" className="absolute inset-0 bg-surface/55" />
         <div className="relative flex items-center h-14 px-2">
@@ -179,7 +196,7 @@ export function BookDetailPage({
         </div>
         <div className="relative flex gap-4 px-5 pb-5 max-w-2xl mx-auto w-full">
           <div className="w-24 aspect-[3/4] shrink-0 rounded-lg overflow-hidden shadow-md bg-surface-container-high">
-            <BookCover title={book.book.title} assetId={book.coverAssetId} />
+            <LibraryCover book={book} />
           </div>
           <div className="min-w-0 flex-1 flex flex-col justify-center gap-1.5">
             <h1 className="font-title-editorial text-lg font-semibold text-on-surface break-words">
@@ -195,7 +212,18 @@ export function BookDetailPage({
       </header>
       <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <div className="max-w-2xl mx-auto w-full px-5 py-4 space-y-5 min-w-0">
-          <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
+          {online && (
+            <OnlineActions
+              book={book}
+              onChanged={() => void runtime.library.refresh()}
+              onDelete={() => setConfirm("delete")}
+            />
+          )}
+          <div
+            role="group"
+            aria-label="书籍操作"
+            className={`grid grid-cols-3 gap-2 ${online ? "hidden" : ""}`}
+          >
             <ActionTile icon="edit" label="编辑" onClick={() => setEditing(true)} />
             {book.inCloud ? (
               <DropdownMenu>
@@ -356,13 +384,15 @@ export function BookDetailPage({
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
               <DialogTitle className="font-title-editorial text-base">
-                {confirm === "delete" ? "删除这本书" : "本地与云端一起删除"}
+                {online || confirm === "delete" ? "删除这本书" : "本地与云端一起删除"}
               </DialogTitle>
             </DialogHeader>
             <p className="text-sm text-secondary">
-              {confirm === "delete"
-                ? `从书架和应用存储中删除《${book.book.title}》，云书架上的文件保留。进度、书签和阅读时长会保留，以后再导入或下载同一本书时自动恢复。`
-                : `从书架和应用存储中删除《${book.book.title}》，并删除云书架上的文件。进度、书签和阅读时长会保留，以后再导入同一本书时自动恢复。`}
+              {online
+                ? `从书架删除《${book.book.title}》和它缓存的章节。`
+                : confirm === "delete"
+                  ? `从书架和应用存储中删除《${book.book.title}》，云书架上的文件保留。进度、书签和阅读时长会保留，以后再导入或下载同一本书时自动恢复。`
+                  : `从书架和应用存储中删除《${book.book.title}》，并删除云书架上的文件。进度、书签和阅读时长会保留，以后再导入同一本书时自动恢复。`}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>
@@ -507,5 +537,138 @@ function EditBookDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * An online book's actions in Legado's detail page: 更新目录, 离线缓存
+ * (the next 50 chapters, the rest, or clearing them), 允许更新, and 删除.
+ */
+function OnlineActions({
+  book,
+  onChanged,
+  onDelete,
+}: {
+  book: LibraryBook;
+  onChanged: () => void;
+  onDelete: () => void;
+}) {
+  const runtime = useRuntime();
+  const service = runtime.services.sources;
+  const online = book.online!;
+  const id = book.book.id;
+  const [updating, setUpdating] = useState(false);
+  const [caching, setCaching] = useState<{ operationId: string; text: string } | null>(null);
+  const operation = useRef<string | null>(null);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    void service
+      .onCache((event) => {
+        if (event.operationId !== operation.current) return;
+        if (event.done) {
+          operation.current = null;
+          setCaching(null);
+          toast(`已缓存 ${event.cached} 章${event.failed ? `，${event.failed} 章失败` : ""}`);
+          onChanged();
+          return;
+        }
+        setCaching({
+          operationId: event.operationId,
+          text: `缓存中 ${event.cached + event.failed}/${event.total}`,
+        });
+      })
+      .then((unsubscribe) => {
+        if (active) stop = unsubscribe;
+        else unsubscribe();
+      });
+    return () => {
+      active = false;
+      stop?.();
+      if (operation.current) void service.cancel(operation.current);
+    };
+  }, [service]);
+
+  const cache = (count: number | null) => {
+    const start = online.readChapter ?? 0;
+    const end = count === null ? online.totalChapters : start + count;
+    const operationId = `cache-${Date.now()}`;
+    operation.current = operationId;
+    setCaching({ operationId, text: "准备缓存" });
+    void service
+      .cacheChapters({ operationId, bookId: id, start, end })
+      .catch((failure: unknown) => {
+        operation.current = null;
+        setCaching(null);
+        toast({ text: String(failure), error: true });
+      });
+  };
+
+  return (
+    <div role="group" aria-label="书籍操作" className="grid grid-cols-4 gap-2">
+      <ActionTile
+        icon="refresh"
+        label={updating ? "更新中…" : "更新目录"}
+        disabled={updating}
+        onClick={() => {
+          setUpdating(true);
+          void updateOnlineToc(service, [id])
+            .then(([outcome]) =>
+              toast(
+                outcome?.error
+                  ? { text: `目录更新失败：${outcome.error}`, error: true }
+                  : `目录已更新${outcome?.newChapters ? `，${outcome.newChapters} 个新章节` : ""}`,
+              ),
+            )
+            .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+            .finally(() => {
+              setUpdating(false);
+              onChanged();
+            });
+        }}
+      />
+      {caching ? (
+        <ActionTile
+          icon="close"
+          label={caching.text}
+          onClick={() => void service.cancel(caching.operationId)}
+        />
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger aria-label="离线缓存" className={TILE_CLASS}>
+            <Icon name="download" size={18} className="text-secondary" />
+            <span>缓存</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => cache(50)}>
+              <Icon name="download" size={15} />
+              缓存后面 50 章
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => cache(null)}>
+              <Icon name="download" size={15} />
+              缓存后面全部
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                void service.clearOnlineCache(id).then(() => {
+                  toast("已清除缓存");
+                  onChanged();
+                })
+              }
+            >
+              <Icon name="delete" size={15} />
+              清除缓存
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      <ActionTile
+        icon={online.canUpdate ? "check_box" : "check_box_outline"}
+        label="允许更新"
+        onClick={() => void service.setCanUpdate(id, !online.canUpdate).then(onChanged)}
+      />
+      <ActionTile icon="delete" label="删除" onClick={onDelete} />
+    </div>
   );
 }

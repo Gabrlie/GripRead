@@ -48,6 +48,7 @@ const entry: LibraryBook = {
   coverAssetId: null,
   useReplaceRules: true,
   inCloud: false,
+  online: null,
 };
 function runtime(books: LibraryBook[] = []) {
   return new AppRuntime({
@@ -203,7 +204,7 @@ describe("real library presentation", () => {
         error: null,
         result: {
           book: entry.book,
-          asset: entry.asset,
+          asset: entry.asset!,
           duplicate: false,
           sourceByteLength: 10,
         },

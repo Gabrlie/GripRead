@@ -33,15 +33,17 @@ use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
+mod online;
 mod portable;
 mod sources;
+pub use online::{chapter_resource, resource_chapter, OnlineRecord};
 pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
     ProgressState, StoredWebDav,
 };
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 
-const CURRENT_SCHEMA_VERSION: i64 = 16;
+const CURRENT_SCHEMA_VERSION: i64 = 17;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -894,6 +896,44 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (16, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        if current < 17 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE online_books (
+                    book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    source_url TEXT NOT NULL,
+                    book_url TEXT NOT NULL DEFAULT '',
+                    book_json TEXT NOT NULL,
+                    on_shelf INTEGER NOT NULL,
+                    can_update INTEGER NOT NULL DEFAULT 1,
+                    total_chapters INTEGER NOT NULL DEFAULT 0,
+                    new_chapters INTEGER NOT NULL DEFAULT 0,
+                    last_check_time INTEGER,
+                    update_error TEXT,
+                    created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX online_books_origin ON online_books(source_url, book_url);
+                 CREATE TABLE online_chapters (
+                    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    idx INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    is_volume INTEGER NOT NULL,
+                    is_vip INTEGER NOT NULL,
+                    is_pay INTEGER NOT NULL,
+                    tag TEXT NOT NULL,
+                    variables TEXT NOT NULL,
+                    PRIMARY KEY (book_id, idx)
+                 );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (17, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1903,27 +1943,45 @@ impl Storage {
     }
 
     pub fn list_library_books(&self) -> Result<Vec<LibraryBook>, AppError> {
-        self.list_shelf_books(false)
+        self.list_shelf_books(false, None)
     }
     pub fn list_removed_books(&self) -> Result<Vec<LibraryBook>, AppError> {
-        self.list_shelf_books(true)
+        self.list_shelf_books(true, None)
     }
-    fn list_shelf_books(&self, removed: bool) -> Result<Vec<LibraryBook>, AppError> {
+    /// One book as the shelf shows it, including an online book only being
+    /// read from search.
+    pub fn library_book(&self, book_id: &str) -> Result<LibraryBook, AppError> {
+        self.list_shelf_books(false, Some(book_id))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "书籍不存在"))
+    }
+    fn list_shelf_books(
+        &self,
+        removed: bool,
+        only: Option<&str>,
+    ) -> Result<Vec<LibraryBook>, AppError> {
+        // Online books have no asset; ones only being tried from search stay
+        // off the shelf until added.
         let mut statement = self.conn.prepare(
             "SELECT b.id, b.title, b.author, b.content_version, b.created_at, b.updated_at,
                     a.id, a.book_id, a.kind, a.sha256, a.byte_length, a.content_version,
                     a.relative_path, a.created_at, p.updated_at, r.removed_at,
                     b.shelf_state, b.cover_asset_id, b.use_replace_rules,
                     EXISTS(SELECT 1 FROM txt_assets t JOIN cloud_books c
-                           ON c.source_sha256 = t.source_sha256 WHERE t.asset_id = a.id)
-             FROM books b JOIN book_assets a ON a.book_id = b.id
+                           ON c.source_sha256 = t.source_sha256 WHERE t.asset_id = a.id),
+                    o.book_id IS NOT NULL
+             FROM books b LEFT JOIN book_assets a ON a.book_id = b.id
+             LEFT JOIN online_books o ON o.book_id = b.id
              LEFT JOIN reading_positions p ON p.book_id = b.id
              LEFT JOIN shelf_removals r ON r.book_id = b.id
              WHERE (r.book_id IS NOT NULL) = ?1
+               AND (a.id IS NOT NULL OR o.on_shelf = 1 OR b.id = ?2)
+               AND (?2 IS NULL OR b.id = ?2)
              ORDER BY b.updated_at DESC, b.id ASC, a.created_at ASC",
         )?;
         let rows = statement
-            .query_map(params![removed], |row| {
+            .query_map(params![removed, only], |row| {
                 let book = Book {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -1932,7 +1990,11 @@ impl Storage {
                     created_at: row.get(4)?,
                     updated_at: row.get(5)?,
                 };
-                let record = asset_from_columns(row, 6)?;
+                let record = if row.get::<_, Option<String>>(6)?.is_some() {
+                    Some(asset_from_columns(row, 6)?)
+                } else {
+                    None
+                };
                 Ok((
                     book,
                     record,
@@ -1942,38 +2004,50 @@ impl Storage {
                     row.get::<_, Option<String>>(17)?,
                     row.get::<_, bool>(18)?,
                     row.get::<_, bool>(19)?,
+                    row.get::<_, bool>(20)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
+            .filter(|row| row.1.is_some() || row.8)
             .map(
                 |(
                     book,
-                    mut record,
+                    record,
                     last_read_at,
                     removed_at,
                     shelf_state,
                     cover_asset_id,
                     use_replace_rules,
                     in_cloud,
+                    _online,
                 )| {
-                    let path = managed_path(&self.root, &record.relative_path, "books")?;
-                    record.asset.availability = if is_regular_file(&path) {
-                        AssetAvailability::Ready
-                    } else {
-                        AssetAvailability::Missing
-                    };
                     let locator = self.saved_position(&book.id)?;
-                    let total_length = if record.asset.availability == AssetAvailability::Ready {
-                        self.trusted_content_length(&record)?
-                    } else {
-                        None
+                    let (asset, total_length, txt_encoding) = match record {
+                        Some(mut record) => {
+                            let path = managed_path(&self.root, &record.relative_path, "books")?;
+                            record.asset.availability = if is_regular_file(&path) {
+                                AssetAvailability::Ready
+                            } else {
+                                AssetAvailability::Missing
+                            };
+                            let total_length =
+                                if record.asset.availability == AssetAvailability::Ready {
+                                    self.trusted_content_length(&record)?
+                                } else {
+                                    None
+                                };
+                            let txt_encoding = self.txt_encoding_for_asset(&record.asset.id)?;
+                            (Some(record.asset), total_length, txt_encoding)
+                        }
+                        None => (None, None, None),
                     };
-                    let txt_encoding = self.txt_encoding_for_asset(&record.asset.id)?;
+                    let online = self.online_shelf_info(&book.id, locator.as_ref())?;
                     Ok(LibraryBook {
                         book,
-                        asset: record.asset,
+                        asset,
+                        online,
                         locator,
                         total_length,
                         txt_encoding,
@@ -2602,6 +2676,21 @@ impl Storage {
     }
 
     pub fn book_info(&self, book_id: &str) -> Result<BookInfo, AppError> {
+        if self.is_online_book(book_id)? {
+            let record = self.online_record(book_id)?;
+            let reading_seconds: i64 = self.conn.query_row(
+                "SELECT COALESCE(SUM(seconds), 0) FROM reading_time WHERE book_id = ?1",
+                params![book_id],
+                |row| row.get(0),
+            )?;
+            return Ok(BookInfo {
+                book_id: book_id.to_string(),
+                intro: Some(record.book.intro).filter(|intro| !intro.trim().is_empty()),
+                source_byte_length: 0,
+                chapter_count: Some(u64::from(self.online_chapter_count(book_id)?)),
+                reading_seconds: reading_seconds.max(0) as u64,
+            });
+        }
         let record = self.asset_for_book(book_id)?;
         let (intro, entries_json): (Option<String>, Option<String>) = self.conn.query_row(
             "SELECT b.intro, t.entries_json FROM books b
@@ -2831,6 +2920,11 @@ impl Storage {
                 "book content changed while creating the bookmark",
             ));
         }
+        self.insert_bookmark(request)
+    }
+
+    /// Stores a bookmark whose locator the caller has checked.
+    pub(crate) fn insert_bookmark(&self, request: &BookmarkRequest) -> Result<Bookmark, AppError> {
         let id = Uuid::new_v4().to_string();
         let bookmark = Bookmark {
             id: id.clone(),
@@ -3561,6 +3655,7 @@ impl Storage {
             locator: locator.cloned(),
             max_units,
             direction: WindowDirection::Forward,
+            resource_id: None,
         })
     }
 
@@ -4802,6 +4897,10 @@ pub(crate) fn read_content_window_from_context(
         has_before: start_offset > 0,
         has_after: end_offset < total_length,
         locator,
+        previous_resource_id: None,
+        next_resource_id: None,
+        resource_index: None,
+        resource_count: None,
     })
 }
 
@@ -6422,7 +6521,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 16);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
     }
 
     #[test]
@@ -7389,7 +7488,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -7557,7 +7656,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -7788,6 +7887,7 @@ mod tests {
             }),
             max_units: 2,
             direction: WindowDirection::Backward,
+            resource_id: None,
         };
         let backward = storage.read_content_window_request(&request).unwrap();
         assert_eq!(backward.text, "😀乙");
@@ -8148,13 +8248,13 @@ mod tests {
             )
             .unwrap();
         assert!(storage.list_groups().unwrap()[0].book_ids.is_empty());
-        let shelf = storage.list_shelf_books(false).unwrap();
+        let shelf = storage.list_shelf_books(false, None).unwrap();
         assert_eq!(shelf[0].shelf_state, Some(ShelfState::Finished));
         storage
             .move_book(&imported.book.id, &ShelfPlacement::Group(group.id.clone()))
             .unwrap();
         assert_eq!(
-            storage.list_shelf_books(false).unwrap()[0].shelf_state,
+            storage.list_shelf_books(false, None).unwrap()[0].shelf_state,
             None
         );
         // Deleting the group returns the book to automatic grouping.
@@ -8175,7 +8275,7 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert!(remaining.iter().all(|group| group.book_ids.is_empty()));
         assert_eq!(
-            storage.list_shelf_books(false).unwrap()[0].shelf_state,
+            storage.list_shelf_books(false, None).unwrap()[0].shelf_state,
             None
         );
     }
@@ -8243,11 +8343,11 @@ mod tests {
             storage.read_reader_font(&first.id).unwrap_err().code,
             ErrorCode::NotFound
         );
-        let shelf = storage.list_shelf_books(false).unwrap();
+        let shelf = storage.list_shelf_books(false, None).unwrap();
         assert_eq!(shelf[0].cover_asset_id.as_deref(), Some(second.id.as_str()));
         storage.clear_book_cover(&id).unwrap();
         assert_eq!(
-            storage.list_shelf_books(false).unwrap()[0].cover_asset_id,
+            storage.list_shelf_books(false, None).unwrap()[0].cover_asset_id,
             None
         );
         assert!(storage.list_reader_fonts().unwrap().is_empty());
@@ -8566,7 +8666,7 @@ mod tests {
         // The book's own switch turns its rules off.
         storage.set_book_replace_rules(&id, false).unwrap();
         assert!(storage
-            .list_shelf_books(false)
+            .list_shelf_books(false, None)
             .unwrap()
             .iter()
             .all(|book| !book.use_replace_rules));
@@ -8704,7 +8804,11 @@ mod tests {
         storage.remove_book(&first.book.id).unwrap();
         assert!(storage.list_library_books().unwrap().is_empty());
         assert_eq!(
-            storage.list_removed_books().unwrap()[0].asset.id,
+            storage.list_removed_books().unwrap()[0]
+                .asset
+                .clone()
+                .unwrap()
+                .id,
             first.asset.id
         );
         drop(storage);
@@ -8726,7 +8830,11 @@ mod tests {
         assert_eq!(repeated.book.title, "Revised title");
         assert!(storage.list_removed_books().unwrap().is_empty());
         assert_eq!(
-            storage.list_library_books().unwrap()[0].asset.availability,
+            storage.list_library_books().unwrap()[0]
+                .asset
+                .clone()
+                .unwrap()
+                .availability,
             AssetAvailability::Ready
         );
         storage.remove_book(&first.book.id).unwrap();
@@ -8884,12 +8992,12 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
         assert_eq!(library[0].book, imported.book);
-        assert_eq!(library[0].asset.id, imported.asset.id);
+        assert_eq!(library[0].asset.as_ref().unwrap().id, imported.asset.id);
         assert_eq!(
             reopened.saved_position(&imported.book.id).unwrap(),
             Some(locator)
@@ -8952,7 +9060,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(
@@ -8978,7 +9086,7 @@ mod tests {
         assert!(!groups.is_empty());
         assert!(reopened.list_groups().unwrap().is_empty());
         assert_eq!(
-            reopened.list_shelf_books(false).unwrap()[0].shelf_state,
+            reopened.list_shelf_books(false, None).unwrap()[0].shelf_state,
             None
         );
         assert_eq!(reopened.get_settings().unwrap(), preferences);

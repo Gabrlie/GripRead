@@ -60,6 +60,11 @@ import type {
   OnlineBook,
   OnlineChapter,
   OnlineContent,
+  AddOnlineBookRequest,
+  UpdateOnlineTocRequest,
+  OnlineTocEvent,
+  CacheOnlineChaptersRequest,
+  OnlineCacheEvent,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -240,6 +245,23 @@ export interface SourceService {
   ): Promise<OnlineContent>;
   /** A cover image fetched with the source's headers. */
   cover(sourceUrl: string, url: string): Promise<ArrayBuffer>;
+  /** Keeps an online book with its contents; `onShelf` false only opens it for reading. */
+  addOnlineBook(request: AddOnlineBookRequest): Promise<LibraryBook>;
+  getLibraryBook(bookId: string): Promise<LibraryBook>;
+  /** The shelf's online book with this name and author, from any source. */
+  findOnlineBook(name: string, author: string): Promise<LibraryBook | null>;
+  setOnShelf(bookId: string, on: boolean): Promise<void>;
+  setCanUpdate(bookId: string, on: boolean): Promise<void>;
+  /** Drops a book read from search that was not added; returns whether it was dropped. */
+  leaveOnlineBook(bookId: string): Promise<boolean>;
+  listOnlineChapters(bookId: string): Promise<OnlineChapter[]>;
+  clearOnlineCache(bookId: string): Promise<void>;
+  /** 更新目录 for these books, or every shelf book that allows it when empty. */
+  updateToc(request: UpdateOnlineTocRequest): Promise<void>;
+  onTocUpdate(listener: (event: OnlineTocEvent) => void): Promise<Unsubscribe>;
+  /** 离线缓存 of a chapter range; progress arrives through `onCache`. */
+  cacheChapters(request: CacheOnlineChaptersRequest): Promise<void>;
+  onCache(listener: (event: OnlineCacheEvent) => void): Promise<Unsubscribe>;
 }
 export interface AppServices {
   library: LibraryService;

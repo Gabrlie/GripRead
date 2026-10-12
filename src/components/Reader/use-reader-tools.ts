@@ -41,6 +41,7 @@ export function useReaderTools(
   const pendingSettings = useRef<Promise<unknown> | null>(null);
   const failedSettings = useRef<{ bookId: string; settings: BookTocSettings } | null>(null);
   const bookId = activeBook?.book.id;
+  const online = Boolean(activeBook?.online);
 
   const reload = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -50,7 +51,8 @@ export function useReaderTools(
     setLoading(true);
     setError(null);
     void Promise.all([
-      runtime.services.library.getTxtEncoding(bookId),
+      // Online books have no TXT file and so no encoding.
+      online ? Promise.resolve(null) : runtime.services.library.getTxtEncoding(bookId),
       runtime.services.reader.listToc(bookId),
       runtime.services.reader.listBookmarks(bookId),
       runtime.services.reader.listTxtTocRules(),
@@ -75,7 +77,7 @@ export function useReaderTools(
       setBookmarks([]);
       setEncodingInfo(null);
     };
-  }, [bookId, runtime.services, revision]);
+  }, [bookId, online, runtime.services, revision]);
 
   /** Reads the directory again after anything that can change it. */
   const refreshDirectory = useCallback(

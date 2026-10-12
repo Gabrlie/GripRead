@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import type { SourceService } from "../services/contracts";
-import type { SearchScope } from "../types/generated";
+import type {
+  ExploreKind,
+  OnlineSearchEvent,
+  OnlineSearchResult,
+  OnlineTocEvent,
+  SearchScope,
+} from "../types/generated";
 
 const HISTORY_KEY = "gripread.onlineSearchHistory";
 const HISTORY_LIMIT = 20;
@@ -81,3 +87,44 @@ export function useOnlineCover(
   }, [service, sourceUrl, url]);
   return image;
 }
+
+/**
+ * Runs 更新目录 for these books (every updatable shelf book when empty) and
+ * resolves with each book's outcome once the update finishes.
+ */
+export async function updateOnlineToc(
+  service: SourceService,
+  bookIds: string[],
+  onProgress?: (event: OnlineTocEvent) => void,
+): Promise<OnlineTocEvent[]> {
+  const operationId = `toc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const outcomes: OnlineTocEvent[] = [];
+  let stop: (() => void) | undefined;
+  try {
+    return await new Promise<OnlineTocEvent[]>((resolve, reject) => {
+      void service
+        .onTocUpdate((event) => {
+          if (event.operationId !== operationId) return;
+          onProgress?.(event);
+          if (event.done) resolve(outcomes);
+          else outcomes.push(event);
+        })
+        .then((unsubscribe) => {
+          stop = unsubscribe;
+          return service.updateToc({ operationId, bookIds });
+        })
+        .catch(reject);
+    });
+  } finally {
+    stop?.();
+  }
+}
+
+/** Where an online book was opened from, restored when the reader closes. */
+export type OnlineReturn = {
+  result: OnlineSearchResult;
+  origin: number;
+} & (
+  | { view: "search"; scope: SearchScope; key: string; event: OnlineSearchEvent | null }
+  | { view: "explore"; sourceUrl: string; sourceName: string; kind: ExploreKind }
+);
