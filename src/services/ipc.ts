@@ -118,6 +118,8 @@ import type {
   OnlineCacheEvent,
   SetOnlineBookFlagRequest,
   FindOnlineBookRequest,
+  ChangeOnlineSourceRequest,
+  ChangeOnlineSourceResult,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -646,6 +648,10 @@ export const tauriServices: AppServices = {
     addOnlineBook: (request) =>
       invokeCommand<LibraryBook>("add_online_book", {
         request: request satisfies AddOnlineBookRequest,
+      }),
+    changeSource: (request) =>
+      invokeCommand<ChangeOnlineSourceResult>("change_online_source", {
+        request: request satisfies ChangeOnlineSourceRequest,
       }),
     findOnlineBook: (name, author) =>
       invokeCommand<LibraryBook | null>("find_online_book", {

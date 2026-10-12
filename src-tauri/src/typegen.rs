@@ -160,6 +160,8 @@ const IPC_TYPES: &[&str] = &[
     "OnlineShelfInfo",
     "AddOnlineBookRequest",
     "FindOnlineBookRequest",
+    "ChangeOnlineSourceRequest",
+    "ChangeOnlineSourceResult",
     "UpdateOnlineTocRequest",
     "OnlineTocEvent",
     "CacheOnlineChaptersRequest",
@@ -327,6 +329,8 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<OnlineShelfInfo>(&config)?;
     export_all::<AddOnlineBookRequest>(&config)?;
     export_all::<FindOnlineBookRequest>(&config)?;
+    export_all::<ChangeOnlineSourceRequest>(&config)?;
+    export_all::<ChangeOnlineSourceResult>(&config)?;
     export_all::<UpdateOnlineTocRequest>(&config)?;
     export_all::<OnlineTocEvent>(&config)?;
     export_all::<CacheOnlineChaptersRequest>(&config)?;

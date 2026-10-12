@@ -7,6 +7,7 @@ import type { AppServices } from "../../services/contracts";
 import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "../../preview/sources";
 import { DiscoverView } from "../Discover/DiscoverView";
 import { SearchPage } from "./SearchPage";
+import { ChangeSourceDialog } from "./ChangeSourceDialog";
 
 afterEach(cleanup);
 
@@ -118,5 +119,40 @@ describe("发现", () => {
     expect(await screen.findByRole("dialog", { name: "甲站小说 · 都市" })).toBeTruthy();
     const books = await screen.findByRole("list", { name: "书籍" });
     expect((await within(books).findAllByText("剑来外传")).length).toBeGreaterThan(0);
+  });
+});
+
+describe("换源", () => {
+  it("lists the other sources with the same book and moves the book to the chosen one", async () => {
+    const sources = service();
+    const kept = await sources.addOnlineBook({
+      book: PREVIEW_BOOKS[0],
+      chapters: await sources.chapters(PREVIEW_BOOKS[0]),
+      onShelf: true,
+    });
+    const change = vi.spyOn(sources, "changeSource");
+    const onChanged = vi.fn();
+    render(
+      <ChangeSourceDialog
+        service={sources}
+        book={kept}
+        onChanged={onChanged}
+        onClose={() => undefined}
+      />,
+    );
+    const list = await screen.findByRole("list", { name: "可换的书源" });
+    // 剑来外传 has a different name and stays out.
+    expect(await within(list).findByText("乙站 API")).toBeTruthy();
+    expect(within(list).queryByText(/剑来外传/)).toBeNull();
+    const current = within(list).getByText("甲站小说").closest("button")!;
+    expect(current.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(within(list).getByText("乙站 API"));
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+    expect(change).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: kept.book.id,
+        book: expect.objectContaining({ sourceUrl: "https://api.example-b.com" }),
+      }),
+    );
   });
 });

@@ -1167,6 +1167,10 @@ pub enum RestoreCategory {
     ReadingTime,
     /// Title, author, introduction, cover, and placement.
     BookInfo,
+    /// Book sources (their JSON, switches, groups, and order).
+    Sources,
+    /// Online books on the shelf with their source and progress.
+    OnlineBooks,
 }
 
 /// This device's WebDAV account (Legado WebDav 设置). The password is kept in
@@ -1280,6 +1284,8 @@ pub struct BackupPreview {
     /// User chapter rules (built-in rules are only switched and ordered).
     pub toc_rules: u32,
     pub has_preferences: bool,
+    pub book_sources: u32,
+    pub online_books: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
@@ -1293,6 +1299,10 @@ pub struct RestoreReport {
     pub books_pending: u32,
     pub positions_restored: u32,
     pub bookmarks_added: u32,
+    /// Sources added or updated to a newer copy.
+    pub sources_restored: u32,
+    /// Online books added or brought up to date.
+    pub online_books_restored: u32,
     /// The local recovery point written before restoring.
     pub recovery_point: String,
 }
@@ -1652,6 +1662,27 @@ pub struct AddOnlineBookRequest {
     pub chapters: Vec<OnlineChapter>,
     /// False opens it for reading without putting it on the shelf.
     pub on_shelf: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeOnlineSourceRequest {
+    pub book_id: String,
+    /// The details from the new source, with its contents.
+    pub book: OnlineBook,
+    pub chapters: Vec<OnlineChapter>,
+}
+
+/// After 换源: the book, and where its position went.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeOnlineSourceResult {
+    pub book: LibraryBook,
+    /// The chapter the position is now in; `None` when the book was unread.
+    pub chapter: Option<u32>,
+    /// False when no chapter matched by title or number, so the position
+    /// kept its place in the contents.
+    pub certain: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

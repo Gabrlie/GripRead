@@ -65,6 +65,8 @@ import type {
   OnlineTocEvent,
   CacheOnlineChaptersRequest,
   OnlineCacheEvent,
+  ChangeOnlineSourceRequest,
+  ChangeOnlineSourceResult,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -248,6 +250,8 @@ export interface SourceService {
   /** Keeps an online book with its contents; `onShelf` false only opens it for reading. */
   addOnlineBook(request: AddOnlineBookRequest): Promise<LibraryBook>;
   getLibraryBook(bookId: string): Promise<LibraryBook>;
+  /** 换源: the kept book takes these details and contents from another source. */
+  changeSource(request: ChangeOnlineSourceRequest): Promise<ChangeOnlineSourceResult>;
   /** The shelf's online book with this name and author, from any source. */
   findOnlineBook(name: string, author: string): Promise<LibraryBook | null>;
   setOnShelf(bookId: string, on: boolean): Promise<void>;

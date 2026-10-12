@@ -12,8 +12,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use sha2::{Digest, Sha256};
-
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     ContentWindow, OnlineChapter, ReadContentRequest, ReaderLocator, ResolveOffsetRequest,
@@ -23,7 +21,7 @@ use crate::online_commands::{book_data, chapter_data};
 use crate::source_commands::{engine_error, load_source, session_for, spawn_engine};
 use crate::sources::context::Control;
 use crate::sources::web_book::chapter_absolute_url;
-use crate::storage::{chapter_resource, resource_chapter, Storage};
+use crate::storage::{chapter_resource, chapter_version, resource_chapter, Storage};
 use crate::transform;
 
 const CONTEXT_UNITS: usize = 32;
@@ -47,6 +45,38 @@ pub struct ChapterText {
     pub count: u32,
     pub version: String,
     pub units: Vec<u16>,
+}
+
+/// Fetches a book's details and contents again from its source (更新目录)
+/// and returns how many chapters were added.
+pub fn refresh_toc(
+    storage: &Shared,
+    book_id: &str,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<u32, AppError> {
+    let record = lock(storage)?.online_record(book_id)?;
+    let source = load_source(storage, &record.book.source_url)?;
+    let control = Control::new(cancel, Some(Instant::now() + FETCH_TIMEOUT));
+    let session = session_for(storage, source, control).map_err(engine_error)?;
+    let book = Rc::new(RefCell::new(book_data(&record.book)));
+    // Legado refreshes the details first, then the contents they point at.
+    session.book_info(&book, false).map_err(engine_error)?;
+    let chapters = session.chapters(&book).map_err(engine_error)?;
+    let updated = crate::online_commands::online_book(&book.borrow());
+    let chapters: Vec<OnlineChapter> = chapters
+        .iter()
+        .map(crate::online_commands::online_chapter)
+        .collect();
+    lock(storage)?.replace_online_toc(book_id, &updated, &chapters)
+}
+
+/// A book restored from a backup has no contents yet; they are fetched
+/// before it is first read.
+pub fn ensure_toc(storage: &Shared, book_id: &str) -> Result<(), AppError> {
+    if lock(storage)?.online_chapter_count(book_id)? > 0 {
+        return Ok(());
+    }
+    refresh_toc(storage, book_id, Default::default()).map(|_| ())
 }
 
 /// The chapter's text as the source gave it, from the device or fetched now.
@@ -127,19 +157,6 @@ pub fn chapter_text(storage: &Shared, book_id: &str, index: u32) -> Result<Chapt
     })
 }
 
-/// Stable while the chapter keeps its address; a changed transform only
-/// moves offsets slightly, which positions tolerate by clamping.
-fn chapter_version(book_id: &str, chapter: &OnlineChapter) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(book_id.as_bytes());
-    hasher.update([0]);
-    hasher.update(chapter.url.as_bytes());
-    hasher.update([0]);
-    hasher.update(chapter.title.as_bytes());
-    let digest = hasher.finalize();
-    format!("online-{}", hex::encode(&digest[..8]))
-}
-
 fn is_low_surrogate(unit: u16) -> bool {
     (0xdc00..=0xdfff).contains(&unit)
 }
@@ -218,6 +235,7 @@ pub fn read_window(
             .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?,
         None => 0,
     };
+    ensure_toc(storage, book_id)?;
     let chapter = chapter_text(storage, book_id, index)?;
     if let Some(locator) = &request.locator {
         if locator.content_version != chapter.version {
@@ -295,6 +313,7 @@ pub fn resolve_progress(
 
 /// The contents for the reader: one entry per chapter, at its start.
 pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
+    ensure_toc(storage, book_id)?;
     let guard = lock(storage)?;
     let chapters = guard.online_chapters(book_id)?;
     let cached = guard.cached_online_chapters(book_id)?;

@@ -41,4 +41,6 @@ Compatibility sample: the user's published collection of 463 sources, 395 of the
 
 S4 is implemented: schema 17 online books and chapters with a chapter cache, chapter-resource reading in page modes and chapter-by-chapter scrolling, the contents and in-book search for online books, background pre-download, 离线缓存, 更新目录 with new-chapter marks, the shelf and detail page for online books, 加入书架 and 阅读 from the online book page with the return to it, and the prompt when leaving a book that is not on the shelf. Verification: Rust tests for chapter windows, edges, version mismatch, contents, progress, search, cache, and dropping an unshelved book; controller tests for turning across chapter edges and 上一章/下一章; frontend tests for adding and reading from the online book page and for the reader's online contents, tools, and leave prompt.
 
-Next is S5: 换源 for shelf books, backups, and progress sync for online books.
+S5 is implemented: 换源 from the reader and the detail page with Legado's chapter mapping for the position and bookmarks; backups with book sources and online books by chapter position, restored lazily when the contents are first fetched, with 书源 and 网络书籍 in the 恢复忽略列表; and progress sync for online books keyed by name and author. Verification: Rust tests for chapter numbers, titles, and matching; switching sources with the position and a bookmark; and a backup round trip that places the position after the contents arrive; a frontend test for the 换源 dialog.
+
+Next is the Android build for device acceptance of S4 and S5.

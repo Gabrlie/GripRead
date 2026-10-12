@@ -6,6 +6,14 @@ export type RestoreReport = { groupsCreated: number, rulesRestored: number, pref
  */
 booksPending: number, positionsRestored: number, bookmarksAdded: number, 
 /**
+ * Sources added or updated to a newer copy.
+ */
+sourcesRestored: number, 
+/**
+ * Online books added or brought up to date.
+ */
+onlineBooksRestored: number, 
+/**
  * The local recovery point written before restoring.
  */
 recoveryPoint: string, };

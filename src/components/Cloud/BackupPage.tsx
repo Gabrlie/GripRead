@@ -32,6 +32,8 @@ export const RESTORE_CATEGORIES: [RestoreCategory, string, string][] = [
   ["progress", "阅读进度", ""],
   ["bookmarks", "书签", ""],
   ["reading-time", "阅读时长", ""],
+  ["sources", "书源", "书源的规则、开关、分组和顺序"],
+  ["online-books", "网络书籍", "书架上的网络书籍和它们的进度、书签"],
 ];
 
 type Draft = Omit<SaveWebDavRequest, "password"> & { password: string };
@@ -538,6 +540,12 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 分组 {restoring.preview.groups} 个，替换规则 {restoring.preview.replaceRules}{" "}
                 条，自定义目录规则 {restoring.preview.tocRules} 条
               </li>
+              {(restoring.preview.onlineBooks > 0 || restoring.preview.bookSources > 0) && (
+                <li>
+                  网络书籍 {restoring.preview.onlineBooks} 本，书源 {restoring.preview.bookSources}{" "}
+                  个
+                </li>
+              )}
               {restoring.preview.hasPreferences && <li>阅读设置（字体和背景图保留本机的）</li>}
               {settings.restoreIgnore.length > 0 && (
                 <li className="text-secondary text-xs">
@@ -594,6 +602,12 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               </li>
               {report.booksPending > 0 && (
                 <li>{report.booksPending} 本书不在本机，导入或从云书架下载后会自动恢复记录</li>
+              )}
+              {(report.onlineBooksRestored > 0 || report.sourcesRestored > 0) && (
+                <li>
+                  网络书籍 {report.onlineBooksRestored} 本，书源 {report.sourcesRestored} 个
+                  （目录在第一次打开时读取）
+                </li>
               )}
               <li>
                 新建分组 {report.groupsCreated} 个，规则 {report.rulesRestored} 条

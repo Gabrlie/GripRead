@@ -37,6 +37,8 @@ interface ReaderTopBarProps {
   onOpenDetail: () => void;
   /** TXT目录规则 and 设置编码 apply to local TXT books only. */
   txtTools?: boolean;
+  /** 换源, for an online book. */
+  onChangeSource?: () => void;
 }
 
 const CONVERSION_LABELS: Record<ChineseConversion, string> = {
@@ -63,6 +65,7 @@ export function ReaderTopBar({
   onOpenTools,
   onOpenDetail,
   txtTools = true,
+  onChangeSource,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -104,6 +107,18 @@ export function ReaderTopBar({
           </h1>
           <p className="text-[11px] text-secondary truncate leading-tight mt-0.5">{subtitle}</p>
         </button>
+        {onChangeSource && (
+          <Button
+            aria-label="换源"
+            title="换源"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-secondary rounded-full"
+            onClick={onChangeSource}
+          >
+            <Icon name="swap_horiz" size={19} />
+          </Button>
+        )}
         {txtTools && action("rules", "TXT目录规则", "toc_rule")}
         {txtTools && action("encoding", "设置编码", "translate")}
         <DropdownMenu>

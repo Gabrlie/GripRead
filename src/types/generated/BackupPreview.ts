@@ -11,4 +11,4 @@ booksOnDevice: number, bookmarks: number, groups: number, replaceRules: number,
 /**
  * User chapter rules (built-in rules are only switched and ordered).
  */
-tocRules: number, hasPreferences: boolean, };
+tocRules: number, hasPreferences: boolean, bookSources: number, onlineBooks: number, };

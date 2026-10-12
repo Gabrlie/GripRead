@@ -16,6 +16,231 @@ pub fn resource_chapter(resource_id: &str) -> Option<u32> {
     resource_id.strip_prefix("chapter-")?.parse().ok()
 }
 
+/// Stable while the chapter keeps its address and title; a changed
+/// transform only moves offsets slightly, which positions tolerate.
+pub fn chapter_version(book_id: &str, chapter: &OnlineChapter) -> String {
+    let mut hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut hasher, book_id.as_bytes());
+    sha2::Digest::update(&mut hasher, [0]);
+    sha2::Digest::update(&mut hasher, chapter.url.as_bytes());
+    sha2::Digest::update(&mut hasher, [0]);
+    sha2::Digest::update(&mut hasher, chapter.title.as_bytes());
+    let digest = sha2::Digest::finalize(hasher);
+    format!("online-{}", hex::encode(&digest[..8]))
+}
+
+/// A position in an online book that does not depend on its source: the
+/// chapter's place and title, and the offset in it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterPosition {
+    pub index: u32,
+    pub title: String,
+    pub offset: u64,
+    /// Chapters the contents had, for placing the position proportionally.
+    #[serde(default)]
+    pub count: u32,
+}
+
+/// A bookmark by chapter position, kept until the contents are known.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingBookmark {
+    pub position: ChapterPosition,
+    pub excerpt: String,
+    #[serde(default)]
+    pub note: String,
+    pub created_at: i64,
+}
+
+/// Legado's `BookHelp.getChapterNum`: the number in 第…章/节/回/卷, in
+/// Arabic or Chinese numerals; 0 when there is none.
+fn chapter_number(title: &str) -> i64 {
+    let chars: Vec<char> = title.chars().collect();
+    let Some(start) = chars.iter().position(|c| *c == '第') else {
+        return 0;
+    };
+    let digits: String = chars[start + 1..]
+        .iter()
+        .take_while(|c| !matches!(c, '章' | '节' | '回' | '卷' | '集' | '话' | '部' | '篇'))
+        .collect();
+    let digits = digits.trim();
+    if digits.is_empty() {
+        return 0;
+    }
+    if let Ok(number) = digits.parse::<i64>() {
+        return number;
+    }
+    chinese_number(digits).unwrap_or(0)
+}
+
+fn chinese_number(text: &str) -> Option<i64> {
+    let digit = |c: char| -> Option<i64> {
+        Some(match c {
+            '零' | '〇' => 0,
+            '一' | '壹' => 1,
+            '二' | '两' | '贰' => 2,
+            '三' | '叁' => 3,
+            '四' | '肆' => 4,
+            '五' | '伍' => 5,
+            '六' | '陆' => 6,
+            '七' | '柒' => 7,
+            '八' | '捌' => 8,
+            '九' | '玖' => 9,
+            '0'..='9' => c.to_digit(10)? as i64,
+            _ => return None,
+        })
+    };
+    let (mut total, mut section, mut number) = (0i64, 0i64, 0i64);
+    let mut seen = false;
+    for c in text.chars() {
+        if let Some(value) = digit(c) {
+            number = number * 10 + value;
+            seen = true;
+            continue;
+        }
+        let unit = match c {
+            '十' | '拾' => 10,
+            '百' | '佰' => 100,
+            '千' | '仟' => 1000,
+            '万' => 10_000,
+            '亿' => 100_000_000,
+            _ => return None,
+        };
+        seen = true;
+        if unit >= 10_000 {
+            total = (total + section + number) * unit;
+            section = 0;
+        } else {
+            section += number.max(1) * unit;
+        }
+        number = 0;
+    }
+    seen.then_some(total + section + number)
+}
+
+/// Legado's `getPureChapterName`: the title without its 第…章 prefix,
+/// brackets, and punctuation, for comparing chapters across sources.
+fn pure_title(title: &str) -> String {
+    let mut text = title.to_string();
+    if let Some(start) = text.find('第') {
+        if let Some(end) = text[start..]
+            .find(['章', '节', '回', '卷', '集', '话'])
+            .map(|end| start + end)
+        {
+            let unit_len = text[end..].chars().next().map_or(0, char::len_utf8);
+            text = format!("{}{}", &text[..start], &text[end + unit_len..]);
+        }
+    }
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn jaro_winkler(a: &str, b: &str) -> f64 {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let window = (a.len().max(b.len()) / 2).saturating_sub(1);
+    let mut a_match = vec![false; a.len()];
+    let mut b_match = vec![false; b.len()];
+    let mut matches = 0usize;
+    for i in 0..a.len() {
+        let low = i.saturating_sub(window);
+        let high = (i + window + 1).min(b.len());
+        for j in low..high {
+            if !b_match[j] && a[i] == b[j] {
+                a_match[i] = true;
+                b_match[j] = true;
+                matches += 1;
+                break;
+            }
+        }
+    }
+    if matches == 0 {
+        return 0.0;
+    }
+    let (mut transpositions, mut k) = (0usize, 0usize);
+    for i in 0..a.len() {
+        if !a_match[i] {
+            continue;
+        }
+        while !b_match[k] {
+            k += 1;
+        }
+        if a[i] != b[k] {
+            transpositions += 1;
+        }
+        k += 1;
+    }
+    let m = matches as f64;
+    let jaro =
+        (m / a.len() as f64 + m / b.len() as f64 + (m - transpositions as f64 / 2.0) / m) / 3.0;
+    let prefix = a.iter().zip(&b).take(4).take_while(|(x, y)| x == y).count() as f64;
+    jaro + prefix * 0.1 * (1.0 - jaro)
+}
+
+/// Legado's `getDurChapter`: the chapter of `chapters` that matches the
+/// one at `index` titled `title` in a list of `count`, looking ten either
+/// side of the same place for the closest title, then the same number.
+/// Returns it and whether the match is certain; an uncertain match keeps
+/// the old place.
+pub fn map_chapter(index: u32, title: &str, count: u32, chapters: &[OnlineChapter]) -> (u32, bool) {
+    if chapters.is_empty() {
+        return (index, false);
+    }
+    let size = chapters.len() as u32;
+    let last = size - 1;
+    if index == 0 && count <= 1 {
+        return (0, true);
+    }
+    let scaled = if count == 0 {
+        index
+    } else {
+        ((index as u64 * size as u64) / count.max(1) as u64) as u32
+    };
+    let low = index.min(scaled).saturating_sub(10) as usize;
+    let high = (index.max(scaled) + 10).min(last) as usize;
+    let old_pure = pure_title(title);
+    let (mut best, mut similarity) = (index.min(last) as usize, 0.0f64);
+    if !old_pure.is_empty() {
+        for (offset, chapter) in chapters[low..=high].iter().enumerate() {
+            let score = jaro_winkler(&old_pure, &pure_title(&chapter.title));
+            if score > similarity {
+                similarity = score;
+                best = low + offset;
+            }
+        }
+    }
+    if similarity >= 0.96 {
+        return (best as u32, true);
+    }
+    let old_number = chapter_number(title);
+    if old_number > 0 {
+        let mut closest: Option<(usize, i64)> = None;
+        for (offset, chapter) in chapters[low..=high].iter().enumerate() {
+            let number = chapter_number(&chapter.title);
+            let distance = (number - old_number).abs();
+            if closest.is_none_or(|(_, best)| distance < best) {
+                closest = Some((low + offset, distance));
+            }
+            if distance == 0 {
+                break;
+            }
+        }
+        if let Some((found, 0)) = closest {
+            return (found as u32, true);
+        }
+    }
+    (index.min(last), false)
+}
+
 /// An online book as stored, with what reading and updating need.
 #[derive(Debug, Clone)]
 pub struct OnlineRecord {
@@ -123,6 +348,235 @@ impl Storage {
             .optional()?)
     }
 
+    /// The saved position as a source-independent chapter position.
+    pub fn online_position(&self, book_id: &str) -> Result<Option<ChapterPosition>, AppError> {
+        let Some(locator) = self.saved_position(book_id)? else {
+            return self.pending_online_position(book_id);
+        };
+        let Some(index) = resource_chapter(&locator.resource_id) else {
+            return Ok(None);
+        };
+        let title = self
+            .online_chapter(book_id, index)?
+            .map(|chapter| chapter.title)
+            .unwrap_or_default();
+        Ok(Some(ChapterPosition {
+            index,
+            title,
+            offset: locator.offset,
+            count: self.online_chapter_count(book_id)?,
+        }))
+    }
+
+    pub fn pending_online_position(
+        &self,
+        book_id: &str,
+    ) -> Result<Option<ChapterPosition>, AppError> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT pending_position FROM online_books WHERE book_id = ?1",
+                params![book_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(json.and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
+    /// Keeps a position until the book's contents are known (after a
+    /// restore, before the first fetch).
+    pub fn set_pending_online_position(
+        &self,
+        book_id: &str,
+        position: Option<&ChapterPosition>,
+    ) -> Result<(), AppError> {
+        self.conn.execute(
+            "UPDATE online_books SET pending_position = ?2 WHERE book_id = ?1",
+            params![book_id, position.map(serde_json::to_string).transpose()?],
+        )?;
+        Ok(())
+    }
+
+    /// The locator for a chapter position in the contents as they are now,
+    /// with whether the chapter was matched with certainty.
+    pub fn locate_online_position(
+        &self,
+        book_id: &str,
+        position: &ChapterPosition,
+    ) -> Result<Option<(ReaderLocator, bool)>, AppError> {
+        let chapters = self.online_chapters(book_id)?;
+        if chapters.is_empty() {
+            return Ok(None);
+        }
+        let (index, certain) =
+            map_chapter(position.index, &position.title, position.count, &chapters);
+        let chapter = &chapters[index as usize];
+        Ok(Some((
+            ReaderLocator {
+                book_id: book_id.to_string(),
+                content_version: chapter_version(book_id, chapter),
+                resource_id: chapter_resource(index),
+                offset: if index == position.index || certain {
+                    position.offset
+                } else {
+                    0
+                },
+                context_before: String::new(),
+                context_after: String::new(),
+            },
+            certain,
+        )))
+    }
+
+    /// Bookmarks restored before the contents are known.
+    pub fn add_pending_online_bookmarks(
+        &self,
+        book_id: &str,
+        bookmarks: &[PendingBookmark],
+    ) -> Result<(), AppError> {
+        let mut kept = self.pending_online_bookmarks(book_id)?;
+        for bookmark in bookmarks {
+            if !kept.contains(bookmark) {
+                kept.push(bookmark.clone());
+            }
+        }
+        self.conn.execute(
+            "UPDATE online_books SET pending_bookmarks = ?2 WHERE book_id = ?1",
+            params![
+                book_id,
+                (!kept.is_empty())
+                    .then(|| serde_json::to_string(&kept))
+                    .transpose()?
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn pending_online_bookmarks(&self, book_id: &str) -> Result<Vec<PendingBookmark>, AppError> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT pending_bookmarks FROM online_books WHERE book_id = ?1",
+                params![book_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default())
+    }
+
+    /// Places a pending position and bookmarks once the contents are known.
+    /// Returns how many bookmarks were added.
+    pub fn settle_pending_online_position(&self, book_id: &str) -> Result<u32, AppError> {
+        if self.online_chapter_count(book_id)? == 0 {
+            return Ok(0);
+        }
+        if let Some(position) = self.pending_online_position(book_id)? {
+            if let Some((locator, _)) = self.locate_online_position(book_id, &position)? {
+                self.save_position_record(&locator)?;
+                self.set_pending_online_position(book_id, None)?;
+            }
+        }
+        let mut added = 0;
+        for bookmark in self.pending_online_bookmarks(book_id)? {
+            if let Some((locator, _)) = self.locate_online_position(book_id, &bookmark.position)? {
+                self.insert_bookmark(&crate::models::BookmarkRequest {
+                    book_id: book_id.to_string(),
+                    locator,
+                    excerpt: bookmark.excerpt.clone(),
+                    note: Some(bookmark.note.clone()),
+                })?;
+                added += 1;
+            }
+        }
+        self.conn.execute(
+            "UPDATE online_books SET pending_bookmarks = NULL WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        Ok(added)
+    }
+
+    /// 换源: the book keeps its identity, shelf place, and records; its
+    /// details and contents come from the new source, the cached chapters
+    /// go, and the position and bookmarks move to the matching chapters.
+    /// Returns the chapter the position moved to and whether that match is
+    /// certain.
+    pub fn switch_online_source(
+        &mut self,
+        book_id: &str,
+        book: &OnlineBook,
+        chapters: &[OnlineChapter],
+    ) -> Result<Option<(u32, bool)>, AppError> {
+        self.online_record(book_id)?;
+        if chapters.is_empty() {
+            return Err(AppError::invalid_argument("新书源的目录为空"));
+        }
+        let position = self.online_position(book_id)?;
+        let old_chapters = self.online_chapters(book_id)?;
+        let old_count = old_chapters.len() as u32;
+        let bookmarks = self.list_bookmarks(book_id)?;
+        let tx = self.conn.transaction()?;
+        store_book_json(&tx, book_id, book)?;
+        store_chapters(&tx, book_id, chapters)?;
+        tx.execute(
+            "UPDATE online_books SET new_chapters = 0, update_error = NULL, last_check_time = ?2
+             WHERE book_id = ?1",
+            params![book_id, now_millis()],
+        )?;
+        tx.execute(
+            "UPDATE books SET title = ?2, author = COALESCE(NULLIF(?3, ''), author), updated_at = ?4
+             WHERE id = ?1",
+            params![book_id, book.name, book.author, now_millis()],
+        )?;
+        tx.commit()?;
+        self.clear_online_cache(book_id)?;
+        for bookmark in bookmarks {
+            let Some(index) = resource_chapter(&bookmark.locator.resource_id) else {
+                continue;
+            };
+            let title = old_chapters
+                .get(index as usize)
+                .map(|chapter| chapter.title.clone())
+                .unwrap_or_default();
+            let mark = ChapterPosition {
+                index,
+                title,
+                offset: bookmark.locator.offset,
+                count: old_count,
+            };
+            if let Some((locator, _)) = self.locate_online_position(book_id, &mark)? {
+                let moved = ReaderLocator {
+                    context_before: bookmark.locator.context_before.clone(),
+                    context_after: bookmark.locator.context_after.clone(),
+                    ..locator.clone()
+                };
+                self.conn.execute(
+                    "UPDATE OR IGNORE bookmarks SET content_version = ?2, offset = ?3, locator_json = ?4
+                     WHERE id = ?1",
+                    params![
+                        bookmark.id,
+                        locator.content_version,
+                        locator.offset as i64,
+                        serde_json::to_string(&moved)?
+                    ],
+                )?;
+            }
+        }
+        let Some(position) = position else {
+            return Ok(None);
+        };
+        let Some((locator, certain)) = self.locate_online_position(book_id, &position)? else {
+            return Ok(None);
+        };
+        let index = resource_chapter(&locator.resource_id).unwrap_or(0);
+        self.save_position_record(&locator)?;
+        self.set_pending_online_position(book_id, None)?;
+        Ok(Some((index, certain)))
+    }
+
     pub fn online_record(&self, book_id: &str) -> Result<OnlineRecord, AppError> {
         self.conn
             .query_row(
@@ -196,6 +650,7 @@ impl Storage {
         chapters: &[OnlineChapter],
     ) -> Result<u32, AppError> {
         let before = self.online_chapter_count(book_id)?;
+        let position = self.online_position(book_id)?;
         let tx = self.conn.transaction()?;
         store_book_json(&tx, book_id, book)?;
         store_chapters(&tx, book_id, chapters)?;
@@ -206,6 +661,19 @@ impl Storage {
             params![book_id, added, now_millis()],
         )?;
         tx.commit()?;
+        self.settle_pending_online_position(book_id)?;
+        // Legado maps the position again when the contents change around it.
+        if let Some(position) = position {
+            let moved = chapters
+                .get(position.index as usize)
+                .is_none_or(|chapter| chapter.title != position.title);
+            if moved || self.saved_position(book_id)?.is_none() {
+                if let Some((locator, _)) = self.locate_online_position(book_id, &position)? {
+                    self.save_position_record(&locator)?;
+                    self.set_pending_online_position(book_id, None)?;
+                }
+            }
+        }
         Ok(added)
     }
 
@@ -444,4 +912,167 @@ fn chapter_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OnlineChapter> 
         tag: row.get(7)?,
         variables: row.get(8)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Dir(PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn storage() -> (Dir, Storage) {
+        let dir = Dir(std::env::temp_dir().join(format!("gripread-online-{}", Uuid::new_v4())));
+        fs::create_dir_all(&dir.0).unwrap();
+        let storage = Storage::open(&dir.0).unwrap();
+        (dir, storage)
+    }
+
+    fn chapters(titles: &[&str], site: &str) -> Vec<OnlineChapter> {
+        titles
+            .iter()
+            .enumerate()
+            .map(|(index, title)| OnlineChapter {
+                index: index as u32,
+                title: title.to_string(),
+                url: format!("{site}/{index}.html"),
+                base_url: site.to_string(),
+                is_volume: false,
+                is_vip: false,
+                is_pay: false,
+                tag: String::new(),
+                variables: String::new(),
+            })
+            .collect()
+    }
+
+    fn book(site: &str) -> OnlineBook {
+        OnlineBook {
+            source_url: site.into(),
+            source_name: site.into(),
+            name: "剑来".into(),
+            author: "烽火".into(),
+            kind: String::new(),
+            cover_url: String::new(),
+            intro: String::new(),
+            word_count: String::new(),
+            latest_chapter_title: String::new(),
+            book_url: format!("{site}/book/1"),
+            toc_url: String::new(),
+            variables: String::new(),
+            reverse_toc: false,
+        }
+    }
+
+    #[test]
+    fn chapters_match_by_title_then_number_like_legado() {
+        assert_eq!(chapter_number("第一百二十三章 雨"), 123);
+        assert_eq!(chapter_number("第十章"), 10);
+        assert_eq!(chapter_number("第2050章 终"), 2050);
+        assert_eq!(pure_title("第十章 惊蛰（求月票）"), "惊蛰求月票");
+        let other = chapters(
+            &[
+                "序章",
+                "第1章 惊蛰",
+                "第2章 开门",
+                "第3章 春风",
+                "第4章 远行",
+            ],
+            "b",
+        );
+        // The same title one place later in another source's contents.
+        assert_eq!(map_chapter(2, "第三章 春风", 5, &other), (3, true));
+        // A different title with the same number.
+        assert_eq!(map_chapter(3, "第4章 下山", 5, &other), (4, true));
+        // Nothing alike: keep the place, uncertain.
+        assert_eq!(map_chapter(2, "番外 一", 5, &other), (2, false));
+    }
+
+    #[test]
+    fn switching_sources_keeps_the_book_and_moves_its_records() {
+        let (_dir, mut storage) = storage();
+        let old = chapters(&["第1章 惊蛰", "第2章 开门", "第3章 春风"], "a");
+        let id = storage.add_online_book(&book("a"), &old, true).unwrap();
+        let at = |index: u32, offset: u64| ReaderLocator {
+            book_id: id.clone(),
+            content_version: chapter_version(&id, &old[index as usize]),
+            resource_id: chapter_resource(index),
+            offset,
+            context_before: String::new(),
+            context_after: String::new(),
+        };
+        storage.save_position_record(&at(2, 5)).unwrap();
+        storage
+            .insert_bookmark(&crate::models::BookmarkRequest {
+                book_id: id.clone(),
+                locator: at(1, 3),
+                excerpt: "开门".into(),
+                note: None,
+            })
+            .unwrap();
+        let new = chapters(&["引子", "第一章 惊蛰", "第二章 开门", "第三章 春风"], "b");
+        let moved = storage.switch_online_source(&id, &book("b"), &new).unwrap();
+        assert_eq!(moved, Some((3, true)));
+        let saved = storage.saved_position(&id).unwrap().unwrap();
+        assert_eq!((saved.resource_id.as_str(), saved.offset), ("chapter-3", 5));
+        assert_eq!(saved.content_version, chapter_version(&id, &new[3]));
+        let bookmark = &storage.list_bookmarks(&id).unwrap()[0];
+        assert_eq!(bookmark.locator.resource_id, "chapter-2");
+        assert_eq!(storage.online_record(&id).unwrap().book.source_url, "b");
+        assert_eq!(storage.online_chapter_count(&id).unwrap(), 4);
+    }
+
+    #[test]
+    fn backups_carry_online_books_and_sources_by_chapter() {
+        let (_dir, mut storage) = storage();
+        storage
+            .save_book_source(r#"{"bookSourceUrl":"a","bookSourceName":"甲"}"#, None)
+            .unwrap();
+        let toc = chapters(&["第1章 惊蛰", "第2章 开门"], "a");
+        let id = storage.add_online_book(&book("a"), &toc, true).unwrap();
+        storage
+            .save_position_record(&ReaderLocator {
+                book_id: id.clone(),
+                content_version: chapter_version(&id, &toc[1]),
+                resource_id: chapter_resource(1),
+                offset: 7,
+                context_before: String::new(),
+                context_after: String::new(),
+            })
+            .unwrap();
+        let backup = storage.export_backup("phone").unwrap();
+        assert_eq!(backup.book_sources.len(), 1);
+        assert_eq!(backup.online_books.len(), 1);
+        assert_eq!(
+            backup.online_books[0].position.as_ref().unwrap().title,
+            "第2章 开门"
+        );
+
+        let (_other, mut fresh) = super::tests::storage();
+        let report = fresh.restore_backup(&backup).unwrap();
+        assert_eq!(
+            (report.sources_restored, report.online_books_restored),
+            (1, 1)
+        );
+        let shelf = fresh.list_library_books().unwrap();
+        let restored = &shelf[0].book.id;
+        assert!(shelf[0].online.is_some());
+        // The contents are fetched later; the position waits for them.
+        assert_eq!(fresh.saved_position(restored).unwrap(), None);
+        assert!(fresh.pending_online_position(restored).unwrap().is_some());
+        fresh
+            .replace_online_toc(
+                restored,
+                &book("a"),
+                &chapters(&["第1章 惊蛰", "第2章 开门"], "a"),
+            )
+            .unwrap();
+        let saved = fresh.saved_position(restored).unwrap().unwrap();
+        assert_eq!((saved.resource_id.as_str(), saved.offset), ("chapter-1", 7));
+        assert!(fresh.pending_online_position(restored).unwrap().is_none());
+    }
 }

@@ -158,6 +158,8 @@ export type { OnlineCoverRequest } from "./generated/OnlineCoverRequest";
 export type { OnlineShelfInfo } from "./generated/OnlineShelfInfo";
 export type { AddOnlineBookRequest } from "./generated/AddOnlineBookRequest";
 export type { FindOnlineBookRequest } from "./generated/FindOnlineBookRequest";
+export type { ChangeOnlineSourceRequest } from "./generated/ChangeOnlineSourceRequest";
+export type { ChangeOnlineSourceResult } from "./generated/ChangeOnlineSourceResult";
 export type { UpdateOnlineTocRequest } from "./generated/UpdateOnlineTocRequest";
 export type { OnlineTocEvent } from "./generated/OnlineTocEvent";
 export type { CacheOnlineChaptersRequest } from "./generated/CacheOnlineChaptersRequest";

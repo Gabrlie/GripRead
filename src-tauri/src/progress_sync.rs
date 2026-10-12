@@ -4,7 +4,9 @@
 //! whichever device read it last. A device recognizes its own uploads by
 //! its random device id and remembers which remote version it already
 //! answered, so a slow server never makes the reader ask about progress it
-//! wrote itself, and each new remote position is asked about once.
+//! wrote itself, and each new remote position is asked about once. Online
+//! books are keyed by name and author, as Legado does, so the same book on
+//! another source still matches; their position is a chapter position.
 
 use std::sync::Mutex;
 
@@ -13,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::cloud::{connect, lock, now_millis};
 use crate::error::{AppError, ErrorCode};
 use crate::models::ProgressPrompt;
-use crate::storage::{PortableLocator, Storage};
+use crate::storage::{ChapterPosition, PortableLocator, Storage};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +30,52 @@ struct RemoteProgress {
     locator: PortableLocator,
     #[serde(default)]
     chapter_title: String,
+    /// For an online book: the chapter position, independent of its source.
+    #[serde(default)]
+    chapter: Option<ChapterPosition>,
+}
+
+/// An online book's record name: its name and author, hashed for a safe path.
+fn online_key(name: &str, author: &str) -> String {
+    crate::storage::sha256_bytes(format!("online\n{}\n{}", name.trim(), author.trim()).as_bytes())
+}
+
+/// The record key and position of a book: the original file's hash and
+/// its text position, or for an online book its name key and chapter.
+fn book_position(
+    guard: &Storage,
+    book_id: &str,
+) -> Result<Option<(String, PortableLocator, Option<ChapterPosition>)>, AppError> {
+    if guard.is_online_book(book_id)? {
+        let record = guard.online_record(book_id)?;
+        let Some(position) = guard.online_position(book_id)? else {
+            return Ok(None);
+        };
+        let locator = PortableLocator {
+            content_version: format!("chapter-{}", position.index),
+            offset: position.offset,
+            total_length: u64::from(position.count),
+            context_before: String::new(),
+            context_after: String::new(),
+        };
+        return Ok(Some((
+            online_key(&record.title, &record.book.author),
+            locator,
+            Some(position),
+        )));
+    }
+    let Some((portable, _)) = guard.portable_position(book_id)? else {
+        return Ok(None);
+    };
+    Ok(Some((guard.book_source_file(book_id)?.1, portable, None)))
+}
+
+fn book_key(guard: &Storage, book_id: &str) -> Result<String, AppError> {
+    if guard.is_online_book(book_id)? {
+        let record = guard.online_record(book_id)?;
+        return Ok(online_key(&record.title, &record.book.author));
+    }
+    Ok(guard.book_source_file(book_id)?.1)
 }
 
 const PROGRESS_LIMIT: u64 = 1024 * 1024;
@@ -50,12 +98,17 @@ pub fn upload(
         if !settings.configured() || !settings.sync_progress {
             return Ok(false);
         }
-        let Some((portable, _)) = guard.portable_position(book_id)? else {
+        let Some((source, portable, chapter)) = book_position(&guard, book_id)? else {
             return Ok(false);
         };
-        let source = guard.book_source_file(book_id)?.1;
-        (settings, source, portable, guard.progress_state(book_id)?)
+        (
+            settings,
+            source,
+            (portable, chapter),
+            guard.progress_state(book_id)?,
+        )
     };
+    let (position, chapter) = position;
     if state.synced_version.as_deref() == Some(position.content_version.as_str())
         && state.synced_offset == Some(position.offset)
     {
@@ -72,6 +125,7 @@ pub fn upload(
         written_at: now_millis(),
         locator: position.clone(),
         chapter_title: chapter_title.chars().take(100).collect(),
+        chapter,
     };
     let bytes = serde_json::to_vec(&record)?;
     let path = record_path(&folders.progress, &source);
@@ -98,7 +152,7 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
         if !settings.configured() || !settings.sync_progress {
             return Ok(None);
         }
-        (settings, guard.book_source_file(book_id)?.1)
+        (settings, book_key(&guard, book_id)?)
     };
     let (dav, folders) = connect(storage)?;
     let path = record_path(&folders.progress, &source);
@@ -116,7 +170,14 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
     {
         return Ok(None);
     }
-    let located = guard.locator_from_portable(book_id, &record.locator)?;
+    let located = match &record.chapter {
+        Some(position) if guard.is_online_book(book_id)? => guard
+            .locate_online_position(book_id, position)?
+            .map(|(locator, _)| locator),
+        // A local book's record has no chapter position, and the reverse.
+        Some(_) | None if guard.is_online_book(book_id)? => None,
+        _ => guard.locator_from_portable(book_id, &record.locator)?,
+    };
     let current = guard.saved_position(book_id)?;
     let Some(located) = located.filter(|located| {
         current.as_ref().is_none_or(|current| {
@@ -134,8 +195,12 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
         device_name: record.device_name,
         revision: record.revision,
         written_at: record.written_at,
+        excerpt: if located.context_after.is_empty() {
+            record.chapter_title.clone()
+        } else {
+            located.context_after.chars().take(40).collect()
+        },
         chapter_title: record.chapter_title,
-        excerpt: located.context_after.chars().take(40).collect(),
         locator: located,
     }))
 }

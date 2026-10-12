@@ -79,6 +79,7 @@ import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { updateOnlineToc } from "../../application/online";
+import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow } from "../../types/generated";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
@@ -556,6 +557,7 @@ export function ReaderView() {
   // A book read from search is only kept if the reader adds it (Legado
   // asks the same when leaving a book that is not on the shelf).
   const shelfChoice = useRef<"add" | "leave" | null>(null);
+  const [changingSource, setChangingSource] = useState(false);
   const [askShelf, setAskShelf] = useState<{ toDetail: boolean } | null>(null);
   const close = useCallback(
     (toDetail = false) => {
@@ -1158,6 +1160,7 @@ export function ReaderView() {
             reloadTools();
           }}
           txtTools={!activeBook.online}
+          onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           replaceEnabled={useReplaceRules}
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
           conversion={style?.chineseConversion ?? "off"}
@@ -1484,6 +1487,19 @@ export function ReaderView() {
       )}
       {cloudProgress && (
         <CloudProgressDialog prompt={cloudProgress} onAnswer={answerCloudProgress} />
+      )}
+      {changingSource && activeBook.online && (
+        <ChangeSourceDialog
+          service={runtime.services.sources}
+          book={activeBook}
+          onChanged={() => {
+            setChangingSource(false);
+            // The position moved to the matching chapter of the new source.
+            if (controller && bookId) run(() => controller.open(bookId));
+            reloadTools();
+          }}
+          onClose={() => setChangingSource(false)}
+        />
       )}
       {askShelf && (
         <Dialog open onOpenChange={(open) => !open && setAskShelf(null)}>

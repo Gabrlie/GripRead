@@ -1348,6 +1348,22 @@ pub async fn get_saved_reader_locator(
     request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<Option<ReaderLocator>, AppError> {
+    // A restored online book places its position once its contents are known.
+    let book_id = request.book_id.clone();
+    if let Some(saved) = for_online_book(&state, &request.book_id, move |storage| {
+        if lock_storage(storage)?
+            .pending_online_position(&book_id)?
+            .is_some()
+        {
+            let _ = crate::online_reader::ensure_toc(storage, &book_id);
+            lock_storage(storage)?.settle_pending_online_position(&book_id)?;
+        }
+        lock_storage(storage)?.saved_position(&book_id)
+    })
+    .await?
+    {
+        return Ok(saved);
+    }
     let storage = Arc::clone(&state.storage);
     tauri::async_runtime::spawn_blocking(move || {
         let storage = storage
@@ -2242,13 +2258,6 @@ pub async fn upload_book_progress(
     request: crate::models::UploadProgressRequest,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
-    // Online books join progress sync with source switching.
-    if for_online_book(&state, &request.book_id, |_| Ok(()))
-        .await?
-        .is_some()
-    {
-        return Ok(false);
-    }
     with_cloud(&state, move |storage, _| {
         crate::progress_sync::upload(
             storage,
@@ -2266,12 +2275,6 @@ pub async fn fetch_book_progress(
     request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
-    if for_online_book(&state, &request.book_id, |_| Ok(()))
-        .await?
-        .is_some()
-    {
-        return Ok(None);
-    }
     with_cloud(&state, move |storage, _| {
         crate::progress_sync::fetch(storage, &request.book_id)
     })

@@ -44,6 +44,38 @@ pub struct BackupDocument {
     pub preferences: Option<ReaderPreferences>,
     #[serde(default)]
     pub shelf_preferences: Option<ShelfPreferences>,
+    /// Book sources as Legado JSON; login state and cookies stay on the device.
+    #[serde(default)]
+    pub book_sources: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub online_books: Vec<PortableOnlineBook>,
+}
+
+/// An online book on the shelf: its source and details, and the records
+/// kept by chapter position so they survive a different source's contents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableOnlineBook {
+    pub book: crate::models::OnlineBook,
+    pub title: String,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub shelf_state: Option<ShelfState>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default = "default_true")]
+    pub use_replace_rules: bool,
+    #[serde(default = "default_true")]
+    pub can_update: bool,
+    #[serde(default)]
+    pub position: Option<super::online::ChapterPosition>,
+    #[serde(default)]
+    pub position_updated_at: i64,
+    #[serde(default)]
+    pub bookmarks: Vec<super::online::PendingBookmark>,
+    #[serde(default)]
+    pub reading_time: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -701,7 +733,212 @@ impl Storage {
             toc_rules: self.list_txt_toc_rules()?,
             preferences: Some(preferences),
             shelf_preferences: Some(self.get_shelf_preferences()?),
+            book_sources: serde_json::from_str(&self.export_book_sources(&[])?)?,
+            online_books: self.portable_online_books()?,
         })
+    }
+
+    fn portable_online_books(&self) -> Result<Vec<PortableOnlineBook>, AppError> {
+        let ids: Vec<String> = {
+            let mut statement = self.conn.prepare(
+                "SELECT o.book_id FROM online_books o JOIN books b ON b.id = o.book_id
+                 WHERE o.on_shelf = 1
+                   AND NOT EXISTS(SELECT 1 FROM shelf_removals r WHERE r.book_id = o.book_id)
+                 ORDER BY b.created_at, b.id",
+            )?;
+            let rows = statement
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            rows
+        };
+        ids.iter()
+            .map(|id| {
+                let record = self.online_record(id)?;
+                let (author, state, use_rules): (Option<String>, Option<String>, bool) =
+                    self.conn.query_row(
+                        "SELECT author, shelf_state, use_replace_rules FROM books WHERE id = ?1",
+                        params![id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )?;
+                let group: Option<String> = self
+                    .conn
+                    .query_row(
+                        "SELECT g.name FROM book_groups m JOIN library_groups g ON g.id = m.group_id
+                         WHERE m.book_id = ?1 LIMIT 1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let position_updated_at: i64 = self
+                    .conn
+                    .query_row(
+                        "SELECT updated_at FROM reading_positions WHERE book_id = ?1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0);
+                let chapters = self.online_chapters(id)?;
+                let count = chapters.len() as u32;
+                let bookmarks = self
+                    .list_bookmarks(id)?
+                    .into_iter()
+                    .filter_map(|bookmark| {
+                        let index = super::online::resource_chapter(&bookmark.locator.resource_id)?;
+                        Some(super::online::PendingBookmark {
+                            position: super::online::ChapterPosition {
+                                index,
+                                title: chapters.get(index as usize)?.title.clone(),
+                                offset: bookmark.locator.offset,
+                                count,
+                            },
+                            excerpt: bookmark.excerpt,
+                            note: bookmark.note,
+                            created_at: bookmark.created_at,
+                        })
+                    })
+                    .collect();
+                let mut statement = self.conn.prepare(
+                    "SELECT day, seconds FROM reading_time WHERE book_id = ?1 ORDER BY day",
+                )?;
+                let reading_time = statement
+                    .query_map(params![id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?.max(0) as u64,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(PortableOnlineBook {
+                    book: record.book,
+                    title: record.title,
+                    author,
+                    shelf_state: state.as_deref().and_then(parse_shelf_state),
+                    group,
+                    use_replace_rules: use_rules,
+                    can_update: record.can_update,
+                    position: self.online_position(id)?,
+                    position_updated_at,
+                    bookmarks,
+                    reading_time,
+                })
+            })
+            .collect()
+    }
+
+    /// Restores an online book: the one kept for the same source address or
+    /// name and author takes the newer position and the union of bookmarks;
+    /// otherwise the book is added and its contents fetched when first read.
+    fn restore_online_book(
+        &mut self,
+        portable: &PortableOnlineBook,
+        skip: &dyn Fn(RestoreCategory) -> bool,
+        report: &mut RestoreReport,
+    ) -> Result<(), AppError> {
+        let existing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT book_id FROM online_books WHERE source_url = ?1 AND book_url = ?2",
+                params![portable.book.source_url, portable.book.book_url],
+                |row| row.get(0),
+            )
+            .optional()?
+            .or(self.find_online_book(&portable.title, portable.author.as_deref().unwrap_or(""))?);
+        let book_id = match existing {
+            Some(id) => {
+                self.set_online_on_shelf(&id, true)?;
+                id
+            }
+            None => self.add_online_book(&portable.book, &[], true)?,
+        };
+        if !skip(RestoreCategory::BookInfo) {
+            self.conn.execute(
+                "UPDATE books SET title = ?2, author = ?3, shelf_state = ?4, use_replace_rules = ?5
+                 WHERE id = ?1",
+                params![
+                    book_id,
+                    portable.title,
+                    portable.author,
+                    portable.shelf_state.map(shelf_state_name),
+                    portable.use_replace_rules
+                ],
+            )?;
+            self.set_online_can_update(&book_id, portable.can_update)?;
+            if let Some(group) = portable.group.as_deref() {
+                let group_id: Option<String> = self
+                    .conn
+                    .query_row(
+                        "SELECT id FROM library_groups WHERE name = ?1",
+                        params![group],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(group_id) = group_id {
+                    self.conn.execute(
+                        "DELETE FROM book_groups WHERE book_id = ?1",
+                        params![book_id],
+                    )?;
+                    self.conn.execute(
+                        "INSERT INTO book_groups(group_id, book_id) VALUES (?1, ?2)",
+                        params![group_id, book_id],
+                    )?;
+                }
+            }
+        }
+        if let Some(position) = portable
+            .position
+            .as_ref()
+            .filter(|_| !skip(RestoreCategory::Progress))
+        {
+            let local_updated: i64 = self
+                .conn
+                .query_row(
+                    "SELECT updated_at FROM reading_positions WHERE book_id = ?1",
+                    params![book_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            if portable.position_updated_at > local_updated {
+                match self.locate_online_position(&book_id, position)? {
+                    Some((locator, _)) => self.save_position_record(&locator)?,
+                    None => self.set_pending_online_position(&book_id, Some(position))?,
+                }
+                report.positions_restored += 1;
+            }
+        }
+        if !skip(RestoreCategory::Bookmarks) && !portable.bookmarks.is_empty() {
+            let existing: Vec<(u32, u64)> = self
+                .list_bookmarks(&book_id)?
+                .iter()
+                .filter_map(|bookmark| {
+                    Some((
+                        super::online::resource_chapter(&bookmark.locator.resource_id)?,
+                        bookmark.locator.offset,
+                    ))
+                })
+                .collect();
+            let missing: Vec<super::online::PendingBookmark> = portable
+                .bookmarks
+                .iter()
+                .filter(|mark| !existing.contains(&(mark.position.index, mark.position.offset)))
+                .cloned()
+                .collect();
+            report.bookmarks_added += missing.len() as u32;
+            self.add_pending_online_bookmarks(&book_id, &missing)?;
+            self.settle_pending_online_position(&book_id)?;
+        }
+        if !skip(RestoreCategory::ReadingTime) {
+            for (day, seconds) in &portable.reading_time {
+                self.conn.execute(
+                    "INSERT INTO reading_time(book_id, day, seconds) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(book_id, day) DO UPDATE SET seconds = MAX(seconds, excluded.seconds)",
+                    params![book_id, day, *seconds as i64],
+                )?;
+            }
+        }
+        report.online_books_restored += 1;
+        Ok(())
     }
 
     /// What restoring `document` would do to this library.
@@ -730,6 +967,8 @@ impl Storage {
                 .filter(|rule| !rule.builtin)
                 .count() as u32,
             has_preferences: document.preferences.is_some(),
+            book_sources: document.book_sources.len() as u32,
+            online_books: document.online_books.len() as u32,
         })
     }
 
@@ -895,6 +1134,33 @@ impl Storage {
                 let mut shelf = shelf.clone();
                 shelf.group_id = "all".into();
                 let _ = self.save_shelf_preferences(&shelf);
+            }
+        }
+        if !skip(RestoreCategory::Sources) && !document.book_sources.is_empty() {
+            let json = serde_json::to_string(&document.book_sources)?;
+            let preview = self.preview_source_import(&json)?;
+            // Sources already here keep their copy unless the backup's is newer.
+            let urls: Vec<String> = preview
+                .items
+                .iter()
+                .filter(|item| item.status != crate::models::SourceImportStatus::Existing)
+                .map(|item| item.url.clone())
+                .collect();
+            if !urls.is_empty() {
+                report.sources_restored += self
+                    .import_sources(&crate::models::ImportSourcesRequest {
+                        json,
+                        urls,
+                        keep_name: true,
+                        keep_group: true,
+                        keep_enabled: true,
+                    })?
+                    .len() as u32;
+            }
+        }
+        if !skip(RestoreCategory::OnlineBooks) {
+            for book in &document.online_books {
+                self.restore_online_book(book, &skip, &mut report)?;
             }
         }
         for book in &document.books {

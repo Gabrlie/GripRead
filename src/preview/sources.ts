@@ -419,6 +419,17 @@ export function createMemorySourceService(
       keptChapters.set(id, chapters);
       return entry;
     },
+    changeSource: async ({ bookId, book, chapters }) => {
+      const entry = kept.get(bookId);
+      if (!entry?.online) throw new Error("书籍不存在");
+      const changed: LibraryBook = {
+        ...entry,
+        online: { ...entry.online, book, totalChapters: chapters.length, cachedChapters: 0 },
+      };
+      kept.set(bookId, changed);
+      keptChapters.set(bookId, chapters);
+      return { book: changed, chapter: entry.online.readChapter, certain: true };
+    },
     findOnlineBook: async (name, author) =>
       [...kept.values()].find(
         (entry) =>

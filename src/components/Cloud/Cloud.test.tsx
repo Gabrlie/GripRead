@@ -58,6 +58,8 @@ describe("backup and the cloud bookshelf", () => {
       replaceRules: 0,
       tocRules: 0,
       hasPreferences: false,
+      bookSources: 0,
+      onlineBooks: 0,
     });
     vi.mocked(sync.restoreBackup).mockResolvedValue({
       groupsCreated: 0,
@@ -68,6 +70,8 @@ describe("backup and the cloud bookshelf", () => {
       positionsRestored: 1,
       bookmarksAdded: 2,
       recoveryPoint: "recovery-1.json",
+      sourcesRestored: 0,
+      onlineBooksRestored: 0,
     });
     render(
       <RuntimeContext.Provider value={app}>

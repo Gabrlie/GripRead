@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { updateOnlineToc } from "../../application/online";
+import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { describeError } from "../Cloud/format";
@@ -559,6 +560,7 @@ function OnlineActions({
   const id = book.book.id;
   const [updating, setUpdating] = useState(false);
   const [caching, setCaching] = useState<{ operationId: string; text: string } | null>(null);
+  const [changing, setChanging] = useState(false);
   const operation = useRef<string | null>(null);
 
   useEffect(() => {
@@ -606,7 +608,19 @@ function OnlineActions({
   };
 
   return (
-    <div role="group" aria-label="书籍操作" className="grid grid-cols-4 gap-2">
+    <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
+      <ActionTile icon="swap_horiz" label="换源" onClick={() => setChanging(true)} />
+      {changing && (
+        <ChangeSourceDialog
+          service={service}
+          book={book}
+          onChanged={() => {
+            setChanging(false);
+            onChanged();
+          }}
+          onClose={() => setChanging(false)}
+        />
+      )}
       <ActionTile
         icon="refresh"
         label={updating ? "更新中…" : "更新目录"}

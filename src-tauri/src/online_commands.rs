@@ -592,6 +592,24 @@ pub async fn add_online_book(
     .await
 }
 
+/// 换源 for a kept online book.
+#[tauri::command]
+pub async fn change_online_source(
+    request: crate::models::ChangeOnlineSourceRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::models::ChangeOnlineSourceResult, AppError> {
+    with_storage(&state, move |storage| {
+        let moved =
+            storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
+        Ok(crate::models::ChangeOnlineSourceResult {
+            book: storage.library_book(&request.book_id)?,
+            chapter: moved.map(|(index, _)| index),
+            certain: moved.is_none_or(|(_, certain)| certain),
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn find_online_book(
     request: crate::models::FindOnlineBookRequest,
@@ -677,31 +695,6 @@ pub async fn clear_online_cache(
     .await
 }
 
-/// Fetches a book's details and contents again from its source.
-fn update_one(
-    storage: &Arc<Mutex<crate::storage::Storage>>,
-    book_id: &str,
-    cancel: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<u32, AppError> {
-    let record = storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .online_record(book_id)?;
-    let source = load_source(storage, &record.book.source_url)?;
-    let control = Control::new(cancel, Some(Instant::now() + STEP_TIMEOUT));
-    let session = session_for(storage, source, control).map_err(engine_error)?;
-    let book = Rc::new(RefCell::new(book_data(&record.book)));
-    // Legado refreshes the details first, then the contents they point at.
-    session.book_info(&book, false).map_err(engine_error)?;
-    let chapters = session.chapters(&book).map_err(engine_error)?;
-    let updated = online_book(&book.borrow());
-    let chapters: Vec<OnlineChapter> = chapters.iter().map(online_chapter).collect();
-    storage
-        .lock()
-        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-        .replace_online_toc(book_id, &updated, &chapters)
-}
-
 /// Legado's 更新目录 over shelf books, a few at a time, streaming
 /// `online-toc` per book and once when done.
 #[tauri::command]
@@ -742,7 +735,7 @@ pub async fn update_online_toc(
                 let Some(book_id) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
                     break;
                 };
-                let outcome = update_one(&storage, &book_id, cancel.clone());
+                let outcome = crate::online_reader::refresh_toc(&storage, &book_id, cancel.clone());
                 if cancel.load(Ordering::Acquire) {
                     break;
                 }

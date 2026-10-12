@@ -437,6 +437,8 @@ export function previewServices(): AppServices {
         replaceRules: 2,
         tocRules: 0,
         hasPreferences: true,
+        bookSources: 0,
+        onlineBooks: 0,
       }),
       restoreBackup: async () => ({
         groupsCreated: 1,
@@ -447,6 +449,8 @@ export function previewServices(): AppServices {
         positionsRestored: 1,
         bookmarksAdded: 4,
         recoveryPoint: "recovery-1.json",
+        sourcesRestored: 0,
+        onlineBooksRestored: 0,
       }),
       exportBackupFile: async () => false,
       listCloudBooks: async () => cloud,

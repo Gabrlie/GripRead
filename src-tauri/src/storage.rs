@@ -36,7 +36,9 @@ use crate::txt_toc::{
 mod online;
 mod portable;
 mod sources;
-pub use online::{chapter_resource, resource_chapter, OnlineRecord};
+pub use online::{
+    chapter_resource, chapter_version, map_chapter, resource_chapter, ChapterPosition, OnlineRecord,
+};
 pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
     ProgressState, StoredWebDav,
@@ -915,6 +917,8 @@ impl Storage {
                     new_chapters INTEGER NOT NULL DEFAULT 0,
                     last_check_time INTEGER,
                     update_error TEXT,
+                    pending_position TEXT,
+                    pending_bookmarks TEXT,
                     created_at INTEGER NOT NULL
                  );
                  CREATE INDEX online_books_origin ON online_books(source_url, book_url);
@@ -5657,7 +5661,7 @@ fn read_file_checked(
     Ok(bytes)
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String {
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 

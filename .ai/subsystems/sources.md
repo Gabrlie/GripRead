@@ -52,7 +52,7 @@ Search asks every chosen source with up to eight at a time and a 30-second limit
 
 Return search results progressively by source; one failing source does not erase others. Chain details, table of contents, and chapter retrieval through explicit book context. Persist sanitized chapters in local cache, support update checks and source switching, and respect per-source request concurrency.
 
-Source switching preserves `Book` identity, then maps chapters using old/new tables of contents and text context. If uncertain, keep the prior position and present the nearest candidate with an explanation. Do not assume matching chapter numbers or URLs prove equivalence.
+Source switching (换源, from the reader's top bar or the book's detail page) searches enabled sources for the book's name with 精准搜索 and lists the copies with the same name, and the same author while 校验作者 is on. Choosing one keeps the `Book` identity, shelf place, reading time, and records, replaces the details and contents, clears the cached chapters, and maps the position and bookmarks with Legado's `getDurChapter`: within ten chapters of the same place, the closest title (Jaro-Winkler at least 0.96 on titles without their 第…章 prefix and punctuation), else the same chapter number; with neither, the position keeps its place in the contents and the reader is told no matching chapter was found. 更新目录 maps the position the same way when the chapter at its place changed.
 
 Source configuration can participate in [Sync](sync.md), but credentials and login state remain local. Preserve imported configuration locally while excluding embedded secrets from exported or replicated data.
 
