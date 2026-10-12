@@ -161,6 +161,8 @@ export type { FindOnlineBookRequest } from "./generated/FindOnlineBookRequest";
 export type { ChangeOnlineSourceRequest } from "./generated/ChangeOnlineSourceRequest";
 export type { ChangeOnlineSourceResult } from "./generated/ChangeOnlineSourceResult";
 export type { SourceCoverRequest } from "./generated/SourceCoverRequest";
+export type { StoragePart } from "./generated/StoragePart";
+export type { StorageUsage } from "./generated/StorageUsage";
 export type { LogLevel } from "./generated/LogLevel";
 export type { LogEntry } from "./generated/LogEntry";
 export type { LogQuery } from "./generated/LogQuery";

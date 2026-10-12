@@ -23,6 +23,7 @@ import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 import { LibraryCover } from "./LibraryCover";
+import { OfflineCachePage } from "./OfflineCachePage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 
@@ -122,6 +123,7 @@ export function BookshelfView() {
   const handleUpdateToc = () => void store.refresh();
   // Legado's 更新目录: every online shelf book that allows updates.
   const [updating, setUpdating] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
   const handleUpdateOnline = () => {
     if (updating) return;
     setUpdating("正在更新目录…");
@@ -285,6 +287,7 @@ export function BookshelfView() {
                     detail: updating ?? undefined,
                     onSelect: handleUpdateOnline,
                   },
+                  { icon: "download", label: "离线缓存", onSelect: () => setOffline(true) },
                 ]
               : []),
             {
@@ -476,6 +479,7 @@ export function BookshelfView() {
       </div>
 
       <LibraryManager mode={manager} onClose={() => setManager(null)} />
+      {offline && <OfflineCachePage onClose={() => setOffline(false)} />}
       {infoBook && (
         <BookDetailPage
           book={state.books.find((entry) => entry.book.id === infoBook.book.id) ?? infoBook}

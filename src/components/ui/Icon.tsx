@@ -1,6 +1,7 @@
 import type { SVGProps } from "react";
 import {
   ArrowLeftRight,
+  HardDrive,
   BookOpen,
   Compass,
   Library,
@@ -150,6 +151,7 @@ const icons = {
   info: Info,
   swap_vert: ArrowUpDown,
   swap_horiz: ArrowLeftRight,
+  storage: HardDrive,
   remove: Minus,
   restart: RotateCcw,
   share: Share2,

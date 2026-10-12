@@ -67,6 +67,7 @@ import type {
   OnlineCacheEvent,
   ChangeOnlineSourceRequest,
   ChangeOnlineSourceResult,
+  StorageUsage,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -242,6 +243,12 @@ export interface SourceService {
   /** The book with its details page read; a copy kept within the hour unless `refresh`. */
   bookInfo(book: OnlineBook, refresh?: boolean): Promise<OnlineBook>;
   chapters(book: OnlineBook, refresh?: boolean): Promise<OnlineChapter[]>;
+  /** 缓存管理: the data folder by part, and each online book's chapter cache. */
+  storageUsage(): Promise<StorageUsage>;
+  clearAllOnlineCaches(): Promise<void>;
+  clearCoverCache(): Promise<void>;
+  /** 转为本地书籍: a fully cached online book becomes a local TXT book. */
+  convertToLocal(bookId: string): Promise<LibraryBook>;
   /** Saves a source's cover image as the book's own cover. */
   setCoverFromSource(bookId: string, sourceUrl: string, url: string): Promise<void>;
   chapterContent(

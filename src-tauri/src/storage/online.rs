@@ -1228,4 +1228,51 @@ mod tests {
         assert_eq!(stats.total_seconds, 0);
         assert!(stats.books.is_empty() && stats.days.is_empty());
     }
+
+    #[test]
+    fn a_cached_online_book_becomes_a_local_book_with_its_records() {
+        let (_dir, mut storage) = storage();
+        let toc = chapters(&["第1章 惊蛰", "第2章 开门"], "a");
+        let id = storage.add_online_book(&book("a"), &toc, true).unwrap();
+        let at = |index: u32, offset: u64| ReaderLocator {
+            book_id: id.clone(),
+            content_version: chapter_version(&id, &toc[index as usize]),
+            resource_id: chapter_resource(index),
+            offset,
+            context_before: String::new(),
+            context_after: String::new(),
+        };
+        // 第2章 开门\n 是 7 个字，偏移 9 落在第二段“二段正文”的“正”。
+        storage.save_position_record(&at(1, 9)).unwrap();
+        storage
+            .insert_bookmark(&crate::models::BookmarkRequest {
+                book_id: id.clone(),
+                locator: at(0, 7),
+                excerpt: "一段".into(),
+                note: None,
+            })
+            .unwrap();
+        storage.add_reading_time(&id, "2026-10-12", 600).unwrap();
+        let texts = vec!["一段正文\n".to_string(), "\n二段正文".to_string()];
+        let local = storage.convert_online_to_local(&id, &texts).unwrap();
+        assert!(
+            storage.online_record(&id).is_err(),
+            "the online copy is gone"
+        );
+        let book = storage.library_book(&local).unwrap();
+        assert!(book.online.is_none() && book.asset.is_some());
+        let text = "第1章 惊蛰\n一段正文\n第2章 开门\n二段正文\n";
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let saved = storage.saved_position(&local).unwrap().unwrap();
+        let start = "第1章 惊蛰\n一段正文\n".encode_utf16().count();
+        assert_eq!(saved.offset as usize, start + 9);
+        assert_eq!(
+            String::from_utf16_lossy(&units[saved.offset as usize..saved.offset as usize + 1]),
+            "正"
+        );
+        assert_eq!(storage.list_bookmarks(&local).unwrap()[0].locator.offset, 7);
+        let stats = storage.reading_stats("2026-10-12").unwrap();
+        assert_eq!(stats.books[0].book_id, local);
+        assert_eq!(stats.total_seconds, 600);
+    }
 }

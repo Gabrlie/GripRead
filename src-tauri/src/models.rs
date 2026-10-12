@@ -1921,3 +1921,21 @@ pub struct FrontendLogRequest {
     pub area: String,
     pub message: String,
 }
+
+/// One part of the app's data folder (缓存管理).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StoragePart {
+    /// A part name, or an online book's id.
+    pub key: String,
+    pub label: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageUsage {
+    pub parts: Vec<StoragePart>,
+    /// Online books with cached chapters, by size.
+    pub books: Vec<StoragePart>,
+}

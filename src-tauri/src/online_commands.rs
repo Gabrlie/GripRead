@@ -1262,3 +1262,58 @@ pub async fn cache_online_chapters(
         let _ = app.emit("online-cache", event(cached, failed, total, true));
     })
 }
+
+/// 缓存管理: what the app's data folder holds.
+#[tauri::command]
+pub async fn storage_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::models::StorageUsage, AppError> {
+    with_storage(&state, |storage| storage.storage_usage()).await
+}
+
+#[tauri::command]
+pub async fn clear_all_online_caches(state: State<'_, AppState>) -> Result<(), AppError> {
+    with_storage(&state, |storage| storage.clear_all_online_caches()).await
+}
+
+#[tauri::command]
+pub async fn clear_cover_cache(state: State<'_, AppState>) -> Result<(), AppError> {
+    with_storage(&state, |storage| storage.clear_cover_cache()).await
+}
+
+/// 转为本地书籍 for an online book whose chapters are all cached; returns
+/// the new local book.
+#[tauri::command]
+pub async fn convert_online_to_local(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<LibraryBook, AppError> {
+    let storage = state.storage.clone();
+    on_engine_thread(move || {
+        let (count, cached) = {
+            let guard = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            (
+                guard.online_chapter_count(&request.book_id)?,
+                guard.cached_online_chapters(&request.book_id)?,
+            )
+        };
+        let missing = count as usize - cached.len().min(count as usize);
+        if missing > 0 {
+            return Err(AppError::invalid_argument(format!(
+                "还有 {missing} 章没有缓存"
+            )));
+        }
+        let texts = (0..count)
+            .map(|index| crate::online_reader::raw_chapter(&storage, &request.book_id, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut guard = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        let local = guard.convert_online_to_local(&request.book_id, &texts)?;
+        crate::app_log::info("library", format!("网络书籍转为本地书籍：{local}"));
+        guard.library_book(&local)
+    })
+    .await?
+}

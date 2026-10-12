@@ -377,6 +377,27 @@ export function createMemorySourceService(
       throw new Error("预览模式不加载封面");
     },
     setCoverFromSource: async () => undefined,
+    storageUsage: async () => ({
+      parts: [
+        { key: "books", label: "本地书籍", bytes: 12_400_000 },
+        { key: "chapters", label: "章节缓存", bytes: 3_200_000 },
+        { key: "covers", label: "封面缓存", bytes: 860_000 },
+        { key: "logs", label: "日志", bytes: 24_000 },
+      ],
+      books: [...kept.values()].map((entry) => ({
+        key: entry.book.id,
+        label: entry.book.title,
+        bytes: 400_000,
+      })),
+    }),
+    clearAllOnlineCaches: async () => undefined,
+    clearCoverCache: async () => undefined,
+    convertToLocal: async (bookId) => {
+      const entry = kept.get(bookId);
+      if (!entry) throw new Error("书籍不存在");
+      kept.delete(bookId);
+      return { ...entry, online: null };
+    },
     addOnlineBook: async ({ book, chapters, onShelf }) => {
       const existing = [...kept.values()].find(
         (entry) =>

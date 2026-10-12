@@ -229,6 +229,14 @@ export function BookDetailPage({
               }}
               onEdit={() => setEditing(true)}
               onDelete={() => setConfirm("delete")}
+              onConverted={
+                inReader
+                  ? undefined
+                  : () => {
+                      void runtime.library.refresh();
+                      (onRemoved ?? onClose)();
+                    }
+              }
             />
           )}
           <div
@@ -614,11 +622,14 @@ function OnlineActions({
   onChanged,
   onEdit,
   onDelete,
+  onConverted,
 }: {
   book: LibraryBook;
   onChanged: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** After 转为本地书籍; not offered inside the reader. */
+  onConverted?: () => void;
 }) {
   const runtime = useRuntime();
   const service = runtime.services.sources;
@@ -627,7 +638,9 @@ function OnlineActions({
   const [updating, setUpdating] = useState(false);
   const [caching, setCaching] = useState<{ operationId: string; text: string } | null>(null);
   const [changing, setChanging] = useState(false);
+  const [converting, setConverting] = useState<"ask" | "busy" | null>(null);
   const operation = useRef<string | null>(null);
+  const complete = online.totalChapters > 0 && online.cachedChapters >= online.totalChapters;
 
   useEffect(() => {
     let stop: (() => void) | undefined;
@@ -742,8 +755,56 @@ function OnlineActions({
               <Icon name="delete" size={15} />
               清除缓存
             </DropdownMenuItem>
+            {complete && onConverted && (
+              <DropdownMenuItem onClick={() => setConverting("ask")}>
+                <Icon name="collections_bookmark" size={15} />
+                转为本地书籍
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
+      )}
+      {converting && (
+        <Dialog open onOpenChange={(open) => !open && converting === "ask" && setConverting(null)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">转为本地书籍</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-secondary">
+              另存为本地 TXT，进度、书签和阅读时长一并转移，网络书籍随后删除。
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={converting === "busy"}
+                onClick={() => setConverting(null)}
+              >
+                取消
+              </Button>
+              <Button
+                size="sm"
+                disabled={converting === "busy"}
+                onClick={() => {
+                  setConverting("busy");
+                  void service.convertToLocal(id).then(
+                    () => {
+                      toast("已转为本地书籍");
+                      setConverting(null);
+                      onConverted?.();
+                    },
+                    (failure: unknown) => {
+                      setConverting(null);
+                      toast({ text: describeError(failure), error: true });
+                    },
+                  );
+                }}
+              >
+                {converting === "busy" ? "转换中…" : "转换"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
       <ActionTile
         icon={online.canUpdate ? "check_box" : "check_box_outline"}
