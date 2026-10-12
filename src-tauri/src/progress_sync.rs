@@ -37,7 +37,7 @@ struct RemoteProgress {
 
 /// An online book's record name: its name and author, hashed for a safe path.
 fn online_key(name: &str, author: &str) -> String {
-    crate::storage::sha256_bytes(format!("online\n{}\n{}", name.trim(), author.trim()).as_bytes())
+    crate::storage::online_key(name, author)
 }
 
 /// The record key and position of a book: the original file's hash and

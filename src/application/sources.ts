@@ -94,6 +94,42 @@ export function filterSources(
 
 const collator = new Intl.Collator("zh-Hans-CN", { numeric: true });
 
+/** The groups a failed 校验 adds (Rust `CHECK_GROUPS`). */
+const CHECK_FAILURES = new Set([
+  "网站失效",
+  "js失效",
+  "校验超时",
+  "搜索失效",
+  "发现失效",
+  "详情失效",
+  "目录失效",
+  "正文失效",
+  "搜索链接规则为空",
+  "发现规则为空",
+]);
+
+/** Whether the last 校验 found this source broken. */
+export function sourceFailed(source: BookSourceSummary): boolean {
+  return (
+    splitGroups(source.group).some((group) => CHECK_FAILURES.has(group)) ||
+    sourceError(source) !== null
+  );
+}
+
+/**
+ * 智能排序: sources that work first — enabled, without a failed check, and
+ * quicker to answer — then by weight and the manual order.
+ */
+function smartOrder(a: BookSourceSummary, b: BookSourceSummary): number {
+  return (
+    Number(b.enabled) - Number(a.enabled) ||
+    Number(sourceFailed(a)) - Number(sourceFailed(b)) ||
+    a.respondTime - b.respondTime ||
+    b.weight - a.weight ||
+    a.customOrder - b.customOrder
+  );
+}
+
 export function sortSources(
   sources: BookSourceSummary[],
   sort: SourceSort,
@@ -101,7 +137,7 @@ export function sortSources(
 ): BookSourceSummary[] {
   const compare: Record<SourceSort, (a: BookSourceSummary, b: BookSourceSummary) => number> = {
     manual: (a, b) => a.customOrder - b.customOrder,
-    weight: (a, b) => b.weight - a.weight,
+    weight: smartOrder,
     name: (a, b) => collator.compare(a.name, b.name),
     url: (a, b) => a.url.localeCompare(b.url),
     update: (a, b) => b.lastUpdateTime - a.lastUpdateTime,

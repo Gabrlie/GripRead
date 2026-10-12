@@ -22,6 +22,12 @@ export function Navbar() {
 
   return (
     <>
+      {/* The gesture bar's strip stays opaque, so text never scrolls into it. */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-x-0 bottom-0 z-30 bg-surface md:hidden pointer-events-none"
+        style={{ height: "var(--safe-bottom)" }}
+      />
       {/* Mobile Apple-style Floating Island Dock */}
       <nav
         className="glass-dock fixed bottom-[calc(1rem+var(--safe-bottom))] inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none"

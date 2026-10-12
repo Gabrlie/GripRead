@@ -553,9 +553,14 @@ pub struct ReadingTimeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BookReadingTime {
+    /// The book, or `retired:<key>` for a deleted one.
     pub book_id: String,
     pub seconds: u64,
     pub last_day: String,
+    pub title: String,
+    pub author: Option<String>,
+    /// The book was deleted; its time stays in the records.
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -563,7 +568,7 @@ pub struct BookReadingTime {
 pub struct ReadingStats {
     pub total_seconds: u64,
     pub today_seconds: u64,
-    /// Days with reading, most recent first, up to 30.
+    /// Days with reading in the last 26 weeks, most recent first.
     pub days: Vec<DayReadingTime>,
     pub books: Vec<BookReadingTime>,
 }

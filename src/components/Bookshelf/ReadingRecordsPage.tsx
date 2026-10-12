@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { useLibrary, useRuntime } from "../../application/runtime";
-import type { LibraryBook, ReadingStats } from "../../types/generated";
+import type { BookReadingTime, LibraryBook, ReadingStats } from "../../types/generated";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { ActivityMatrix } from "./ActivityMatrix";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { BookCover } from "./BookCover";
+import { LibraryCover } from "./LibraryCover";
 import { formatDuration, localDay } from "../../application/reading-time";
 
 /** Legado's 阅读记录: total and daily reading time, and time per book. */
@@ -33,16 +36,14 @@ export function ReadingRecordsPage({
     };
   }, [runtime.services.library]);
   const longest = Math.max(1, ...(stats?.days.map((day) => day.seconds) ?? []));
-  const books = (stats?.books ?? [])
-    .map((record) => ({
-      record,
-      book: [...library.books, ...library.removedBooks].find(
-        (entry) => entry.book.id === record.bookId,
-      ),
-    }))
-    .filter((item): item is { record: typeof item.record; book: LibraryBook } =>
-      Boolean(item.book),
-    );
+  // Deleted books and online books read without adding them keep their time.
+  const books = (stats?.books ?? []).map((record) => ({
+    record,
+    book: [...library.books, ...library.removedBooks].find(
+      (entry) => entry.book.id === record.bookId,
+    ),
+  }));
+  const [gone, setGone] = useState<BookReadingTime | null>(null);
   return (
     <div
       ref={page}
@@ -50,7 +51,7 @@ export function ReadingRecordsPage({
       aria-modal="true"
       aria-label="阅读记录"
       data-open=""
-      className="fixed inset-0 z-40 bg-surface flex flex-col overflow-hidden pt-safe"
+      className="fixed inset-0 z-40 bg-surface flex flex-col overflow-hidden pt-safe pb-safe"
     >
       <header className="shrink-0 flex items-center h-14 px-2 gap-1">
         <Button variant="ghost" size="icon" aria-label="返回" onClick={onClose}>
@@ -58,7 +59,7 @@ export function ReadingRecordsPage({
         </Button>
         <h1 className="font-title-editorial text-base font-semibold">阅读记录</h1>
       </header>
-      <main className="flex-1 min-h-0 overflow-y-auto pb-safe">
+      <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-5 py-2 space-y-5">
           {error && (
             <p role="alert" className="text-xs text-error break-words">
@@ -76,13 +77,14 @@ export function ReadingRecordsPage({
               </div>
             ))}
           </dl>
+          {stats && <ActivityMatrix days={stats.days} today={localDay()} />}
           {stats && stats.days.length > 0 && (
             <section aria-labelledby="records-days" className="space-y-2">
               <h2 id="records-days" className="text-xs text-secondary font-medium">
                 最近阅读
               </h2>
               <ul className="space-y-1.5">
-                {stats.days.slice(0, 14).map((day) => (
+                {stats.days.slice(0, 7).map((day) => (
                   <li key={day.day} className="flex items-center gap-3 text-xs">
                     <span className="w-20 shrink-0 tabular-nums text-secondary">
                       {day.day.slice(5)}
@@ -113,18 +115,25 @@ export function ReadingRecordsPage({
                 <li key={record.bookId}>
                   <button
                     type="button"
-                    onClick={() => onOpenBook(book)}
-                    className="w-full flex items-center gap-3 rounded-xl bg-surface-container-low p-2.5 text-left hover:bg-surface-container"
+                    onClick={() => (book ? onOpenBook(book) : setGone(record))}
+                    className={`w-full flex items-center gap-3 rounded-xl bg-surface-container-low p-2.5 text-left hover:bg-surface-container ${
+                      book ? "" : "opacity-70"
+                    }`}
                   >
                     <span className="w-10 aspect-[3/4] rounded overflow-hidden shrink-0">
-                      <BookCover title={book.book.title} assetId={book.coverAssetId} />
+                      {book ? <LibraryCover book={book} /> : <BookCover title={record.title} />}
                     </span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-medium truncate">
-                        {book.book.title}
-                        {book.removedAt !== null && (
+                        {book?.book.title ?? record.title}
+                        {book && book.removedAt !== null && (
                           <span className="ml-2 text-[10px] font-normal text-secondary">
                             回收站
+                          </span>
+                        )}
+                        {!book && (
+                          <span className="ml-2 text-[10px] font-normal text-secondary">
+                            {record.deleted ? "已删除" : "不在书架"}
                           </span>
                         )}
                       </span>
@@ -139,6 +148,25 @@ export function ReadingRecordsPage({
           </section>
         </div>
       </main>
+      {gone && (
+        <Dialog open onOpenChange={(open) => !open && setGone(null)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">{gone.title}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-secondary">
+              {gone.deleted
+                ? "这本书已删除，无法打开。它的阅读时长保留在记录里；本地书重新导入同一个文件后，进度和书签也会恢复。"
+                : "这本书没有加入书架，可以从搜索里再次打开它，会接着上次的进度。"}
+            </p>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={() => setGone(null)}>
+                知道了
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

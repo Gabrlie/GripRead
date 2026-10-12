@@ -56,3 +56,6 @@ Each page specification includes the [motion contract](motion.md) alongside layo
 ## Acceptance
 
 Verify phone and desktop layouts, keyboard focus, touch controls, modal focus restoration, empty/error states, and preserved reading/list context. Evaluate motion and reduced-motion behavior using the cases owned by the motion specification.
+
+Bars at the bottom of the screen cover the system gesture bar too: full-screen pages pad their frame (not their scroll body, whose padding would let text scroll under the bar) by the bottom inset, and the main tabs keep an opaque strip behind the gesture bar under the floating dock. 阅读记录 shows today's and total time, a GitHub-style activity matrix of the last 26 weeks (Monday-first columns, five levels by minutes read, today outlined, a tapped day's time below), the last seven days, and the books read; deleted books and online books read without adding them stay listed with 已删除 or 不在书架 and explain why they cannot be opened. Generated covers size their title from the cover's width so small covers show it whole.
+

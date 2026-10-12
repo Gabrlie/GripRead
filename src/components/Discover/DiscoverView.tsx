@@ -89,7 +89,10 @@ export function DiscoverView() {
   }, [service]);
 
   const explorable = useMemo(
-    () => (sources ?? []).filter((source) => source.hasExplore && source.enabledExplore),
+    () =>
+      (sources ?? []).filter(
+        (source) => source.enabled && source.hasExplore && source.enabledExplore,
+      ),
     [sources],
   );
   const groups = useMemo(() => sourceGroups(explorable), [explorable]);
@@ -169,7 +172,7 @@ export function DiscoverView() {
             <p className="text-sm text-secondary">
               {sources.length === 0
                 ? "还没有书源。导入书源后，这里会显示它们的发现分类。"
-                : "已有的书源都没有发现分类，或发现已被禁用。"}
+                : "启用的书源都没有发现分类，或发现已被禁用。"}
             </p>
             <Button size="sm" variant="outline" onClick={() => setManaging(true)}>
               书源管理

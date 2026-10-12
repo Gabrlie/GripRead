@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { usePageLayer } from "../Layout/use-page-layer";
 import type { OnlineChapter } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
@@ -33,6 +34,8 @@ export function OnlineTocPage({
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
   const [reversed, setReversed] = useState(false);
   const list = useRef<HTMLDivElement>(null);
+  // The Android back gesture arrives as Escape and closes the top page.
+  const page = usePageLayer(onClose);
 
   const rows = useMemo(() => {
     const indexed = chapters.map((chapter, index) => ({ chapter, index }));
@@ -61,6 +64,7 @@ export function OnlineTocPage({
 
   return (
     <div
+      ref={page}
       role="dialog"
       aria-modal="true"
       aria-label="目录"

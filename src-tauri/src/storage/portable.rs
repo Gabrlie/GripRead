@@ -1220,14 +1220,29 @@ impl Storage {
                 created_at = excluded.created_at",
             params![source, serde_json::to_string(&record)?, now_millis()],
         )?;
+        self.retire_reading_time(book_id, &source)?;
+        Ok(true)
+    }
+
+    /// Keeps a deleted book's reading time, and its title for 阅读记录,
+    /// under `key` (the original file's hash, or an online book's name key).
+    pub(crate) fn retire_reading_time(&self, book_id: &str, key: &str) -> Result<(), AppError> {
         self.conn.execute(
             "INSERT INTO retired_reading_time(source_sha256, day, seconds)
              SELECT ?2, day, seconds FROM reading_time WHERE book_id = ?1
              ON CONFLICT(source_sha256, day) DO UPDATE SET
                 seconds = MAX(retired_reading_time.seconds, excluded.seconds)",
-            params![book_id, source],
+            params![book_id, key],
         )?;
-        Ok(true)
+        self.conn.execute(
+            "INSERT INTO retired_books(key, title, author, deleted_at)
+             SELECT ?2, title, author, ?3 FROM books WHERE id = ?1
+               AND EXISTS(SELECT 1 FROM reading_time WHERE book_id = ?1)
+             ON CONFLICT(key) DO UPDATE SET title = excluded.title, author = excluded.author,
+                deleted_at = excluded.deleted_at",
+            params![book_id, key, now_millis()],
+        )?;
+        Ok(())
     }
 
     /// Applies records restored before this book was on the device.
@@ -1293,6 +1308,8 @@ impl Storage {
             "DELETE FROM retired_reading_time WHERE source_sha256 = ?1",
             params![source],
         )?;
+        self.conn
+            .execute("DELETE FROM retired_books WHERE key = ?1", params![source])?;
         Ok(true)
     }
 

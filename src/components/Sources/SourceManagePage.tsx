@@ -444,7 +444,7 @@ export function SourceManagePage({
       </ul>
 
       {selected && (
-        <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-[calc(0.5rem+var(--safe-bottom))] bg-surface border-t border-surface-variant/30 space-y-2">
+        <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-2 bg-surface border-t border-surface-variant/30 space-y-2">
           <div className="flex items-center justify-between text-xs text-secondary">
             <span>
               已选 {selectedUrls.length} / {shown.length}

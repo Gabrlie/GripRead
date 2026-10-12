@@ -74,3 +74,22 @@ describe("source lists", () => {
     expect(formatRespondTime(181200)).toBe("超时");
   });
 });
+
+describe("智能排序", () => {
+  it("puts working sources first, then the quicker ones", () => {
+    const sources = [
+      source({ url: "1", name: "失效", group: "网站失效", respondTime: 100 }),
+      source({ url: "2", name: "慢", respondTime: 5000 }),
+      source({ url: "3", name: "禁用", enabled: false, respondTime: 50 }),
+      source({ url: "4", name: "快", respondTime: 800 }),
+      source({ url: "5", name: "报错", comment: "// Error: 搜索结果为空", respondTime: 200 }),
+    ];
+    expect(sortSources(sources, "weight").map((item) => item.name)).toEqual([
+      "快",
+      "慢",
+      "失效",
+      "报错",
+      "禁用",
+    ]);
+  });
+});

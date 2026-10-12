@@ -37,7 +37,8 @@ mod online;
 mod portable;
 mod sources;
 pub use online::{
-    chapter_resource, chapter_version, map_chapter, resource_chapter, ChapterPosition, OnlineRecord,
+    chapter_resource, chapter_version, map_chapter, online_key, resource_chapter, ChapterPosition,
+    OnlineRecord,
 };
 pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
@@ -45,7 +46,7 @@ pub use portable::{
 };
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 
-const CURRENT_SCHEMA_VERSION: i64 = 17;
+const CURRENT_SCHEMA_VERSION: i64 = 18;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -938,6 +939,35 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (17, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        if current < 18 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE retired_books (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL,
+                    author TEXT,
+                    deleted_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE online_book_cache (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    info_json TEXT,
+                    toc_json TEXT,
+                    fetched_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE online_cover_cache (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    relative_path TEXT,
+                    failed_at INTEGER
+                 );
+                 ALTER TABLE online_books ADD COLUMN last_opened_at INTEGER;",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (18, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -1856,22 +1886,37 @@ impl Storage {
             params![today],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        // The activity matrix covers 26 weeks back from today.
+        let since = chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d")
+            .map(|day| {
+                (day - chrono::Duration::days(26 * 7))
+                    .format("%Y-%m-%d")
+                    .to_string()
+            })
+            .unwrap_or_default();
         let mut days = self.conn.prepare(
             "SELECT day, SUM(seconds) FROM (SELECT day, seconds FROM reading_time
                    UNION ALL SELECT day, seconds FROM retired_reading_time)
-             GROUP BY day ORDER BY day DESC LIMIT 30",
+             WHERE day > ?1 GROUP BY day ORDER BY day DESC",
         )?;
         let days = days
-            .query_map([], |row| {
+            .query_map(params![since], |row| {
                 Ok(DayReadingTime {
                     day: row.get(0)?,
                     seconds: row.get::<_, i64>(1)?.max(0) as u64,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        // Deleted books keep their time under their retired key.
         let mut books = self.conn.prepare(
-            "SELECT book_id, SUM(seconds), MAX(day) FROM reading_time
-             GROUP BY book_id ORDER BY MAX(day) DESC, SUM(seconds) DESC",
+            "SELECT * FROM (
+                SELECT r.book_id, SUM(r.seconds), MAX(r.day), b.title, b.author, 0
+                FROM reading_time r JOIN books b ON b.id = r.book_id GROUP BY r.book_id
+                UNION ALL
+                SELECT 'retired:' || t.source_sha256, SUM(t.seconds), MAX(t.day), d.title, d.author, 1
+                FROM retired_reading_time t JOIN retired_books d ON d.key = t.source_sha256
+                GROUP BY t.source_sha256)
+             ORDER BY 3 DESC, 2 DESC",
         )?;
         let books = books
             .query_map([], |row| {
@@ -1879,6 +1924,9 @@ impl Storage {
                     book_id: row.get(0)?,
                     seconds: row.get::<_, i64>(1)?.max(0) as u64,
                     last_day: row.get(2)?,
+                    title: row.get(3)?,
+                    author: row.get(4)?,
+                    deleted: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -6525,7 +6573,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 18);
     }
 
     #[test]
@@ -7492,7 +7540,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -7660,7 +7708,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -8996,7 +9044,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -9064,7 +9112,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(

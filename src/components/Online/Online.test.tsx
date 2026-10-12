@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
@@ -40,8 +40,10 @@ describe("online search", () => {
     await userEvent.click(await screen.findByRole("button", { name: /目录（23 章）/ }));
     const toc = await screen.findByRole("dialog", { name: "目录" });
     expect(within(toc).getByText("共 23 章")).toBeTruthy();
-    await userEvent.click(within(toc).getByRole("button", { name: "返回" }));
+    // The Android back gesture arrives as Escape.
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "书籍详情" })).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: "加入书架" }));
     expect(add).toHaveBeenLastCalledWith(expect.objectContaining({ onShelf: true }));
@@ -88,7 +90,18 @@ describe("online search", () => {
 
 describe("发现", () => {
   it("expands a source into categories and opens a category's books", async () => {
-    const sources = service();
+    const sources = createMemorySourceService(
+      [
+        ...PREVIEW_SOURCES,
+        {
+          bookSourceUrl: "https://off.example.com",
+          bookSourceName: "已禁用的站",
+          enabled: false,
+          exploreUrl: "玄幻::/x",
+        },
+      ],
+      PREVIEW_BOOKS,
+    );
     const runtime = new AppRuntime({
       library: {
         listBooks: vi.fn(async () => []),
@@ -114,6 +127,7 @@ describe("发现", () => {
     );
     const list = await screen.findByRole("list", { name: "发现书源" });
     expect(within(list).queryByText("乙站 API")).toBeNull();
+    expect(within(list).queryByText("已禁用的站")).toBeNull();
     await userEvent.click(within(list).getByRole("button", { name: "甲站小说" }));
     await userEvent.click(await screen.findByRole("button", { name: "都市" }));
     expect(await screen.findByRole("dialog", { name: "甲站小说 · 都市" })).toBeTruthy();

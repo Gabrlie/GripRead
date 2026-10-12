@@ -262,7 +262,7 @@ export function OnlineBookPage({
         </button>
       )}
 
-      <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-[calc(0.75rem+var(--safe-bottom))] bg-surface flex gap-2">
+      <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-3 bg-surface flex gap-2">
         <Button
           variant="outline"
           className="flex-1"

@@ -4,6 +4,6 @@ import type { DayReadingTime } from "./DayReadingTime";
 
 export type ReadingStats = { totalSeconds: number, todaySeconds: number, 
 /**
- * Days with reading, most recent first, up to 30.
+ * Days with reading in the last 26 weeks, most recent first.
  */
 days: Array<DayReadingTime>, books: Array<BookReadingTime>, };

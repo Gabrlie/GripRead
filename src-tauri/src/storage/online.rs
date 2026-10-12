@@ -29,6 +29,15 @@ pub fn chapter_version(book_id: &str, chapter: &OnlineChapter) -> String {
     format!("online-{}", hex::encode(&digest[..8]))
 }
 
+/// An online book's identity across sources and devices: its name and
+/// author, as Legado matches books.
+pub fn online_key(name: &str, author: &str) -> String {
+    format!(
+        "online-{}",
+        sha256_bytes(format!("online\n{}\n{}", name.trim(), author.trim()).as_bytes())
+    )
+}
+
 /// A position in an online book that does not depend on its source: the
 /// chapter's place and title, and the offset in it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -767,7 +776,9 @@ impl Storage {
 
     /// Deletes an online book with its cached chapters, as Legado's 删除.
     pub fn delete_online_book(&mut self, book_id: &str) -> Result<(), AppError> {
-        self.online_record(book_id)?;
+        let record = self.online_record(book_id)?;
+        // 阅读记录 keeps its time under the name key progress sync uses.
+        self.retire_reading_time(book_id, &online_key(&record.title, &record.book.author))?;
         let cover = self.book_cover(book_id)?;
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
@@ -1074,5 +1085,22 @@ mod tests {
         let saved = fresh.saved_position(restored).unwrap().unwrap();
         assert_eq!((saved.resource_id.as_str(), saved.offset), ("chapter-1", 7));
         assert!(fresh.pending_online_position(restored).unwrap().is_none());
+    }
+
+    #[test]
+    fn deleted_books_stay_in_the_reading_records() {
+        let (_dir, mut storage) = storage();
+        let id = storage
+            .add_online_book(&book("a"), &chapters(&["第1章"], "a"), true)
+            .unwrap();
+        storage.add_reading_time(&id, "2026-10-12", 600).unwrap();
+        storage.delete_online_book(&id).unwrap();
+        let stats = storage.reading_stats("2026-10-12").unwrap();
+        assert_eq!(stats.total_seconds, 600);
+        assert_eq!(stats.days.len(), 1);
+        let record = &stats.books[0];
+        assert!(record.deleted);
+        assert_eq!(record.title, "剑来");
+        assert_eq!(record.seconds, 600);
     }
 }

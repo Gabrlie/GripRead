@@ -45,14 +45,19 @@ export function GeneratedCover({ title }: { title: string }) {
     <div
       aria-hidden="true"
       className="w-full h-full p-[7%] select-none relative overflow-hidden"
-      style={{ background: theme.paper, color: theme.ink }}
+      // The title is sized from the cover's own width, so small covers in
+      // lists and records still show it whole (about five characters a line).
+      style={{ background: theme.paper, color: theme.ink, containerType: "inline-size" }}
     >
       {/* A thin inner frame, with a short rule under the title. */}
       <div
         className="w-full h-full rounded-[2px] border flex flex-col items-center justify-center gap-[8%] px-[8%] text-center"
         style={{ borderColor: `${theme.ink}40` }}
       >
-        <span className="font-title-editorial font-semibold text-[11px] sm:text-xs leading-snug line-clamp-4 break-all">
+        <span
+          className="font-title-editorial font-semibold leading-snug line-clamp-5 break-all"
+          style={{ fontSize: "clamp(6px, 14cqw, 15px)" }}
+        >
           {cleanTitle}
         </span>
         <span className="block h-px w-1/4" style={{ background: `${theme.ink}66` }} />

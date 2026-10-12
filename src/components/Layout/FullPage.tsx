@@ -30,7 +30,7 @@ export function FullPage({
       aria-modal="true"
       aria-label={label}
       data-open=""
-      className={`fixed inset-0 ${layer} bg-surface text-on-surface flex flex-col overflow-hidden pt-safe`}
+      className={`fixed inset-0 ${layer} bg-surface text-on-surface flex flex-col overflow-hidden pt-safe pb-safe`}
     >
       <header className="shrink-0 border-b border-surface-variant/30">
         <div className="h-14 px-2 flex items-center gap-1 max-w-3xl mx-auto w-full">
@@ -49,7 +49,9 @@ export function FullPage({
           {actions}
         </div>
       </header>
-      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-safe">
+      {/* The frame, not the scroll body, keeps clear of the gesture bar: a
+          scroll body's padding scrolls, and text would show below bars. */}
+      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto w-full px-3 py-3 space-y-3">{children}</div>
       </main>
     </div>
