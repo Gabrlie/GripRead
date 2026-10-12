@@ -484,10 +484,10 @@ fn data_url_response(url: &str) -> SourceResult<HttpResponse> {
         .ok_or_else(|| SourceError::rule("data: 地址缺少内容"))?;
     let header = &url[5..payload_start];
     let payload = &url[payload_start + 1..];
-    let bytes = if header
+    let base64 = header
         .split(';')
-        .any(|part| part.eq_ignore_ascii_case("base64"))
-    {
+        .any(|part| part.eq_ignore_ascii_case("base64"));
+    let bytes = if base64 {
         base64::engine::general_purpose::STANDARD
             .decode(payload.trim())
             .map_err(|error| SourceError::rule(format!("data: 地址无法解码：{error}")))?
@@ -498,7 +498,13 @@ fn data_url_response(url: &str) -> SourceResult<HttpResponse> {
         .split(';')
         .find_map(|part| part.trim().strip_prefix("charset="))
         .map(str::to_string);
-    let body = http::decode_body(&bytes, charset.as_deref(), None);
+    // Legado answers a base64 data address with the bytes as hex, which
+    // scripts turn back with java.hexDecodeToString.
+    let body = if base64 {
+        hex::encode(&bytes)
+    } else {
+        http::decode_body(&bytes, charset.as_deref(), None)
+    };
     Ok(HttpResponse {
         url: url.to_string(),
         code: 200,
@@ -536,6 +542,8 @@ mod tests {
     #[test]
     fn data_urls_decode() {
         let response = data_url_response("data:text/html;base64,5q2j5paH").unwrap();
-        assert_eq!(response.body, "正文");
+        assert_eq!(response.body, "e6ada3e69687");
+        assert_eq!(response.bytes, "正文".as_bytes());
+        assert_eq!(data_url_response("data:,a%20b").unwrap().body, "a%20b");
     }
 }

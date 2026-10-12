@@ -19,7 +19,7 @@ pub fn parse_content(content: &Val) -> Option<Json> {
 
 fn normalise_path(path: &str) -> String {
     let path = path.trim();
-    if path.starts_with('$') {
+    let rooted = if path.starts_with('$') {
         path.to_string()
     } else if let Some(rest) = path.strip_prefix('@') {
         format!("${rest}")
@@ -27,7 +27,81 @@ fn normalise_path(path: &str) -> String {
         format!("${path}")
     } else {
         format!("$.{path}")
+    };
+    jayway_to_rfc(&rooted)
+}
+
+/// Rewrites what Jayway accepts and RFC 9535 does not: `a.[*]` for `a[*]`,
+/// and dotted names such as `a.b-c` or `a.0`, which need brackets.
+fn jayway_to_rfc(path: &str) -> String {
+    let chars: Vec<char> = path.chars().collect();
+    let mut out = String::with_capacity(path.len() + 8);
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if let Some(open) = quote {
+            out.push(ch);
+            if ch == '\\' && index + 1 < chars.len() {
+                out.push(chars[index + 1]);
+                index += 2;
+                continue;
+            }
+            if ch == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match ch {
+            '\'' | '"' if depth > 0 => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            '[' => {
+                depth += 1;
+                out.push(ch);
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+                out.push(ch);
+            }
+            '.' if depth == 0 => {
+                let deep = chars.get(index + 1) == Some(&'.');
+                let start = if deep { index + 2 } else { index + 1 };
+                if chars.get(start) == Some(&'[') {
+                    out.push_str(if deep { ".." } else { "" });
+                    index = start;
+                    continue;
+                }
+                let mut end = start;
+                while end < chars.len() && chars[end] != '.' && chars[end] != '[' {
+                    end += 1;
+                }
+                let name: String = chars[start..end].iter().collect();
+                let plain = name == "*"
+                    || name.chars().next().is_some_and(|first| {
+                        first == '_' || first.is_ascii_alphabetic() || !first.is_ascii()
+                    }) && name
+                        .chars()
+                        .all(|c| c == '_' || c.is_ascii_alphanumeric() || !c.is_ascii());
+                if plain || name.is_empty() {
+                    out.push_str(if deep { ".." } else { "." });
+                    out.push_str(&name);
+                } else {
+                    out.push_str(if deep { "..['" } else { "['" });
+                    out.push_str(&name.replace('\'', "\\'"));
+                    out.push_str("']");
+                }
+                index = end;
+                continue;
+            }
+            _ => out.push(ch),
+        }
+        index += 1;
     }
+    out
 }
 
 /// Jayway treats a path without wildcards, filters, slices, unions, or deep
@@ -56,8 +130,9 @@ pub enum Read {
 }
 
 pub fn read(json: &Json, path: &str) -> Result<Read, String> {
+    let (path, function) = split_function(path.trim());
     let path = normalise_path(path);
-    let (path, function) = split_function(&path);
+    let path = path.as_str();
     let compiled =
         JsonPath::parse(path).map_err(|error| format!("JSONPath 无效 `{path}`：{error}"))?;
     let nodes: Vec<Json> = compiled.query(json).all().into_iter().cloned().collect();
@@ -202,6 +277,21 @@ pub fn get_list(json: &Json, rule: &str) -> Vec<Val> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jayway_paths_become_rfc_paths() {
+        assert_eq!(normalise_path("$.data.list.[*]"), "$.data.list[*]");
+        assert_eq!(
+            normalise_path("data.book-list[0]"),
+            "$.data['book-list'][0]"
+        );
+        assert_eq!(normalise_path("$..[*].a"), "$..[*].a");
+        assert_eq!(
+            normalise_path("$.a[?(@.b-c == 'x.y')]"),
+            "$.a[?(@.b-c == 'x.y')]"
+        );
+        assert_eq!(normalise_path("$.书名"), "$.书名");
+    }
 
     fn data() -> Json {
         serde_json::json!({

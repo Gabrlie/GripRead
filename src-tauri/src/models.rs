@@ -1595,6 +1595,8 @@ pub struct OnlineBook {
     pub toc_url: String,
     /// The book's rule variables as JSON, carried between steps.
     pub variables: String,
+    /// The details asked for the contents newest first.
+    pub reverse_toc: bool,
 }
 
 /// Search results with the same name and author from several sources.

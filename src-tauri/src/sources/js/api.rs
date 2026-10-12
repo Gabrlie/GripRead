@@ -3,6 +3,7 @@
 //! prelude builds Jsoup elements and Java shims on.
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use rquickjs::function::Rest;
 use rquickjs::{Array, Ctx, Exception, Function, Object, Value};
@@ -453,6 +454,34 @@ pub(super) fn install_natives<'js>(
             &crypto::base64_encode(&bytes(args, 0), number(args, 1).unwrap_or(0.0) as i64),
         )
     })?;
+    // javax.crypto and java.security over byte arrays.
+    define(ctx, native, "cipherBytes", |ctx, args| {
+        let transformation = text(args, 0);
+        let decrypt = number(args, 1).unwrap_or(1.0) as i64 == 2;
+        let iv = present(args, 3)
+            .filter(|value| !value.is_null())
+            .map(|_| bytes(args, 3));
+        let crypto = crypto::SymmetricCrypto::new(&transformation, &bytes(args, 2), iv.as_deref())
+            .map_err(|error| throw(ctx, error))?;
+        let data = bytes(args, 4);
+        let out = if decrypt {
+            crypto.decrypt(&data)
+        } else {
+            crypto.encrypt(&data)
+        }
+        .map_err(|error| throw(ctx, error))?;
+        byte_array(ctx, &out)
+    })?;
+    define(ctx, native, "digestBytes", |ctx, args| {
+        let out =
+            crypto::digest(&bytes(args, 1), &text(args, 0)).map_err(|error| throw(ctx, error))?;
+        byte_array(ctx, &out)
+    })?;
+    define(ctx, native, "hmacBytes", |ctx, args| {
+        let out = crypto::hmac(&bytes(args, 2), &text(args, 0), &bytes(args, 1))
+            .map_err(|error| throw(ctx, error))?;
+        byte_array(ctx, &out)
+    })?;
     define(ctx, native, "timeFormatPattern", |ctx, args| {
         string(
             ctx,
@@ -475,6 +504,79 @@ pub(super) fn install_natives<'js>(
         string(ctx, &uuid::Uuid::new_v4().to_string())
     })?;
 
+    // `org.jsoup.Jsoup.connect(...)`: the connection the prelude builds,
+    // executed with redirects followed unless it says otherwise.
+    let st = state.clone();
+    define(ctx, native, "jsoupExecute", move |ctx, args| {
+        let mut request = http::HttpRequest::get(&text(args, 0));
+        request.method = match text(args, 1).to_ascii_uppercase().as_str() {
+            "POST" => HttpMethod::Post,
+            "HEAD" => HttpMethod::Head,
+            _ => HttpMethod::Get,
+        };
+        if let Some(headers) = present(args, 2).and_then(|value| value.as_object()) {
+            for (key, value) in headers
+                .props::<String, rquickjs::Coerced<String>>()
+                .flatten()
+            {
+                request.headers.push((key, value.0));
+            }
+        }
+        if let Some(body) = opt_text(args, 3) {
+            if !request
+                .headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+            {
+                request.headers.push((
+                    "Content-Type".to_string(),
+                    "application/x-www-form-urlencoded".to_string(),
+                ));
+            }
+            request.body = Some(body.into_bytes());
+        }
+        request.follow_redirects = present(args, 4).and_then(|v| v.as_bool()).unwrap_or(true);
+        if let Some(ms) = number(args, 5).filter(|ms| *ms > 0.0) {
+            request.timeout = Duration::from_millis(ms as u64);
+        }
+        let response =
+            http::execute(&st.env, &request).map_err(|error| source_failure(ctx, error))?;
+        let object = response_object(ctx, &response)?;
+        if let Some(object) = object.as_object() {
+            object.set("__bytes", crypto::base64_encode(&response.bytes, 2))?;
+        }
+        Ok(object)
+    })?;
+    // `Element.remove()`: the document is rebuilt without the nodes, and its
+    // handles point at the new one.
+    let st = state.clone();
+    define(ctx, native, "elRemove", move |ctx, args| {
+        let handles: Vec<i32> = present(args, 0)
+            .and_then(|value| value.as_array())
+            .map(|array| array.iter::<f64>().flatten().map(|h| h as i32).collect())
+            .unwrap_or_default();
+        let removed: Vec<dom::Element> = handles.iter().filter_map(|h| st.element(*h)).collect();
+        let mut done: Vec<dom::Element> = Vec::new();
+        for item in &removed {
+            let root = item.document();
+            if done.contains(&root) {
+                continue;
+            }
+            let same: Vec<dom::Element> = removed
+                .iter()
+                .filter(|other| other.document() == root)
+                .cloned()
+                .collect();
+            let rebuilt = dom::without(&root, &same);
+            for slot in st.elements.borrow_mut().iter_mut() {
+                if *slot == root {
+                    *slot = rebuilt.clone();
+                }
+            }
+            done.push(root);
+        }
+        Ok(Value::new_undefined(ctx.clone()))
+    })?;
     let st = state.clone();
     define(ctx, native, "jsoupParse", move |ctx, args| {
         let document = dom::parse(&text(args, 0), &st.rule().redirect_url());
@@ -1238,8 +1340,33 @@ pub(super) fn source_object<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> JsResu
         .into_object()
         .ok_or_else(|| throw(ctx, "书源不是对象"))?;
     let url = state.env.source.url();
+    // Rhino reads Java getters as properties: `source.key` is getKey().
+    source.set("key", url.clone())?;
+    source.set("tag", state.env.source.name())?;
     let key = url.clone();
     define(ctx, &source, "getKey", move |ctx, _| string(ctx, &key))?;
+    for field in [
+        "bookSourceUrl",
+        "bookSourceName",
+        "bookSourceGroup",
+        "bookSourceComment",
+        "loginUrl",
+        "header",
+        "searchUrl",
+        "exploreUrl",
+    ] {
+        let value = state
+            .env
+            .source
+            .raw
+            .get(field)
+            .map(json_text)
+            .unwrap_or_default();
+        let mut getter = String::from("get");
+        getter.push_str(&field[..1].to_ascii_uppercase());
+        getter.push_str(&field[1..]);
+        define(ctx, &source, &getter, move |ctx, _| string(ctx, &value))?;
+    }
     let name = state.env.source.name();
     define(ctx, &source, "getTag", move |ctx, _| string(ctx, &name))?;
     let st = state.clone();
@@ -1531,6 +1658,7 @@ pub(super) fn book_fields(book: &BookData) -> Json {
         "origin": book.origin,
         "originName": book.origin_name,
         "variable": serde_json::to_string(&book.variables).unwrap_or_default(),
+        "reverseToc": book.reverse_toc,
     })
 }
 
@@ -1575,6 +1703,12 @@ pub(super) fn sync_book(object: &Value<'_>, book: &mut BookData) {
     update("latestChapterTitle", &mut book.latest_chapter_title);
     update("bookUrl", &mut book.book_url);
     update("tocUrl", &mut book.toc_url);
+    if let Some(reverse) = object
+        .as_object()
+        .and_then(|object| object.get::<_, Option<bool>>("reverseToc").ok().flatten())
+    {
+        book.reverse_toc = reverse;
+    }
 }
 
 pub(super) fn sync_chapter(object: &Value<'_>, chapter: &mut ChapterData) {

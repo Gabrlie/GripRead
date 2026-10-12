@@ -145,9 +145,27 @@ fn script_error<'js>(ctx: &Ctx<'js>, error: rquickjs::Error, env: &Env) -> Sourc
                 .and_then(|object| {
                     let name: Option<String> = object.get("name").ok();
                     let message: Option<String> = object.get("message").ok();
-                    message.map(|message| match name {
-                        Some(name) if !name.is_empty() => format!("{name}: {message}"),
-                        _ => message,
+                    // Where it failed, so "not a function" names a place.
+                    let place = object
+                        .get::<_, Option<String>>("stack")
+                        .ok()
+                        .flatten()
+                        .and_then(|stack| {
+                            stack
+                                .lines()
+                                .map(str::trim)
+                                .find(|line| line.starts_with("at ") && !line.contains("__gr_eval"))
+                                .map(str::to_string)
+                        });
+                    message.map(|message| {
+                        let text = match name {
+                            Some(name) if !name.is_empty() => format!("{name}: {message}"),
+                            _ => message,
+                        };
+                        match place {
+                            Some(place) => format!("{text}（{place}）"),
+                            None => text,
+                        }
                     })
                 })
                 .or_else(|| {
@@ -191,7 +209,7 @@ impl<'js> JsScope<'js> {
         // `java.lang.String`; point those names at the shims.
         eval_sloppy::<()>(
             ctx,
-            "['lang','util','net','text'].forEach(function(n){java[n]=Packages.java[n]})",
+            "['lang','util','net','text','nio','security'].forEach(function(n){java[n]=Packages.java[n]})",
         )
         .map_err(|e| self.js_error(e))?;
         let source = api::source_object(ctx, self.state.clone()).map_err(|e| self.js_error(e))?;
@@ -247,7 +265,15 @@ impl<'js> JsScope<'js> {
         Ok(match value {
             Val::Null => Value::new_null(ctx.clone()),
             Val::Str(text) => rquickjs::String::from_str(ctx.clone(), text)?.into_value(),
-            Val::Json(json) => ctx.json_parse(json.to_string())?,
+            Val::Json(json) => {
+                let value = ctx.json_parse(json.to_string())?;
+                if json.is_object() || json.is_array() {
+                    let java: Function = ctx.globals().get("__gr_java_json")?;
+                    java.call((value,))?
+                } else {
+                    value
+                }
+            }
             Val::Element(element) => {
                 let handle = self.state.register(element.clone());
                 let make: Function = ctx.globals().get("__gr_element")?;

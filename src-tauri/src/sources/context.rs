@@ -33,6 +33,8 @@ pub struct BookData {
     pub info_html: Option<String>,
     /// The contents page when it is the details page.
     pub toc_html: Option<String>,
+    /// `book.setReverseToc(true)`: the contents come newest first.
+    pub reverse_toc: bool,
 }
 
 /// A chapter as Legado's `BookChapter` exposes it.

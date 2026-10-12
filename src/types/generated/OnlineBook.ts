@@ -12,4 +12,8 @@ kind: string, coverUrl: string, intro: string, wordCount: string, latestChapterT
 /**
  * The book's rule variables as JSON, carried between steps.
  */
-variables: string, };
+variables: string, 
+/**
+ * The details asked for the contents newest first.
+ */
+reverseToc: boolean, };

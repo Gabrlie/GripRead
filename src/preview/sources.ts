@@ -391,6 +391,7 @@ export const PREVIEW_BOOKS: OnlineBook[] = [
   bookUrl: `${sourceUrl}/book/${encodeURIComponent(name)}`,
   tocUrl: "",
   variables: "",
+  reverseToc: false,
 }));
 
 /** A few sources to show the management pages in the preview build. */

@@ -108,6 +108,7 @@ pub fn online_book(book: &BookData) -> OnlineBook {
         book_url: book.book_url.clone(),
         toc_url: book.toc_url.clone(),
         variables: variables_json(&book.variables),
+        reverse_toc: book.reverse_toc,
     }
 }
 
@@ -128,6 +129,7 @@ pub fn book_data(book: &OnlineBook) -> BookData {
         variables: parse_variables(&book.variables),
         info_html: None,
         toc_html: None,
+        reverse_toc: book.reverse_toc,
     }
 }
 
@@ -510,6 +512,7 @@ mod tests {
             book_url: format!("{source}/{name}"),
             toc_url: String::new(),
             variables: String::new(),
+            reverse_toc: false,
         }
     }
 

@@ -46,7 +46,7 @@ fancy-regex = "0.19.2"
 aho-corasick = "1.1.5"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "brotli"] }
 rquickjs = { version = "0.14", default-features = false, features = ["classes", "properties"] }
-scraper = "0.27"
+scraper = { version = "0.27", features = ["deterministic"] }
 sxd-document = "0.3"
 sxd-xpath = "0.4"
 serde_json_path = "0.7"

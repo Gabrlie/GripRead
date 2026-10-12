@@ -13,7 +13,7 @@ use ureq::tls::TlsConfig;
 use super::context::{Control, Env};
 use super::error::{SourceError, SourceResult};
 
-pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const MAX_REDIRECTS: usize = 8;
 const MAX_BODY: u64 = 32 * 1024 * 1024;
 
@@ -300,6 +300,28 @@ fn method_of(method: HttpMethod) -> Method {
     }
 }
 
+/// The address as OkHttp sends it: characters a URL may not carry, such as
+/// Chinese text or spaces in the path, are percent-encoded in UTF-8, while
+/// existing escapes stay; the fragment is dropped.
+pub fn wire_url(url: &str) -> String {
+    let url = url.split('#').next().unwrap_or(url).trim();
+    let mut out = String::with_capacity(url.len());
+    for ch in url.chars() {
+        match ch {
+            '!'..='~' if !matches!(ch, '"' | '<' | '>' | '\\' | '^' | '`' | '{' | '|' | '}') => {
+                out.push(ch)
+            }
+            _ => {
+                let mut buffer = [0u8; 4];
+                for byte in ch.encode_utf8(&mut buffer).bytes() {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Sends a request for a source: rate-limited, with the source's cookies when
 /// its cookie jar is on, following redirects by hand.
 pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
@@ -311,7 +333,7 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
         &env.control,
     )?;
     let started = Instant::now();
-    let mut url = request.url.clone();
+    let mut url = wire_url(&request.url);
     let mut method = request.method;
     let mut body = request.body.clone();
     for _ in 0..=MAX_REDIRECTS {
@@ -379,7 +401,7 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
             .map(|(_, value)| value.clone());
         if request.follow_redirects && (300..400).contains(&code) && code != 304 {
             if let Some(location) = location {
-                url = super::util::absolute_url(&url, &location);
+                url = wire_url(&super::util::absolute_url(&url, &location));
                 if code == 303 || ((code == 301 || code == 302) && method == HttpMethod::Post) {
                     method = HttpMethod::Get;
                     body = None;
@@ -388,12 +410,19 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
             }
         }
         let mut bytes = Vec::new();
-        response
+        match response
             .body_mut()
             .as_reader()
             .take(MAX_BODY)
             .read_to_end(&mut bytes)
-            .map_err(|error| SourceError::network(format!("读取响应失败：{error}")))?;
+        {
+            Ok(_) => {}
+            // A server that hangs up without TLS close_notify still sent its
+            // page; OkHttp keeps what arrived, and so does this.
+            Err(error)
+                if !bytes.is_empty() && error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+            Err(error) => return Err(SourceError::network(format!("读取响应失败：{error}"))),
+        }
         let content_type = headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case("content-type"))
@@ -435,6 +464,18 @@ fn run<B: ureq::AsSendBody>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn addresses_go_out_encoded_like_okhttp() {
+        assert_eq!(
+            wire_url("https://a.com/search/我的/1.html?q=%E6%88%91 x#top"),
+            "https://a.com/search/%E6%88%91%E7%9A%84/1.html?q=%E6%88%91%20x"
+        );
+        assert_eq!(
+            wire_url("https://a.com/a?b=1&c=[2]"),
+            "https://a.com/a?b=1&c=[2]"
+        );
+    }
 
     #[test]
     fn cookie_domains_are_registrable_domains() {

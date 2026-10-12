@@ -960,4 +960,116 @@ mod engine_tests {
     fn session_with(source: serde_json::Value) -> SourceSession {
         session(source)
     }
+
+    /// Checks the sources in `GRIPREAD_SOURCES` (a Legado JSON array) against
+    /// their live sites and writes one line per source to
+    /// `GRIPREAD_SOURCES_REPORT`. Live sites change, so this is a tool for
+    /// compatibility reports, not an acceptance test.
+    #[test]
+    #[ignore]
+    fn live_source_report() {
+        let path = std::env::var("GRIPREAD_SOURCES").expect("GRIPREAD_SOURCES");
+        let out = std::env::var("GRIPREAD_SOURCES_REPORT").expect("GRIPREAD_SOURCES_REPORT");
+        let text = std::fs::read_to_string(path).unwrap();
+        let sources: Vec<BookSource> = crate::sources::model::parse_sources(&text)
+            .unwrap()
+            .into_iter()
+            .filter_map(|value| BookSource::from_value(value).ok())
+            .filter(|source| source.source_type() == 0)
+            .collect();
+        let queue = Arc::new(Mutex::new(sources));
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let workers: Vec<_> = (0..12)
+            .map(|_| {
+                let (queue, lines) = (queue.clone(), lines.clone());
+                std::thread::Builder::new()
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn(move || loop {
+                        let Some(source) = queue.lock().unwrap().pop() else {
+                            break;
+                        };
+                        let name = source.name();
+                        let started = Instant::now();
+                        let control = Control::new(
+                            Arc::new(AtomicBool::new(false)),
+                            Some(started + Duration::from_secs(120)),
+                        );
+                        let (failures, logs) = match SourceSession::new(
+                            source,
+                            Arc::new(MemoryStore::default()),
+                            control,
+                        ) {
+                            Ok(session) => {
+                                let failures = check_one(&session, "", &|_| ());
+                                let logs = session.logs();
+                                let tail = logs[logs.len().saturating_sub(4)..].to_vec();
+                                (failures, tail)
+                            }
+                            Err(error) => {
+                                (vec![(failure_group("搜索", &error), error.message)], vec![])
+                            }
+                        };
+                        let line = serde_json::json!({
+                            "name": name,
+                            "ms": started.elapsed().as_millis() as u64,
+                            "failures": failures,
+                            "logs": logs,
+                        });
+                        eprintln!("{line}");
+                        lines.lock().unwrap().push(line);
+                    })
+                    .unwrap()
+            })
+            .collect();
+        for worker in workers {
+            let _ = worker.join();
+        }
+        let lines = lines.lock().unwrap();
+        std::fs::write(out, serde_json::to_string_pretty(&*lines).unwrap()).unwrap();
+    }
+
+    /// Runs 调试 for the sources in `GRIPREAD_SOURCES` whose name contains
+    /// `GRIPREAD_SOURCE_NAME`, printing every line and request.
+    #[test]
+    #[ignore]
+    fn live_source_debug() {
+        let path = std::env::var("GRIPREAD_SOURCES").expect("GRIPREAD_SOURCES");
+        let name = std::env::var("GRIPREAD_SOURCE_NAME").expect("GRIPREAD_SOURCE_NAME");
+        let key = std::env::var("GRIPREAD_SOURCE_KEY").unwrap_or_default();
+        let text = std::fs::read_to_string(path).unwrap();
+        let sources = crate::sources::model::parse_sources(&text).unwrap();
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                for value in sources {
+                    let Ok(source) = BookSource::from_value(value) else {
+                        continue;
+                    };
+                    if source.name() != name || source.source_type() != 0 {
+                        continue;
+                    }
+                    let key = if key.is_empty() {
+                        source
+                            .rule("ruleSearch", "checkKeyWord")
+                            .unwrap_or_else(|| "我的".into())
+                    } else {
+                        key.clone()
+                    };
+                    let session = SourceSession::new(
+                        source,
+                        Arc::new(MemoryStore::default()),
+                        Control::new(
+                            Arc::new(AtomicBool::new(false)),
+                            Some(Instant::now() + Duration::from_secs(120)),
+                        ),
+                    )
+                    .unwrap();
+                    let outcome = debug_run(&session, &key, &|line| eprintln!("{line}"));
+                    eprintln!("== {outcome:?}");
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

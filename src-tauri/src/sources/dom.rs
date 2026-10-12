@@ -510,6 +510,74 @@ impl Element {
     }
 }
 
+/// The document `root` parsed again without `removed` and their contents,
+/// which is how `Element.remove()` changes a page.
+pub fn without(root: &Element, removed: &[Element]) -> Element {
+    let skip: HashSet<NodeId> = removed.iter().map(|element| element.id).collect();
+    let mut out = String::new();
+    write_raw(root.doc.html.tree.root(), &mut out, &skip);
+    parse(&out, &root.doc.base_url)
+}
+
+/// Serializes a node as written, leaving out the `skip` subtrees.
+fn write_raw(node: NodeRef<'_, HtmlNode>, out: &mut String, skip: &HashSet<NodeId>) {
+    if skip.contains(&node.id()) {
+        return;
+    }
+    match node.value() {
+        HtmlNode::Text(text) => {
+            let raw = node.parent().is_some_and(|parent| {
+                parent
+                    .value()
+                    .as_element()
+                    .is_some_and(|element| matches!(element.name(), "script" | "style"))
+            });
+            if raw {
+                out.push_str(text);
+            } else {
+                escape_text(text, out);
+            }
+        }
+        HtmlNode::Element(element) => {
+            let name = element.name();
+            out.push('<');
+            out.push_str(name);
+            for (key, value) in element.attrs() {
+                out.push(' ');
+                out.push_str(key);
+                out.push_str("=\"");
+                escape_attr(value, out);
+                out.push('"');
+            }
+            out.push('>');
+            if VOID_TAGS.contains(&name) {
+                return;
+            }
+            for child in node.children() {
+                write_raw(child, out, skip);
+            }
+            out.push_str("</");
+            out.push_str(name);
+            out.push('>');
+        }
+        HtmlNode::Comment(comment) => {
+            out.push_str("<!--");
+            out.push_str(comment);
+            out.push_str("-->");
+        }
+        HtmlNode::Doctype(doctype) => {
+            out.push_str("<!doctype ");
+            out.push_str(doctype.name());
+            out.push('>');
+        }
+        _ => {
+            for child in node.children() {
+                write_raw(child, out, skip);
+            }
+        }
+    }
+}
+
 /// Serializes a node the way Jsoup's pretty printer lays it out: block
 /// elements on their own indented lines, inline content kept on the line.
 fn write_node(

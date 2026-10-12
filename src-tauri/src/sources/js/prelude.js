@@ -88,6 +88,40 @@
     Object.setPrototypeOf(list, ElementsProto);
     return list;
   }
+  // JSON a rule hands to a script is a Java Map or List under Rhino, so
+  // String(result) reads `{key=value, …}` or `[a, b]`, which scripts match on.
+  function javaText(value) {
+    return value === null || value === undefined ? "null" : String(value);
+  }
+  function mapToString() {
+    var self = this;
+    return (
+      "{" +
+      Object.keys(self)
+        .map(function (key) {
+          return key + "=" + javaText(self[key]);
+        })
+        .join(", ") +
+      "}"
+    );
+  }
+  function listToString() {
+    return "[" + Array.prototype.map.call(this, javaText).join(", ") + "]";
+  }
+  function javaJson(value) {
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+      hide(value, "toString", listToString);
+      value.forEach(javaJson);
+    } else {
+      hide(value, "toString", mapToString);
+      Object.keys(value).forEach(function (key) {
+        javaJson(value[key]);
+      });
+    }
+    return value;
+  }
+  hide(global, "__gr_java_json", javaJson);
   hide(global, "__gr_element", element);
   hide(global, "__gr_elements", elements);
 
@@ -172,6 +206,9 @@
     textNodes: function () {
       return native.elTextNodes(this.__h);
     },
+    remove: function () {
+      native.elRemove([this.__h]);
+    },
     toString: function () {
       return native.elOuterHtml(this.__h);
     },
@@ -184,6 +221,14 @@
   });
 
   var listMethods = {
+    remove: function () {
+      native.elRemove(
+        this.map(function (item) {
+          return item.__h;
+        }),
+      );
+      return this;
+    },
     text: function () {
       return this.map(function (item) {
         return item.text();
@@ -287,6 +332,41 @@
     hide(book, "getTocUrl", function () {
       return book.tocUrl;
     });
+    // Legado's Book getters and setters over the plain fields.
+    [
+      "name",
+      "author",
+      "kind",
+      "coverUrl",
+      "intro",
+      "wordCount",
+      "latestChapterTitle",
+      "bookUrl",
+      "tocUrl",
+      "origin",
+      "originName",
+    ].forEach(function (field) {
+      var suffix = field.charAt(0).toUpperCase() + field.slice(1);
+      if (!book["get" + suffix])
+        hide(book, "get" + suffix, function () {
+          return book[field];
+        });
+      hide(book, "set" + suffix, function (value) {
+        book[field] = value === null || value === undefined ? "" : String(value);
+      });
+    });
+    hide(book, "getReverseToc", function () {
+      return !!book.reverseToc;
+    });
+    hide(book, "setReverseToc", function (value) {
+      book.reverseToc = !!value;
+    });
+    hide(book, "getDisplayName", function () {
+      return book.name;
+    });
+    hide(book, "getDisplayIntro", function () {
+      return book.intro;
+    });
     return book;
   });
   hide(global, "__gr_chapter", function (chapter) {
@@ -347,6 +427,22 @@
       raw: function () {
         return response;
       },
+      request: function () {
+        return {
+          url: function () {
+            return data.url;
+          },
+          method: function () {
+            return "GET";
+          },
+          headers: function () {
+            return {};
+          },
+        };
+      },
+      isSuccessful: function () {
+        return data.code >= 200 && data.code < 300;
+      },
       toString: function () {
         return data.body;
       },
@@ -367,6 +463,8 @@
           };
         }
         if (typeof name === "symbol") return undefined;
+        if (name === "__className") return path.split(".").pop();
+        if (name === "__javaPackage") return path;
         return unsupported(path + "." + String(name));
       },
       apply: function () {
@@ -378,6 +476,14 @@
     });
   }
   function pkg(path, members) {
+    Object.keys(members).forEach(function (name) {
+      var member = members[name];
+      if ((typeof member === "function" || typeof member === "object") && member !== null) {
+        if (!Object.prototype.hasOwnProperty.call(member, "__className"))
+          hide(member, "__className", name);
+      }
+    });
+    hide(members, "__javaPackage", path);
     return new Proxy(members, {
       get: function (target, name) {
         if (typeof name === "symbol" || name in target) return target[name];
@@ -434,6 +540,143 @@
   SimpleDateFormat.prototype.format = function (date) {
     var time = date instanceof Date ? date.getTime() : Number(date);
     return native.timeFormatPattern(time, this.pattern);
+  };
+
+  // javax.crypto and java.security, over Java-style signed byte arrays.
+  function javaBytes(value, charset) {
+    if (Array.isArray(value)) return value;
+    if (value && value.__bytes) return value.__bytes;
+    return native.strToBytes(String(value === undefined ? "" : value), charset || "UTF-8");
+  }
+  function construct(build) {
+    // Rhino lets scripts call Java constructors with or without `new`.
+    return function () {
+      return build.apply(null, arguments);
+    };
+  }
+  var SecretKeySpec = construct(function (key, algorithm) {
+    var bytes = javaBytes(key);
+    return {
+      __bytes: bytes,
+      getEncoded: function () {
+        return bytes.slice();
+      },
+      getAlgorithm: function () {
+        return String(algorithm);
+      },
+    };
+  });
+  var IvParameterSpec = construct(function (iv) {
+    var bytes = javaBytes(iv);
+    return {
+      __bytes: bytes,
+      getIV: function () {
+        return bytes.slice();
+      },
+    };
+  });
+  function digester(update, finish) {
+    var parts = [];
+    return {
+      update: function (data) {
+        parts = parts.concat(javaBytes(data));
+      },
+      take: function (data) {
+        if (data !== undefined) parts = parts.concat(javaBytes(data));
+        var all = parts;
+        parts = [];
+        return all;
+      },
+    };
+  }
+  var Cipher = {
+    ENCRYPT_MODE: 1,
+    DECRYPT_MODE: 2,
+    getInstance: function (transformation) {
+      var mode = 1;
+      var key = null;
+      var iv = null;
+      var buffer = digester();
+      return {
+        init: function (opmode, secret, spec) {
+          mode = Number(opmode);
+          key = javaBytes(secret);
+          iv = spec === undefined || spec === null ? null : javaBytes(spec);
+        },
+        update: function (data) {
+          buffer.update(data);
+          return [];
+        },
+        doFinal: function (data) {
+          return native.cipherBytes(String(transformation), mode, key, iv, buffer.take(data));
+        },
+      };
+    },
+  };
+  var MessageDigest = {
+    getInstance: function (algorithm) {
+      var buffer = digester();
+      return {
+        update: function (data) {
+          buffer.update(data);
+        },
+        digest: function (data) {
+          return native.digestBytes(String(algorithm), buffer.take(data));
+        },
+        reset: function () {
+          buffer.take();
+        },
+      };
+    },
+  };
+  var JavaMac = {
+    getInstance: function (algorithm) {
+      var key = [];
+      var buffer = digester();
+      return {
+        init: function (secret) {
+          key = javaBytes(secret);
+        },
+        update: function (data) {
+          buffer.update(data);
+        },
+        doFinal: function (data) {
+          return native.hmacBytes(String(algorithm), key, buffer.take(data));
+        },
+      };
+    },
+  };
+  var JavaArrays = {
+    copyOfRange: function (array, from, to) {
+      var out = Array.prototype.slice.call(array, from, to);
+      while (out.length < to - from) out.push(0);
+      return out;
+    },
+    copyOf: function (array, length) {
+      return JavaArrays.copyOfRange(array, 0, length);
+    },
+    toString: function (array) {
+      return "[" + Array.prototype.join.call(array, ", ") + "]";
+    },
+    asList: function () {
+      return arguments.length === 1 && Array.isArray(arguments[0])
+        ? arguments[0].slice()
+        : Array.prototype.slice.call(arguments);
+    },
+    fill: function (array, value) {
+      for (var i = 0; i < array.length; i++) array[i] = value;
+    },
+    equals: function (a, b) {
+      return JavaArrays.toString(a) === JavaArrays.toString(b);
+    },
+  };
+  var StandardCharsets = {
+    UTF_8: "UTF-8",
+    ISO_8859_1: "ISO-8859-1",
+    US_ASCII: "US-ASCII",
+    UTF_16: "UTF-16",
+    UTF_16LE: "UTF-16LE",
+    UTF_16BE: "UTF-16BE",
   };
 
   var javaPackage = pkg("java", {
@@ -529,13 +772,127 @@
       Date: Date,
       HashMap: Map,
       ArrayList: Array,
+      Arrays: JavaArrays,
     }),
+    nio: pkg("java.nio", {
+      charset: pkg("java.nio.charset", {
+        StandardCharsets: StandardCharsets,
+        Charset: {
+          forName: function (name) {
+            return String(name);
+          },
+        },
+      }),
+    }),
+    security: pkg("java.security", { MessageDigest: MessageDigest }),
     text: pkg("java.text", { SimpleDateFormat: SimpleDateFormat }),
   });
+
+  function JsoupConnection(url) {
+    var self = this;
+    var headers = {};
+    var data = [];
+    var body = null;
+    var method = "GET";
+    var follow = true;
+    var ignoreErrors = false;
+    var timeout = 0;
+    var chain = function (fn) {
+      return function () {
+        fn.apply(null, arguments);
+        return self;
+      };
+    };
+    this.header = chain(function (name, value) {
+      headers[String(name)] = String(value);
+    });
+    this.headers = chain(function (map) {
+      Object.keys(map || {}).forEach(function (key) {
+        headers[key] = String(map[key]);
+      });
+    });
+    this.userAgent = chain(function (value) {
+      headers["User-Agent"] = String(value);
+    });
+    this.referrer = chain(function (value) {
+      headers["Referer"] = String(value);
+    });
+    this.cookie = chain(function (name, value) {
+      var current = headers["Cookie"] ? headers["Cookie"] + "; " : "";
+      headers["Cookie"] = current + name + "=" + value;
+    });
+    this.cookies = chain(function (map) {
+      Object.keys(map || {}).forEach(function (key) {
+        self.cookie(key, map[key]);
+      });
+    });
+    this.data = chain(function (key, value) {
+      if (typeof key === "object") {
+        Object.keys(key).forEach(function (name) {
+          data.push(encodeURIComponent(name) + "=" + encodeURIComponent(key[name]));
+        });
+      } else {
+        data.push(encodeURIComponent(key) + "=" + encodeURIComponent(value));
+      }
+    });
+    this.requestBody = chain(function (value) {
+      body = String(value);
+    });
+    this.method = chain(function (value) {
+      method = String(value && value.name ? value.name : value).replace(/^.*\./, "");
+    });
+    this.followRedirects = chain(function (value) {
+      follow = !!value;
+    });
+    this.ignoreHttpErrors = chain(function (value) {
+      ignoreErrors = !!value;
+    });
+    this.timeout = chain(function (value) {
+      timeout = Number(value);
+    });
+    ["ignoreContentType", "maxBodySize", "validateTLSCertificates", "sslSocketFactory", "proxy"].forEach(
+      function (name) {
+        self[name] = chain(function () {});
+      },
+    );
+    this.execute = function () {
+      var target = String(url);
+      var payload = body;
+      if (data.length) {
+        if (method === "GET") target += (target.indexOf("?") < 0 ? "?" : "&") + data.join("&");
+        else if (payload === null) payload = data.join("&");
+      }
+      var response = native.jsoupExecute(target, method, headers, payload, follow, timeout);
+      var code = response.statusCode();
+      if (!ignoreErrors && (code < 200 || code >= 400))
+        throw new Error("HTTP error fetching URL. Status=" + code + ", URL=" + target);
+      hide(response, "bodyAsBytes", function () {
+        return native.base64DecodeBytes(response.__bytes, 0);
+      });
+      hide(response, "parse", function () {
+        return jsoup.parse(response.body(), response.url());
+      });
+      hide(response, "charset", function () {
+        return "UTF-8";
+      });
+      return response;
+    };
+    this.get = function () {
+      method = "GET";
+      return self.execute().parse();
+    };
+    this.post = function () {
+      method = "POST";
+      return self.execute().parse();
+    };
+  }
 
   var jsoup = {
     parse: function (html) {
       return element(native.jsoupParse(String(html)));
+    },
+    connect: function (url) {
+      return new JsoupConnection(url);
     },
   };
 
@@ -555,26 +912,58 @@
       }),
     }),
     org: pkg("org", { jsoup: pkg("org.jsoup", { Jsoup: jsoup }) }),
-    javax: unsupported("javax"),
+    javax: pkg("javax", {
+      crypto: pkg("javax.crypto", {
+        Cipher: Cipher,
+        Mac: JavaMac,
+        spec: pkg("javax.crypto.spec", {
+          SecretKeySpec: SecretKeySpec,
+          IvParameterSpec: IvParameterSpec,
+        }),
+      }),
+    }),
     cn: unsupported("cn"),
   });
   hide(global, "Packages", packages);
   hide(global, "org", packages.org);
   hide(global, "android", packages.android);
 
-  hide(global, "JavaImporter", function () {
-    var scope = {};
-    for (var i = 0; i < arguments.length; i++) {
-      var source = arguments[i];
-      if (source && typeof source === "object") {
-        Object.keys(source).forEach(function (name) {
-          scope[name] = source[name];
+  // Rhino's importers. A JavaImporter is the object of a `with` block, so
+  // its classes shadow globals there (`String` becomes java.lang.String);
+  // top-level imports only fill names the global scope lacks.
+  function importInto(scope, items, overwrite) {
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (!item || (typeof item !== "object" && typeof item !== "function")) continue;
+      var name = item.__className;
+      var isPackage = typeof item.__javaPackage === "string" && !(typeof item === "function");
+      if (isPackage) {
+        Object.keys(item).forEach(function (key) {
+          if (overwrite || !(key in scope)) scope[key] = item[key];
         });
+      } else if (name && (overwrite || !(name in scope))) {
+        scope[name] = item;
       }
     }
+  }
+  function JavaImporter() {
+    var scope = {};
+    hide(scope, "importPackage", function () {
+      importInto(scope, arguments, true);
+    });
+    hide(scope, "importClass", function () {
+      importInto(scope, arguments, true);
+    });
+    importInto(scope, arguments, true);
     return scope;
+  }
+  hide(global, "JavaImporter", JavaImporter);
+  hide(global, "importPackage", function () {
+    importInto(global, arguments, false);
   });
-
+  hide(global, "importClass", function () {
+    importInto(global, arguments, false);
+  });
 })(globalThis);
 
 // Runs a source script with Legado's bindings as locals, returning the

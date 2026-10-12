@@ -107,12 +107,30 @@ pub fn evaluate(scope: &Element, path: &str) -> Result<Vec<Hit>, String> {
     let package = Package::new();
     let document = package.as_document();
     let mut ids = HashMap::new();
-    // An element scope becomes the document's top element, as JsoupXpath
-    // treats an element it is given.
+    // An element scope becomes the document's top element. JsoupXpath reads
+    // `//a` there as the element or any descendant, and `/a`, `a`, or `@x`
+    // as the element's children or attributes, so those start at the top.
     let tops: Vec<NodeRef<'_, HtmlNode>> = if scope.is_document() {
         scope.node().children().collect()
     } else {
         vec![scope.node()]
+    };
+    let rooted;
+    let base_path = if scope.is_document() || base_path.starts_with("//") {
+        base_path
+    } else {
+        rooted = if let Some(rest) = base_path.strip_prefix("./") {
+            format!("/*/{rest}")
+        } else if base_path.starts_with('/') {
+            format!("/*{base_path}")
+        } else if base_path == "." {
+            "/*".to_string()
+        } else if base_path.starts_with('(') || base_path.contains("::") {
+            base_path.to_string()
+        } else {
+            format!("/*/{base_path}")
+        };
+        rooted.as_str()
     };
     for top in tops {
         if let HtmlNode::Element(element) = top.value() {
@@ -229,5 +247,9 @@ mod tests {
         };
         assert_eq!(get_string(&item, "//a/text()").unwrap().unwrap(), "第二章");
         assert_eq!(get_string(&item, "//a/@href").unwrap().unwrap(), "/2.html");
+        // As in JsoupXpath, a single slash starts at the element's children.
+        assert_eq!(get_string(&item, "/a/text()").unwrap().unwrap(), "第二章");
+        assert_eq!(get_string(&item, "a/@href").unwrap().unwrap(), "/2.html");
+        assert_eq!(get_string(&item, "/li").unwrap(), None);
     }
 }

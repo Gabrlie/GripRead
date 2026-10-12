@@ -778,6 +778,9 @@ pub fn chapter_list(scope: &JsScope<'_>, book: &BookRef) -> SourceResult<Vec<Cha
         }
     }
     unique.reverse();
+    if book.borrow().reverse_toc {
+        unique.reverse();
+    }
     for (index, chapter) in unique.iter_mut().enumerate() {
         chapter.index = index;
     }
