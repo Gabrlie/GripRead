@@ -342,15 +342,16 @@ impl Storage {
         Ok(book_id)
     }
 
-    /// The shelf's online book with this name and author, which Legado treats
-    /// as the same book whatever its source.
+    /// The kept online book with this name and author, which Legado treats
+    /// as the same book whatever its source: the shelf's copy first, else one
+    /// read from search without adding it.
     pub fn find_online_book(&self, name: &str, author: &str) -> Result<Option<String>, AppError> {
         Ok(self
             .conn
             .query_row(
                 "SELECT b.id FROM books b JOIN online_books o ON o.book_id = b.id
-                 WHERE o.on_shelf = 1 AND b.title = ?1 AND COALESCE(b.author, '') = ?2
-                 ORDER BY b.updated_at DESC LIMIT 1",
+                 WHERE b.title = ?1 AND COALESCE(b.author, '') = ?2
+                 ORDER BY o.on_shelf DESC, b.updated_at DESC LIMIT 1",
                 params![name.trim(), author.trim()],
                 |row| row.get(0),
             )
@@ -694,13 +695,34 @@ impl Storage {
         Ok(())
     }
 
-    /// Opening a book clears its new-chapter mark, as Legado does.
+    /// Opening a book clears its new-chapter mark, as Legado does, and
+    /// keeps a book read off the shelf for another 30 days.
     pub fn clear_online_new_chapters(&self, book_id: &str) -> Result<(), AppError> {
         self.conn.execute(
-            "UPDATE online_books SET new_chapters = 0 WHERE book_id = ?1",
-            params![book_id],
+            "UPDATE online_books SET new_chapters = 0, last_opened_at = ?2 WHERE book_id = ?1",
+            params![book_id, now_millis()],
         )?;
         Ok(())
+    }
+
+    /// Deletes books read from search but not added that were not opened
+    /// for 30 days. Returns how many went.
+    pub fn purge_unshelved_online_books(&mut self) -> Result<u32, AppError> {
+        let cutoff = now_millis() - 30 * 24 * 3_600_000;
+        let ids: Vec<String> = {
+            let mut statement = self.conn.prepare(
+                "SELECT book_id FROM online_books
+                 WHERE on_shelf = 0 AND COALESCE(last_opened_at, created_at) < ?1",
+            )?;
+            let rows = statement
+                .query_map(params![cutoff], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            rows
+        };
+        for id in &ids {
+            self.delete_online_book(id)?;
+        }
+        Ok(ids.len() as u32)
     }
 
     pub fn set_online_on_shelf(&self, book_id: &str, on: bool) -> Result<(), AppError> {
@@ -1102,5 +1124,31 @@ mod tests {
         assert!(record.deleted);
         assert_eq!(record.title, "剑来");
         assert_eq!(record.seconds, 600);
+    }
+
+    #[test]
+    fn books_read_off_the_shelf_keep_their_place_for_30_days() {
+        let (_dir, mut storage) = storage();
+        let toc = chapters(&["第1章"], "a");
+        let old = storage.add_online_book(&book("a"), &toc, false).unwrap();
+        let mut other = book("b");
+        other.name = "雪中".into();
+        let fresh = storage.add_online_book(&other, &toc, false).unwrap();
+        storage.clear_online_new_chapters(&fresh).unwrap();
+        storage
+            .conn
+            .execute(
+                "UPDATE online_books SET created_at = 0, last_opened_at = 0 WHERE book_id = ?1",
+                params![old],
+            )
+            .unwrap();
+        // Found again from search even though it is off the shelf.
+        assert_eq!(
+            storage.find_online_book("雪中", "烽火").unwrap(),
+            Some(fresh.clone())
+        );
+        assert_eq!(storage.purge_unshelved_online_books().unwrap(), 1);
+        assert!(storage.online_record(&old).is_err());
+        assert!(storage.online_record(&fresh).is_ok());
     }
 }

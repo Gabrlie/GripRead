@@ -125,7 +125,18 @@ fn release_toc_build(
 
 impl AppState {
     pub fn new(data_dir: PathBuf) -> Result<Self, AppError> {
-        let storage = Storage::open(&data_dir)?;
+        let mut storage = Storage::open(&data_dir)?;
+        match storage.purge_unshelved_online_books() {
+            Ok(0) => {}
+            Ok(count) => crate::app_log::info(
+                "library",
+                format!("清理了 {count} 本 30 天未打开、未加入书架的网络书籍"),
+            ),
+            Err(error) => crate::app_log::warn(
+                "library",
+                format!("清理未加入书架的书失败：{}", error.message),
+            ),
+        }
         let data_root = storage.root_path().to_path_buf();
         // Storage now holds the exclusive data lock, so no other process owns these copies.
         crate::documents::clear_staging(&data_root)?;

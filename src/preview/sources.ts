@@ -428,15 +428,14 @@ export function createMemorySourceService(
       };
       kept.set(bookId, changed);
       keptChapters.set(bookId, chapters);
-      return { book: changed, chapter: entry.online.readChapter, certain: true };
+      return { book: changed, chapter: entry.online.readChapter, certain: true, locator: null };
     },
-    findOnlineBook: async (name, author) =>
-      [...kept.values()].find(
-        (entry) =>
-          entry.online?.onShelf &&
-          entry.book.title === name &&
-          (entry.book.author ?? "") === author,
-      ) ?? null,
+    findOnlineBook: async (name, author) => {
+      const same = [...kept.values()].filter(
+        (entry) => entry.book.title === name && (entry.book.author ?? "") === author,
+      );
+      return same.find((entry) => entry.online?.onShelf) ?? same[0] ?? null;
+    },
     getLibraryBook: async (bookId) => {
       const entry = kept.get(bookId);
       if (!entry) throw new Error("书籍不存在");

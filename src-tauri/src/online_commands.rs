@@ -631,6 +631,7 @@ pub async fn change_online_source(
             book: storage.library_book(&request.book_id)?,
             chapter: moved.map(|(index, _)| index),
             certain: moved.is_none_or(|(_, certain)| certain),
+            locator: storage.saved_position(&request.book_id)?,
         })
     })
     .await

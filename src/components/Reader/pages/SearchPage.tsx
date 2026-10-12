@@ -10,9 +10,15 @@ interface SearchPageProps {
   totalLength: number;
   onOpenMatch: (index: number) => void;
   onClose: () => void;
+  /** An online book: chapters are resources, and only kept ones are searched. */
+  byResource?: boolean;
 }
 
-function chapterAt(toc: TocEntry[], offset: number): string {
+function chapterAt(toc: TocEntry[], match: SearchMatch, byResource: boolean): string {
+  // A book read chapter by chapter names the chapter by its resource.
+  if (byResource)
+    return toc.find((entry) => entry.locator.resourceId === match.locator.resourceId)?.title ?? "";
+  const offset = match.matchStart;
   let title = "";
   for (const entry of toc) {
     if (entry.locator.offset <= offset) title = entry.title;
@@ -56,7 +62,14 @@ function emphasize(excerpt: string, query: string, regex: boolean) {
  * Legado's in-book search screen: results carry their chapter, surrounding
  * text with the match emphasized, and their position in the book.
  */
-export function SearchPage({ search, toc, totalLength, onOpenMatch, onClose }: SearchPageProps) {
+export function SearchPage({
+  search,
+  toc,
+  totalLength,
+  onOpenMatch,
+  onClose,
+  byResource = false,
+}: SearchPageProps) {
   const percent = (match: SearchMatch) =>
     totalLength > 0 ? `${((match.matchStart / totalLength) * 100).toFixed(1)}%` : "";
   return (
@@ -133,6 +146,11 @@ export function SearchPage({ search, toc, totalLength, onOpenMatch, onClose }: S
               正在搜索…
             </p>
           )}
+          {byResource && (
+            <p className="text-[11px] text-secondary px-1">
+              只搜索已缓存的章节；要搜索更多，可以在书籍详情里缓存后面的章节。
+            </p>
+          )}
           {search.complete && search.matches.length === 0 && (
             <p className="text-sm text-secondary px-1">没有找到“{search.query}”。</p>
           )}
@@ -151,9 +169,11 @@ export function SearchPage({ search, toc, totalLength, onOpenMatch, onClose }: S
             >
               <span className="flex items-center gap-2 text-xs">
                 <span className="flex-1 min-w-0 truncate text-primary font-medium">
-                  {chapterAt(toc, match.matchStart) || "开头"}
+                  {chapterAt(toc, match, byResource) || "开头"}
                 </span>
-                <span className="text-secondary tabular-nums shrink-0">{percent(match)}</span>
+                {!byResource && (
+                  <span className="text-secondary tabular-nums shrink-0">{percent(match)}</span>
+                )}
               </span>
               <span className="block text-sm leading-relaxed text-on-surface/90 break-words">
                 {emphasize(match.excerpt, search.query, search.regex)}

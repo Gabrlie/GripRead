@@ -582,8 +582,8 @@ export function ReaderView() {
           // Legado 同步阅读进度: leaving the reader uploads the position.
           if (leaving && progressSyncOn.current)
             void runtime.progressSync.upload(leaving, chapterTitle).catch(() => undefined);
-          if (leaving && shelfChoice.current === "leave")
-            void runtime.services.sources.leaveOnlineBook(leaving).catch(() => undefined);
+          // A book left off the shelf keeps its place for 30 days, so opening
+          // it again from search resumes reading.
           return runtime.library.refresh();
         })
         .catch(() => undefined);
@@ -1330,14 +1330,21 @@ export function ReaderView() {
         <ReaderBottomBar
           visible={controls && searchIndex === null && !previewing}
           previous={{
-            disabled: !state.chapter || state.chapter === state.chapters[0] || closing,
+            // A book read chapter by chapter also moves into the resource before.
+            disabled:
+              !state.chapter ||
+              (state.chapter === state.chapters[0] && !state.contentWindow?.previousResourceId) ||
+              closing,
             onClick: () => {
               void pauseAutomatic();
               if (controller) run(() => controller.seekChapter("previous"));
             },
           }}
           next={{
-            disabled: !state.chapter || state.chapter === state.chapters.at(-1) || closing,
+            disabled:
+              !state.chapter ||
+              (state.chapter === state.chapters.at(-1) && !state.contentWindow?.nextResourceId) ||
+              closing,
             onClick: () => {
               void pauseAutomatic();
               if (controller) run(() => controller.seekChapter("next"));
@@ -1498,11 +1505,18 @@ export function ReaderView() {
         <ChangeSourceDialog
           service={runtime.services.sources}
           book={activeBook}
-          onChanged={() => {
+          prepare={async () => {
+            // The switch maps the place saved now, not an older one.
+            await controller?.flush();
+          }}
+          onChanged={(result) => {
             setChangingSource(false);
-            // The position moved to the matching chapter of the new source.
-            if (controller && bookId) run(() => controller.open(bookId));
+            if (!bookId) return;
+            // The old place belongs to the old source's text; never save it again.
+            runtime.positions.forget(bookId);
             reloadTools();
+            const target = result.locator;
+            if (controller) run(() => (target ? controller.seek(target) : controller.open(bookId)));
           }}
           onClose={() => setChangingSource(false)}
         />
@@ -1513,7 +1527,10 @@ export function ReaderView() {
             <DialogHeader>
               <DialogTitle className="font-title-editorial text-base">加入书架</DialogTitle>
             </DialogHeader>
-            <p className="text-sm">《{activeBook.book.title}》还不在书架上，是否加入书架？</p>
+            <p className="text-sm">
+              《{activeBook.book.title}》还不在书架上，是否加入书架？不加入也会保留阅读进度 30
+              天，从搜索再次打开时接着读。
+            </p>
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
@@ -1603,6 +1620,7 @@ export function ReaderView() {
           search={search}
           toc={tools.toc}
           totalLength={totalLength}
+          byResource={Boolean(activeBook.online)}
           onOpenMatch={openMatch}
           onClose={closePanel}
         />

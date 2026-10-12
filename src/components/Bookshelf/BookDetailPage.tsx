@@ -616,6 +616,7 @@ function OnlineActions({
           book={book}
           onChanged={() => {
             setChanging(false);
+            runtime.positions.forget(id);
             onChanged();
           }}
           onClose={() => setChanging(false)}

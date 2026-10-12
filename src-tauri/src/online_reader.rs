@@ -719,6 +719,31 @@ mod tests {
         .unwrap();
         assert_eq!(found.matches.len(), 1);
         assert_eq!(found.matches[0].locator.resource_id, "chapter-1");
+        // Every kept chapter is searched, not only the one being read.
+        read_window(
+            &storage,
+            &request(&id, None, Some("chapter-2"), WindowDirection::Forward),
+        )
+        .unwrap();
+        let across = search(
+            &storage,
+            &SearchRequest {
+                book_id: id.clone(),
+                query: "段".into(),
+                case_sensitive: false,
+                regex: false,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            },
+        )
+        .unwrap();
+        let resources: Vec<&str> = across
+            .matches
+            .iter()
+            .map(|found| found.locator.resource_id.as_str())
+            .collect();
+        assert_eq!(resources, ["chapter-1", "chapter-1", "chapter-2"]);
 
         assert!(storage
             .lock()

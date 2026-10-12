@@ -39,6 +39,8 @@ interface MeasuredWindow {
 }
 
 const MAX_WINDOW_UNITS = 1_000_000;
+/** A chapter resource read whole to open it at its end. */
+const WHOLE_RESOURCE_UNITS = 400_000;
 const CONTEXT_UNITS = 32;
 
 export function emptyReaderSnapshot(bookId: string | null = null): ReaderSnapshot {
@@ -392,14 +394,19 @@ export class ReaderController {
     });
   }
 
-  /** A neighbouring resource from its start, or ending at its end. */
+  /**
+   * A neighbouring resource from its start. Entering it from its end
+   * still paginates from the start, as Legado does, so the last page is
+   * the one forward reading ends on instead of a short first page.
+   */
   private async readResource(
     bookId: string,
     resourceId: string,
     direction: WindowDirection,
     epoch: number,
   ): Promise<MeasuredWindow> {
-    return this.readAndMeasure(bookId, null, direction, epoch, undefined, resourceId);
+    const units = direction === "backward" ? WHOLE_RESOURCE_UNITS : undefined;
+    return this.readAndMeasure(bookId, null, "forward", epoch, undefined, resourceId, units);
   }
 
   public seekChapterProgress(progress: number): Promise<void> {
@@ -830,12 +837,13 @@ export class ReaderController {
     epoch: number,
     backwardAnchor?: number,
     resourceId?: string,
+    maxUnits = this.maxUnits,
   ): Promise<MeasuredWindow> {
     this.assertCurrent(epoch);
     const window = await this.service.readContentWindow({
       bookId,
       locator,
-      maxUnits: this.maxUnits,
+      maxUnits,
       direction,
       ...(resourceId ? { resourceId } : {}),
     });

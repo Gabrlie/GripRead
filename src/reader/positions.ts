@@ -30,8 +30,14 @@ export class ReaderPositions {
       ? Promise.resolve(this.latest.get(bookId)!)
       : this.service.getSavedReaderLocator(bookId);
   }
+  /**
+   * Drops what this session knows of a book's position, including a save
+   * not yet written, after the book's position changed elsewhere (换源).
+   */
   forget(bookId: string) {
     this.latest.delete(bookId);
+    this.pending.delete(bookId);
+    if (this.failures.delete(bookId)) this.notify();
   }
   queue(locator: ReaderLocator) {
     this.latest.set(locator.bookId, locator);

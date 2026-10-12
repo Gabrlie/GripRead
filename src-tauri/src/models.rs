@@ -1688,6 +1688,8 @@ pub struct ChangeOnlineSourceResult {
     /// False when no chapter matched by title or number, so the position
     /// kept its place in the contents.
     pub certain: bool,
+    /// The saved position after the switch.
+    pub locator: Option<ReaderLocator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

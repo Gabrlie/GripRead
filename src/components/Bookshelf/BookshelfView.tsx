@@ -602,6 +602,11 @@ function BookCardList({
             <span className="truncate min-w-0 text-[11px] sm:text-xs">
               最新：{book.latestChapter || book.lastReadChapter || "第一章"}
             </span>
+            {Boolean(book.entry.online?.newChapters) && (
+              <span className="shrink-0 rounded px-1 text-[10px] leading-4 bg-primary/10 text-primary">
+                新 {book.entry.online!.newChapters}
+              </span>
+            )}
             {book.entry.online?.updateError && (
               <span
                 className="shrink-0 text-[10px] text-error"
@@ -655,16 +660,21 @@ function BookCardGrid({
   );
 }
 
-/** Legado's red count of chapters the last 更新目录 added to an online book. */
+/** Legado's red count of an online book's chapters still unread. */
 function NewChaptersMark({ book }: { book: LibraryBook }) {
-  const count = book.online?.newChapters ?? 0;
+  const online = book.online;
+  if (!online) return null;
+  const count =
+    online.readChapter === null || !book.locator
+      ? online.totalChapters
+      : Math.max(0, online.totalChapters - online.readChapter - 1);
   if (!count) return null;
   return (
     <span
-      aria-label={`${count} 个新章节`}
+      aria-label={`还有 ${count} 章未读`}
       className="absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full bg-error text-on-error text-[10px] leading-4 text-center shadow-xs"
     >
-      {count > 99 ? "99+" : count}
+      {count > 999 ? "999+" : count}
     </span>
   );
 }

@@ -92,7 +92,16 @@ export function OnlineBookPage({
 
   /** The book as kept on the device, adding it with these details when needed. */
   const keep = async (shelf: boolean): Promise<LibraryBook> => {
-    if (kept && (keptHere || !book || !chapters)) return kept;
+    if (kept && (keptHere || !book || !chapters)) {
+      // A copy read before without adding it joins the shelf as it is.
+      if (shelf && !kept.online?.onShelf) {
+        await service.setOnShelf(kept.book.id, true);
+        const added = await service.getLibraryBook(kept.book.id);
+        setKept(added);
+        return added;
+      }
+      return kept;
+    }
     if (!book || !chapters) throw new Error("详情和目录还没有读取完");
     const entry = await service.addOnlineBook({ book, chapters, onShelf: shelf });
     if (shelf) setKept(entry);
@@ -192,6 +201,11 @@ export function OnlineBookPage({
           {onShelf && (
             <p className="text-[11px] text-primary">
               已在书架{keptHere ? "" : `（${kept?.online?.book.sourceName}）`}
+            </p>
+          )}
+          {kept && !onShelf && kept.online?.readChapterTitle && (
+            <p className="text-[11px] text-secondary truncate">
+              上次读到：{kept.online.readChapterTitle}
             </p>
           )}
         </div>

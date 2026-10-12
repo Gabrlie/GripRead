@@ -20,11 +20,14 @@ import { toast } from "../ui/toast";
 export function ChangeSourceDialog({
   service,
   book,
+  prepare,
   onChanged,
   onClose,
 }: {
   service: SourceService;
   book: LibraryBook;
+  /** Runs before switching, such as saving the reader's current place. */
+  prepare?: () => Promise<void>;
   onChanged: (result: ChangeOnlineSourceResult) => void;
   onClose: () => void;
 }) {
@@ -81,6 +84,7 @@ export function ChangeSourceDialog({
     void (async () => {
       const info = await service.bookInfo(origin);
       const chapters = await service.chapters(info);
+      await prepare?.();
       const result = await service.changeSource({ bookId: book.book.id, book: info, chapters });
       toast(
         result.certain

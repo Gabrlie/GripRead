@@ -848,6 +848,9 @@ describe("online books", () => {
     expect(screen.queryByRole("button", { name: "TXT目录规则" })).toBeNull();
     expect(screen.queryByRole("button", { name: "设置编码" })).toBeNull();
     expect(app.services.library.getTxtEncoding).not.toHaveBeenCalled();
+    const nextChapter = screen.getByRole("button", { name: "下一章" });
+    expect(nextChapter.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "上一章" }).hasAttribute("disabled")).toBe(true);
     tapSurface();
     tapSurface(0.9, 0.5);
     await waitFor(() => expect(screen.getByTestId("reader-page").textContent).toContain("第二段"));
@@ -868,8 +871,10 @@ describe("online books", () => {
     expect(navigation.closeReader).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "不加入" }));
     expect(navigation.closeReader).toHaveBeenCalledOnce();
-    await waitFor(() =>
-      expect(app.services.sources.leaveOnlineBook).toHaveBeenCalledWith("reader-book"),
-    );
+    // The book stays off the shelf with its place kept.
+    await act(async () => {
+      await app.flush();
+    });
+    expect(app.services.sources.leaveOnlineBook).not.toHaveBeenCalled();
   });
 });

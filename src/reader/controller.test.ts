@@ -954,4 +954,62 @@ describe("ReaderController with chapter resources", () => {
     await controller.seekChapter("previous");
     expect(controller.getSnapshot().page?.text).toBe("c");
   });
+
+  it("paginates the previous chapter from its start, as reading forward does", async () => {
+    const service = chapteredService(["abcde", "fg"]);
+    // Pages of two units from the start, or from the end when measured backward.
+    const measurer = {
+      measure(window: ContentWindow, direction?: string) {
+        const pages: ReaderPage[] = [];
+        const text = window.text;
+        if (direction === "backward") {
+          for (let end = text.length; end > 0; end -= 2) {
+            const start = Math.max(0, end - 2);
+            pages.unshift({
+              text: text.slice(start, end),
+              startOffset: window.startOffset + start,
+              endOffset: window.startOffset + end,
+              hasBefore: window.startOffset + start > 0,
+              hasAfter: window.startOffset + end < window.totalLength,
+            });
+          }
+          return pages;
+        }
+        return paginateText(text, window.startOffset, 2);
+      },
+    };
+    const controller = new ReaderController(service, { measurer, maxUnits: 8 });
+    await controller.open("online");
+    for (let step = 0; step < 3; step++) await controller.next();
+    expect(controller.getSnapshot().page?.text).toBe("fg");
+    await controller.previous();
+    // Forward pages are ab, cd, e: the last one, not a short "a" first page.
+    expect(controller.getSnapshot().page?.text).toBe("e");
+    await controller.previous();
+    expect(controller.getSnapshot().page?.text).toBe("cd");
+  });
+});
+
+describe("ReaderPositions.forget", () => {
+  it("drops a save not yet written, so an old place cannot return after 换源", async () => {
+    const saves: ReaderLocator[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const positions = new ReaderPositions({
+      saveReaderLocator: async (locator) => {
+        await gate;
+        saves.push(locator);
+        return locator;
+      },
+      getSavedReaderLocator: async () => null,
+    });
+    positions.queue(locatorFor("a", 1));
+    positions.queue(locatorFor("a", 2));
+    positions.forget("a");
+    release();
+    await positions.flush();
+    // The first save was already running; the queued one is gone.
+    expect(saves.map((locator) => locator.offset)).toEqual([1]);
+    expect(await positions.load("a")).toBeNull();
+  });
 });
