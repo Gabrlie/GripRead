@@ -37,6 +37,12 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const STEP_TIMEOUT: Duration = Duration::from_secs(90);
 const PAGE_CACHE_LIMIT: usize = 64;
 const UPDATE_WORKERS: usize = 4;
+/// Details and contents kept from a source are used for an hour.
+const BOOK_KEEP_MS: i64 = 3_600_000;
+const EXPLORE_KEEP_MS: i64 = 600_000;
+/// Covers are fetched a few at a time, each within its own limit.
+const COVER_WORKERS: usize = 4;
+const COVER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A book's details page and contents page, as one source fetched them.
 type KeptPages = (String, Option<String>, Option<String>);
@@ -407,14 +413,34 @@ pub async fn explore_books(
 ) -> Result<Vec<OnlineBook>, AppError> {
     let pages = pages.inner().clone();
     let source_url = request.source_url.clone();
-    run_step(&state, request.source_url, move |session| {
+    // A category page is kept for ten minutes, so going back and forth
+    // does not ask the source again.
+    let key = format!(
+        "explore:{}\n{}\n{}",
+        request.source_url, request.url, request.page
+    );
+    let kept = with_storage(&state, {
+        let key = key.clone();
+        move |storage| storage.cached_book_part(&key, "info", Some(EXPLORE_KEEP_MS))
+    })
+    .await?;
+    if let Some(books) = kept.and_then(|json| serde_json::from_str::<Vec<OnlineBook>>(&json).ok()) {
+        return Ok(books);
+    }
+    let books: Vec<OnlineBook> = run_step(&state, request.source_url, move |session| {
         let books = session.explore(&request.url, request.page.max(1) as i64)?;
         for book in &books {
             pages.remember(&source_url, book);
         }
         Ok(books.iter().map(online_book).collect())
     })
-    .await
+    .await?;
+    let json = serde_json::to_string(&books)?;
+    with_storage(&state, move |storage| {
+        storage.keep_book_part(&key, "info", &json)
+    })
+    .await?;
+    Ok(books)
 }
 
 #[tauri::command]
@@ -425,7 +451,18 @@ pub async fn online_book_info(
 ) -> Result<OnlineBook, AppError> {
     let pages = pages.inner().clone();
     let source_url = request.book.source_url.clone();
-    run_step(&state, source_url.clone(), move |session| {
+    let key = crate::storage::book_cache_key(&source_url, &request.book.book_url);
+    if !request.refresh.unwrap_or(false) {
+        let kept = with_storage(&state, {
+            let key = key.clone();
+            move |storage| storage.cached_book_part(&key, "info", Some(BOOK_KEEP_MS))
+        })
+        .await?;
+        if let Some(book) = kept.and_then(|json| serde_json::from_str::<OnlineBook>(&json).ok()) {
+            return Ok(book);
+        }
+    }
+    let book = run_step(&state, source_url.clone(), move |session| {
         let mut data = book_data(&request.book);
         pages.restore(&source_url, &mut data);
         let book = Rc::new(RefCell::new(data));
@@ -434,7 +471,13 @@ pub async fn online_book_info(
         pages.remember(&source_url, &data);
         Ok(online_book(&data))
     })
-    .await
+    .await?;
+    let json = serde_json::to_string(&book)?;
+    with_storage(&state, move |storage| {
+        storage.keep_book_part(&key, "info", &json)
+    })
+    .await?;
+    Ok(book)
 }
 
 #[tauri::command]
@@ -445,7 +488,20 @@ pub async fn online_book_chapters(
 ) -> Result<Vec<OnlineChapter>, AppError> {
     let pages = pages.inner().clone();
     let source_url = request.book.source_url.clone();
-    run_step(&state, source_url.clone(), move |session| {
+    let key = crate::storage::book_cache_key(&source_url, &request.book.book_url);
+    if !request.refresh.unwrap_or(false) {
+        let kept = with_storage(&state, {
+            let key = key.clone();
+            move |storage| storage.cached_book_part(&key, "toc", Some(BOOK_KEEP_MS))
+        })
+        .await?;
+        if let Some(chapters) =
+            kept.and_then(|json| serde_json::from_str::<Vec<OnlineChapter>>(&json).ok())
+        {
+            return Ok(chapters);
+        }
+    }
+    let chapters: Vec<OnlineChapter> = run_step(&state, source_url.clone(), move |session| {
         let mut data = book_data(&request.book);
         pages.restore(&source_url, &mut data);
         let book = Rc::new(RefCell::new(data));
@@ -455,7 +511,13 @@ pub async fn online_book_chapters(
         let chapters = session.chapters(&book)?;
         Ok(chapters.iter().map(online_chapter).collect())
     })
-    .await
+    .await?;
+    let json = serde_json::to_string(&chapters)?;
+    with_storage(&state, move |storage| {
+        storage.keep_book_part(&key, "toc", &json)
+    })
+    .await?;
+    Ok(chapters)
 }
 
 #[tauri::command]
@@ -480,35 +542,140 @@ pub async fn online_chapter_content(
     .await
 }
 
-/// A cover image fetched with the source's headers and cookies.
+/// Waits for one of the cover fetch slots.
+struct CoverSlot;
+
+fn cover_slots() -> &'static (Mutex<usize>, std::sync::Condvar) {
+    static SLOTS: std::sync::OnceLock<(Mutex<usize>, std::sync::Condvar)> =
+        std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| (Mutex::new(0), std::sync::Condvar::new()))
+}
+
+impl CoverSlot {
+    fn take() -> Self {
+        let (count, ready) = cover_slots();
+        let mut taken = count.lock().unwrap_or_else(|poison| poison.into_inner());
+        while *taken >= COVER_WORKERS {
+            taken = ready
+                .wait(taken)
+                .unwrap_or_else(|poison| poison.into_inner());
+        }
+        *taken += 1;
+        CoverSlot
+    }
+}
+
+impl Drop for CoverSlot {
+    fn drop(&mut self) {
+        let (count, ready) = cover_slots();
+        if let Ok(mut taken) = count.lock() {
+            *taken = taken.saturating_sub(1);
+        }
+        ready.notify_one();
+    }
+}
+
+/// A cover image: the kept copy, or fetched with the source's headers and
+/// cookies and then kept. Runs on an engine thread.
+fn cover_bytes(
+    storage: &Arc<Mutex<crate::storage::Storage>>,
+    source_url: &str,
+    url: &str,
+) -> Result<Vec<u8>, AppError> {
+    use crate::storage::CachedCover;
+    let key = crate::storage::cover_key(source_url, url);
+    let lock = || {
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
+    };
+    match lock()?.cached_cover(&key)? {
+        CachedCover::Kept(path) => return Ok(std::fs::read(path)?),
+        CachedCover::RecentlyFailed => {
+            return Err(AppError::new(ErrorCode::Io, "封面暂时无法下载"));
+        }
+        CachedCover::Unknown => {}
+    }
+    let _slot = CoverSlot::take();
+    let source = load_source(storage, source_url)?;
+    let control = Control::new(Default::default(), Some(Instant::now() + COVER_TIMEOUT));
+    let session = session_for(storage, source, control).map_err(engine_error)?;
+    let fetched = session.run_with_rule(|scope, rule| {
+        let address = AnalyzeUrl::new(
+            rule,
+            scope,
+            url,
+            None,
+            None,
+            &session.env().source.url(),
+            None,
+        )?;
+        let response = address.get_str_response(session.env())?;
+        let image = response.bytes.len() > 64
+            && !response.body.trim_start().starts_with('<')
+            && response.is_success();
+        if !image {
+            return Err(SourceError::network(format!(
+                "封面下载失败（{}）",
+                response.code
+            )));
+        }
+        Ok(response.bytes)
+    });
+    match fetched {
+        Ok(bytes) => {
+            lock()?.keep_cover(&key, &bytes)?;
+            Ok(bytes)
+        }
+        Err(error) => {
+            lock()?.record_cover_failure(&key)?;
+            crate::app_log::detail("source", format!("封面下载失败 {url}：{}", error.message));
+            Err(engine_error(error))
+        }
+    }
+}
+
+/// A cover image fetched with the source's headers and cookies, kept on
+/// the device after the first time.
 #[tauri::command]
 pub async fn online_cover(
     request: OnlineCoverRequest,
     state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let bytes = run_step(&state, request.source_url, move |session| {
-        session.run_with_rule(|scope, rule| {
-            let url = AnalyzeUrl::new(
-                rule,
-                scope,
-                &request.url,
-                None,
-                None,
-                &session.env().source.url(),
-                None,
-            )?;
-            let response = url.get_str_response(session.env())?;
-            if !response.is_success() || response.bytes.is_empty() {
-                return Err(SourceError::network(format!(
-                    "封面下载失败（{}）",
-                    response.code
-                )));
-            }
-            Ok(response.bytes)
-        })
-    })
-    .await?;
+    let storage = state.storage.clone();
+    let bytes = on_engine_thread(move || cover_bytes(&storage, &request.source_url, &request.url))
+        .await??;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Saves a source's cover as the book's own cover (加入书架, 换封面).
+#[tauri::command]
+pub async fn set_cover_from_source(
+    request: crate::models::SourceCoverRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    on_engine_thread(move || {
+        let bytes = cover_bytes(&storage, &request.source_url, &request.url)?;
+        let key = crate::storage::cover_key(&request.source_url, &request.url);
+        let mut guard = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        let path = guard.keep_cover(&key, &bytes)?;
+        let ext = image_extension(&bytes);
+        guard.set_book_cover(&request.book_id, &path, &format!("cover.{ext}"))?;
+        Ok(())
+    })
+    .await?
+}
+
+fn image_extension(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [b'G', b'I', b'F', ..] => "gif",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
+        _ => "jpg",
+    }
 }
 
 #[cfg(test)]

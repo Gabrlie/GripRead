@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { SourceService } from "../services/contracts";
 import type {
   ExploreKind,
+  LibraryBook,
+  OnlineBook,
   OnlineSearchEvent,
   OnlineSearchResult,
   OnlineTocEvent,
@@ -128,3 +130,26 @@ export type OnlineReturn = {
   | { view: "search"; scope: SearchScope; key: string; event: OnlineSearchEvent | null }
   | { view: "explore"; sourceUrl: string; sourceName: string; kind: ExploreKind }
 );
+
+/**
+ * The book to keep: the details, with the search result's fields where the
+ * details page left them empty (many sources give the cover only in search).
+ */
+export function mergeOnlineBook(found: OnlineBook, details: OnlineBook): OnlineBook {
+  const pick = (key: keyof OnlineBook) => {
+    const value = details[key];
+    return typeof value === "string" && !value.trim() ? found[key] : value;
+  };
+  return Object.fromEntries(
+    (Object.keys(details) as (keyof OnlineBook)[]).map((key) => [key, pick(key)]),
+  ) as OnlineBook;
+}
+
+/** Saves the source's cover as a kept book's own, so the shelf never refetches it. */
+export function keepOnlineCover(service: SourceService, book: LibraryBook) {
+  const online = book.online;
+  if (!online?.book.coverUrl || book.coverAssetId) return Promise.resolve();
+  return service
+    .setCoverFromSource(book.book.id, online.book.sourceUrl, online.book.coverUrl)
+    .catch(() => undefined);
+}

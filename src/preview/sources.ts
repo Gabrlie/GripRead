@@ -376,6 +376,7 @@ export function createMemorySourceService(
     cover: async () => {
       throw new Error("预览模式不加载封面");
     },
+    setCoverFromSource: async () => undefined,
     addOnlineBook: async ({ book, chapters, onShelf }) => {
       const existing = [...kept.values()].find(
         (entry) =>

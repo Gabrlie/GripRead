@@ -78,7 +78,7 @@ import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
-import { updateOnlineToc } from "../../application/online";
+import { keepOnlineCover, updateOnlineToc } from "../../application/online";
 import { appLog } from "../../services/log";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow } from "../../types/generated";
@@ -1550,6 +1550,7 @@ export function ReaderView() {
                   const { toDetail } = askShelf;
                   void runtime.services.sources.setOnShelf(activeBook.book.id, true).then(
                     () => {
+                      void keepOnlineCover(runtime.services.sources, activeBook);
                       shelfChoice.current = "add";
                       setAskShelf(null);
                       close(toDetail);

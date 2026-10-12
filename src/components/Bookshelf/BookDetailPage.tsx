@@ -11,6 +11,7 @@ import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { updateOnlineToc } from "../../application/online";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
+import { SourceDetailsDialog } from "../Online/SourceDetailsDialog";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { describeError } from "../Cloud/format";
@@ -216,7 +217,11 @@ export function BookDetailPage({
           {online && (
             <OnlineActions
               book={book}
-              onChanged={() => void runtime.library.refresh()}
+              onChanged={() => {
+                void runtime.library.refresh();
+                setRevision((value) => value + 1);
+              }}
+              onEdit={() => setEditing(true)}
               onDelete={() => setConfirm("delete")}
             />
           )}
@@ -450,6 +455,7 @@ function EditBookDialog({
   const [intro, setIntro] = useState(initialIntro);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const id = book.book.id;
   const cover = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -480,7 +486,7 @@ function EditBookDialog({
         >
           <div className="flex items-center gap-3">
             <div className="w-14 aspect-[3/4] rounded-md overflow-hidden shrink-0">
-              <BookCover title={title || book.book.title} assetId={book.coverAssetId} />
+              <LibraryCover book={book} title={title || book.book.title} />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -491,6 +497,15 @@ function EditBookDialog({
                 onClick={() => cover(() => runtime.services.library.pickBookCover(id))}
               >
                 更换封面
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => setChoosing(true)}
+              >
+                从书源选择
               </Button>
               {book.coverAssetId && (
                 <Button
@@ -505,6 +520,25 @@ function EditBookDialog({
               )}
             </div>
           </div>
+          {choosing && (
+            <SourceDetailsDialog
+              service={runtime.services.sources}
+              title={title.trim() || book.book.title}
+              author={author.trim()}
+              onCover={(found) =>
+                runtime.services.sources
+                  .setCoverFromSource(id, found.sourceUrl, found.coverUrl)
+                  .then(() => store.refresh())
+              }
+              onDetails={(found) => {
+                if (found.author.trim()) setAuthor(found.author.trim());
+                if (found.intro.trim()) setIntro(found.intro.trim());
+                setChoosing(false);
+                toast("已填入作者和简介，保存后生效");
+              }}
+              onClose={() => setChoosing(false)}
+            />
+          )}
           <label className="block space-y-1 text-xs text-secondary">
             书名
             <Input value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -548,10 +582,12 @@ function EditBookDialog({
 function OnlineActions({
   book,
   onChanged,
+  onEdit,
   onDelete,
 }: {
   book: LibraryBook;
   onChanged: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const runtime = useRuntime();
@@ -609,6 +645,7 @@ function OnlineActions({
 
   return (
     <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
+      <ActionTile icon="edit" label="编辑" onClick={onEdit} />
       <ActionTile icon="swap_horiz" label="换源" onClick={() => setChanging(true)} />
       {changing && (
         <ChangeSourceDialog

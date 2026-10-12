@@ -1822,6 +1822,10 @@ pub struct ExploreBooksRequest {
 #[serde(rename_all = "camelCase")]
 pub struct OnlineBookRequest {
     pub book: OnlineBook,
+    /// Ask the source again instead of using a copy kept within the hour.
+    #[serde(default)]
+    #[ts(optional)]
+    pub refresh: Option<bool>,
 }
 
 /// One entry of an online book's table of contents.
@@ -1861,6 +1865,15 @@ pub struct OnlineContent {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineCoverRequest {
+    pub source_url: String,
+    pub url: String,
+}
+
+/// Saves a source's cover image as the book's own cover.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCoverRequest {
+    pub book_id: String,
     pub source_url: String,
     pub url: String,
 }

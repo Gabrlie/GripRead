@@ -34,12 +34,14 @@ use crate::txt_toc::{
 };
 
 mod online;
+mod online_cache;
 mod portable;
 mod sources;
 pub use online::{
     chapter_resource, chapter_version, map_chapter, online_key, resource_chapter, ChapterPosition,
     OnlineRecord,
 };
+pub use online_cache::{book_cache_key, cover_key, CachedCover};
 pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
     ProgressState, StoredWebDav,
@@ -2735,9 +2737,13 @@ impl Storage {
                 params![book_id],
                 |row| row.get(0),
             )?;
+            // An introduction the reader edited wins over the source's.
+            let own = self
+                .book_intro(book_id)?
+                .filter(|intro| !intro.trim().is_empty());
             return Ok(BookInfo {
                 book_id: book_id.to_string(),
-                intro: Some(record.book.intro).filter(|intro| !intro.trim().is_empty()),
+                intro: own.or(Some(record.book.intro).filter(|intro| !intro.trim().is_empty())),
                 source_byte_length: 0,
                 chapter_count: Some(u64::from(self.online_chapter_count(book_id)?)),
                 reading_seconds: reading_seconds.max(0) as u64,

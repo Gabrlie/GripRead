@@ -51,8 +51,8 @@ use online_commands::{
     add_online_book, cache_online_chapters, change_online_source, clear_online_cache,
     explore_books, explore_kinds, find_online_book, get_library_book, leave_online_book,
     list_online_chapters, online_book_chapters, online_book_info, online_chapter_content,
-    online_cover, search_online_books, set_online_can_update, set_online_on_shelf,
-    update_online_toc, OnlinePages,
+    online_cover, search_online_books, set_cover_from_source, set_online_can_update,
+    set_online_on_shelf, update_online_toc, OnlinePages,
 };
 use source_commands::{
     cancel_source_operation, change_book_sources_group, check_book_sources, clear_source_cookies,
@@ -172,6 +172,7 @@ pub fn run() {
             online_book_chapters,
             online_chapter_content,
             online_cover,
+            set_cover_from_source,
             add_online_book,
             change_online_source,
             find_online_book,

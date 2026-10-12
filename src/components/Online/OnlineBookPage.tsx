@@ -19,6 +19,7 @@ import { copyText } from "../../services/system";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineTocPage } from "./OnlineTocPage";
+import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -70,12 +71,15 @@ export function OnlineBookPage({
     setError(null);
     setBook(null);
     setChapters(null);
+    // Kept copies show at once; 刷新 asks the source again.
+    const fresh = refresh > 0;
     void service
-      .bookInfo(origin)
+      .bookInfo(origin, fresh)
       .then((info) => {
         if (!active) return;
-        setBook(info);
-        return service.chapters(info).then((list) => active && setChapters(list));
+        const merged = mergeOnlineBook(origin, info);
+        setBook(merged);
+        return service.chapters(merged, fresh).then((list) => active && setChapters(list));
       })
       .catch((failure: unknown) => active && setError(String(failure)))
       .finally(() => active && setLoading(false));
@@ -98,13 +102,17 @@ export function OnlineBookPage({
         await service.setOnShelf(kept.book.id, true);
         const added = await service.getLibraryBook(kept.book.id);
         setKept(added);
+        void keepOnlineCover(service, added);
         return added;
       }
       return kept;
     }
     if (!book || !chapters) throw new Error("详情和目录还没有读取完");
     const entry = await service.addOnlineBook({ book, chapters, onShelf: shelf });
-    if (shelf) setKept(entry);
+    if (shelf) {
+      setKept(entry);
+      void keepOnlineCover(service, entry);
+    }
     return entry;
   };
 

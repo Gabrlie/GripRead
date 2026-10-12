@@ -237,9 +237,11 @@ export interface SourceService {
   /** A source's 发现 categories; `refresh` runs its script again. */
   exploreKinds(sourceUrl: string, refresh?: boolean): Promise<ExploreKind[]>;
   exploreBooks(sourceUrl: string, url: string, page: number): Promise<OnlineBook[]>;
-  /** The book with its details page read. */
-  bookInfo(book: OnlineBook): Promise<OnlineBook>;
-  chapters(book: OnlineBook): Promise<OnlineChapter[]>;
+  /** The book with its details page read; a copy kept within the hour unless `refresh`. */
+  bookInfo(book: OnlineBook, refresh?: boolean): Promise<OnlineBook>;
+  chapters(book: OnlineBook, refresh?: boolean): Promise<OnlineChapter[]>;
+  /** Saves a source's cover image as the book's own cover. */
+  setCoverFromSource(bookId: string, sourceUrl: string, url: string): Promise<void>;
   chapterContent(
     book: OnlineBook,
     chapter: OnlineChapter,

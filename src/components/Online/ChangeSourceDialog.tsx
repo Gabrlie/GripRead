@@ -4,9 +4,35 @@ import type {
   ChangeOnlineSourceResult,
   LibraryBook,
   OnlineBook,
+  OnlineChapter,
   OnlineSearchEvent,
 } from "../../types/generated";
-import { ALL_SOURCES } from "../../application/online";
+
+function originKey(origin: OnlineBook): string {
+  return `${origin.sourceUrl}\n${origin.bookUrl}`;
+}
+
+/** The line under a candidate: its latest chapter and size once loaded. */
+function describe(
+  origin: OnlineBook,
+  loaded: { book: OnlineBook; chapters: OnlineChapter[] } | "failed" | undefined,
+  checkAuthor: boolean,
+): string {
+  const latest =
+    loaded && loaded !== "failed"
+      ? loaded.book.latestChapterTitle ||
+        loaded.chapters.filter((chapter) => !chapter.isVolume).at(-1)?.title ||
+        ""
+      : origin.latestChapterTitle;
+  const size =
+    loaded && loaded !== "failed"
+      ? `${loaded.chapters.filter((chapter) => !chapter.isVolume).length} 章`
+      : "";
+  const parts = [checkAuthor ? "" : origin.author, latest, size].filter(Boolean);
+  if (parts.length) return parts.join(" · ");
+  return loaded === "failed" ? "读取失败" : loaded ? "—" : "正在读取最新章节…";
+}
+import { ALL_SOURCES, mergeOnlineBook } from "../../application/online";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
@@ -79,11 +105,46 @@ export function ChangeSourceDialog({
       .filter((origin) => !query || origin.sourceName.includes(query));
   }, [event, checkAuthor, filter, book, online]);
 
+  // Legado's 换源 loads each candidate's details and contents so the list
+  // can show the latest chapter and size; they are reused when chosen.
+  const [loaded, setLoaded] = useState<
+    Record<string, { book: OnlineBook; chapters: OnlineChapter[] } | "failed">
+  >({});
+  const queued = useRef(new Set<string>());
+  const loading = useRef(0);
+  const pump = useRef<() => void>(() => undefined);
+  pump.current = () => {
+    for (const origin of candidates) {
+      if (loading.current >= 3) return;
+      const key = originKey(origin);
+      if (queued.current.has(key) || origin.sourceUrl === online.book.sourceUrl) continue;
+      queued.current.add(key);
+      loading.current++;
+      void service
+        .bookInfo(origin)
+        .then(async (info) => {
+          const book = mergeOnlineBook(origin, info);
+          const chapters = await service.chapters(book);
+          setLoaded((current) => ({ ...current, [key]: { book, chapters } }));
+        })
+        .catch(() => setLoaded((current) => ({ ...current, [key]: "failed" })))
+        .finally(() => {
+          loading.current--;
+          pump.current();
+        });
+    }
+  };
+  useEffect(() => pump.current(), [candidates]);
+
   const choose = (origin: OnlineBook) => {
     setSwitching(origin.sourceUrl);
     void (async () => {
-      const info = await service.bookInfo(origin);
-      const chapters = await service.chapters(info);
+      const ready = loaded[originKey(origin)];
+      const info =
+        ready && ready !== "failed"
+          ? ready.book
+          : mergeOnlineBook(origin, await service.bookInfo(origin));
+      const chapters = ready && ready !== "failed" ? ready.chapters : await service.chapters(info);
       await prepare?.();
       const result = await service.changeSource({ bookId: book.book.id, book: info, chapters });
       toast(
@@ -144,9 +205,7 @@ export function ChangeSourceDialog({
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm truncate">{origin.sourceName}</span>
                     <span className="block text-[11px] text-secondary truncate">
-                      {[checkAuthor ? "" : origin.author, origin.latestChapterTitle]
-                        .filter(Boolean)
-                        .join(" · ") || "—"}
+                      {describe(origin, loaded[originKey(origin)], checkAuthor)}
                     </span>
                   </span>
                   {current && <Icon name="check" size={15} className="text-primary shrink-0" />}

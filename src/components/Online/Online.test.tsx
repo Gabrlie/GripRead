@@ -8,6 +8,7 @@ import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "../..
 import { DiscoverView } from "../Discover/DiscoverView";
 import { SearchPage } from "./SearchPage";
 import { ChangeSourceDialog } from "./ChangeSourceDialog";
+import { SourceDetailsDialog } from "./SourceDetailsDialog";
 
 afterEach(cleanup);
 
@@ -157,6 +158,8 @@ describe("换源", () => {
     const list = await screen.findByRole("list", { name: "可换的书源" });
     // 剑来外传 has a different name and stays out.
     expect(await within(list).findByText("乙站 API")).toBeTruthy();
+    // Each candidate's details and contents load to show its latest chapter and size.
+    expect(await within(list).findByText(/第一千章 终 · 23 章/)).toBeTruthy();
     expect(within(list).queryByText(/剑来外传/)).toBeNull();
     const current = within(list).getByText("甲站小说").closest("button")!;
     expect(current.hasAttribute("disabled")).toBe(true);
@@ -168,5 +171,34 @@ describe("换源", () => {
         book: expect.objectContaining({ sourceUrl: "https://api.example-b.com" }),
       }),
     );
+  });
+});
+
+describe("从书源选择封面和详情", () => {
+  it("offers each source's copy and hands over its details", async () => {
+    const sources = service();
+    const onDetails = vi.fn();
+    render(
+      <SourceDetailsDialog
+        service={sources}
+        title="剑来"
+        author="烽火戏诸侯"
+        onCover={async () => undefined}
+        onDetails={onDetails}
+        onClose={() => undefined}
+      />,
+    );
+    const list = await screen.findByRole("list", { name: "书源里的这本书" });
+    expect(await within(list).findByText("乙站 API")).toBeTruthy();
+    // The preview books have no cover address to take.
+    expect(
+      within(list).getAllByRole("button", { name: "用这个封面" })[0].hasAttribute("disabled"),
+    ).toBe(true);
+    await userEvent.click(within(list).getAllByRole("button", { name: "用这个详情" })[0]);
+    await vi.waitFor(() => expect(onDetails).toHaveBeenCalledOnce());
+    expect(onDetails.mock.calls[0][0]).toMatchObject({
+      author: "烽火戏诸侯",
+      intro: "剑来的简介。",
+    });
   });
 });
