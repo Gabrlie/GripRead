@@ -4,4 +4,9 @@ export type CheckSourcesRequest = { operationId: string, urls: Array<string>,
 /**
  * The search keyword; empty uses each source's `checkKeyWord` or 我的.
  */
-keyword: string, };
+keyword: string, 
+/**
+ * Switch off a source whose reading chain fails, or only its explore
+ * when just 发现 fails.
+ */
+disableFailed: boolean, };

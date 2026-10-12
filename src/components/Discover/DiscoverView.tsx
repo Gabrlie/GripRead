@@ -132,7 +132,7 @@ export function DiscoverView() {
           <div className="py-12 text-center space-y-3">
             <p className="text-sm text-secondary">
               {sources.length === 0
-                ? "还没有书源。导入阅读（Legado）书源后，这里会显示它们的发现分类。"
+                ? "还没有书源。导入书源后，这里会显示它们的发现分类。"
                 : "已有的书源都没有发现分类，或发现已被禁用。"}
             </p>
             <Button size="sm" variant="outline" onClick={() => setManaging(true)}>

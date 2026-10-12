@@ -25,7 +25,7 @@ import { sourceServiceMocks } from "../../test/sources";
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
   closeReader: vi.fn(),
-  takeReaderPage: vi.fn(() => null),
+  takeReaderPage: vi.fn((): "contents" | null => null),
   reducedMotion: false,
 }));
 vi.mock("../../context/AppContext", () => ({ useApp: () => navigation }));
@@ -348,6 +348,27 @@ describe("reader directory and search operation ownership", () => {
         second,
       ),
     );
+  });
+
+  it("returns to the detail page when contents it opened are left without a choice", async () => {
+    const app = runtime();
+    navigation.takeReaderPage.mockReturnValueOnce("contents");
+    await view(app);
+    expect(await screen.findByRole("dialog", { name: "目录" })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(navigation.closeReader).toHaveBeenCalledWith(true));
+  });
+
+  it("stays in the reader after a place is chosen in contents the detail page opened", async () => {
+    const app = runtime();
+    vi.mocked(app.services.reader.listToc).mockResolvedValue(
+      tocListing([tocEntry(0, "第一章 开端", locator(0))]),
+    );
+    navigation.takeReaderPage.mockReturnValueOnce("contents");
+    await view(app);
+    await userEvent.click(await screen.findByRole("button", { name: /第一章 开端/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull());
+    expect(navigation.closeReader).not.toHaveBeenCalled();
   });
 
   it("lists bookmarks in Contents and opens them", async () => {

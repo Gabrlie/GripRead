@@ -242,8 +242,16 @@ export function ReaderView() {
     return () => system.setOrientation("auto");
   }, [bookId, orientation]);
   const { cancel: cancelSearch } = search;
+  // Contents opened from the shelf's detail page go back there when left
+  // without choosing a place, like Legado's separate 目录 page.
+  const fromDetail = useRef(false);
+  const leaveToDetail = useRef<() => void>(() => undefined);
   const onPanelClose = useCallback(
     (closed: ReaderPanel) => {
+      if (closed === "contents" && fromDetail.current) {
+        fromDetail.current = false;
+        queueMicrotask(() => leaveToDetail.current());
+      }
       // Results stay for the result bar; only a running search stops.
       if (closed === "search") cancelSearch();
       // Previewed adjustments are written at once when their panel closes.
@@ -469,7 +477,9 @@ export function ReaderView() {
 
   // The book detail page can open the reader on its contents.
   useEffect(() => {
-    if (takeReaderPage() === "contents") openPanel("contents");
+    if (takeReaderPage() !== "contents") return;
+    fromDetail.current = true;
+    openPanel("contents");
   }, [openPanel, takeReaderPage]);
   /**
    * Manual reading stops the automatic countdown; during a running automatic
@@ -505,37 +515,41 @@ export function ReaderView() {
     [controller, effectiveMode, interruptAutomatic, run],
   );
 
-  const close = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    synchronizeScroll.current?.();
-    void pauseAutomatic();
-    controller?.dispose();
-    runtime.finishReaderWrite(flushDirectory);
-    runtime.finishReaderWrite(settingsStore.flush);
-    closeReader();
-    const leaving = bookId;
-    const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
-    void runtime.positions
-      .flush()
-      .then(() => {
-        // Legado 同步阅读进度: leaving the reader uploads the position.
-        if (leaving && progressSyncOn.current)
-          void runtime.progressSync.upload(leaving, chapterTitle).catch(() => undefined);
-        return runtime.library.refresh();
-      })
-      .catch(() => undefined);
-  }, [
-    bookId,
-    controller,
-    closing,
-    closeReader,
-    fail,
-    flushDirectory,
-    pauseAutomatic,
-    runtime,
-    settingsStore,
-  ]);
+  const close = useCallback(
+    (toDetail = false) => {
+      if (closing) return;
+      setClosing(true);
+      synchronizeScroll.current?.();
+      void pauseAutomatic();
+      controller?.dispose();
+      runtime.finishReaderWrite(flushDirectory);
+      runtime.finishReaderWrite(settingsStore.flush);
+      closeReader(toDetail);
+      const leaving = bookId;
+      const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
+      void runtime.positions
+        .flush()
+        .then(() => {
+          // Legado 同步阅读进度: leaving the reader uploads the position.
+          if (leaving && progressSyncOn.current)
+            void runtime.progressSync.upload(leaving, chapterTitle).catch(() => undefined);
+          return runtime.library.refresh();
+        })
+        .catch(() => undefined);
+    },
+    [
+      bookId,
+      controller,
+      closing,
+      closeReader,
+      fail,
+      flushDirectory,
+      pauseAutomatic,
+      runtime,
+      settingsStore,
+    ],
+  );
+  leaveToDetail.current = () => close(true);
 
   const { setBookmarks, setEncodingInfo, reload: reloadTools } = tools;
   const addBookmark = useCallback(() => {
@@ -1028,6 +1042,7 @@ export function ReaderView() {
   };
   const typeStyle = appearance.text;
   const seekTo = (locator: Bookmark["locator"]) => {
+    fromDetail.current = false;
     closePanel();
     setControls(false);
     if (controller) run(() => controller.seek(locator));

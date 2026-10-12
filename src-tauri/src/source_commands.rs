@@ -772,6 +772,7 @@ pub async fn check_book_sources(
         );
         let id = request.operation_id.clone();
         let keyword = request.keyword.clone();
+        let disable_failed = request.disable_failed;
         spawn_engine(move || {
             loop {
                 if cancel.load(Ordering::Acquire) {
@@ -824,7 +825,13 @@ pub async fn check_book_sources(
                     CHECK_TIMEOUT.as_millis() as i64 + elapsed
                 };
                 if let Ok(mut guard) = storage.lock() {
-                    let _ = guard.record_source_check(&url, &groups, error.as_deref(), respond);
+                    let _ = guard.record_source_check(
+                        &url,
+                        &groups,
+                        error.as_deref(),
+                        respond,
+                        disable_failed,
+                    );
                 }
                 checked.fetch_add(1, Ordering::AcqRel);
                 let message = if failures.is_empty() {

@@ -14,6 +14,7 @@ import { copyText } from "../../services/system";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
 import { ChapterPreviewPage } from "./ChapterPreviewPage";
+import { OnlineTocPage } from "./OnlineTocPage";
 
 /**
  * Legado's 书籍详情 for an online book: details from the chosen source, the
@@ -181,43 +182,19 @@ export function OnlineBookPage({
       )}
 
       {chapters && (
-        <section className="rounded-xl bg-surface-container-low overflow-hidden">
-          <button
-            type="button"
-            className="w-full flex items-center justify-between px-3 py-2.5 text-sm"
-            onClick={() => setShowChapters((value) => !value)}
-          >
-            <span>目录（{chapters.filter((chapter) => !chapter.isVolume).length} 章）</span>
-            <Icon name={showChapters ? "expand_less" : "expand_more"} size={16} />
-          </button>
-          {showChapters && (
-            <ul className="max-h-[50dvh] overflow-y-auto border-t border-surface-variant/30">
-              {chapters.map((chapter, index) =>
-                chapter.isVolume ? (
-                  <li
-                    key={`${chapter.index}-${chapter.url}`}
-                    className="px-3 py-1.5 text-[11px] text-secondary bg-surface-container"
-                  >
-                    {chapter.title}
-                  </li>
-                ) : (
-                  <li key={`${chapter.index}-${chapter.url}`}>
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-surface-container"
-                      onClick={() => setReading(index)}
-                    >
-                      <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
-                      {chapter.isVip && (
-                        <span className="text-[10px] text-secondary shrink-0">VIP</span>
-                      )}
-                    </button>
-                  </li>
-                ),
-              )}
-            </ul>
-          )}
-        </section>
+        <button
+          type="button"
+          className="w-full rounded-xl bg-surface-container-low flex items-center gap-2 px-3 py-2.5 text-sm text-left"
+          onClick={() => setShowChapters(true)}
+        >
+          <span className="flex-1 min-w-0 truncate">
+            目录（{chapters.filter((chapter) => !chapter.isVolume).length} 章）
+            {book?.latestChapterTitle && (
+              <span className="ml-2 text-[11px] text-secondary">{book.latestChapterTitle}</span>
+            )}
+          </span>
+          <Icon name="chevron_right" size={16} className="text-secondary" />
+        </button>
       )}
 
       <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-[calc(0.75rem+var(--safe-bottom))] bg-surface flex gap-2">
@@ -238,6 +215,17 @@ export function OnlineBookPage({
         </Button>
       </div>
 
+      {showChapters && book && chapters && (
+        <OnlineTocPage
+          bookName={book.name}
+          chapters={chapters}
+          onChoose={(index) => {
+            setShowChapters(false);
+            setReading(index);
+          }}
+          onClose={() => setShowChapters(false)}
+        />
+      )}
       {reading !== null && book && chapters && (
         <ChapterPreviewPage
           service={service}

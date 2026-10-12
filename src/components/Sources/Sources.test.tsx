@@ -30,7 +30,7 @@ describe("书源管理", () => {
     const service = sourceServiceMocks(SOURCES);
     render(<SourceManagePage service={service} onClose={() => undefined} />);
     await screen.findByText("甲站");
-    await userEvent.click(screen.getByRole("button", { name: "导入书源" }));
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "粘贴导入" }));
     fireEvent.change(screen.getByRole("textbox", { name: "书源 JSON" }), {
       target: {
@@ -86,7 +86,7 @@ describe("书源管理", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "校验" }));
     await userEvent.click(screen.getByRole("button", { name: "开始校验" }));
     expect(service.check).toHaveBeenCalledWith(
-      expect.objectContaining({ urls: ["https://a.com"], keyword: "" }),
+      expect.objectContaining({ urls: ["https://a.com"], keyword: "", disableFailed: true }),
     );
     expect(await screen.findByText("校验完成 1/1")).toBeTruthy();
   });

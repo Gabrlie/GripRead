@@ -35,6 +35,11 @@ describe("online search", () => {
     expect(await screen.findByRole("dialog", { name: "书籍详情" })).toBeTruthy();
     expect(await screen.findByText("换源（2）")).toBeTruthy();
     expect(await screen.findByText("目录（23 章）")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    const toc = await screen.findByRole("dialog", { name: "目录" });
+    expect(within(toc).getByText("共 23 章")).toBeTruthy();
+    await userEvent.click(within(toc).getByRole("button", { name: "返回" }));
+    expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "试读" }));
     expect(await screen.findByText(/第1章 剑来的第1章的第 1 段预览正文/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "下一章" }));

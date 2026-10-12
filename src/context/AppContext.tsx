@@ -17,7 +17,10 @@ interface Navigation {
   openReader: (book: LibraryBook, page?: "contents") => void;
   /** The page to open with the book, once; the reader takes it on mount. */
   takeReaderPage: () => "contents" | null;
-  closeReader: () => void;
+  /** Leaves the reader; `toDetail` reopens the book's detail page. */
+  closeReader: (toDetail?: boolean) => void;
+  /** The book whose detail page the shelf reopens, once. */
+  takeDetailReturn: () => LibraryBook | null;
   shelf: ShelfViewState;
   setShelf: (patch: Partial<ShelfViewState>) => void;
 }
@@ -26,6 +29,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>("bookshelf");
   const [activeBook, setActiveBook] = useState<LibraryBook | null>(null);
   const readerPage = useRef<"contents" | null>(null);
+  const detailReturn = useRef<LibraryBook | null>(null);
   const { state: preferences, store } = useShelfPreferences();
   const [transient, setTransient] = useState({ query: "", scroll: 0 });
   useEffect(() => {
@@ -64,7 +68,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           readerPage.current = null;
           return page;
         },
-        closeReader: () => setActiveBook(null),
+        closeReader: (toDetail) => {
+          detailReturn.current = toDetail ? activeBook : null;
+          setActiveBook(null);
+        },
+        takeDetailReturn: () => {
+          const book = detailReturn.current;
+          detailReturn.current = null;
+          return book;
+        },
         shelf,
         setShelf,
       }}

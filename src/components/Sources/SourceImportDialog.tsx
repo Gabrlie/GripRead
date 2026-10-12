@@ -170,7 +170,7 @@ export function SourceImportDialog({
           <textarea
             aria-label="书源 JSON"
             rows={8}
-            placeholder="粘贴阅读（Legado）书源 JSON，单个书源或数组都可以"
+            placeholder="粘贴书源 JSON，单个书源或数组都可以"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"

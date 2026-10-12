@@ -359,9 +359,17 @@ impl Storage {
         failures: &[String],
         error: Option<&str>,
         respond_ms: i64,
+        disable_failed: bool,
     ) -> Result<(), AppError> {
         let urls = vec![url.to_string()];
         self.update_sources(&urls, |raw, source| {
+            if disable_failed {
+                if failures.iter().any(|group| !group.starts_with("发现")) {
+                    raw.insert("enabled".into(), Json::Bool(false));
+                } else if !failures.is_empty() {
+                    raw.insert("enabledExplore".into(), Json::Bool(false));
+                }
+            }
             let mut groups: Vec<String> = split_groups(&source.group())
                 .into_iter()
                 .filter(|group| !CHECK_GROUPS.contains(&group.as_str()))
@@ -692,18 +700,42 @@ mod tests {
             .unwrap();
         assert_eq!(storage.list_book_sources().unwrap()[0].url, "https://b.com");
         storage
-            .record_source_check("https://a.com", &["网站失效".into()], Some("连接失败"), 900)
+            .record_source_check(
+                "https://a.com",
+                &["网站失效".into()],
+                Some("连接失败"),
+                900,
+                false,
+            )
             .unwrap();
         let a = storage.book_source("https://a.com").unwrap().unwrap();
         assert!(a.group().contains("网站失效"));
+        let enabled = a.enabled();
         assert!(a.comment().unwrap().starts_with("// Error: 连接失败"));
         storage
-            .record_source_check("https://a.com", &[], None, 300)
+            .record_source_check("https://a.com", &[], None, 300, true)
             .unwrap();
         let a = storage.book_source("https://a.com").unwrap().unwrap();
         assert!(!a.group().contains("网站失效"));
         assert_eq!(a.comment().unwrap_or_default(), "");
         assert_eq!(a.respond_time(), 300);
+        assert_eq!(a.enabled(), enabled, "a passing check changes no switch");
+        storage
+            .set_sources_switch(&["https://a.com".into()], SourceSwitch::Enabled, true)
+            .unwrap();
+        storage
+            .record_source_check("https://a.com", &["发现失效".into()], Some("空"), 300, true)
+            .unwrap();
+        let a = storage.book_source("https://a.com").unwrap().unwrap();
+        assert!(a.enabled() && !a.enabled_explore(), "only explore fails");
+        storage
+            .record_source_check("https://a.com", &["目录失效".into()], Some("空"), 300, true)
+            .unwrap();
+        assert!(!storage
+            .book_source("https://a.com")
+            .unwrap()
+            .unwrap()
+            .enabled());
         let exported: Json =
             serde_json::from_str(&storage.export_book_sources(&[]).unwrap()).unwrap();
         assert_eq!(exported.as_array().unwrap().len(), 2);

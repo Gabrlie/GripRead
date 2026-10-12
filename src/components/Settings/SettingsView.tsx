@@ -238,7 +238,7 @@ export function SettingsView() {
           <PageLink
             icon="public"
             label="书源管理"
-            detail="导入、编辑、校验阅读（Legado）书源"
+            detail="导入、编辑、校验书源"
             onClick={() => setPage("sources")}
           />
           <PageLink

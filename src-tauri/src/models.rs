@@ -1546,6 +1546,9 @@ pub struct CheckSourcesRequest {
     pub urls: Vec<String>,
     /// The search keyword; empty uses each source's `checkKeyWord` or 我的.
     pub keyword: String,
+    /// Switch off a source whose reading chain fails, or only its explore
+    /// when just 发现 fails.
+    pub disable_failed: bool,
 }
 
 /// Progress of a source check, streamed as `source-check`.

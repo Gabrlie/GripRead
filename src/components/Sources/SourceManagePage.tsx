@@ -143,12 +143,12 @@ export function SourceManagePage({
       return next;
     });
 
-  const startCheck = (urls: string[], keyword: string) => {
+  const startCheck = (urls: string[], keyword: string, disableFailed: boolean) => {
     const operationId = newOperationId();
     checkId.current = operationId;
     setChecking({ operationId, checked: 0, total: urls.length, current: "准备校验", done: false });
     void service
-      .check({ operationId, urls, keyword })
+      .check({ operationId, urls, keyword, disableFailed })
       .catch((failure: unknown) => toast({ text: String(failure), error: true }));
   };
 
@@ -202,28 +202,6 @@ export function SourceManagePage({
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger
-          aria-label="导入书源"
-          className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
-        >
-          <Icon name="download" size={19} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          <DropdownMenuItem onClick={() => setImporting("network")}>
-            <Icon name="public" size={15} />
-            网络导入
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setImporting("file")}>
-            <Icon name="description" size={15} />
-            本地导入
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setImporting("paste")}>
-            <Icon name="content_paste" size={15} />
-            粘贴导入
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <DropdownMenu>
-        <DropdownMenuTrigger
           aria-label="排序"
           className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
         >
@@ -250,6 +228,18 @@ export function SourceManagePage({
           <Icon name="more_vert" size={19} />
         </DropdownMenuTrigger>
         <DropdownMenuContent>
+          <DropdownMenuItem onClick={() => setImporting("network")}>
+            <Icon name="public" size={15} />
+            网络导入
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setImporting("file")}>
+            <Icon name="description" size={15} />
+            本地导入
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setImporting("paste")}>
+            <Icon name="content_paste" size={15} />
+            粘贴导入
+          </DropdownMenuItem>
           <DropdownMenuItem disabled={!sources.length} onClick={() => setSelected(new Set())}>
             <Icon name="checklist" size={15} />
             多选
@@ -304,9 +294,7 @@ export function SourceManagePage({
 
       {loaded && sources.length === 0 && (
         <div className="py-10 text-center space-y-3">
-          <p className="text-sm text-secondary">
-            还没有书源。可以从网址、文件或剪贴板导入阅读（Legado）书源。
-          </p>
+          <p className="text-sm text-secondary">还没有书源。可以从网址、文件或剪贴板导入书源。</p>
           <div className="flex justify-center gap-2">
             <Button size="sm" variant="outline" onClick={() => setImporting("network")}>
               网络导入
@@ -582,10 +570,10 @@ export function SourceManagePage({
       {checkKeyword && (
         <CheckDialog
           count={checkKeyword.length}
-          onStart={(keyword) => {
+          onStart={(keyword, disableFailed) => {
             const urls = checkKeyword;
             setCheckKeyword(null);
-            startCheck(urls, keyword);
+            startCheck(urls, keyword, disableFailed);
           }}
           onClose={() => setCheckKeyword(null)}
         />
@@ -686,10 +674,11 @@ function CheckDialog({
   onClose,
 }: {
   count: number;
-  onStart: (keyword: string) => void;
+  onStart: (keyword: string, disableFailed: boolean) => void;
   onClose: () => void;
 }) {
   const [keyword, setKeyword] = useState("");
+  const [disableFailed, setDisableFailed] = useState(true);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
@@ -705,11 +694,22 @@ function CheckDialog({
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
         />
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span>
+            禁用失效的书源
+            <span className="block text-[11px] text-secondary">只有发现失效时，只禁用发现</span>
+          </span>
+          <Switch
+            aria-label="禁用失效的书源"
+            checked={disableFailed}
+            onCheckedChange={setDisableFailed}
+          />
+        </label>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
             取消
           </Button>
-          <Button size="sm" onClick={() => onStart(keyword.trim())}>
+          <Button size="sm" onClick={() => onStart(keyword.trim(), disableFailed)}>
             开始校验
           </Button>
         </div>

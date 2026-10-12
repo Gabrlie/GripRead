@@ -34,7 +34,7 @@ type ShelfBook = {
   missing: boolean;
 };
 export function BookshelfView() {
-  const { shelf, setShelf, openReader, setActiveTab } = useApp();
+  const { shelf, setShelf, openReader, setActiveTab, takeDetailReturn } = useApp();
   const { state, store } = useLibrary();
   // 移到回收站 offers 撤销 for a few seconds in the floating toast.
   const lastRemoved = state.lastRemoved;
@@ -53,7 +53,8 @@ export function BookshelfView() {
   const { state: groupState, store: groupStore } = useShelf();
   const preferences = useShelfPreferences();
   const [manager, setManager] = useState<"removed" | "sort" | null>(null);
-  const [infoBook, setInfoBook] = useState<LibraryBook | null>(null);
+  // Leaving the contents a detail page opened returns to that detail page.
+  const [infoBook, setInfoBook] = useState<LibraryBook | null>(takeDetailReturn);
   const [records, setRecords] = useState(false);
   const [cloud, setCloud] = useState(false);
   const runtime = useRuntime();
