@@ -33,7 +33,11 @@ syncProgress: boolean,
 /**
  * Also when the reader resumes or the network returns (Legado 同步增强).
  */
-syncProgressPlus: boolean, restoreIgnore: Array<RestoreCategory>, lastBackupAt: number | null, 
+syncProgressPlus: boolean, 
+/**
+ * Upload edited book details to the cloud bookshelf without asking.
+ */
+autoSyncBookInfo?: boolean, restoreIgnore: Array<RestoreCategory>, lastBackupAt: number | null, 
 /**
  * Why the last automatic backup or progress upload failed.
  */

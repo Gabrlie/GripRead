@@ -269,6 +269,7 @@ export function previewServices(): AppServices {
       },
       ensureTextTransforms: async () => null,
       setBookReplaceRules: async () => undefined,
+      deleteReadingRecord: async () => undefined,
       readingStats: async (today) => ({
         totalSeconds: readingSeconds + 5400,
         todaySeconds: readingSeconds,

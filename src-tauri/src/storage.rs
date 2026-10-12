@@ -1945,6 +1945,26 @@ impl Storage {
         })
     }
 
+    /// Deletes a book's reading time completely, so it no longer counts
+    /// anywhere; `retired:<key>` names a deleted book's kept time.
+    pub fn delete_reading_record(&mut self, book_id: &str) -> Result<(), AppError> {
+        let tx = self.conn.transaction()?;
+        if let Some(key) = book_id.strip_prefix("retired:") {
+            tx.execute(
+                "DELETE FROM retired_reading_time WHERE source_sha256 = ?1",
+                params![key],
+            )?;
+            tx.execute("DELETE FROM retired_books WHERE key = ?1", params![key])?;
+        } else {
+            tx.execute(
+                "DELETE FROM reading_time WHERE book_id = ?1",
+                params![book_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Stores an image as the book's cover, replacing and removing any previous one.
     pub fn set_book_cover(
         &mut self,

@@ -66,6 +66,7 @@ function runtime(books: LibraryBook[] = []) {
       clearBookCover: vi.fn(async () => undefined),
       readAsset: vi.fn(async () => new ArrayBuffer(0)),
       addReadingTime: vi.fn(async () => undefined),
+      deleteReadingRecord: vi.fn(async () => undefined),
       readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
       listRemovedBooks: vi.fn(async () => []),
       updateBook: vi.fn(),

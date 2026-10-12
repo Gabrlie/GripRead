@@ -101,6 +101,8 @@ export interface LibraryService {
   /** Adds reading time to a local calendar day (`YYYY-MM-DD`). */
   addReadingTime(bookId: string, day: string, seconds: number): Promise<void>;
   readingStats(today: string): Promise<ReadingStats>;
+  /** 删除记录: the book's reading time no longer counts anywhere. */
+  deleteReadingRecord(bookId: string): Promise<void>;
   onImportProgress(listener: (status: ImportStatus) => void): Promise<Unsubscribe>;
   getTxtEncoding(bookId: string): Promise<TxtEncodingInfo>;
   pickAndReassociateTxt(bookId: string): Promise<TxtEncodingInfo | null>;

@@ -48,6 +48,7 @@ function draftOf(settings: WebDavSettings): Draft {
     autoBackup: settings.autoBackup,
     syncProgress: settings.syncProgress,
     syncProgressPlus: settings.syncProgressPlus,
+    autoSyncBookInfo: settings.autoSyncBookInfo ?? false,
     restoreIgnore: settings.restoreIgnore,
   };
 }
@@ -248,15 +249,22 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
               同步增强
-              <span className="block text-[11px] text-secondary">
-                重新进入页面（息屏、后台返回等）或网络恢复时也同步云端进度
-              </span>
+              <span className="block text-[11px] text-secondary">回到应用或网络恢复时也同步</span>
             </span>
             <Switch
               aria-label="同步增强"
               checked={draft.syncProgressPlus}
               disabled={busy !== null || !draft.syncProgress}
               onCheckedChange={(syncProgressPlus) => saveSwitch({ syncProgressPlus })}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>自动同步书籍信息到云书架</span>
+            <Switch
+              aria-label="自动同步书籍信息到云书架"
+              checked={draft.autoSyncBookInfo ?? false}
+              disabled={busy !== null}
+              onCheckedChange={(autoSyncBookInfo) => saveSwitch({ autoSyncBookInfo })}
             />
           </label>
           {slowWarning}

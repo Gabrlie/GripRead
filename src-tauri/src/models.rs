@@ -1206,6 +1206,10 @@ pub struct WebDavSettings {
     pub sync_progress: bool,
     /// Also when the reader resumes or the network returns (Legado 同步增强).
     pub sync_progress_plus: bool,
+    /// Upload edited book details to the cloud bookshelf without asking.
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_sync_book_info: Option<bool>,
     pub restore_ignore: Vec<RestoreCategory>,
     pub last_backup_at: Option<i64>,
     /// Why the last automatic backup or progress upload failed.
@@ -1226,6 +1230,9 @@ pub struct SaveWebDavRequest {
     pub auto_backup: bool,
     pub sync_progress: bool,
     pub sync_progress_plus: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_sync_book_info: Option<bool>,
     pub restore_ignore: Vec<RestoreCategory>,
 }
 

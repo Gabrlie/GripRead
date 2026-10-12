@@ -1,14 +1,13 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent,
-} from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { useApp } from "../../context/AppContext";
 import { useLibrary, useRuntime, useShelf, useShelfPreferences } from "../../application/runtime";
 import type { LibraryBook } from "../../types/generated";
-import { READING_GROUPS, shelfGroupOf, type ShelfChapterLabels } from "../../application/shelf";
+import {
+  READING_GROUPS,
+  gainedChapters,
+  shelfGroupOf,
+  type ShelfChapterLabels,
+} from "../../application/shelf";
 import { Header } from "../Layout/Header";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
@@ -24,6 +23,7 @@ import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 import { LibraryCover } from "./LibraryCover";
+import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 
 type ShelfBook = {
@@ -509,45 +509,6 @@ export function BookshelfView() {
   );
 }
 // 1. List View Card (Requirement 3: 封面固定比例4:3，无放大动画，无左上序号；右侧严格4行均等间距：书名、作者名、读至目录章节、最新目录与更新时间)
-/**
- * Long-press (or right-click) opens book information, as in Legado; the
- * click that ends a long press does not also open the book.
- */
-function useLongPress(onLongPress: () => void, onClick: () => void) {
-  const timer = useRef<number | null>(null);
-  const fired = useRef(false);
-  const clear = () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = null;
-  };
-  return {
-    onPointerDown: () => {
-      fired.current = false;
-      clear();
-      timer.current = window.setTimeout(() => {
-        fired.current = true;
-        onLongPress();
-      }, 550);
-    },
-    onPointerUp: clear,
-    onPointerLeave: clear,
-    onPointerCancel: clear,
-    onContextMenu: (event: ReactMouseEvent) => {
-      event.preventDefault();
-      clear();
-      if (!fired.current) onLongPress();
-      fired.current = true;
-    },
-    onClick: () => {
-      if (fired.current) {
-        fired.current = false;
-        return;
-      }
-      onClick();
-    },
-  };
-}
-
 function BookCardList({
   book,
   onOpen,
@@ -660,19 +621,23 @@ function BookCardGrid({
   );
 }
 
-/** Legado's red count of an online book's chapters still unread. */
+/**
+ * Legado's count of chapters still unread: red when the book gained
+ * chapters since it was last read, grey otherwise.
+ */
 function NewChaptersMark({ book }: { book: LibraryBook }) {
-  const online = book.online;
-  if (!online) return null;
-  const count =
-    online.readChapter === null || !book.locator
-      ? online.totalChapters
-      : Math.max(0, online.totalChapters - online.readChapter - 1);
+  const { state } = useShelf();
+  const labels = state.chapters[book.book.id];
+  const count = labels?.remaining ?? 0;
   if (!count) return null;
+  const fresh = gainedChapters(book, labels);
   return (
     <span
       aria-label={`还有 ${count} 章未读`}
-      className="absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full bg-error text-on-error text-[10px] leading-4 text-center shadow-xs"
+      data-fresh={fresh ? "true" : undefined}
+      className={`absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center shadow-xs ${
+        fresh ? "bg-error text-on-error" : "bg-surface-container-highest/90 text-on-surface-variant"
+      }`}
     >
       {count > 999 ? "999+" : count}
     </span>

@@ -110,6 +110,12 @@ export function BookDetailPage({
         void runtime.library.refresh();
       });
   };
+  const [askCloudSync, setAskCloudSync] = useState(false);
+  const syncDetails = (announce: boolean) =>
+    void runtime.services.sync.uploadBooks([id]).then(
+      () => announce && toast("已同步到云书架"),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
+    );
   const uploadToCloud = () =>
     cloudAction(async () => {
       const report = await runtime.services.sync.uploadBooks([id]);
@@ -422,6 +428,29 @@ export function BookDetailPage({
           </DialogContent>
         </Dialog>
       )}
+      {askCloudSync && (
+        <Dialog open onOpenChange={(open) => !open && setAskCloudSync(false)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">同步到云书架？</DialogTitle>
+            </DialogHeader>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setAskCloudSync(false)}>
+                不用
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setAskCloudSync(false);
+                  syncDetails(true);
+                }}
+              >
+                同步
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {editing && (
         <EditBookDialog
           book={book}
@@ -430,6 +459,13 @@ export function BookDetailPage({
           onSaved={() => {
             setEditing(false);
             setRevision((value) => value + 1);
+            // A book on the cloud bookshelf can take the new details there too.
+            if (!book.inCloud) return;
+            void runtime.services.sync.getWebDav().then(
+              (settings) =>
+                settings.autoSyncBookInfo ? syncDetails(false) : setAskCloudSync(true),
+              () => undefined,
+            );
           }}
         />
       )}

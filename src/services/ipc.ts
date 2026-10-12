@@ -301,6 +301,8 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("set_book_replace_rules", {
         request: { bookId, enabled } satisfies BookReplaceRequest,
       }),
+    deleteReadingRecord: (bookId) =>
+      invokeCommand<void>("delete_reading_record", { request: { bookId } satisfies BookRequest }),
     readingStats: (today) =>
       invokeCommand<ReadingStats>("reading_stats", {
         request: { today } satisfies ReadingStatsRequest,

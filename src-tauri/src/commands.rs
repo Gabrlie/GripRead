@@ -1987,6 +1987,9 @@ fn merged_webdav(
     settings.auto_backup = request.auto_backup;
     settings.sync_progress = request.sync_progress;
     settings.sync_progress_plus = request.sync_progress_plus;
+    if let Some(on) = request.auto_sync_book_info {
+        settings.auto_sync_book_info = on;
+    }
     settings.restore_ignore = request.restore_ignore.clone();
     Ok(settings)
 }
@@ -2365,4 +2368,16 @@ pub fn log_frontend(request: crate::models::FrontendLogRequest) {
         crate::app_log::LogLevel::Info => crate::app_log::info(area, &request.message),
         crate::app_log::LogLevel::Detail => crate::app_log::detail(area, &request.message),
     }
+}
+
+/// 阅读记录's 删除记录: the book's reading time no longer counts.
+#[tauri::command]
+pub async fn delete_reading_record(
+    request: BookRequest,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    with_storage(&state, move |storage| {
+        storage.delete_reading_record(&request.book_id)
+    })
+    .await
 }

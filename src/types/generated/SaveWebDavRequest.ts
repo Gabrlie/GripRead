@@ -5,4 +5,4 @@ export type SaveWebDavRequest = { url: string, username: string,
 /**
  * `None` keeps the saved password.
  */
-password: string | null, folder: string, deviceName: string, autoBackup: boolean, syncProgress: boolean, syncProgressPlus: boolean, restoreIgnore: Array<RestoreCategory>, };
+password: string | null, folder: string, deviceName: string, autoBackup: boolean, syncProgress: boolean, syncProgressPlus: boolean, autoSyncBookInfo?: boolean, restoreIgnore: Array<RestoreCategory>, };

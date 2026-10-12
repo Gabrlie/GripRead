@@ -212,6 +212,7 @@ pub struct StoredWebDav {
     pub auto_backup: bool,
     pub sync_progress: bool,
     pub sync_progress_plus: bool,
+    pub auto_sync_book_info: bool,
     pub restore_ignore: Vec<RestoreCategory>,
     pub last_backup_at: Option<i64>,
     /// Digest of the records of the last automatic backup, to skip unchanged days.
@@ -234,6 +235,7 @@ impl Default for StoredWebDav {
             // Legado turns progress sync on by default.
             sync_progress: true,
             sync_progress_plus: false,
+            auto_sync_book_info: false,
             restore_ignore: Vec::new(),
             last_backup_at: None,
             last_backup_digest: None,
@@ -296,6 +298,7 @@ impl StoredWebDav {
             auto_backup: self.auto_backup,
             sync_progress: self.sync_progress,
             sync_progress_plus: self.sync_progress_plus,
+            auto_sync_book_info: Some(self.auto_sync_book_info),
             restore_ignore: self.restore_ignore.clone(),
             last_backup_at: self.last_backup_at,
             last_error: self.last_error.clone(),

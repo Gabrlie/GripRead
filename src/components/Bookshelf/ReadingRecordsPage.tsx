@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useLongPress } from "../ui/use-long-press";
 import { useLibrary, useRuntime } from "../../application/runtime";
 import type { BookReadingTime, LibraryBook, ReadingStats } from "../../types/generated";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -22,6 +23,7 @@ export function ReadingRecordsPage({
   const { state: library } = useLibrary();
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
   const page = usePageLayer(onClose);
   useEffect(() => {
     let cancelled = false;
@@ -34,7 +36,7 @@ export function ReadingRecordsPage({
     return () => {
       cancelled = true;
     };
-  }, [runtime.services.library]);
+  }, [runtime.services.library, revision]);
   // Deleted books and online books read without adding them keep their time.
   const books = (stats?.books ?? []).map((record) => ({
     record,
@@ -43,6 +45,7 @@ export function ReadingRecordsPage({
     ),
   }));
   const [gone, setGone] = useState<BookReadingTime | null>(null);
+  const [removing, setRemoving] = useState<BookReadingTime | null>(null);
   return (
     <div
       ref={page}
@@ -87,8 +90,8 @@ export function ReadingRecordsPage({
             <ul className="space-y-2">
               {books.map(({ record, book }) => (
                 <li key={record.bookId}>
-                  <button
-                    type="button"
+                  <RecordButton
+                    onLongPress={() => setRemoving(record)}
                     onClick={() => (book ? onOpenBook(book) : setGone(record))}
                     className={`w-full flex items-center gap-3 rounded-xl bg-surface-container-low p-2.5 text-left hover:bg-surface-container ${
                       book ? "" : "opacity-70"
@@ -115,13 +118,44 @@ export function ReadingRecordsPage({
                         最近 {record.lastDay} · {formatDuration(record.seconds)}
                       </span>
                     </span>
-                  </button>
+                  </RecordButton>
                 </li>
               ))}
             </ul>
           </section>
         </div>
       </main>
+      {removing && (
+        <Dialog open onOpenChange={(open) => !open && setRemoving(null)}>
+          <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">删除阅读记录</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-secondary">
+              《{removing.title}》的阅读时长将被删除，不再计入统计。
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setRemoving(null)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                className="bg-error text-on-error"
+                onClick={() => {
+                  const target = removing;
+                  setRemoving(null);
+                  void runtime.services.library.deleteReadingRecord(target.bookId).then(
+                    () => setRevision((value) => value + 1),
+                    (failure: unknown) => setError(String(failure)),
+                  );
+                }}
+              >
+                删除
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {gone && (
         <Dialog open onOpenChange={(open) => !open && setGone(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
@@ -140,5 +174,24 @@ export function ReadingRecordsPage({
         </Dialog>
       )}
     </div>
+  );
+}
+
+function RecordButton({
+  onLongPress,
+  onClick,
+  className,
+  children,
+}: {
+  onLongPress: () => void;
+  onClick: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const press = useLongPress(onLongPress, onClick);
+  return (
+    <button type="button" {...press} className={className}>
+      {children}
+    </button>
   );
 }

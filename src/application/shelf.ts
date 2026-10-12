@@ -30,6 +30,37 @@ interface FailedWrite {
 export interface ShelfChapterLabels {
   current: string;
   latest: string;
+  /** Chapters after the one being read (all of them when unread). */
+  remaining?: number;
+  /** All chapters, to tell when a book gained chapters since it was read. */
+  total?: number;
+}
+
+const READ_COUNTS_KEY = "gripread.chaptersWhenRead";
+
+function readCounts(): Record<string, number> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(READ_COUNTS_KEY) ?? "{}");
+    return value && typeof value === "object" ? (value as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Remembers how many chapters a book had when it was last read. */
+export function rememberChaptersWhenRead(bookId: string, count: number) {
+  try {
+    localStorage.setItem(READ_COUNTS_KEY, JSON.stringify({ ...readCounts(), [bookId]: count }));
+  } catch {
+    // The red mark is a convenience.
+  }
+}
+
+/** Whether a book gained chapters since it was last read (the red mark). */
+export function gainedChapters(book: LibraryBook, labels: ShelfChapterLabels | undefined): boolean {
+  if (book.online) return book.online.newChapters > 0;
+  const before = readCounts()[book.book.id];
+  return before !== undefined && labels?.total !== undefined && labels.total > before;
 }
 export function chapterLabels(book: LibraryBook, entries: TocEntry[]): ShelfChapterLabels {
   const currentEntries = entries.filter(
@@ -41,10 +72,19 @@ export function chapterLabels(book: LibraryBook, entries: TocEntry[]): ShelfChap
     position === null
       ? undefined
       : currentEntries.filter((entry) => entry.locator.offset <= position).at(-1);
+  const chapters = currentEntries.filter((entry) => !entry.volume);
+  const at = chapter ? chapters.findIndex((entry) => entry.ordinal === chapter.ordinal) : -1;
   return {
     current:
       saved && position === null ? "待重新定位" : !saved ? "尚未阅读" : (chapter?.title ?? "全文"),
     latest: currentEntries.at(-1)?.title ?? "全文",
+    remaining:
+      chapters.length > 1
+        ? saved
+          ? Math.max(0, chapters.length - at - 1)
+          : chapters.length
+        : undefined,
+    total: chapters.length,
   };
 }
 /** An online book's labels come from the chapter it is in and the source's latest. */
@@ -54,6 +94,11 @@ export function onlineChapterLabels(book: LibraryBook): ShelfChapterLabels | nul
   return {
     current: online.readChapterTitle || (book.locator ? "全文" : "尚未阅读"),
     latest: online.book.latestChapterTitle || "",
+    remaining:
+      online.readChapter === null || !book.locator
+        ? online.totalChapters
+        : Math.max(0, online.totalChapters - online.readChapter - 1),
+    total: online.totalChapters,
   };
 }
 

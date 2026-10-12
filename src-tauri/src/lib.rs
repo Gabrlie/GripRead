@@ -36,11 +36,11 @@ use commands::{
     reading_stats, set_book_cover, update_bookmark_note,
 };
 use commands::{
-    backup_to_webdav, clear_logs, delete_cloud_book, delete_remote_backup, download_cloud_book,
-    export_backup_file, export_log_text, get_webdav_settings, list_cloud_books, list_log_entries,
-    list_recovery_points, list_remote_backups, log_frontend, preview_backup, restore_backup,
-    run_automatic_backup, save_webdav_settings, set_backup_folder, set_detailed_log, test_webdav,
-    upload_cloud_books,
+    backup_to_webdav, clear_logs, delete_cloud_book, delete_reading_record, delete_remote_backup,
+    download_cloud_book, export_backup_file, export_log_text, get_webdav_settings,
+    list_cloud_books, list_log_entries, list_recovery_points, list_remote_backups, log_frontend,
+    preview_backup, restore_backup, run_automatic_backup, save_webdav_settings, set_backup_folder,
+    set_detailed_log, test_webdav, upload_cloud_books,
 };
 use commands::{
     delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
@@ -261,6 +261,7 @@ pub fn run() {
             restore_backup,
             export_backup_file,
             list_log_entries,
+            delete_reading_record,
             set_detailed_log,
             clear_logs,
             export_log_text,

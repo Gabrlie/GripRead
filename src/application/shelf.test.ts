@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import type { LibraryService, ReaderService } from "../services/contracts";
 import type { LibraryBook, LibraryGroup, TocEntry } from "../types/generated";
-import { ShelfStore } from "./shelf";
+import { ShelfStore, chapterLabels, gainedChapters, rememberChaptersWhenRead } from "./shelf";
 import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
 
 function deferred<T>() {
@@ -73,6 +74,7 @@ function setup() {
     clearBookCover: vi.fn(async () => undefined),
     readAsset: vi.fn(async () => new ArrayBuffer(0)),
     addReadingTime: vi.fn(async () => undefined),
+    deleteReadingRecord: vi.fn(async () => undefined),
     readingStats: vi.fn(async () => ({ totalSeconds: 0, todaySeconds: 0, days: [], books: [] })),
     listRemovedBooks: vi.fn(async () => []),
     updateBook: vi.fn(),
@@ -317,5 +319,23 @@ describe("shelf chapter snapshots", () => {
     expect(store.getSnapshot().chapterErrors.book).toContain("chapter failure");
     expect(store.getSnapshot().chapters.book.latest).toBe("目录读取失败");
     expect(store.getSnapshot().loading).toBe(false);
+  });
+});
+
+describe("remaining chapters", () => {
+  it("counts chapters after the current one and marks books that gained chapters", () => {
+    const toc = [0, 10, 20, 30].map((offset, index) =>
+      tocEntry(index, `第${index + 1}章`, { ...entry.locator!, offset }),
+    );
+    const reading = { ...entry, locator: { ...entry.locator!, offset: 12 } };
+    const labels = chapterLabels(reading, toc);
+    expect(labels.remaining).toBe(2);
+    expect(chapterLabels({ ...entry, locator: null }, toc).remaining).toBe(4);
+    localStorage.removeItem("gripread.chaptersWhenRead");
+    expect(gainedChapters(reading, labels)).toBe(false);
+    rememberChaptersWhenRead("book", 3);
+    expect(gainedChapters(reading, labels)).toBe(true);
+    rememberChaptersWhenRead("book", 4);
+    expect(gainedChapters(reading, labels)).toBe(false);
   });
 });

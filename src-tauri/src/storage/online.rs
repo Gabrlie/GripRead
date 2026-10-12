@@ -1194,4 +1194,38 @@ mod tests {
         assert!(storage.online_record(&old).is_err());
         assert!(storage.online_record(&fresh).is_ok());
     }
+
+    #[test]
+    fn reading_records_can_be_deleted_completely() {
+        let (_dir, mut storage) = storage();
+        let id = storage
+            .add_online_book(&book("a"), &chapters(&["第1章"], "a"), true)
+            .unwrap();
+        storage.add_reading_time(&id, "2026-10-12", 600).unwrap();
+        let other = storage
+            .add_online_book(
+                &{
+                    let mut b = book("b");
+                    b.name = "雪中".into();
+                    b
+                },
+                &chapters(&["第1章"], "b"),
+                true,
+            )
+            .unwrap();
+        storage.add_reading_time(&other, "2026-10-12", 300).unwrap();
+        storage.delete_online_book(&other).unwrap();
+        assert_eq!(
+            storage.reading_stats("2026-10-12").unwrap().total_seconds,
+            900
+        );
+        storage.delete_reading_record(&id).unwrap();
+        let retired = storage.reading_stats("2026-10-12").unwrap().books[0]
+            .book_id
+            .clone();
+        storage.delete_reading_record(&retired).unwrap();
+        let stats = storage.reading_stats("2026-10-12").unwrap();
+        assert_eq!(stats.total_seconds, 0);
+        assert!(stats.books.is_empty() && stats.days.is_empty());
+    }
 }

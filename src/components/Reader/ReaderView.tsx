@@ -79,6 +79,7 @@ import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { keepOnlineCover, updateOnlineToc } from "../../application/online";
+import { rememberChaptersWhenRead } from "../../application/shelf";
 import { appLog } from "../../services/log";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow } from "../../types/generated";
@@ -568,6 +569,9 @@ export function ReaderView() {
         return;
       }
       setClosing(true);
+      // The shelf marks chapters added after this read in red.
+      if (bookId && tools.toc.length)
+        rememberChaptersWhenRead(bookId, tools.toc.filter((entry) => !entry.volume).length);
       synchronizeScroll.current?.();
       void pauseAutomatic();
       controller?.dispose();
@@ -599,6 +603,7 @@ export function ReaderView() {
       pauseAutomatic,
       runtime,
       settingsStore,
+      tools.toc,
     ],
   );
   leaveToDetail.current = () => close(true);

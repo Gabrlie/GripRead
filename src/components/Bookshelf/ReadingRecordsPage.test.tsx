@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
@@ -48,5 +48,50 @@ describe("阅读记录", () => {
     await userEvent.click(await screen.findByRole("button", { name: /删掉的书/ }));
     expect(await screen.findByText(/这本书已删除，无法打开/)).toBeTruthy();
     expect(onOpenBook).not.toHaveBeenCalled();
+  });
+});
+
+describe("删除阅读记录", () => {
+  it("removes a record after a long press and a confirmation", async () => {
+    const remove = vi.fn(async () => undefined);
+    const stats = vi.fn(async () => ({
+      totalSeconds: 600,
+      todaySeconds: 0,
+      days: [{ day: "2026-10-01", seconds: 600 }],
+      books: [
+        {
+          bookId: "retired:abc",
+          seconds: 600,
+          lastDay: "2026-10-01",
+          title: "删掉的书",
+          author: null,
+          deleted: true,
+          lastReadAt: 1,
+        },
+      ],
+    }));
+    const runtime = new AppRuntime({
+      library: {
+        listBooks: vi.fn(async () => []),
+        listRemovedBooks: vi.fn(async () => []),
+        onImportProgress: vi.fn(async () => () => undefined),
+        readingStats: stats,
+        deleteReadingRecord: remove,
+      },
+      reader: {},
+      settings: {},
+      sync: {},
+      sources: sourceServiceMocks(),
+    } as unknown as AppServices);
+    render(
+      <RuntimeContext.Provider value={runtime}>
+        <ReadingRecordsPage onClose={() => undefined} onOpenBook={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    const row = await screen.findByRole("button", { name: /删掉的书/ });
+    fireEvent.contextMenu(row);
+    await userEvent.click(await screen.findByRole("button", { name: "删除" }));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("retired:abc"));
+    await vi.waitFor(() => expect(stats).toHaveBeenCalledTimes(2));
   });
 });
