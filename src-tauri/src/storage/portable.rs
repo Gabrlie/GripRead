@@ -1165,7 +1165,7 @@ impl Storage {
                     |row| row.get(0),
                 )
                 .optional()?;
-            if local.map_or(true, |local| book.position_updated_at > local) {
+            if local.is_none_or(|local| book.position_updated_at > local) {
                 if let Some(locator) = locate(position)? {
                     self.conn.execute(
                         "INSERT INTO reading_positions(book_id, locator_json, updated_at)

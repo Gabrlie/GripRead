@@ -188,8 +188,8 @@ pub(crate) fn apply(text: &str, transform: &TextTransform) -> (String, OffsetMap
     }
     let output = match transform.chinese {
         ChineseConversion::Off => output,
-        ChineseConversion::ToTraditional => convert(&output, &S2T, include_str!("zh/s2t.txt")),
-        ChineseConversion::ToSimplified => convert(&output, &T2S, include_str!("zh/t2s.txt")),
+        ChineseConversion::ToTraditional => to_traditional(&output),
+        ChineseConversion::ToSimplified => to_simplified(&output),
     };
     (output, map)
 }
@@ -224,6 +224,16 @@ fn replace_line(line: &str, compiled: &CompiledRule<'_>) -> Option<String> {
             Some(output)
         }
     }
+}
+
+/// Simplified to Traditional Chinese, as `java.s2t` in source scripts.
+pub(crate) fn to_traditional(text: &str) -> String {
+    convert(text, &S2T, include_str!("zh/s2t.txt"))
+}
+
+/// Traditional to Simplified Chinese, as `java.t2s` in source scripts.
+pub(crate) fn to_simplified(text: &str) -> String {
+    convert(text, &T2S, include_str!("zh/t2s.txt"))
 }
 
 struct Converter {

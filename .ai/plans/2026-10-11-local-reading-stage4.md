@@ -43,4 +43,4 @@ D5: Rust test for a deleted book keeping its totals and returning with its posit
 
 ## Handoff
 
-In progress: D1–D5 are implemented on the host; next is the Android APK and device results.
+D1–D5 are accepted on device; a few small items are batched for a later round.

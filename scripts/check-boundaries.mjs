@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve, relative, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 export function checkBoundaries(root) {
@@ -67,6 +67,23 @@ export function checkBoundaries(root) {
   for (const file of ["models.rs", "storage.rs", "txt.rs"])
     if (/\btauri\b/.test(readFileSync(resolve(root, "src-tauri/src", file), "utf8")))
       errors.push(`${file}: storage/domain cannot depend on Tauri`);
+  // The source engine runs untrusted rules and scripts; it stays free of the
+  // application's IPC.
+  const engine = resolve(root, "src-tauri/src/sources");
+  const engineFiles = [];
+  function walkRust(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = resolve(dir, entry.name);
+      if (entry.isDirectory()) walkRust(file);
+      else if (file.endsWith(".rs")) engineFiles.push(file);
+    }
+  }
+  if (existsSync(engine)) walkRust(engine);
+  for (const file of engineFiles)
+    if (/\btauri\b/.test(readFileSync(file, "utf8")))
+      errors.push(
+        `${relative(root, file).replaceAll("\\", "/")}: the source engine cannot depend on Tauri`,
+      );
   return errors;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

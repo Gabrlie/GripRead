@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is in progress: fixes from stage 3 device acceptance, a rebuilt settings page, backup and restore, and a WebDAV cloud bookshelf, delivered as one Android build.
+The [Legado book sources task](plans/2026-10-11-legado-sources.md) is in progress. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-D1–D5 are implemented on the host; next is the Android APK and device results. The macOS native suite needs a run on macOS.
+S1, the rule engine, is implemented; S2, source storage and management, is next. The macOS native suite needs a run on macOS.

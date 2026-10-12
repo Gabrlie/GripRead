@@ -65,3 +65,19 @@ test("lets component tests import shared test helpers but not production pages",
     },
   );
 });
+
+test("keeps the source engine free of Tauri", () => {
+  fixture(
+    {
+      "src-tauri/src/sources/js/mod.rs": "use tauri::AppHandle;",
+      "src-tauri/src/sources/rule.rs": "fn rule() {}",
+      "src/main.ts": "",
+    },
+    (root) => {
+      const errors = checkBoundaries(root);
+      assert.deepEqual(errors, [
+        "src-tauri/src/sources/js/mod.rs: the source engine cannot depend on Tauri",
+      ]);
+    },
+  );
+});

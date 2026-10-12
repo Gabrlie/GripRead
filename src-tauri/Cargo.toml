@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A local-first novel reader"
 authors = ["GripRead contributors"]
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.87"
 default-run = "gripread"
 
 [lib]
@@ -44,7 +44,29 @@ thiserror = "2.0.20"
 uuid = { version = "1.24.1", features = ["v4", "serde"] }
 fancy-regex = "0.19.2"
 aho-corasick = "1.1.5"
-ureq = { version = "3", default-features = false, features = ["rustls"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "brotli"] }
+rquickjs = { version = "0.14", default-features = false, features = ["classes", "properties"] }
+scraper = "0.27"
+sxd-document = "0.3"
+sxd-xpath = "0.4"
+serde_json_path = "0.7"
+url = "2"
+md-5 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+des = "0.8"
+cbc = "0.1"
+ecb = "0.1"
+base64 = "0.22"
+hex = "0.4"
+cipher = { version = "0.4", features = ["block-padding", "alloc"] }
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+ego-tree = "0.11"
+
+# rquickjs ships no pregenerated bindings for Android; generate them there.
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { version = "0.14", default-features = false, features = ["classes", "properties", "bindgen"] }
 
 # Debug builds are installed on devices for acceptance. Optimize dependencies
 # (decoding, encoding detection, hashing, regex, SQLite) so imports and reads

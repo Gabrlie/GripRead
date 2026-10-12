@@ -1480,7 +1480,7 @@ impl Storage {
             // A duplicate operation can have a journal while its asset row is
             // already committed. Its final path belongs to that asset and
             // must survive an ordinary query/commit failure.
-            if committed.as_ref().map_or(true, |(path, hash)| {
+            if committed.as_ref().is_none_or(|(path, hash)| {
                 path != &journal.relative_path || hash != &journal.sha256
             }) {
                 let references: i64 = self.conn.query_row(
@@ -1614,7 +1614,7 @@ impl Storage {
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;
             let book_id: Option<String> = row.get(2)?;
-            if groups.last().map_or(true, |group| group.id != id) {
+            if groups.last().is_none_or(|group| group.id != id) {
                 groups.push(LibraryGroup {
                     id,
                     name: row.get(1)?,
@@ -5111,7 +5111,7 @@ fn build_sparse_index(text: &str) -> SparseIndex {
     let utf16_length = utf16_offset;
     if entries
         .last()
-        .map_or(true, |entry| entry.utf16_offset != utf16_length)
+        .is_none_or(|entry| entry.utf16_offset != utf16_length)
     {
         entries.push(IndexEntry {
             utf16_offset: utf16_length,

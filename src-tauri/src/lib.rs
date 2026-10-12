@@ -6,6 +6,7 @@ pub mod m1_txt;
 pub mod models;
 mod progress_sync;
 mod relocation;
+pub mod sources;
 pub mod storage;
 mod transform;
 pub mod txt;

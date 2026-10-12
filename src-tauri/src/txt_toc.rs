@@ -124,7 +124,7 @@ pub fn choose_rule<'a>(text: &str, rules: &'a [RuleSpec]) -> Option<&'a RuleSpec
         for found in regex.find_iter(sample) {
             let Ok(found) = found else { break };
             let start = chars_at(found.start());
-            if last_end.map_or(true, |end| start > end + SCORE_GAP_CHARS) {
+            if last_end.is_none_or(|end| start > end + SCORE_GAP_CHARS) {
                 score += 1;
                 last_end = Some(chars_at(found.end()));
             }

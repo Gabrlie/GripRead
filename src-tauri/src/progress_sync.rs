@@ -119,7 +119,7 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
     let located = guard.locator_from_portable(book_id, &record.locator)?;
     let current = guard.saved_position(book_id)?;
     let Some(located) = located.filter(|located| {
-        current.as_ref().map_or(true, |current| {
+        current.as_ref().is_none_or(|current| {
             current.content_version != located.content_version || current.offset != located.offset
         })
     }) else {
