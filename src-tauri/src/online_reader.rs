@@ -718,4 +718,93 @@ mod tests {
             .unwrap());
         assert!(!storage.lock().unwrap().online_cache_dir(&id).exists());
     }
+
+    /// Reads two chapters of a live book from `GRIPREAD_SOURCES` /
+    /// `GRIPREAD_SOURCE_NAME` through the shelf path, then updates its
+    /// contents. A tool for checking the whole online path by hand.
+    #[test]
+    #[ignore]
+    fn live_online_reading() {
+        let path = std::env::var("GRIPREAD_SOURCES").expect("GRIPREAD_SOURCES");
+        let name = std::env::var("GRIPREAD_SOURCE_NAME").expect("GRIPREAD_SOURCE_NAME");
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let text = std::fs::read_to_string(path).unwrap();
+                let raw = crate::sources::model::parse_sources(&text)
+                    .unwrap()
+                    .into_iter()
+                    .find(|value| value["bookSourceName"] == name.as_str())
+                    .unwrap();
+                let dir =
+                    Dir(std::env::temp_dir()
+                        .join(format!("gripread-live-{}", uuid::Uuid::new_v4())));
+                std::fs::create_dir_all(&dir.0).unwrap();
+                let mut storage = Storage::open(&dir.0).unwrap();
+                storage.save_book_source(&raw.to_string(), None).unwrap();
+                let storage: Shared = Arc::new(Mutex::new(storage));
+                let source = load_source(&storage, raw["bookSourceUrl"].as_str().unwrap()).unwrap();
+                let key = source
+                    .rule("ruleSearch", "checkKeyWord")
+                    .unwrap_or_else(|| "我的".into());
+                let session = session_for(&storage, source, Control::unlimited()).unwrap();
+                let found = session.search(&key, 1).unwrap();
+                let book = Rc::new(RefCell::new(found[0].clone()));
+                session.book_info(&book, false).unwrap();
+                let chapters: Vec<OnlineChapter> = session
+                    .chapters(&book)
+                    .unwrap()
+                    .iter()
+                    .map(crate::online_commands::online_chapter)
+                    .collect();
+                let online = crate::online_commands::online_book(&book.borrow());
+                let id = storage
+                    .lock()
+                    .unwrap()
+                    .add_online_book(&online, &chapters, true)
+                    .unwrap();
+                eprintln!("《{}》{} 章", online.name, chapters.len());
+                let first = read_window(
+                    &storage,
+                    &ReadContentRequest {
+                        book_id: id.clone(),
+                        locator: None,
+                        max_units: 200,
+                        direction: WindowDirection::Forward,
+                        resource_id: None,
+                    },
+                )
+                .unwrap();
+                eprintln!(
+                    "{}: {}",
+                    first.resource_id,
+                    first.text.chars().take(60).collect::<String>()
+                );
+                let next = first.next_resource_id.clone().unwrap();
+                let second = read_window(
+                    &storage,
+                    &ReadContentRequest {
+                        book_id: id.clone(),
+                        locator: None,
+                        max_units: 200,
+                        direction: WindowDirection::Forward,
+                        resource_id: Some(next),
+                    },
+                )
+                .unwrap();
+                eprintln!(
+                    "{}: {}",
+                    second.resource_id,
+                    second.text.chars().take(60).collect::<String>()
+                );
+                let added = refresh_toc(&storage, &id, Default::default()).unwrap();
+                eprintln!("更新目录：新增 {added} 章");
+                std::thread::sleep(Duration::from_secs(8));
+                let cached = storage.lock().unwrap().cached_online_chapters(&id).unwrap();
+                eprintln!("已缓存 {} 章", cached.len());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
