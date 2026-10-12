@@ -46,6 +46,8 @@ The engine lives in `src-tauri/src/sources/` and runs scripts in QuickJS with bl
 
 ### Acquisition and source changes
 
+Search asks every chosen source with up to eight at a time and a 30-second limit per source, and streams `online-search` events whose results are merged as Legado's `SearchModel` does: same name and author fold into one result with each source's copy, exact matches of the key first, then results containing it, each by source count, then the rest unless 精准搜索 is on. A source named in the scope is searched even when disabled. Details, contents, and chapter text are separate steps with a 90-second limit; a details page that also lists the contents is kept briefly so the next step does not fetch it again. Covers are fetched through the source's URL rules so headers and cookies apply.
+
 Return search results progressively by source; one failing source does not erase others. Chain details, table of contents, and chapter retrieval through explicit book context. Persist sanitized chapters in local cache, support update checks and source switching, and respect per-source request concurrency.
 
 Source switching preserves `Book` identity, then maps chapters using old/new tables of contents and text context. If uncertain, keep the prior position and present the nearest candidate with an explanation. Do not assume matching chapter numbers or URLs prove equivalence.

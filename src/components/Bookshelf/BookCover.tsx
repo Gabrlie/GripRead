@@ -34,6 +34,11 @@ export function BookCover({ title, assetId }: { title: string; assetId?: string 
       />
     );
   }
+  return <GeneratedCover title={title} />;
+}
+
+/** The cover drawn from a book's title when it has no image. */
+export function GeneratedCover({ title }: { title: string }) {
   const theme = getCoverTheme(title);
   const cleanTitle = title.replace(/^《|》$/g, "").trim();
   return (

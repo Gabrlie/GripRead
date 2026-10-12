@@ -5,6 +5,17 @@ export type { LibraryService, ReaderService, SettingsService, AppServices } from
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  SearchOnlineRequest,
+  OnlineSearchEvent,
+  ExploreKind,
+  ExploreKindsRequest,
+  ExploreBooksRequest,
+  OnlineBook,
+  OnlineBookRequest,
+  OnlineChapter,
+  OnlineContent,
+  OnlineContentRequest,
+  OnlineCoverRequest,
   BookSourceSummary,
   BookSourceDetail,
   SourceImportPreview,
@@ -594,6 +605,36 @@ export const tauriServices: AppServices = {
     cancel: (operationId) =>
       invokeCommand<CancelResult>("cancel_source_operation", {
         request: { operationId } satisfies ImportOperationRequest,
+      }),
+    search: (request) =>
+      invokeCommand<void>("search_online_books", {
+        request: request satisfies SearchOnlineRequest,
+      }),
+    onSearch: (listener) =>
+      listen<OnlineSearchEvent>("online-search", (event) => listener(event.payload)),
+    exploreKinds: (sourceUrl, refresh = false) =>
+      invokeCommand<ExploreKind[]>("explore_kinds", {
+        request: { sourceUrl, refresh } satisfies ExploreKindsRequest,
+      }),
+    exploreBooks: (sourceUrl, url, page) =>
+      invokeCommand<OnlineBook[]>("explore_books", {
+        request: { sourceUrl, url, page } satisfies ExploreBooksRequest,
+      }),
+    bookInfo: (book) =>
+      invokeCommand<OnlineBook>("online_book_info", {
+        request: { book } satisfies OnlineBookRequest,
+      }),
+    chapters: (book) =>
+      invokeCommand<OnlineChapter[]>("online_book_chapters", {
+        request: { book } satisfies OnlineBookRequest,
+      }),
+    chapterContent: (book, chapter, nextChapterUrl) =>
+      invokeCommand<OnlineContent>("online_chapter_content", {
+        request: { book, chapter, nextChapterUrl } satisfies OnlineContentRequest,
+      }),
+    cover: (sourceUrl, url) =>
+      invokeCommand<ArrayBuffer>("online_cover", {
+        request: { sourceUrl, url } satisfies OnlineCoverRequest,
       }),
   },
 };

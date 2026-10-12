@@ -4,6 +4,7 @@ pub mod documents;
 pub mod error;
 pub mod m1_txt;
 pub mod models;
+mod online_commands;
 mod progress_sync;
 mod relocation;
 pub mod source_commands;
@@ -42,6 +43,10 @@ use commands::{
     delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
     list_replace_rules, order_replace_rules, save_replace_rule, set_book_replace_rules,
     test_replace_rule,
+};
+use online_commands::{
+    explore_books, explore_kinds, online_book_chapters, online_book_info, online_chapter_content,
+    online_cover, search_online_books, OnlinePages,
 };
 use source_commands::{
     cancel_source_operation, change_book_sources_group, check_book_sources, clear_source_cookies,
@@ -91,6 +96,7 @@ pub fn run() {
             app.manage(AppState::new(data_dir)?);
             app.manage(ExitPermission::default());
             app.manage(SourceOperations::default());
+            app.manage(std::sync::Arc::new(OnlinePages::default()));
             #[cfg(target_os = "macos")]
             {
                 // AppKit's predefined Quit invokes terminate: directly and
@@ -148,6 +154,13 @@ pub fn run() {
             cancel_source_operation,
             read_source_file,
             export_book_sources_file,
+            search_online_books,
+            explore_kinds,
+            explore_books,
+            online_book_info,
+            online_book_chapters,
+            online_chapter_content,
+            online_cover,
             start_import,
             get_import_status,
             cancel_import,

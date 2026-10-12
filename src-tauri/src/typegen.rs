@@ -143,6 +143,20 @@ const IPC_TYPES: &[&str] = &[
     "CheckSourcesRequest",
     "SourceCheckEvent",
     "ExportSourcesFileRequest",
+    "ExploreKind",
+    "OnlineBook",
+    "OnlineSearchResult",
+    "SearchScope",
+    "SearchOnlineRequest",
+    "SourceFailure",
+    "OnlineSearchEvent",
+    "ExploreKindsRequest",
+    "ExploreBooksRequest",
+    "OnlineBookRequest",
+    "OnlineChapter",
+    "OnlineContentRequest",
+    "OnlineContent",
+    "OnlineCoverRequest",
 ];
 
 pub fn generated_types() -> Result<String, AppError> {
@@ -288,6 +302,20 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<CheckSourcesRequest>(&config)?;
     export_all::<SourceCheckEvent>(&config)?;
     export_all::<ExportSourcesFileRequest>(&config)?;
+    export_all::<crate::sources::web_book::ExploreKind>(&config)?;
+    export_all::<OnlineBook>(&config)?;
+    export_all::<OnlineSearchResult>(&config)?;
+    export_all::<SearchScope>(&config)?;
+    export_all::<SearchOnlineRequest>(&config)?;
+    export_all::<SourceFailure>(&config)?;
+    export_all::<OnlineSearchEvent>(&config)?;
+    export_all::<ExploreKindsRequest>(&config)?;
+    export_all::<ExploreBooksRequest>(&config)?;
+    export_all::<OnlineBookRequest>(&config)?;
+    export_all::<OnlineChapter>(&config)?;
+    export_all::<OnlineContentRequest>(&config)?;
+    export_all::<OnlineContent>(&config)?;
+    export_all::<OnlineCoverRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;

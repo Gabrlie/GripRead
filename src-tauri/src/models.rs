@@ -1572,3 +1572,140 @@ pub struct ExportSourcesFileRequest {
     /// The sources to export; every source when empty.
     pub urls: Vec<String>,
 }
+
+/// A book as one source describes it: a search or explore result, or its
+/// details once read.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineBook {
+    pub source_url: String,
+    pub source_name: String,
+    pub name: String,
+    pub author: String,
+    /// Categories, comma separated.
+    pub kind: String,
+    pub cover_url: String,
+    pub intro: String,
+    pub word_count: String,
+    pub latest_chapter_title: String,
+    pub book_url: String,
+    pub toc_url: String,
+    /// The book's rule variables as JSON, carried between steps.
+    pub variables: String,
+}
+
+/// Search results with the same name and author from several sources.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineSearchResult {
+    pub name: String,
+    pub author: String,
+    pub kind: String,
+    pub cover_url: String,
+    pub intro: String,
+    pub word_count: String,
+    pub latest_chapter_title: String,
+    /// Each source's copy, in the order they answered.
+    pub origins: Vec<OnlineBook>,
+}
+
+/// Which sources a search asks; both empty means every enabled source.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchScope {
+    pub groups: Vec<String>,
+    pub source_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOnlineRequest {
+    pub operation_id: String,
+    pub key: String,
+    pub scope: SearchScope,
+    /// Keep only results whose name or author contains the key.
+    pub precise: bool,
+    pub page: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceFailure {
+    pub source_name: String,
+    pub message: String,
+}
+
+/// Search progress, streamed as `online-search` with the merged results so far.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineSearchEvent {
+    pub operation_id: String,
+    pub searched: u32,
+    pub total: u32,
+    pub done: bool,
+    pub results: Vec<OnlineSearchResult>,
+    pub failures: Vec<SourceFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExploreKindsRequest {
+    pub source_url: String,
+    /// Run the source's explore script again instead of using its cache.
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExploreBooksRequest {
+    pub source_url: String,
+    pub url: String,
+    pub page: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineBookRequest {
+    pub book: OnlineBook,
+}
+
+/// One entry of an online book's table of contents.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineChapter {
+    pub index: u32,
+    pub title: String,
+    /// The address as the source gave it, possibly relative.
+    pub url: String,
+    /// The page the address is relative to.
+    pub base_url: String,
+    pub is_volume: bool,
+    pub is_vip: bool,
+    pub is_pay: bool,
+    /// Extra text such as an update time.
+    pub tag: String,
+    pub variables: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineContentRequest {
+    pub book: OnlineBook,
+    pub chapter: OnlineChapter,
+    pub next_chapter_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineContent {
+    /// The title the content page gave, when it has a title rule.
+    pub title: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineCoverRequest {
+    pub source_url: String,
+    pub url: String,
+}

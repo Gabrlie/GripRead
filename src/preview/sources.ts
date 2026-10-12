@@ -1,6 +1,9 @@
 import type { SourceService } from "../services/contracts";
 import type {
   BookSourceSummary,
+  OnlineBook,
+  OnlineChapter,
+  OnlineSearchEvent,
   SourceCheckEvent,
   SourceDebugEvent,
   SourceImportItem,
@@ -36,6 +39,18 @@ function parse(json: string): Raw[] {
   return list.filter((item): item is Raw => typeof item === "object" && item !== null);
 }
 
+/** A simplified stand-in for the engine's merge: same name and author fold together. */
+function mergeSearchResults(key: string, books: OnlineBook[], precise: boolean) {
+  const results: OnlineSearchEvent["results"] = [];
+  for (const book of books) {
+    if (precise && !book.name.includes(key) && !book.author.includes(key)) continue;
+    const same = results.find((item) => item.name === book.name && item.author === book.author);
+    if (same) same.origins.push(book);
+    else results.push({ ...book, origins: [book] });
+  }
+  return results.sort((a, b) => b.origins.length - a.origins.length);
+}
+
 function groups(group: string): string[] {
   return group
     .split(/[,;，；]/)
@@ -48,8 +63,13 @@ function groups(group: string): string[] {
  * preview build and component tests. Debugging and checks report scripted
  * steps instead of fetching.
  */
-export function createMemorySourceService(initial: Raw[] = []): SourceService {
+export function createMemorySourceService(
+  initial: Raw[] = [],
+  catalogue: OnlineBook[] = [],
+): SourceService {
   let sources: Raw[] = initial.map((raw) => ({ ...raw }));
+  const searchListeners = new Set<(event: OnlineSearchEvent) => void>();
+  const cancelled = new Set<string>();
   const debugListeners = new Set<(event: SourceDebugEvent) => void>();
   const checkListeners = new Set<(event: SourceCheckEvent) => void>();
   const find = (url: string) => sources.find((raw) => raw.bookSourceUrl === url);
@@ -260,9 +280,118 @@ export function createMemorySourceService(initial: Raw[] = []): SourceService {
       checkListeners.add(listener);
       return () => checkListeners.delete(listener);
     },
-    cancel: async () => ({ requested: true }),
+    cancel: async (operationId) => {
+      cancelled.add(operationId);
+      return { requested: true };
+    },
+    search: async (request) => {
+      const asked = sources.filter((raw) =>
+        request.scope.sourceUrls.length
+          ? request.scope.sourceUrls.includes(text(raw.bookSourceUrl))
+          : raw.enabled !== false &&
+            Boolean(text(raw.searchUrl)) &&
+            (!request.scope.groups.length ||
+              groups(text(raw.bookSourceGroup)).some((name) =>
+                request.scope.groups.includes(name),
+              )),
+      );
+      const found: OnlineBook[] = [];
+      const emit = (searched: number, done: boolean) => {
+        for (const listener of searchListeners)
+          listener({
+            operationId: request.operationId,
+            searched,
+            total: asked.length,
+            done,
+            results: mergeSearchResults(request.key, found, request.precise),
+            failures: [],
+          });
+      };
+      if (!asked.length) {
+        setTimeout(() => emit(0, true));
+        return;
+      }
+      asked.forEach((raw, index) =>
+        setTimeout(
+          () => {
+            if (cancelled.has(request.operationId)) return;
+            found.push(
+              ...catalogue.filter(
+                (book) =>
+                  book.sourceUrl === raw.bookSourceUrl &&
+                  (book.name.includes(request.key) || book.author.includes(request.key)),
+              ),
+            );
+            emit(index + 1, index === asked.length - 1);
+          },
+          (index + 1) * 150,
+        ),
+      );
+    },
+    onSearch: async (listener) => {
+      searchListeners.add(listener);
+      return () => searchListeners.delete(listener);
+    },
+    exploreKinds: async (sourceUrl) =>
+      text(find(sourceUrl)?.exploreUrl)
+        .split(/&&|\n/)
+        .filter((part) => part.trim())
+        .map((part) => {
+          const [title, url] = part.split("::");
+          return { title: title.trim(), url: url?.trim() || null, style: null };
+        }),
+    exploreBooks: async (sourceUrl, _url, page) =>
+      page > 2 ? [] : catalogue.filter((book) => book.sourceUrl === sourceUrl),
+    bookInfo: async (book) => ({
+      ...book,
+      intro: book.intro || "这是一本用于预览的网络书籍。",
+      tocUrl: book.tocUrl || `${book.bookUrl}/toc`,
+    }),
+    chapters: async (book) =>
+      Array.from({ length: 24 }, (_, index): OnlineChapter => ({
+        index,
+        title: index === 0 ? "正文卷" : `第${index}章 ${book.name}的第${index}章`,
+        url: index === 0 ? "正文卷0" : `${book.bookUrl}/${index}.html`,
+        baseUrl: book.bookUrl,
+        isVolume: index === 0,
+        isVip: index > 20,
+        isPay: false,
+        tag: "",
+        variables: "",
+      })),
+    chapterContent: async (book, chapter) => ({
+      title: null,
+      text: Array.from(
+        { length: 12 },
+        (_, index) => `《${book.name}》${chapter.title}的第 ${index + 1} 段预览正文。`,
+      ).join("\n"),
+    }),
+    cover: async () => {
+      throw new Error("预览模式不加载封面");
+    },
   };
 }
+
+/** Books the preview sources "find", for the search and explore pages. */
+export const PREVIEW_BOOKS: OnlineBook[] = [
+  ["https://www.example-a.com", "甲站小说", "剑来", "烽火戏诸侯", "玄幻,连载"],
+  ["https://api.example-b.com", "乙站 API", "剑来", "烽火戏诸侯", "仙侠"],
+  ["https://www.example-a.com", "甲站小说", "剑来外传", "某人", "同人"],
+  ["https://api.example-b.com", "乙站 API", "雪中悍刀行", "烽火戏诸侯", "武侠,完结"],
+].map(([sourceUrl, sourceName, name, author, kind]) => ({
+  sourceUrl,
+  sourceName,
+  name,
+  author,
+  kind,
+  coverUrl: "",
+  intro: `${name}的简介。`,
+  wordCount: "123.4万字",
+  latestChapterTitle: "第一千章 终",
+  bookUrl: `${sourceUrl}/book/${encodeURIComponent(name)}`,
+  tocUrl: "",
+  variables: "",
+}));
 
 /** A few sources to show the management pages in the preview build. */
 export const PREVIEW_SOURCES: Raw[] = [

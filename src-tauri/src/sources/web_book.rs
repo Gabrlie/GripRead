@@ -203,6 +203,16 @@ impl SourceSession {
             .run(|scope| content(scope, book, chapter, next_chapter_url, chapter_urls))
     }
 
+    /// Runs `work` with a fresh analyzer of this source, for requests made
+    /// outside the usual chain such as covers.
+    pub fn run_with_rule<R>(
+        &self,
+        work: impl for<'js> FnOnce(&JsScope<'js>, &AnalyzeRule) -> SourceResult<R>,
+    ) -> SourceResult<R> {
+        self.host
+            .run(|scope| work(scope, &AnalyzeRule::new(self.env.clone())))
+    }
+
     /// Runs a script with the source's bindings, as a login button or a
     /// source's own action does.
     pub fn run_script(&self, script: &str, book: Option<&BookRef>) -> SourceResult<Val> {
@@ -1130,6 +1140,19 @@ fn analyze_content_page(
     Ok((content, next_urls))
 }
 
+fn explore_cache_key(env: &Env) -> String {
+    let explore_url = env.source.explore_url().unwrap_or_default();
+    format!(
+        "exploreKinds_{}",
+        super::js::crypto::md5_hex(format!("{}{}", env.source.url(), explore_url).as_bytes())
+    )
+}
+
+/// Forgets the categories an explore script produced, so they are built again.
+pub fn clear_explore_cache(env: &Env) {
+    env.store.cache_delete(&explore_cache_key(env));
+}
+
 pub fn explore_kinds(scope: &JsScope<'_>) -> SourceResult<Vec<ExploreKind>> {
     let env = scope.env().clone();
     let Some(explore_url) = env
@@ -1139,10 +1162,7 @@ pub fn explore_kinds(scope: &JsScope<'_>) -> SourceResult<Vec<ExploreKind>> {
     else {
         return Ok(Vec::new());
     };
-    let cache_key = format!(
-        "exploreKinds_{}",
-        super::js::crypto::md5_hex(format!("{}{}", env.source.url(), explore_url).as_bytes())
-    );
+    let cache_key = explore_cache_key(&env);
     let trimmed = explore_url.trim();
     let lower = trimmed.to_ascii_lowercase();
     let text = if lower.starts_with("<js>") || lower.starts_with("@js:") {

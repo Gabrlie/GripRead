@@ -39,7 +39,7 @@ pub struct SourceOperations {
 }
 
 impl SourceOperations {
-    fn register(&self, id: &str) -> Arc<AtomicBool> {
+    pub(crate) fn register(&self, id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         if let Ok(mut cancels) = self.cancels.lock() {
             cancels.insert(id.to_string(), flag.clone());
@@ -47,7 +47,11 @@ impl SourceOperations {
         flag
     }
 
-    fn finish(cancels: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>, id: &str) {
+    pub(crate) fn cancels(&self) -> Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> {
+        self.cancels.clone()
+    }
+
+    pub(crate) fn finish(cancels: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>, id: &str) {
         if let Ok(mut cancels) = cancels.lock() {
             cancels.remove(id);
         }
@@ -58,7 +62,7 @@ const ENGINE_STACK: usize = 16 * 1024 * 1024;
 const CHECK_TIMEOUT: Duration = Duration::from_secs(180);
 const CHECK_WORKERS: usize = 4;
 
-fn engine_error(error: SourceError) -> AppError {
+pub(crate) fn engine_error(error: SourceError) -> AppError {
     let code = match error.kind {
         SourceErrorKind::Cancelled => ErrorCode::ImportCancelled,
         _ => ErrorCode::InvalidArgument,
@@ -67,7 +71,7 @@ fn engine_error(error: SourceError) -> AppError {
 }
 
 /// Runs engine work on a thread with room for nested scripts, and waits.
-async fn on_engine_thread<T: Send + 'static>(
+pub(crate) async fn on_engine_thread<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -88,7 +92,7 @@ async fn on_engine_thread<T: Send + 'static>(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("source worker stopped: {error}")))?
 }
 
-fn spawn_engine(work: impl FnOnce() + Send + 'static) -> Result<(), AppError> {
+pub(crate) fn spawn_engine(work: impl FnOnce() + Send + 'static) -> Result<(), AppError> {
     std::thread::Builder::new()
         .name("source-engine".into())
         .stack_size(ENGINE_STACK)
@@ -102,7 +106,10 @@ fn spawn_engine(work: impl FnOnce() + Send + 'static) -> Result<(), AppError> {
         })
 }
 
-fn load_source(storage: &Arc<Mutex<Storage>>, url: &str) -> Result<BookSource, AppError> {
+pub(crate) fn load_source(
+    storage: &Arc<Mutex<Storage>>,
+    url: &str,
+) -> Result<BookSource, AppError> {
     let guard = storage
         .lock()
         .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
@@ -111,7 +118,7 @@ fn load_source(storage: &Arc<Mutex<Storage>>, url: &str) -> Result<BookSource, A
         .ok_or_else(|| AppError::new(ErrorCode::NotFound, format!("没有这个书源：{url}")))
 }
 
-fn session_for(
+pub(crate) fn session_for(
     storage: &Arc<Mutex<Storage>>,
     source: BookSource,
     control: Control,

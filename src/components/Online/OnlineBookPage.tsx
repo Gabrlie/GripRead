@@ -1,0 +1,252 @@
+import { useEffect, useState } from "react";
+import type { SourceService } from "../../services/contracts";
+import type { OnlineBook, OnlineChapter, OnlineSearchResult } from "../../types/generated";
+import { FullPage } from "../Layout/FullPage";
+import { Button } from "../ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { Icon } from "../ui/Icon";
+import { copyText } from "../../services/system";
+import { toast } from "../ui/toast";
+import { OnlineCover } from "./OnlineCover";
+import { ChapterPreviewPage } from "./ChapterPreviewPage";
+
+/**
+ * Legado's 书籍详情 for an online book: details from the chosen source, the
+ * other sources that have it (换源), and its contents. Reading here
+ * previews the chapters; adding to the shelf comes with online reading.
+ */
+export function OnlineBookPage({
+  service,
+  result,
+  onClose,
+}: {
+  service: SourceService;
+  result: OnlineSearchResult;
+  onClose: () => void;
+}) {
+  const [originIndex, setOriginIndex] = useState(0);
+  const [book, setBook] = useState<OnlineBook | null>(null);
+  const [chapters, setChapters] = useState<OnlineChapter[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showChapters, setShowChapters] = useState(false);
+  const [reading, setReading] = useState<number | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const origin = result.origins[originIndex] ?? result.origins[0];
+
+  useEffect(() => {
+    if (!origin) return;
+    let active = true;
+    setLoading(true);
+    setError(null);
+    setBook(null);
+    setChapters(null);
+    void service
+      .bookInfo(origin)
+      .then((info) => {
+        if (!active) return;
+        setBook(info);
+        return service.chapters(info).then((list) => active && setChapters(list));
+      })
+      .catch((failure: unknown) => active && setError(String(failure)))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [service, origin, refresh]);
+
+  const shown = book ?? origin;
+  if (!shown) return null;
+  const firstChapter = chapters?.findIndex((chapter) => !chapter.isVolume) ?? -1;
+
+  const actions = (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="更多"
+        className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
+      >
+        <Icon name="more_vert" size={19} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuItem
+          onClick={() => void copyText(shown.bookUrl).then(() => toast("已复制书籍地址"))}
+        >
+          <Icon name="link" size={15} />
+          拷贝书籍 URL
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!book?.tocUrl}
+          onClick={() => book && void copyText(book.tocUrl).then(() => toast("已复制目录地址"))}
+        >
+          <Icon name="toc_rule" size={15} />
+          拷贝目录 URL
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setRefresh((value) => value + 1)}>
+          <Icon name="refresh" size={15} />
+          刷新
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  return (
+    <FullPage label="书籍详情" onClose={onClose} actions={actions} layer="z-[45]">
+      <div className="flex gap-4">
+        <div className="w-24 h-32 shrink-0 rounded-md overflow-hidden shadow-sm bg-surface-container">
+          <OnlineCover
+            service={service}
+            sourceUrl={shown.sourceUrl}
+            url={shown.coverUrl || result.coverUrl}
+            title={shown.name}
+          />
+        </div>
+        <div className="flex-1 min-w-0 space-y-1">
+          <h2 className="font-title-editorial text-lg font-semibold leading-snug">{shown.name}</h2>
+          <p className="text-xs text-secondary">{shown.author || "未知作者"}</p>
+          {shown.kind && (
+            <div className="flex flex-wrap gap-1">
+              {shown.kind
+                .split(",")
+                .filter(Boolean)
+                .slice(0, 6)
+                .map((kind) => (
+                  <span
+                    key={kind}
+                    className="rounded px-1.5 text-[10px] leading-5 bg-surface-container-low text-secondary"
+                  >
+                    {kind}
+                  </span>
+                ))}
+            </div>
+          )}
+          {shown.wordCount && <p className="text-[11px] text-secondary">{shown.wordCount}</p>}
+          {shown.latestChapterTitle && (
+            <p className="text-[11px] text-secondary truncate">最新：{shown.latestChapterTitle}</p>
+          )}
+        </div>
+      </div>
+
+      <section className="rounded-xl bg-surface-container-low px-3 py-2.5 flex items-center gap-2">
+        <Icon name="public" size={15} className="text-secondary" />
+        <span className="flex-1 min-w-0 text-sm truncate">来源：{origin?.sourceName}</span>
+        {result.origins.length > 1 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="h-7 px-2.5 rounded-full text-xs bg-surface-container text-primary">
+              换源（{result.origins.length}）
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="max-h-80 overflow-y-auto">
+              {result.origins.map((item, index) => (
+                <DropdownMenuItem key={item.sourceUrl} onClick={() => setOriginIndex(index)}>
+                  <Icon
+                    name="check"
+                    size={15}
+                    className={index === originIndex ? "" : "opacity-0"}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate">{item.sourceName}</span>
+                    {item.latestChapterTitle && (
+                      <span className="block text-[10px] text-secondary truncate">
+                        {item.latestChapterTitle}
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </section>
+
+      {shown.intro && (
+        <section className="rounded-xl bg-surface-container-low p-3">
+          <h3 className="text-[11px] text-secondary mb-1">简介</h3>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{shown.intro}</p>
+        </section>
+      )}
+
+      {loading && (
+        <p role="status" className="text-xs text-secondary px-1">
+          正在读取详情与目录…
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-error break-words px-1">
+          {error}
+        </p>
+      )}
+
+      {chapters && (
+        <section className="rounded-xl bg-surface-container-low overflow-hidden">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between px-3 py-2.5 text-sm"
+            onClick={() => setShowChapters((value) => !value)}
+          >
+            <span>目录（{chapters.filter((chapter) => !chapter.isVolume).length} 章）</span>
+            <Icon name={showChapters ? "expand_less" : "expand_more"} size={16} />
+          </button>
+          {showChapters && (
+            <ul className="max-h-[50dvh] overflow-y-auto border-t border-surface-variant/30">
+              {chapters.map((chapter, index) =>
+                chapter.isVolume ? (
+                  <li
+                    key={`${chapter.index}-${chapter.url}`}
+                    className="px-3 py-1.5 text-[11px] text-secondary bg-surface-container"
+                  >
+                    {chapter.title}
+                  </li>
+                ) : (
+                  <li key={`${chapter.index}-${chapter.url}`}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-surface-container"
+                      onClick={() => setReading(index)}
+                    >
+                      <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
+                      {chapter.isVip && (
+                        <span className="text-[10px] text-secondary shrink-0">VIP</span>
+                      )}
+                    </button>
+                  </li>
+                ),
+              )}
+            </ul>
+          )}
+        </section>
+      )}
+
+      <div className="sticky bottom-0 -mx-3 px-3 pt-2 pb-[calc(0.75rem+var(--safe-bottom))] bg-surface flex gap-2">
+        <Button
+          variant="outline"
+          className="flex-1"
+          disabled={!chapters}
+          onClick={() => setShowChapters(true)}
+        >
+          目录
+        </Button>
+        <Button
+          className="flex-1"
+          disabled={!chapters || firstChapter < 0}
+          onClick={() => setReading(firstChapter)}
+        >
+          试读
+        </Button>
+      </div>
+
+      {reading !== null && book && chapters && (
+        <ChapterPreviewPage
+          service={service}
+          book={book}
+          chapters={chapters}
+          index={reading}
+          onClose={() => setReading(null)}
+        />
+      )}
+    </FullPage>
+  );
+}

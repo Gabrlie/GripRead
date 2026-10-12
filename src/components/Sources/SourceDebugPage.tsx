@@ -48,7 +48,7 @@ export function SourceDebugPage({
   }, [service]);
 
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
+    end.current?.scrollIntoView?.({ block: "end" });
   }, [lines]);
 
   const start = () => {

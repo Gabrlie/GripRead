@@ -54,6 +54,12 @@ import type {
   SourceDebugEvent,
   CheckSourcesRequest,
   SourceCheckEvent,
+  SearchOnlineRequest,
+  OnlineSearchEvent,
+  ExploreKind,
+  OnlineBook,
+  OnlineChapter,
+  OnlineContent,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -218,6 +224,22 @@ export interface SourceService {
   check(request: CheckSourcesRequest): Promise<void>;
   onCheck(listener: (event: SourceCheckEvent) => void): Promise<Unsubscribe>;
   cancel(operationId: string): Promise<CancelResult>;
+  /** Starts searching sources; merged results arrive through `onSearch`. Cancel with `cancel`. */
+  search(request: SearchOnlineRequest): Promise<void>;
+  onSearch(listener: (event: OnlineSearchEvent) => void): Promise<Unsubscribe>;
+  /** A source's 发现 categories; `refresh` runs its script again. */
+  exploreKinds(sourceUrl: string, refresh?: boolean): Promise<ExploreKind[]>;
+  exploreBooks(sourceUrl: string, url: string, page: number): Promise<OnlineBook[]>;
+  /** The book with its details page read. */
+  bookInfo(book: OnlineBook): Promise<OnlineBook>;
+  chapters(book: OnlineBook): Promise<OnlineChapter[]>;
+  chapterContent(
+    book: OnlineBook,
+    chapter: OnlineChapter,
+    nextChapterUrl: string | null,
+  ): Promise<OnlineContent>;
+  /** A cover image fetched with the source's headers. */
+  cover(sourceUrl: string, url: string): Promise<ArrayBuffer>;
 }
 export interface AppServices {
   library: LibraryService;
