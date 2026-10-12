@@ -146,11 +146,7 @@ export function SearchPage({
               正在搜索…
             </p>
           )}
-          {byResource && (
-            <p className="text-[11px] text-secondary px-1">
-              只搜索已缓存的章节；要搜索更多，可以在书籍详情里缓存后面的章节。
-            </p>
-          )}
+          {byResource && <p className="text-[11px] text-secondary px-1">仅搜索已缓存章节</p>}
           {search.complete && search.matches.length === 0 && (
             <p className="text-sm text-secondary px-1">没有找到“{search.query}”。</p>
           )}

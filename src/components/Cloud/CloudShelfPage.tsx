@@ -145,8 +145,8 @@ export function CloudShelfPage({
                   onClick={() =>
                     run(`pull:${book.name}`, async () => {
                       const file = await sync.downloadCloudBook(book.name);
+                      // The import's own notice reports the book joining the shelf.
                       void runtime.library.importBatch([file.path]);
-                      return `已下载《${book.title}》，正在加入书架。`;
                     })
                   }
                 >

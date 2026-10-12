@@ -35,7 +35,6 @@ export function ReadingRecordsPage({
       cancelled = true;
     };
   }, [runtime.services.library]);
-  const longest = Math.max(1, ...(stats?.days.map((day) => day.seconds) ?? []));
   // Deleted books and online books read without adding them keep their time.
   const books = (stats?.books ?? []).map((record) => ({
     record,
@@ -78,31 +77,6 @@ export function ReadingRecordsPage({
             ))}
           </dl>
           {stats && <ActivityMatrix days={stats.days} today={localDay()} />}
-          {stats && stats.days.length > 0 && (
-            <section aria-labelledby="records-days" className="space-y-2">
-              <h2 id="records-days" className="text-xs text-secondary font-medium">
-                最近阅读
-              </h2>
-              <ul className="space-y-1.5">
-                {stats.days.slice(0, 7).map((day) => (
-                  <li key={day.day} className="flex items-center gap-3 text-xs">
-                    <span className="w-20 shrink-0 tabular-nums text-secondary">
-                      {day.day.slice(5)}
-                    </span>
-                    <span className="flex-1 h-2 rounded-full bg-surface-container overflow-hidden">
-                      <span
-                        className="block h-full rounded-full bg-primary"
-                        style={{ width: `${(day.seconds / longest) * 100}%` }}
-                      />
-                    </span>
-                    <span className="w-24 shrink-0 text-right tabular-nums">
-                      {formatDuration(day.seconds)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
           <section aria-labelledby="records-books" className="space-y-2">
             <h2 id="records-books" className="text-xs text-secondary font-medium">
               书籍
@@ -155,9 +129,7 @@ export function ReadingRecordsPage({
               <DialogTitle className="font-title-editorial text-base">{gone.title}</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-secondary">
-              {gone.deleted
-                ? "这本书已删除，无法打开。它的阅读时长保留在记录里；本地书重新导入同一个文件后，进度和书签也会恢复。"
-                : "这本书没有加入书架，可以从搜索里再次打开它，会接着上次的进度。"}
+              {gone.deleted ? "这本书已删除，无法打开。" : "这本书不在书架上，可以从搜索打开。"}
             </p>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setGone(null)}>

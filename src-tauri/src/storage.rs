@@ -1912,13 +1912,17 @@ impl Storage {
         // Deleted books keep their time under their retired key.
         let mut books = self.conn.prepare(
             "SELECT * FROM (
-                SELECT r.book_id, SUM(r.seconds), MAX(r.day), b.title, b.author, 0
+                SELECT r.book_id, SUM(r.seconds) AS seconds, MAX(r.day) AS last_day, b.title,
+                       b.author, 0,
+                       (SELECT p.updated_at FROM reading_positions p WHERE p.book_id = r.book_id)
+                       AS last_read
                 FROM reading_time r JOIN books b ON b.id = r.book_id GROUP BY r.book_id
                 UNION ALL
-                SELECT 'retired:' || t.source_sha256, SUM(t.seconds), MAX(t.day), d.title, d.author, 1
+                SELECT 'retired:' || t.source_sha256, SUM(t.seconds), MAX(t.day), d.title,
+                       d.author, 1, d.deleted_at
                 FROM retired_reading_time t JOIN retired_books d ON d.key = t.source_sha256
                 GROUP BY t.source_sha256)
-             ORDER BY 3 DESC, 2 DESC",
+             ORDER BY last_day DESC, COALESCE(last_read, 0) DESC, seconds DESC",
         )?;
         let books = books
             .query_map([], |row| {
@@ -1929,6 +1933,7 @@ impl Storage {
                     title: row.get(3)?,
                     author: row.get(4)?,
                     deleted: row.get(5)?,
+                    last_read_at: row.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

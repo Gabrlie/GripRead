@@ -561,6 +561,8 @@ pub struct BookReadingTime {
     pub author: Option<String>,
     /// The book was deleted; its time stays in the records.
     pub deleted: bool,
+    /// When it was last read (or deleted), for the newest-first order.
+    pub last_read_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

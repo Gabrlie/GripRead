@@ -72,9 +72,7 @@ export function LogPage({ onClose }: { onClose: () => void }) {
         <span className="flex-1 min-w-0">
           <span className="block text-sm">详细日志</span>
           <span className="block text-[11px] text-secondary">
-            {detailUntil
-              ? `记录每个书源请求和步骤，${time(detailUntil)} 自动关闭`
-              : "排查书源问题时打开，记录每个请求和步骤，一天后自动关闭"}
+            {detailUntil ? `${time(detailUntil)} 自动关闭` : "记录每个请求和步骤，一天后自动关闭"}
           </span>
         </span>
         <Switch

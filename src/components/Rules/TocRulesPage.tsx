@@ -87,9 +87,7 @@ export function TocRulesPage({
         </>
       }
     >
-      <p className="px-1 text-[11px] text-secondary">
-        开启的规则参与自动识别，排在前面的优先；每本书使用的规则在阅读界面的目录规则中选择。
-      </p>
+      <p className="px-1 text-[11px] text-secondary">开启的规则参与自动识别，越靠前越优先。</p>
       <ul
         aria-label="目录规则"
         className="rounded-xl bg-surface-container-low divide-y divide-surface-variant/30"

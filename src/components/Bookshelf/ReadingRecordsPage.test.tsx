@@ -28,6 +28,7 @@ describe("阅读记录", () => {
               title: "删掉的书",
               author: null,
               deleted: true,
+              lastReadAt: 1,
             },
           ],
         })),

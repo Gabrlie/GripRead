@@ -174,31 +174,33 @@ describe("换源", () => {
   });
 });
 
-describe("从书源选择封面和详情", () => {
-  it("offers each source's copy and hands over its details", async () => {
-    const sources = service();
-    const onDetails = vi.fn();
+describe("从书源选择封面", () => {
+  it("offers the copies with a cover and keeps the chosen one", async () => {
+    const sources = createMemorySourceService(
+      PREVIEW_SOURCES,
+      PREVIEW_BOOKS.map((book, index) => ({
+        ...book,
+        coverUrl: index === 1 ? "https://b/c.jpg" : "",
+      })),
+    );
+    const onCover = vi.fn(async () => undefined);
     render(
       <SourceDetailsDialog
         service={sources}
         title="剑来"
         author="烽火戏诸侯"
-        onCover={async () => undefined}
-        onDetails={onDetails}
+        onCover={onCover}
         onClose={() => undefined}
       />,
     );
     const list = await screen.findByRole("list", { name: "书源里的这本书" });
     expect(await within(list).findByText("乙站 API")).toBeTruthy();
-    // The preview books have no cover address to take.
-    expect(
-      within(list).getAllByRole("button", { name: "用这个封面" })[0].hasAttribute("disabled"),
-    ).toBe(true);
-    await userEvent.click(within(list).getAllByRole("button", { name: "用这个详情" })[0]);
-    await vi.waitFor(() => expect(onDetails).toHaveBeenCalledOnce());
-    expect(onDetails.mock.calls[0][0]).toMatchObject({
-      author: "烽火戏诸侯",
-      intro: "剑来的简介。",
-    });
+    // Copies without a cover are left out.
+    expect(within(list).queryByText("甲站小说")).toBeNull();
+    await userEvent.click(within(list).getByRole("button", { name: "用这个封面" }));
+    await vi.waitFor(() => expect(onCover).toHaveBeenCalledOnce());
+    expect(onCover.mock.calls[0]).toEqual([
+      expect.objectContaining({ coverUrl: "https://b/c.jpg" }),
+    ]);
   });
 });

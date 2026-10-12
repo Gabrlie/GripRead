@@ -92,6 +92,9 @@ export function ChangeSourceDialog({
     };
   }, [service, book.book.title]);
 
+  // Rows keep the order they first appeared in, so choosing one while the
+  // search goes on never hits a row that moved.
+  const seen = useRef(new Map<string, number>());
   const candidates = useMemo(() => {
     const author = (book.book.author ?? online.book.author).trim();
     const query = filter.trim();
@@ -102,7 +105,13 @@ export function ChangeSourceDialog({
           (!checkAuthor || !author || result.author.trim() === author),
       )
       .flatMap((result) => result.origins)
-      .filter((origin) => !query || origin.sourceName.includes(query));
+      .filter((origin) => !query || origin.sourceName.includes(query))
+      .map((origin) => {
+        const key = originKey(origin);
+        if (!seen.current.has(key)) seen.current.set(key, seen.current.size);
+        return origin;
+      })
+      .sort((a, b) => seen.current.get(originKey(a))! - seen.current.get(originKey(b))!);
   }, [event, checkAuthor, filter, book, online]);
 
   // Legado's 换源 loads each candidate's details and contents so the list
@@ -161,7 +170,7 @@ export function ChangeSourceDialog({
   const running = event !== null && !event.done;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] p-5 gap-3 flex flex-col">
+      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md h-[70dvh] p-5 gap-3 flex flex-col">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">换源</DialogTitle>
         </DialogHeader>
@@ -184,13 +193,25 @@ export function ChangeSourceDialog({
             校验作者
           </button>
         </div>
-        <p role="status" className="text-[11px] text-secondary">
-          {running
-            ? `正在搜索 ${event.searched}/${event.total}`
-            : event
-              ? `找到 ${candidates.length} 个书源`
-              : "正在搜索…"}
-        </p>
+        <div className="flex items-center gap-2 h-7">
+          <p role="status" className="flex-1 text-[11px] text-secondary">
+            {running
+              ? `正在搜索 ${event.searched}/${event.total}，找到 ${candidates.length} 个`
+              : event
+                ? `找到 ${candidates.length} 个书源`
+                : "正在搜索…"}
+          </p>
+          {running && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => void service.cancel(operation.current)}
+            >
+              停止
+            </Button>
+          )}
+        </div>
         <ul className="flex-1 min-h-0 overflow-y-auto space-y-1" aria-label="可换的书源">
           {candidates.map((origin) => {
             const current = origin.sourceUrl === online.book.sourceUrl;
@@ -200,7 +221,7 @@ export function ChangeSourceDialog({
                   type="button"
                   disabled={switching !== null || current}
                   onClick={() => choose(origin)}
-                  className="w-full text-left rounded-lg px-3 py-2 hover:bg-surface-container-low disabled:opacity-70 flex items-center gap-2"
+                  className="w-full h-14 text-left rounded-lg px-3 hover:bg-surface-container-low disabled:opacity-70 flex items-center gap-2"
                 >
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm truncate">{origin.sourceName}</span>

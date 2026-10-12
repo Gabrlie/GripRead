@@ -397,8 +397,8 @@ export function BookDetailPage({
               {online
                 ? `从书架删除《${book.book.title}》和它缓存的章节。`
                 : confirm === "delete"
-                  ? `从书架和应用存储中删除《${book.book.title}》，云书架上的文件保留。进度、书签和阅读时长会保留，以后再导入或下载同一本书时自动恢复。`
-                  : `从书架和应用存储中删除《${book.book.title}》，并删除云书架上的文件。进度、书签和阅读时长会保留，以后再导入同一本书时自动恢复。`}
+                  ? `删除《${book.book.title}》，云书架上的文件保留。`
+                  : `删除《${book.book.title}》和云书架上的文件。`}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>
@@ -505,7 +505,7 @@ function EditBookDialog({
                 disabled={busy}
                 onClick={() => setChoosing(true)}
               >
-                从书源选择
+                从书源选择封面
               </Button>
               {book.coverAssetId && (
                 <Button
@@ -530,12 +530,6 @@ function EditBookDialog({
                   .setCoverFromSource(id, found.sourceUrl, found.coverUrl)
                   .then(() => store.refresh())
               }
-              onDetails={(found) => {
-                if (found.author.trim()) setAuthor(found.author.trim());
-                if (found.intro.trim()) setIntro(found.intro.trim());
-                setChoosing(false);
-                toast("已填入作者和简介，保存后生效");
-              }}
               onClose={() => setChoosing(false)}
             />
           )}

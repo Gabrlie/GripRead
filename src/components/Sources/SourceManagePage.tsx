@@ -41,6 +41,8 @@ interface CheckProgress {
   done: boolean;
 }
 
+const SORT_KEY = "gripread.sourceSort";
+
 function newOperationId(): string {
   return `source-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -61,7 +63,23 @@ export function SourceManagePage({
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SourceFilter>({ kind: "all" });
-  const [sort, setSort] = useState<SourceSort>("manual");
+  // 智能排序 by default; a chosen order is remembered on this device.
+  const [sort, setSortState] = useState<SourceSort>(() => {
+    try {
+      const kept = localStorage.getItem(SORT_KEY);
+      return SOURCE_SORTS.some(([value]) => value === kept) ? (kept as SourceSort) : "weight";
+    } catch {
+      return "weight";
+    }
+  });
+  const setSort = (value: SourceSort) => {
+    setSortState(value);
+    try {
+      localStorage.setItem(SORT_KEY, value);
+    } catch {
+      // Remembering the order is a convenience.
+    }
+  };
   const [reverse, setReverse] = useState(false);
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [importing, setImporting] = useState<ImportMethod | null>(null);
@@ -685,20 +703,14 @@ function CheckDialog({
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">校验 {count} 个书源</DialogTitle>
         </DialogHeader>
-        <p className="text-xs text-secondary">
-          依次检查搜索、详情、目录与正文，有发现的也检查发现。失败的书源会加上“网站失效”“搜索失效”等分组，成功后自动去掉。
-        </p>
         <Input
           aria-label="校验关键字"
-          placeholder="搜索关键字，留空使用书源的校验关键字或“我的”"
+          placeholder="搜索关键字（可留空）"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
         />
         <label className="flex items-center justify-between gap-3 text-sm">
-          <span>
-            禁用失效的书源
-            <span className="block text-[11px] text-secondary">只有发现失效时，只禁用发现</span>
-          </span>
+          <span>禁用失效的书源</span>
           <Switch
             aria-label="禁用失效的书源"
             checked={disableFailed}

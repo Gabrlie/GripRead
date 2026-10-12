@@ -8,4 +8,8 @@ bookId: string, seconds: number, lastDay: string, title: string, author: string 
 /**
  * The book was deleted; its time stays in the records.
  */
-deleted: boolean, };
+deleted: boolean, 
+/**
+ * When it was last read (or deleted), for the newest-first order.
+ */
+lastReadAt: number | null, };

@@ -1,30 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SourceService } from "../../services/contracts";
 import type { OnlineBook, OnlineSearchEvent } from "../../types/generated";
-import { ALL_SOURCES, mergeOnlineBook } from "../../application/online";
+import { ALL_SOURCES } from "../../application/online";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
 
 /**
- * Legado's 换封面, with details too: every enabled source is searched for
- * the title, and a found copy's cover or its author and introduction can
- * be taken for this book, local or online. What is taken is kept.
+ * Legado's 换封面: every enabled source is searched for the title, and a
+ * found copy's cover can be kept as this book's cover, local or online.
  */
 export function SourceDetailsDialog({
   service,
   title,
   author,
   onCover,
-  onDetails,
   onClose,
 }: {
   service: SourceService;
   title: string;
   author: string;
   onCover: (book: OnlineBook) => Promise<void>;
-  onDetails: (book: OnlineBook) => void;
   onClose: () => void;
 }) {
   const [event, setEvent] = useState<OnlineSearchEvent | null>(null);
@@ -59,15 +56,22 @@ export function SourceDetailsDialog({
     };
   }, [service, title]);
 
-  // The same title first, then the same author, as Legado's 换封面 lists them.
-  const found = useMemo(
-    () =>
-      (event?.results ?? [])
-        .filter((result) => result.name.trim() === title.trim())
-        .sort((a, b) => Number(b.author === author) - Number(a.author === author))
-        .flatMap((result) => result.origins),
-    [event, title, author],
-  );
+  // Copies with a cover keep the place they first appeared in, so loading
+  // images never moves the cards.
+  const seen = useRef(new Map<string, number>());
+  const found = useMemo(() => {
+    const books = (event?.results ?? [])
+      .filter((result) => result.name.trim() === title.trim())
+      .sort((a, b) => Number(b.author === author) - Number(a.author === author))
+      .flatMap((result) => result.origins)
+      .filter((book) => book.coverUrl);
+    for (const book of books) {
+      const key = `${book.sourceUrl}\n${book.bookUrl}`;
+      if (!seen.current.has(key)) seen.current.set(key, seen.current.size);
+    }
+    const order = (book: OnlineBook) => seen.current.get(`${book.sourceUrl}\n${book.bookUrl}`)!;
+    return books.sort((a, b) => order(a) - order(b));
+  }, [event, title, author]);
 
   const act = (book: OnlineBook, work: () => Promise<void>) => {
     setBusy(`${book.sourceUrl}\n${book.bookUrl}`);
@@ -79,9 +83,9 @@ export function SourceDetailsDialog({
   const running = event !== null && !event.done;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-lg max-h-[86dvh] p-5 gap-3 flex flex-col">
+      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-lg h-[70dvh] p-5 gap-3 flex flex-col">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">从书源选择封面和详情</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">从书源选择封面</DialogTitle>
         </DialogHeader>
         <p role="status" className="text-[11px] text-secondary">
           {running
@@ -122,19 +126,6 @@ export function SourceDetailsDialog({
                     }
                   >
                     {busy === key ? "处理中…" : "用这个封面"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-[11px]"
-                    disabled={busy !== null}
-                    onClick={() =>
-                      act(book, async () => {
-                        onDetails(mergeOnlineBook(book, await service.bookInfo(book)));
-                      })
-                    }
-                  >
-                    用这个详情
                   </Button>
                 </div>
               </li>

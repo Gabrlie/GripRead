@@ -266,10 +266,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
 
       <PageSection title="备份">
         <div className="p-4 space-y-3">
-          <p className="text-xs text-secondary">
-            备份书架记录、阅读进度、书签、阅读时长、分组、规则和阅读设置，不包含书籍文件；书籍请用云书架上传。封面随
-            WebDAV 备份保存，导出的文件不含封面。
-          </p>
+          <p className="text-xs text-secondary">不包含书籍文件，书籍请用云书架上传。</p>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="min-w-0">
               本地备份文件夹
@@ -309,9 +306,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
               每日自动备份
-              <span className="block text-[11px] text-secondary">
-                启动时检查，记录有变化才备份；WebDAV 保留最近 7 份，本地文件夹保留最新一份
-              </span>
+              <span className="block text-[11px] text-secondary">有变化时备份，保留最近 7 份</span>
             </span>
             <Switch
               aria-label="每日自动备份"
@@ -363,9 +358,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
 
       <PageSection title="恢复">
         <div className="p-4 space-y-3">
-          <p className="text-xs text-secondary">
-            恢复会合并到当前书架：本机已有的书按备份恢复信息和分组，进度取较新的一份，书签合并；本机没有的书在导入或从云书架下载后自动恢复。恢复前会先保存一个本机恢复点。
-          </p>
+          <p className="text-xs text-secondary">恢复前会先保存一个本机恢复点。</p>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"

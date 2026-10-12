@@ -1527,10 +1527,7 @@ export function ReaderView() {
             <DialogHeader>
               <DialogTitle className="font-title-editorial text-base">加入书架</DialogTitle>
             </DialogHeader>
-            <p className="text-sm">
-              《{activeBook.book.title}》还不在书架上，是否加入书架？不加入也会保留阅读进度 30
-              天，从搜索再次打开时接着读。
-            </p>
+            <p className="text-sm">《{activeBook.book.title}》还不在书架上，是否加入书架？</p>
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"

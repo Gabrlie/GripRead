@@ -285,6 +285,7 @@ export function previewServices(): AppServices {
             title: book().book.title,
             author: book().book.author,
             deleted: false,
+            lastReadAt: Date.now(),
           },
           {
             bookId: "retired:preview",
@@ -293,6 +294,7 @@ export function previewServices(): AppServices {
             title: "已经删除的一本书",
             author: null,
             deleted: true,
+            lastReadAt: null,
           },
         ],
       }),

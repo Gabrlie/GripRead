@@ -282,12 +282,7 @@ export function SettingsView() {
         </PageSection>
 
         <PageSection>
-          <PageLink
-            icon="bug_report"
-            label="日志"
-            detail="出现问题时可复制或分享给开发者"
-            onClick={() => setPage("logs")}
-          />
+          <PageLink icon="bug_report" label="日志" onClick={() => setPage("logs")} />
           <PageLink
             icon="info"
             label="关于"
