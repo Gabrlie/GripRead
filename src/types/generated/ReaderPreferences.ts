@@ -11,4 +11,8 @@ export type ReaderPreferences = { theme: ThemeMode, paperTone: PaperTone, oledBl
  * Legado-style reading styles, layout, information bars, and controls.
  * Absent in records saved before it existed, which then get the defaults.
  */
-style: ReadingStyle, };
+style: ReadingStyle, 
+/**
+ * Legado's 预下载章节数: online chapters fetched ahead while reading.
+ */
+preDownloadChapters?: number, };

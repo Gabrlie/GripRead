@@ -81,22 +81,28 @@ pub fn ensure_toc(storage: &Shared, book_id: &str) -> Result<(), AppError> {
 
 /// The chapter's text as the source gave it, from the device or fetched now.
 pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String, AppError> {
-    let (record, chapter, chapters, path) = {
+    let (chapter, path) = {
         let guard = lock(storage)?;
-        let record = guard.online_record(book_id)?;
         let chapter = guard
             .online_chapter(book_id, index)?
             .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
         let path = guard.online_chapter_path(book_id, &chapter);
-        let chapters = guard.online_chapters(book_id)?;
-        (record, chapter, chapters, path)
+        (chapter, path)
     };
+    // A kept chapter needs no more than its file.
     if let Ok(text) = fs::read_to_string(&path) {
         return Ok(text);
     }
     if chapter.is_volume && chapter.url.trim().is_empty() {
         return Ok(String::new());
     }
+    let (record, chapters) = {
+        let guard = lock(storage)?;
+        (
+            guard.online_record(book_id)?,
+            guard.online_chapters(book_id)?,
+        )
+    };
     let source = load_source(storage, &record.book.source_url)?;
     let control = Control::new(Default::default(), Some(Instant::now() + FETCH_TIMEOUT));
     let session = session_for(storage, source, control).map_err(engine_error)?;
@@ -123,6 +129,7 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
             engine_error(error)
         })?;
     write_cache(&path, &content.text)?;
+    crate::storage::mark_chapter_cached(book_id, &chapter);
     Ok(content.text)
 }
 
@@ -138,8 +145,30 @@ fn write_cache(path: &Path, text: &str) -> Result<(), AppError> {
 
 /// The chapter as the reader shows it: the title line, then the content,
 /// with the book's replace rules and 简繁 applied.
-pub fn chapter_text(storage: &Shared, book_id: &str, index: u32) -> Result<ChapterText, AppError> {
-    let raw = raw_chapter(storage, book_id, index)?;
+/// Chapters as last shown, so reads around a chapter's edges and the
+/// neighbours the reader prepares do not read and transform the file again.
+type Shown = Mutex<std::collections::VecDeque<(String, Arc<ChapterText>)>>;
+
+fn shown() -> &'static Shown {
+    static SHOWN: OnceLock<Shown> = OnceLock::new();
+    SHOWN.get_or_init(Default::default)
+}
+const SHOWN_CHAPTERS: usize = 20;
+
+/// Forgets the shown chapters of a book (after 换源, 更新目录, or clearing
+/// its cache).
+pub fn forget_shown(book_id: &str) {
+    if let Ok(mut list) = shown().lock() {
+        let prefix = format!("{book_id}\n");
+        list.retain(|(key, _)| !key.starts_with(&prefix));
+    }
+}
+
+pub fn chapter_text(
+    storage: &Shared,
+    book_id: &str,
+    index: u32,
+) -> Result<Arc<ChapterText>, AppError> {
     let (chapter, count, transform) = {
         let guard = lock(storage)?;
         let chapter = guard
@@ -151,17 +180,51 @@ pub fn chapter_text(storage: &Shared, book_id: &str, index: u32) -> Result<Chapt
             guard.book_transform(book_id)?,
         )
     };
+    let key = format!(
+        "{book_id}\n{index}\n{}\n{count}\n{}",
+        chapter_version(book_id, &chapter),
+        serde_json::to_string(&transform).unwrap_or_default()
+    );
+    if let Some(found) = shown().lock().ok().and_then(|list| {
+        list.iter()
+            .find(|(kept, _)| *kept == key)
+            .map(|(_, text)| text.clone())
+    }) {
+        return Ok(found);
+    }
+    let text = Arc::new(build_chapter_text(
+        storage, book_id, index, &chapter, count, &transform,
+    )?);
+    if let Ok(mut list) = shown().lock() {
+        list.retain(|(kept, _)| *kept != key);
+        list.push_back((key, text.clone()));
+        while list.len() > SHOWN_CHAPTERS {
+            list.pop_front();
+        }
+    }
+    Ok(text)
+}
+
+fn build_chapter_text(
+    storage: &Shared,
+    book_id: &str,
+    index: u32,
+    chapter: &OnlineChapter,
+    count: u32,
+    transform: &transform::TextTransform,
+) -> Result<ChapterText, AppError> {
+    let raw = raw_chapter(storage, book_id, index)?;
     let body = raw.trim_matches('\n');
     let joined = if body.is_empty() {
         chapter.title.clone()
     } else {
         format!("{}\n{}", chapter.title, body)
     };
-    let text = transform::apply(&joined, &transform).0;
+    let text = transform::apply(&joined, transform).0;
     Ok(ChapterText {
         index,
         count,
-        version: chapter_version(book_id, &chapter),
+        version: chapter_version(book_id, chapter),
         units: text.encode_utf16().collect(),
     })
 }
@@ -451,8 +514,38 @@ fn failures() -> &'static Mutex<std::collections::HashMap<(String, u32), u32>> {
     FAILURES.get_or_init(Default::default)
 }
 
-/// Fetches the chapters after `index` in the background, one book at a time.
+/// The chapter each book was last read at, which its pre-download follows.
+fn reading_at() -> &'static Mutex<std::collections::HashMap<String, u32>> {
+    static AT: OnceLock<Mutex<std::collections::HashMap<String, u32>>> = OnceLock::new();
+    AT.get_or_init(Default::default)
+}
+
+/// Chapters behind the one being read that are also kept ready.
+const PRE_DOWNLOAD_BEHIND: u32 = 3;
+
+/// The next chapter to fetch around `index`: the one after it first, then
+/// the rest ahead, then a few behind; `None` when all are kept or failing.
+fn next_wanted(
+    index: u32,
+    count: u32,
+    ahead: u32,
+    cached: &HashSet<u32>,
+    failing: &dyn Fn(u32) -> bool,
+) -> Option<u32> {
+    let forward = (index + 1..(index + 1 + ahead).min(count)).collect::<Vec<_>>();
+    let backward = (index.saturating_sub(PRE_DOWNLOAD_BEHIND)..index).rev();
+    forward
+        .into_iter()
+        .chain(backward)
+        .find(|candidate| !cached.contains(candidate) && !failing(*candidate))
+}
+
+/// Fetches the chapters around the one being read in the background, one
+/// worker per book that always follows the latest chapter read.
 fn pre_download(storage: Shared, book_id: String, index: u32) {
+    if let Ok(mut at) = reading_at().lock() {
+        at.insert(book_id.clone(), index);
+    }
     if !running()
         .lock()
         .map(|mut set| set.insert(book_id.clone()))
@@ -463,27 +556,37 @@ fn pre_download(storage: Shared, book_id: String, index: u32) {
     let started = spawn_engine({
         let book_id = book_id.clone();
         move || {
-            let wanted: Vec<u32> = {
-                let Ok(guard) = storage.lock() else {
-                    return;
+            while let Some(at) = reading_at()
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&book_id).copied())
+            {
+                let next = {
+                    let Ok(guard) = storage.lock() else {
+                        break;
+                    };
+                    let ahead = guard
+                        .get_settings()
+                        .ok()
+                        .and_then(|settings| settings.pre_download_chapters)
+                        .map_or(PRE_DOWNLOAD_AHEAD, u32::from)
+                        .min(50);
+                    let count = guard.online_chapter_count(&book_id).unwrap_or(0);
+                    let cached = guard.cached_online_chapters(&book_id).unwrap_or_default();
+                    let failing = |candidate: u32| {
+                        failures()
+                            .lock()
+                            .map(|map| {
+                                map.get(&(book_id.clone(), candidate)).copied().unwrap_or(0)
+                                    >= PRE_DOWNLOAD_FAILURES
+                            })
+                            .unwrap_or(true)
+                    };
+                    next_wanted(at, count, ahead, &cached, &failing)
                 };
-                let count = guard.online_chapter_count(&book_id).unwrap_or(0);
-                let cached = guard.cached_online_chapters(&book_id).unwrap_or_default();
-                (index + 1..(index + 1 + PRE_DOWNLOAD_AHEAD).min(count))
-                    .filter(|next| !cached.contains(next))
-                    .collect()
-            };
-            for next in wanted {
-                let skipped = failures()
-                    .lock()
-                    .map(|map| {
-                        map.get(&(book_id.clone(), next)).copied().unwrap_or(0)
-                            >= PRE_DOWNLOAD_FAILURES
-                    })
-                    .unwrap_or(true);
-                if skipped {
-                    continue;
-                }
+                let Some(next) = next else {
+                    break;
+                };
                 if raw_chapter(&storage, &book_id, next).is_err() {
                     if let Ok(mut map) = failures().lock() {
                         *map.entry((book_id.clone(), next)).or_default() += 1;
@@ -623,6 +726,22 @@ mod tests {
             direction,
             resource_id: resource.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn pre_download_fetches_the_next_chapter_first_then_ahead_then_behind() {
+        let none = |_: u32| false;
+        let cached: HashSet<u32> = [6].into_iter().collect();
+        assert_eq!(next_wanted(5, 100, 10, &HashSet::new(), &none), Some(6));
+        assert_eq!(next_wanted(5, 100, 10, &cached, &none), Some(7));
+        let ahead: HashSet<u32> = (6..16).collect();
+        assert_eq!(next_wanted(5, 100, 10, &ahead, &none), Some(4));
+        let all: HashSet<u32> = (2..16).collect();
+        assert_eq!(next_wanted(5, 100, 10, &all, &none), None);
+        assert_eq!(
+            next_wanted(5, 100, 10, &HashSet::new(), &|c| c == 6),
+            Some(7)
+        );
     }
 
     #[test]

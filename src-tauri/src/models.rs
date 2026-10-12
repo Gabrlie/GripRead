@@ -669,6 +669,10 @@ pub struct ReaderPreferences {
     /// Absent in records saved before it existed, which then get the defaults.
     #[serde(default)]
     pub style: ReadingStyle,
+    /// Legado's 预下载章节数: online chapters fetched ahead while reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pre_download_chapters: Option<u8>,
 }
 
 /// A reading colour scheme with day and night variants (Legado ReadBookConfig).
@@ -1062,6 +1066,7 @@ impl Default for ReaderPreferences {
             reading_mode: ReaderMode::Single,
             auto_scroll_speed: default_auto_scroll_speed(),
             style: ReadingStyle::default(),
+            pre_download_chapters: None,
         }
     }
 }

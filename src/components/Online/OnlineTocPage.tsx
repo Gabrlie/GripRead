@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useWindowedList } from "../ui/use-windowed-list";
 import { usePageLayer } from "../Layout/use-page-layer";
 import type { OnlineChapter } from "../../types/generated";
 import { Button } from "../ui/button";
@@ -51,6 +52,16 @@ export function OnlineTocPage({
     }
     return reversed ? visible.reverse() : visible;
   }, [chapters, filter, collapsed, reversed]);
+
+  // Thousands of chapters render only the rows near the screen.
+  const heightOf = useCallback(
+    (row: number) => (rows[row]?.chapter.isVolume && !filter?.trim() ? 40 : 46),
+    [rows, filter],
+  );
+  const windowed = useWindowedList(list, rows.length, heightOf);
+  useLayoutEffect(() => {
+    if (current >= 0) windowed.scrollToIndex(rows.findIndex((row) => row.index === current));
+  }, []);
 
   const volumes = chapters.flatMap((chapter, index) => (chapter.isVolume ? [index] : []));
   const count = chapters.length - volumes.length;
@@ -138,13 +149,14 @@ export function OnlineTocPage({
 
       <div ref={list} className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto w-full">
-          {rows.map(({ chapter, index }) => {
+          <div style={{ height: windowed.before }} />
+          {rows.slice(windowed.start, windowed.end).map(({ chapter, index }) => {
             if (chapter.isVolume && !filter?.trim())
               return (
                 <div
                   key={index}
-                  className="flex items-center gap-1 px-4 pt-4 pb-1.5 text-xs text-secondary"
-                  style={{ contentVisibility: "auto", containIntrinsicSize: "auto 36px" }}
+                  className="flex items-end gap-1 px-4 pb-1 text-xs text-secondary"
+                  style={{ height: 40 }}
                 >
                   <span className="flex-1 min-w-0 truncate font-medium">{chapter.title}</span>
                   <button
@@ -164,8 +176,8 @@ export function OnlineTocPage({
               <button
                 key={index}
                 aria-current={isCurrent ? "location" : undefined}
-                className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
-                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 46px" }}
+                className={`w-full flex items-center gap-3 px-4 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
+                style={{ height: 46 }}
                 onClick={() => onChoose(index)}
               >
                 <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
@@ -178,6 +190,7 @@ export function OnlineTocPage({
               </button>
             );
           })}
+          <div style={{ height: windowed.after }} />
           {chapters.length === 0 && <p className="m-4 text-sm text-secondary">目录为空。</p>}
         </div>
       </div>

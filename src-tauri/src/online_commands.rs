@@ -1023,6 +1023,7 @@ pub async fn change_online_source(
     with_storage(&state, move |storage| {
         let moved =
             storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
+        crate::online_reader::forget_shown(&request.book_id);
         crate::app_log::info(
             "source",
             format!(
@@ -1125,6 +1126,7 @@ pub async fn clear_online_cache(
     request: BookRequest,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    crate::online_reader::forget_shown(&request.book_id);
     with_storage(&state, move |storage| {
         storage.clear_online_cache(&request.book_id)
     })

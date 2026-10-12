@@ -267,7 +267,14 @@ export function StylePanel({
             />
           </div>
         )}
-        {view === "more" && <MoreView style={style} setStyle={setStyle} />}
+        {view === "more" && (
+          <MoreView
+            style={style}
+            setStyle={setStyle}
+            preDownload={preferences.preDownloadChapters ?? 10}
+            onPreDownload={(preDownloadChapters) => onChange({ preDownloadChapters })}
+          />
+        )}
         {typeof view === "object" && (
           <PresetEditor
             style={style}
@@ -621,9 +628,14 @@ function InfoEditor({
 function MoreView({
   style,
   setStyle,
+  preDownload,
+  onPreDownload,
 }: {
   style: ReadingStyle;
   setStyle: (patch: Partial<ReadingStyle>) => void;
+  /** Legado's 预下载章节数, for online books. */
+  preDownload: number;
+  onPreDownload: (chapters: number) => void;
 }) {
   const toggle = (
     label: string,
@@ -659,6 +671,33 @@ function MoreView({
         style.menuFollowsPage,
         (menuFollowsPage) => setStyle({ menuFollowsPage }),
       )}
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span>
+          预下载章节数
+          <span className="block text-[11px] text-secondary">网络书籍</span>
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="减少预下载章节"
+            className="h-7 w-7 rounded-full border border-surface-variant"
+            onClick={() => onPreDownload(Math.max(0, preDownload - 5))}
+          >
+            −
+          </button>
+          <span className="w-8 text-center tabular-nums" aria-label="预下载章节数">
+            {preDownload}
+          </span>
+          <button
+            type="button"
+            aria-label="增加预下载章节"
+            className="h-7 w-7 rounded-full border border-surface-variant"
+            onClick={() => onPreDownload(Math.min(50, preDownload + 5))}
+          >
+            +
+          </button>
+        </div>
+      </div>
       <div className="flex items-center justify-between gap-3 text-xs">
         <span>
           屏幕方向

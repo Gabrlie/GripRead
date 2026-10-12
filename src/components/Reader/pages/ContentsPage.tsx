@@ -1,4 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useWindowedList } from "../../ui/use-windowed-list";
 import type { Bookmark, ReaderLocator, TocEntry } from "../../../types/generated";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
@@ -36,6 +37,9 @@ interface ContentsPageProps {
   /** TXT目录规则 and 拆分超长章节 apply to local TXT books only. */
   txtTools?: boolean;
 }
+
+const CHAPTER_ROW = 46;
+const VOLUME_ROW = 40;
 
 /** Chapter counts in the form Legado shows, e.g. 3256字 or 1.2万字. */
 export function formatLength(units: number): string {
@@ -102,8 +106,19 @@ export function ContentsPage({
     return reversed ? visible.reverse() : visible;
   }, [toc, filter, collapsed, reversed]);
 
+  // Long contents render only the rows near the screen, at fixed heights.
+  const volumeRow = useCallback(
+    (entry: TocEntry | undefined) => Boolean(entry?.volume && !filter?.trim()),
+    [filter],
+  );
+  const heightOf = useCallback(
+    (index: number) => (volumeRow(rows[index]) ? VOLUME_ROW : CHAPTER_ROW),
+    [rows, volumeRow],
+  );
+  const windowed = useWindowedList(list, tab === "toc" ? rows.length : 0, heightOf);
+  const currentRow = rows.findIndex((entry) => entry.ordinal === toc[currentIndex]?.ordinal);
   useLayoutEffect(() => {
-    if (tab === "toc") current.current?.scrollIntoView?.({ block: "center" });
+    if (tab === "toc") windowed.scrollToIndex(currentRow);
   }, [tab]);
 
   const volumes = toc.filter((entry) => entry.volume);
@@ -114,7 +129,7 @@ export function ContentsPage({
       else next.add(ordinal);
       return next;
     });
-  const locate = () => current.current?.scrollIntoView?.({ block: "center" });
+  const locate = () => windowed.scrollToIndex(currentRow);
   const currentEntry = currentIndex >= 0 ? toc[currentIndex] : null;
 
   return (
@@ -242,15 +257,16 @@ export function ContentsPage({
               正在读取目录…
             </p>
           )}
+          {tab === "toc" && rows.length > 0 && <div style={{ height: windowed.before }} />}
           {tab === "toc" &&
-            rows.map((entry) => {
+            rows.slice(windowed.start, windowed.end).map((entry) => {
               const isCurrent = currentEntry !== null && entry.ordinal === currentEntry.ordinal;
               if (entry.volume && !filter?.trim())
                 return (
                   <div
                     key={entry.ordinal}
-                    className="flex items-center gap-1 px-4 pt-4 pb-1.5 text-xs text-secondary"
-                    style={{ contentVisibility: "auto", containIntrinsicSize: "auto 36px" }}
+                    className="flex items-end gap-1 px-4 pb-1 text-xs text-secondary"
+                    style={{ height: VOLUME_ROW }}
                   >
                     <button
                       className="flex-1 min-w-0 text-left truncate font-medium hover:text-on-surface"
@@ -278,8 +294,8 @@ export function ContentsPage({
                   key={entry.ordinal}
                   ref={isCurrent ? current : undefined}
                   aria-current={isCurrent ? "location" : undefined}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
-                  style={{ contentVisibility: "auto", containIntrinsicSize: "auto 46px" }}
+                  className={`w-full flex items-center gap-3 px-4 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
+                  style={{ height: CHAPTER_ROW }}
                   onClick={() => onSeek(entry.locator)}
                 >
                   <span className="flex-1 min-w-0 truncate">{entry.title}</span>
@@ -292,6 +308,7 @@ export function ContentsPage({
                 </button>
               );
             })}
+          {tab === "toc" && rows.length > 0 && <div style={{ height: windowed.after }} />}
           {tab === "toc" && !loading && !error && toc.length === 0 && (
             <p className="m-4 text-sm text-secondary">
               {txtTools ? "没有识别到章节，可以在 TXT目录规则 中换一条规则。" : "目录为空。"}

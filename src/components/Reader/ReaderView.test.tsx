@@ -854,7 +854,7 @@ describe("online books", () => {
     tapSurface();
     tapSurface(0.9, 0.5);
     await waitFor(() => expect(screen.getByTestId("reader-page").textContent).toContain("第二段"));
-    expect(app.services.reader.readContentWindow).toHaveBeenLastCalledWith(
+    expect(app.services.reader.readContentWindow).toHaveBeenCalledWith(
       expect.objectContaining({ resourceId: "chapter-1", locator: null }),
     );
     await userEvent.click(screen.getByRole("button", { name: "目录" }));

@@ -260,6 +260,28 @@ pub struct OnlineRecord {
     pub can_update: bool,
 }
 
+/// The chapter files kept for each book, read once and kept current.
+fn cached_files() -> &'static std::sync::Mutex<HashMap<String, HashSet<String>>> {
+    static FILES: std::sync::OnceLock<std::sync::Mutex<HashMap<String, HashSet<String>>>> =
+        std::sync::OnceLock::new();
+    FILES.get_or_init(Default::default)
+}
+
+/// Records a chapter written to the cache.
+pub fn mark_chapter_cached(book_id: &str, chapter: &OnlineChapter) {
+    if let Ok(mut map) = cached_files().lock() {
+        if let Some(names) = map.get_mut(book_id) {
+            names.insert(chapter_file_name(chapter));
+        }
+    }
+}
+
+pub fn forget_cached_chapters(book_id: &str) {
+    if let Ok(mut map) = cached_files().lock() {
+        map.remove(book_id);
+    }
+}
+
 fn chapter_file_name(chapter: &OnlineChapter) -> String {
     format!(
         "{:05}-{}.txt",
@@ -767,18 +789,38 @@ impl Storage {
             .join(chapter_file_name(chapter))
     }
 
-    /// The cached chapter positions, from the files present.
+    /// The cached chapter positions, from the files present. The folder is
+    /// read once per book and session; writes keep the set current.
     pub fn cached_online_chapters(&self, book_id: &str) -> Result<HashSet<u32>, AppError> {
         let mut cached = HashSet::new();
-        let chapters = self.online_chapters(book_id)?;
-        let dir = self.online_cache_dir(book_id);
-        let names: HashSet<String> = match fs::read_dir(&dir) {
-            Ok(entries) => entries
-                .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .collect(),
-            Err(_) => return Ok(cached),
+        let names = {
+            let known = cached_files()
+                .lock()
+                .ok()
+                .and_then(|map| map.get(book_id).cloned());
+            match known {
+                Some(names) => names,
+                None => {
+                    let names: HashSet<String> = match fs::read_dir(self.online_cache_dir(book_id))
+                    {
+                        Ok(entries) => entries
+                            .flatten()
+                            .filter_map(|entry| entry.file_name().into_string().ok())
+                            .filter(|name| name.ends_with(".txt"))
+                            .collect(),
+                        Err(_) => HashSet::new(),
+                    };
+                    if let Ok(mut map) = cached_files().lock() {
+                        map.insert(book_id.to_string(), names.clone());
+                    }
+                    names
+                }
+            }
         };
+        if names.is_empty() {
+            return Ok(cached);
+        }
+        let chapters = self.online_chapters(book_id)?;
         for chapter in chapters {
             if names.contains(&chapter_file_name(&chapter)) {
                 cached.insert(chapter.index);
@@ -788,6 +830,7 @@ impl Storage {
     }
 
     pub fn clear_online_cache(&self, book_id: &str) -> Result<(), AppError> {
+        forget_cached_chapters(book_id);
         let dir = self.online_cache_dir(book_id);
         match fs::remove_dir_all(&dir) {
             Ok(()) => Ok(()),

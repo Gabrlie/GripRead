@@ -38,8 +38,8 @@ mod online_cache;
 mod portable;
 mod sources;
 pub use online::{
-    chapter_resource, chapter_version, map_chapter, online_key, resource_chapter, ChapterPosition,
-    OnlineRecord,
+    chapter_resource, chapter_version, forget_cached_chapters, map_chapter, mark_chapter_cached,
+    online_key, resource_chapter, ChapterPosition, OnlineRecord,
 };
 pub use online_cache::{book_cache_key, cover_key, CachedCover};
 pub use portable::{

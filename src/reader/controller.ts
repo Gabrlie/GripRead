@@ -465,6 +465,57 @@ export class ReaderController {
   }
 
   private scrollTarget: { offset: number; start: number } | null = null;
+
+  /**
+   * Neighbouring chapter resources read and measured ahead, so turning into
+   * them does not wait. Keyed by resource and the layout they were measured
+   * for; any reflow, mode, or directory change makes them stale.
+   */
+  private neighbours = new Map<string, { layout: string; measured: Promise<MeasuredWindow> }>();
+
+  private layoutKey(epoch: number): string {
+    return `${epoch}|${this.mode}|${this.reflowToken}|${this.directoryGeneration}`;
+  }
+
+  /** A neighbour prepared for this layout, or a fresh read of it. */
+  private neighbour(
+    bookId: string,
+    resourceId: string,
+    direction: WindowDirection,
+    epoch: number,
+  ): Promise<MeasuredWindow> {
+    const entry = this.neighbours.get(resourceId);
+    this.neighbours.delete(resourceId);
+    if (entry && entry.layout === this.layoutKey(epoch))
+      return entry.measured.catch(() => this.readResource(bookId, resourceId, direction, epoch));
+    this.setLoading(true);
+    return this.readResource(bookId, resourceId, direction, epoch);
+  }
+
+  /** Starts reading the chapters around the visible page when it nears an edge. */
+  private prepareNeighbours(epoch: number) {
+    if (this.mode === "scroll") return;
+    const measured = this.activeMeasuredWindow();
+    if (!measured) return;
+    const window = measured.window;
+    const layout = this.layoutKey(epoch);
+    for (const [key, entry] of this.neighbours)
+      if (entry.layout !== layout) this.neighbours.delete(key);
+    const index = this.currentPageIndex;
+    const nearEnd = !window.hasAfter && index >= measured.pages.length - 3;
+    const nearStart = !window.hasBefore && index <= 2;
+    const wanted: [string | undefined, WindowDirection][] = [
+      [nearEnd ? window.nextResourceId : undefined, "forward"],
+      [nearStart ? window.previousResourceId : undefined, "backward"],
+    ];
+    for (const [resourceId, direction] of wanted) {
+      if (!resourceId || this.neighbours.has(resourceId)) continue;
+      const pending = this.readResource(window.bookId, resourceId, direction, epoch);
+      // A failed or superseded read is simply not used.
+      pending.catch(() => this.neighbours.delete(resourceId));
+      this.neighbours.set(resourceId, { layout, measured: pending });
+    }
+  }
   public takeScrollTarget() {
     const target = this.scrollTarget;
     this.scrollTarget = null;
@@ -715,8 +766,7 @@ export class ReaderController {
       if (!next) return;
       this.suppressPositionSave = false;
       this.clearPositionWarning();
-      this.setLoading(true);
-      const measured = await this.readResource(current.window.bookId, next, "forward", epoch);
+      const measured = await this.neighbour(current.window.bookId, next, "forward", epoch);
       this.assertCurrent(epoch);
       this.windows = [measured];
       this.currentWindowIndex = 0;
@@ -792,8 +842,7 @@ export class ReaderController {
       if (!previous) return;
       this.suppressPositionSave = false;
       this.clearPositionWarning();
-      this.setLoading(true);
-      const measured = await this.readResource(current.window.bookId, previous, "backward", epoch);
+      const measured = await this.neighbour(current.window.bookId, previous, "backward", epoch);
       this.assertCurrent(epoch);
       this.windows = [measured];
       this.currentWindowIndex = 0;
@@ -975,6 +1024,7 @@ export class ReaderController {
     // Saving starts before presentation so a slow page-curl animation cannot
     // delay persistence or make the animation the owner of reading position.
     if (displayed && !this.suppressPositionSave) this.positions.queue(displayed.locator);
+    this.prepareNeighbours(epoch);
 
     const context: ReaderPresentationContext = {
       index: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,

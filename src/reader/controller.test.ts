@@ -925,7 +925,9 @@ describe("ReaderController with chapter resources", () => {
     await controller.next();
     await controller.next();
     expect([text(), resource()]).toEqual(["c", "chapter-1"]);
-    expect(service.requests.at(-1)).toMatchObject({ resourceId: "chapter-1", locator: null });
+    expect(service.requests).toContainEqual(
+      expect.objectContaining({ resourceId: "chapter-1", locator: null }),
+    );
     await controller.previous();
     // Going back lands on the last page of the previous chapter.
     expect([text(), resource()]).toEqual(["b", "chapter-0"]);
@@ -1011,5 +1013,26 @@ describe("ReaderPositions.forget", () => {
     // The first save was already running; the queued one is gone.
     expect(saves.map((locator) => locator.offset)).toEqual([1]);
     expect(await positions.load("a")).toBeNull();
+  });
+
+  it("reads the next chapter ahead so turning into it waits for nothing", async () => {
+    const service = chapteredService(["abcdef", "gh"]);
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 8,
+    });
+    await controller.open("online");
+    // Near the end of the first chapter the second one is read ahead.
+    for (let step = 0; step < 4; step++) await controller.next();
+    await vi.waitFor(() =>
+      expect(service.requests.some((request) => request.resourceId === "chapter-1")).toBe(true),
+    );
+    const before = service.requests.length;
+    await controller.next();
+    await controller.next();
+    expect(controller.getSnapshot().page?.text).toBe("g");
+    expect(
+      service.requests.slice(before).some((request) => request.resourceId === "chapter-1"),
+    ).toBe(false);
   });
 });
