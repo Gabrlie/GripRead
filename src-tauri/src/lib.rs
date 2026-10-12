@@ -1,3 +1,4 @@
+pub mod app_log;
 mod cloud;
 pub mod commands;
 pub mod documents;
@@ -35,10 +36,11 @@ use commands::{
     reading_stats, set_book_cover, update_bookmark_note,
 };
 use commands::{
-    backup_to_webdav, delete_cloud_book, delete_remote_backup, download_cloud_book,
-    export_backup_file, get_webdav_settings, list_cloud_books, list_recovery_points,
-    list_remote_backups, preview_backup, restore_backup, run_automatic_backup,
-    save_webdav_settings, set_backup_folder, test_webdav, upload_cloud_books,
+    backup_to_webdav, clear_logs, delete_cloud_book, delete_remote_backup, download_cloud_book,
+    export_backup_file, export_log_text, get_webdav_settings, list_cloud_books, list_log_entries,
+    list_recovery_points, list_remote_backups, log_frontend, preview_backup, restore_backup,
+    run_automatic_backup, save_webdav_settings, set_backup_folder, set_detailed_log, test_webdav,
+    upload_cloud_books,
 };
 use commands::{
     delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
@@ -97,6 +99,11 @@ pub fn run() {
             let data_dir = std::env::var_os("GRIPREAD_TEST_DATA_DIR")
                 .map(std::path::PathBuf::from)
                 .ok_or("native-test builds require an isolated GRIPREAD_TEST_DATA_DIR")?;
+            app_log::init(&data_dir);
+            app_log::info(
+                "app",
+                format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
+            );
             app.manage(AppState::new(data_dir)?);
             app.manage(ExitPermission::default());
             app.manage(SourceOperations::default());
@@ -252,6 +259,11 @@ pub fn run() {
             preview_backup,
             restore_backup,
             export_backup_file,
+            list_log_entries,
+            set_detailed_log,
+            clear_logs,
+            export_log_text,
+            log_frontend,
             list_cloud_books,
             upload_cloud_books,
             download_cloud_book,

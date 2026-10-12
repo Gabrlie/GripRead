@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { AppServices } from "./contracts";
+import { appLog } from "./log";
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
 import { listen } from "@tauri-apps/api/event";
 
@@ -179,9 +180,19 @@ function normalizeError(value: unknown): AppError {
   return { code: "io", message };
 }
 
+/** Failures that are an answer rather than a fault stay out of the log. */
+const QUIET_CODES = new Set([
+  "import_cancelled",
+  "operation_not_found",
+  "content_version_mismatch",
+]);
+
 function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, args).catch((error: unknown) => {
-    throw new ReaderServiceError(normalizeError(error));
+    const normalized = normalizeError(error);
+    if (!QUIET_CODES.has(normalized.code))
+      appLog.write("warn", "command", `${command}：${normalized.message}`);
+    throw new ReaderServiceError(normalized);
   });
 }
 

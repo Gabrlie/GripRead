@@ -79,6 +79,7 @@ import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { updateOnlineToc } from "../../application/online";
+import { appLog } from "../../services/log";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow } from "../../types/generated";
 
@@ -601,6 +602,11 @@ export function ReaderView() {
     ],
   );
   leaveToDetail.current = () => close(true);
+  // Errors the reader shows also go to the app log.
+  useEffect(() => {
+    if (state.error)
+      appLog.write("error", "reader", `《${activeBook?.book.title ?? ""}》${state.error}`);
+  }, [state.error]);
 
   const { setBookmarks, setEncodingInfo, reload: reloadTools } = tools;
   const addBookmark = useCallback(() => {

@@ -184,10 +184,15 @@ impl Env {
     }
 
     pub fn log(&self, message: impl Into<String>) {
+        let message = message.into();
+        // 详细日志 mirrors every engine step and request into the app log.
+        if crate::app_log::detailed() {
+            crate::app_log::detail("source", format!("{}：{}", self.source.name(), message));
+        }
         let mut logs = self.logs.borrow_mut();
         // Logs are for debugging; a runaway script must not grow them forever.
         if logs.len() < 2000 {
-            logs.push(message.into());
+            logs.push(message);
         }
     }
 

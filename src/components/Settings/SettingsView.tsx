@@ -22,10 +22,11 @@ import { BackupPage } from "../Cloud/BackupPage";
 import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatTime } from "../Cloud/format";
 import { APP_VERSION, AboutPage } from "./AboutPage";
+import { LogPage } from "./LogPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
-type Page = "records" | "sources" | "replace" | "toc" | "backup" | "cloud" | "about";
+type Page = "records" | "sources" | "replace" | "toc" | "backup" | "cloud" | "about" | "logs";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -282,6 +283,12 @@ export function SettingsView() {
 
         <PageSection>
           <PageLink
+            icon="bug_report"
+            label="日志"
+            detail="出现问题时可复制或分享给开发者"
+            onClick={() => setPage("logs")}
+          />
+          <PageLink
             icon="info"
             label="关于"
             detail={`手不释卷 · GripRead ${APP_VERSION}`}
@@ -316,6 +323,7 @@ export function SettingsView() {
       {page === "toc" && <TocRulesPage service={runtime.services.reader} onClose={close} />}
       {page === "backup" && <BackupPage onClose={close} />}
       {page === "about" && <AboutPage onClose={close} />}
+      {page === "logs" && <LogPage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

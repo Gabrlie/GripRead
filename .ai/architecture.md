@@ -38,3 +38,8 @@ The owning subsystem defines semantic obligations; executable type declarations 
 Long-running operations expose an operation identity, progress, cancellation, and a terminal result. Resource owners release listeners, workers, and requests when work ends. Stale callbacks cannot overwrite a newer user action. Persistent jobs resume from stored state where the operation requires durability; transient searches need not become database jobs.
 
 The [workflow](engineering/workflow.md) owns implementation discipline and [verification](engineering/testing.md) owns validation methods. Stage-specific runtime choices, including the source JavaScript engine and AI storage/provider, are recorded by their subsystems rather than assumed by the application foundation.
+
+## App log
+
+`src-tauri/src/app_log.rs` keeps the app log shown in 设置 › 日志: one JSON-lines file per local day under the data folder's `logs/`, kept for seven days, plus an in-memory ring of recent entries. Any layer may write to it, including the source engine, which stays free of Tauri. It records failures and key steps (source and chapter failures, failed commands reported by the IPC layer, uncaught page errors, 更新目录, 换源, backup, and restore); 详细日志, which turns itself off after a day, adds every engine step and request. Messages are redacted before writing so cookies, authorization and login headers, tokens, and passwords never enter the log; it is local and leaves the device only when the reader copies or shares it.
+

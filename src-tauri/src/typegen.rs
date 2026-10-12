@@ -162,6 +162,12 @@ const IPC_TYPES: &[&str] = &[
     "FindOnlineBookRequest",
     "ChangeOnlineSourceRequest",
     "ChangeOnlineSourceResult",
+    "LogLevel",
+    "LogEntry",
+    "LogQuery",
+    "LogPage",
+    "SetFlagRequest",
+    "FrontendLogRequest",
     "UpdateOnlineTocRequest",
     "OnlineTocEvent",
     "CacheOnlineChaptersRequest",
@@ -331,6 +337,12 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<FindOnlineBookRequest>(&config)?;
     export_all::<ChangeOnlineSourceRequest>(&config)?;
     export_all::<ChangeOnlineSourceResult>(&config)?;
+    export_all::<crate::app_log::LogLevel>(&config)?;
+    export_all::<crate::app_log::LogEntry>(&config)?;
+    export_all::<LogQuery>(&config)?;
+    export_all::<LogPage>(&config)?;
+    export_all::<SetFlagRequest>(&config)?;
+    export_all::<FrontendLogRequest>(&config)?;
     export_all::<UpdateOnlineTocRequest>(&config)?;
     export_all::<OnlineTocEvent>(&config)?;
     export_all::<CacheOnlineChaptersRequest>(&config)?;

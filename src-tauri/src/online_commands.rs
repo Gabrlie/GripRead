@@ -338,10 +338,16 @@ pub async fn search_online_books(
                             }
                             found.0.extend(books.iter().map(online_book));
                         }
-                        Err(error) => found.1.push(SourceFailure {
-                            source_name: name,
-                            message: error.message,
-                        }),
+                        Err(error) => {
+                            crate::app_log::warn(
+                                "source",
+                                format!("{name} 搜索失败：{}", error.message),
+                            );
+                            found.1.push(SourceFailure {
+                                source_name: name,
+                                message: error.message,
+                            })
+                        }
                     }
                 }
                 emit(false);
@@ -364,9 +370,16 @@ async fn run_step<T: Send + 'static>(
     let storage = state.storage.clone();
     on_engine_thread(move || {
         let source = load_source(&storage, &source_url)?;
+        let name = source.name();
         let control = Control::new(Default::default(), Some(Instant::now() + STEP_TIMEOUT));
         let session = session_for(&storage, source, control).map_err(engine_error)?;
-        step(&session).map_err(engine_error)
+        step(&session).map_err(|error| {
+            crate::app_log::error(
+                "source",
+                format!("{name}（{source_url}）：{}", error.message),
+            );
+            engine_error(error)
+        })
     })
     .await?
 }
@@ -601,6 +614,19 @@ pub async fn change_online_source(
     with_storage(&state, move |storage| {
         let moved =
             storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
+        crate::app_log::info(
+            "source",
+            format!(
+                "换源：《{}》换到 {}，{}",
+                request.book.name,
+                request.book.source_name,
+                match moved {
+                    Some((index, true)) => format!("进度移到第 {} 章", index + 1),
+                    Some((index, false)) => format!("没有找到对应章节，停在第 {} 章", index + 1),
+                    None => "尚未阅读".into(),
+                }
+            ),
+        );
         Ok(crate::models::ChangeOnlineSourceResult {
             book: storage.library_book(&request.book_id)?,
             chapter: moved.map(|(index, _)| index),
@@ -742,6 +768,10 @@ pub async fn update_online_toc(
                 let (new_chapters, error) = match outcome {
                     Ok(added) => (added, None),
                     Err(error) => {
+                        crate::app_log::warn(
+                            "source",
+                            format!("更新目录失败（{book_id}）：{}", error.message),
+                        );
                         if let Ok(guard) = storage.lock() {
                             let _ = guard.record_online_update_error(&book_id, &error.message);
                         }

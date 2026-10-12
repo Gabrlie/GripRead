@@ -1857,3 +1857,33 @@ pub struct OnlineCoverRequest {
     pub source_url: String,
     pub url: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogQuery {
+    /// The lowest level to list.
+    pub level: crate::app_log::LogLevel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogPage {
+    pub entries: Vec<crate::app_log::LogEntry>,
+    /// 详细日志 is on until then.
+    pub detail_until: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFlagRequest {
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendLogRequest {
+    pub level: crate::app_log::LogLevel,
+    #[serde(default)]
+    pub area: String,
+    pub message: String,
+}

@@ -2024,6 +2024,7 @@ pub async fn backup_to_webdav(
 ) -> Result<crate::models::RemoteBackup, AppError> {
     with_cloud(&state, move |storage, _| {
         let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
+        crate::app_log::info("sync", format!("已备份到 WebDAV：{}", backup.name));
         let folder = lock_storage(storage)?.stored_webdav()?.local_folder;
         if let Some(folder) = folder {
             write_local_backup(&app, &folder, &backup.name, &serde_json::to_vec(&document)?)?;
@@ -2170,7 +2171,7 @@ pub async fn restore_backup(
         // restores without them.
         if lock_storage(storage)?.stored_webdav()?.configured() {
             if let Err(error) = crate::cloud::fetch_backup_covers(storage, &document) {
-                eprintln!("Unable to fetch backup covers: {}", error.message);
+                crate::app_log::warn("sync", format!("恢复时封面下载失败：{}", error.message));
             }
         }
         let mut guard = lock_storage(storage)?;
@@ -2178,6 +2179,17 @@ pub async fn restore_backup(
         let recovery_point = guard.write_recovery_point(&device)?;
         let mut report = guard.restore_backup(&document)?;
         report.recovery_point = recovery_point;
+        crate::app_log::info(
+            "sync",
+            format!(
+                "已恢复备份：书籍 {}，网络书籍 {}，书源 {}，进度 {}，书签 {}",
+                report.books_restored,
+                report.online_books_restored,
+                report.sources_restored,
+                report.positions_restored,
+                report.bookmarks_added
+            ),
+        );
         Ok(report)
     })
     .await
@@ -2295,4 +2307,44 @@ pub async fn acknowledge_book_progress(
         )
     })
     .await
+}
+
+#[tauri::command]
+pub fn list_log_entries(request: crate::models::LogQuery) -> crate::models::LogPage {
+    crate::models::LogPage {
+        entries: crate::app_log::entries(request.level),
+        detail_until: crate::app_log::detail_until(),
+    }
+}
+
+#[tauri::command]
+pub fn set_detailed_log(request: crate::models::SetFlagRequest) -> Option<i64> {
+    crate::app_log::set_detailed(request.on)
+}
+
+#[tauri::command]
+pub fn clear_logs() {
+    crate::app_log::clear();
+}
+
+/// The whole log as text, for 复制全部 and sharing.
+#[tauri::command]
+pub fn export_log_text() -> String {
+    crate::app_log::export_text()
+}
+
+/// Errors and steps the page reports (uncaught errors, failed commands).
+#[tauri::command]
+pub fn log_frontend(request: crate::models::FrontendLogRequest) {
+    let area = if request.area.trim().is_empty() {
+        "ui"
+    } else {
+        request.area.trim()
+    };
+    match request.level {
+        crate::app_log::LogLevel::Error => crate::app_log::error(area, &request.message),
+        crate::app_log::LogLevel::Warn => crate::app_log::warn(area, &request.message),
+        crate::app_log::LogLevel::Info => crate::app_log::info(area, &request.message),
+        crate::app_log::LogLevel::Detail => crate::app_log::detail(area, &request.message),
+    }
 }

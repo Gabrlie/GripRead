@@ -112,7 +112,16 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
         .map(|item| chapter_absolute_url(&chapter_data(item)));
     let content = session
         .content(&book, &chapter_data(&chapter), next.as_deref(), &urls)
-        .map_err(engine_error)?;
+        .map_err(|error| {
+            crate::app_log::error(
+                "reader",
+                format!(
+                    "《{}》{} 读取失败（{}）：{}",
+                    record.title, chapter.title, record.book.source_name, error.message
+                ),
+            );
+            engine_error(error)
+        })?;
     write_cache(&path, &content.text)?;
     Ok(content.text)
 }
