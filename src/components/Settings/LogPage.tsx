@@ -36,7 +36,7 @@ function time(value: number): string {
  * passwords, and login headers never enter it. 详细日志 also records every
  * source request and step for a day.
  */
-export function LogPage({ onClose }: { onClose: () => void }) {
+export function LogPage({ onClose, layer }: { onClose: () => void; layer?: string }) {
   const [level, setLevel] = useState<LogLevel>("info");
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [detailUntil, setDetailUntil] = useState<number | null>(null);
@@ -67,7 +67,7 @@ export function LogPage({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <FullPage label="日志" onClose={onClose}>
+    <FullPage label="日志" onClose={onClose} layer={layer}>
       <section className="rounded-xl bg-surface-container-low px-4 py-3 flex items-center gap-3">
         <span className="flex-1 min-w-0">
           <span className="block text-sm">详细日志</span>

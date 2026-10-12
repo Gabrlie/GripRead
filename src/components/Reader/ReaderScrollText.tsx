@@ -16,9 +16,27 @@ interface Props {
   onUserScroll: () => void;
   run: (action: () => Promise<void>) => void;
   synchronize: RefObject<(() => void) | null>;
-  /** For a book read chapter by chapter: open the chapter before or after. */
-  onPreviousChapter?: () => void;
-  onNextChapter?: () => void;
+  /** A book read chapter by chapter: the chapters shown above and below. */
+  before?: ContentWindow | null;
+  after?: ContentWindow | null;
+}
+
+/** Renders a neighbouring chapter, or clears its box when there is none. */
+function renderNeighbour(
+  root: HTMLDivElement | null,
+  content: ContentWindow | null,
+  headings: HeadingIndex,
+) {
+  if (!root) return;
+  if (!content) {
+    root.replaceChildren();
+    return;
+  }
+  renderReaderText(root, content.text, {
+    continued: false,
+    highlight: null,
+    headings: headings.local(content.startOffset, content.endOffset),
+  });
 }
 
 export function ReaderScrollText({
@@ -31,10 +49,38 @@ export function ReaderScrollText({
   onUserScroll,
   run,
   synchronize,
-  onPreviousChapter,
-  onNextChapter,
+  before = null,
+  after = null,
 }: Props) {
   const body = useRef<HTMLDivElement>(null);
+  const beforeBody = useRef<HTMLDivElement>(null);
+  const afterBody = useRef<HTMLDivElement>(null);
+  const shown = useRef<{ before: ContentWindow | null; after: ContentWindow | null }>({
+    before: null,
+    after: null,
+  });
+  /** The passage at the top of the view, in any of the shown chapters. */
+  const topPassage = (): { resourceId: string; offset: number; top: number } | null => {
+    const box = viewport.current;
+    if (!box) return null;
+    const edge = box.getBoundingClientRect().top;
+    const segments: [HTMLDivElement | null, ContentWindow | null][] = [
+      [beforeBody.current, shown.current.before],
+      [body.current, previous.current],
+      [afterBody.current, shown.current.after],
+    ];
+    for (const [root, window] of segments) {
+      if (!root || !window || root.getBoundingClientRect().bottom <= edge) continue;
+      const local = visibleOffsets(root, box).start;
+      const rect = rectAtOffset(root, local);
+      return {
+        resourceId: window.resourceId,
+        offset: window.startOffset + local,
+        top: rect?.top ?? edge,
+      };
+    }
+    return null;
+  };
   const indicator = useRef<HTMLDivElement>(null);
   const indicatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showPosition = (start: number) => {
@@ -62,6 +108,15 @@ export function ReaderScrollText({
   const anchor = useRef<{ offset: number; delta: number } | null>(null);
   report.current = () => {
     if (!body.current || !viewport.current) return;
+    // The chapter at the top of the view is the one being read.
+    const edge = viewport.current.getBoundingClientRect().top;
+    const current = body.current.getBoundingClientRect();
+    // A view without layout (hidden, or not yet sized) has no top passage.
+    const laidOut = current.height > 0 && viewport.current.clientHeight > 0;
+    if (laidOut && after && current.bottom <= edge && controller.enterScrollChapter("forward"))
+      return;
+    if (laidOut && before && current.top > edge + 1 && controller.enterScrollChapter("backward"))
+      return;
     const offsets = visibleOffsets(body.current, viewport.current);
     const top = rectAtOffset(body.current, offsets.start);
     anchor.current = {
@@ -76,11 +131,14 @@ export function ReaderScrollText({
     if (scrolled.current) showPosition(content.startOffset + offsets.start);
     scrolled.current = false;
     if (selectionActive() || controller.getSnapshot().error) return;
-    // Preload within one viewport of either boundary; loading never replaces the visible page.
-    const textHeight = body.current.getBoundingClientRect().height;
-    if (content.hasAfter && box.scrollTop + box.clientHeight * 2 >= textHeight)
+    // Preload within one viewport of either boundary; loading never replaces
+    // the visible page. Past a chapter's ends, the neighbouring chapter loads.
+    const view = box.getBoundingClientRect();
+    const forward = content.hasAfter || (Boolean(content.nextResourceId) && !after);
+    const backward = content.hasBefore || (Boolean(content.previousResourceId) && !before);
+    if (forward && current.bottom - view.bottom < box.clientHeight)
       run(() => controller.extendScroll("forward", () => !selectionActive()));
-    else if (content.hasBefore && box.scrollTop < box.clientHeight)
+    else if (backward && view.top - current.top < box.clientHeight)
       run(() => controller.extendScroll("backward", () => !selectionActive()));
   };
   useLayoutEffect(() => {
@@ -88,15 +146,11 @@ export function ReaderScrollText({
     const box = viewport.current;
     if (!root || !box) return;
     const old = previous.current;
-    const overlap =
-      old &&
-      old.contentVersion === content.contentVersion &&
-      old.startOffset < content.endOffset &&
-      content.startOffset < old.endOffset;
-    const oldVisible = old && visibleOffsets(root, box);
-    const anchor = old && oldVisible ? old.startOffset + oldVisible.start : content.startOffset;
-    const oldRect = old && oldVisible ? rectAtOffset(root, oldVisible.start) : null;
-    const oldTop = oldRect?.top;
+    // The passage at the top before rendering, in whichever chapter holds it.
+    const kept = old ? topPassage() : null;
+    if (shown.current.before !== before) renderNeighbour(beforeBody.current, before, headings);
+    if (shown.current.after !== after) renderNeighbour(afterBody.current, after, headings);
+    shown.current = { before, after };
     renderReaderText(root, content.text, {
       continued: continuesLine(
         content.text,
@@ -121,21 +175,30 @@ export function ReaderScrollText({
         (startRect?.top ?? top) - top,
         (endRect?.bottom ?? top) - top - box.clientHeight,
       );
-    } else if (
-      overlap &&
-      oldTop !== undefined &&
-      anchor >= content.startOffset &&
-      anchor < content.endOffset
-    ) {
-      const nextRect = rectAtOffset(root, anchor - content.startOffset);
-      if (nextRect) box.scrollTop += nextRect.top - oldTop;
+    } else if (kept) {
+      const segments: [HTMLDivElement | null, ContentWindow | null][] = [
+        [beforeBody.current, before],
+        [root, content],
+        [afterBody.current, after],
+      ];
+      const holder = segments.find(
+        ([element, window]) =>
+          element &&
+          window &&
+          window.resourceId === kept.resourceId &&
+          kept.offset >= window.startOffset &&
+          kept.offset < window.endOffset,
+      );
+      const rect = holder ? rectAtOffset(holder[0]!, kept.offset - holder[1]!.startOffset) : null;
+      if (rect) box.scrollTop += rect.top - kept.top;
+      else if (!holder) box.scrollTop = beforeBody.current?.offsetHeight ?? 0;
     } else {
-      box.scrollTop = 0;
+      box.scrollTop = beforeBody.current?.offsetHeight ?? 0;
     }
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => report.current());
     return () => cancelAnimationFrame(frame.current);
-  }, [content, controller, highlight?.start, highlight?.end, headings, viewport]);
+  }, [content, before, after, controller, highlight?.start, highlight?.end, headings, viewport]);
   useLayoutEffect(() => {
     const box = viewport.current;
     if (!box) return;
@@ -196,17 +259,6 @@ export function ReaderScrollText({
         onTouchStart={onInteract}
         onTouchMove={onUserScroll}
       >
-        {!content.hasBefore && onPreviousChapter && (
-          <div className="max-w-2xl mx-auto pt-2 pb-4 flex justify-center">
-            <button
-              type="button"
-              onClick={onPreviousChapter}
-              className="h-8 px-4 rounded-full text-xs bg-surface-container text-secondary"
-            >
-              上一章
-            </button>
-          </div>
-        )}
         {/* The single-page text column; .reader-prose resets padding on its own element. */}
         <div
           className="max-w-2xl mx-auto"
@@ -216,6 +268,11 @@ export function ReaderScrollText({
           }}
         >
           <div
+            ref={beforeBody}
+            data-testid="reader-scroll-before"
+            className={`reader-prose reader-text ${before ? "pb-10" : ""}`}
+          />
+          <div
             ref={body}
             className="reader-prose reader-text"
             data-testid="reader-scroll-text"
@@ -223,19 +280,15 @@ export function ReaderScrollText({
             data-end={content.endOffset}
             data-total={content.totalLength}
           />
+          <div
+            ref={afterBody}
+            data-testid="reader-scroll-after"
+            className={`reader-prose reader-text ${after ? "pt-10" : ""}`}
+          />
         </div>
-        {!content.hasAfter && onNextChapter && (
-          <div className="max-w-2xl mx-auto py-6 flex justify-center">
-            <button
-              type="button"
-              onClick={onNextChapter}
-              className="h-9 px-6 rounded-full text-sm bg-primary text-on-primary"
-            >
-              下一章
-            </button>
-          </div>
+        {!content.hasAfter && !after && (
+          <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />
         )}
-        {!content.hasAfter && <div aria-hidden="true" style={{ height: "calc(100% - 1lh)" }} />}
       </div>
       <div
         ref={indicator}

@@ -54,6 +54,8 @@ export function emptyReaderSnapshot(bookId: string | null = null): ReaderSnapsho
     chapter: null,
     chapterProgress: 0,
     scroll: null,
+    scrollBefore: null,
+    scrollAfter: null,
     scrollRevision: 0,
     contentWindow: null,
     pageIndex: 0,
@@ -565,8 +567,8 @@ export class ReaderController {
       pages: [page],
       chapter,
       chapterProgress: progressInChapter(chapter, start, end),
-      hasBefore: start > 0,
-      hasAfter: end < window.totalLength,
+      hasBefore: start > 0 || Boolean(window.previousResourceId),
+      hasAfter: end < window.totalLength || Boolean(window.nextResourceId),
     };
     this.notify();
     // Persist the latest passage periodically even during uninterrupted automatic scrolling.
@@ -581,10 +583,9 @@ export class ReaderController {
     if (this.scrollRead) return this.scrollRead;
     const windows = this.scrollWindows;
     const edge = direction === "forward" ? windows.at(-1) : windows[0];
-    // Scrolling stays inside one chapter resource; the scroll view offers
-    // the neighbouring chapter at its ends.
-    if (!edge || (direction === "forward" ? !edge.hasAfter : !edge.hasBefore))
-      return Promise.resolve();
+    if (!edge) return Promise.resolve();
+    if (direction === "forward" ? !edge.hasAfter : !edge.hasBefore)
+      return this.readScrollNeighbour(edge, direction, canCommit);
     const epoch = this.epoch;
     const anchor = direction === "forward" ? edge.endOffset : edge.startOffset;
     const operation = this.service
@@ -625,6 +626,77 @@ export class ReaderController {
       });
     this.scrollRead = operation;
     return operation;
+  }
+
+  /**
+   * At a chapter resource's edge, the neighbouring chapter is read and
+   * shown beyond it: the next one from its start, the previous one whole.
+   */
+  private readScrollNeighbour(
+    edge: ContentWindow,
+    direction: WindowDirection,
+    canCommit: () => boolean,
+  ): Promise<void> {
+    const resourceId = direction === "forward" ? edge.nextResourceId : edge.previousResourceId;
+    const kept = direction === "forward" ? this.snapshot.scrollAfter : this.snapshot.scrollBefore;
+    if (!resourceId || kept?.resourceId === resourceId) return Promise.resolve();
+    const windows = this.scrollWindows;
+    const epoch = this.epoch;
+    const operation = this.service
+      .readContentWindow({
+        bookId: edge.bookId,
+        locator: null,
+        maxUnits: direction === "forward" ? this.maxUnits : WHOLE_RESOURCE_UNITS,
+        direction: "forward",
+        resourceId,
+      })
+      .then((next) => {
+        this.assertCurrent(epoch);
+        if (this.mode !== "scroll" || this.scrollWindows !== windows || !canCommit()) return;
+        if (next.bookId !== edge.bookId || next.resourceId !== resourceId) return;
+        this.snapshot = {
+          ...this.snapshot,
+          ...(direction === "forward" ? { scrollAfter: next } : { scrollBefore: next }),
+        };
+        this.notify();
+      })
+      .catch((error: unknown) => {
+        if (epoch !== this.epoch || this.disposed) return;
+        this.reportOperationError(epoch, error);
+        throw error;
+      })
+      .finally(() => {
+        if (this.scrollRead === operation) this.scrollRead = null;
+      });
+    this.scrollRead = operation;
+    return operation;
+  }
+
+  /**
+   * The scroll view's top passed into the chapter shown before or after:
+   * it becomes the current chapter, and the one left stays shown beside it.
+   * Returns whether there was such a chapter.
+   */
+  public enterScrollChapter(direction: WindowDirection): boolean {
+    const target = direction === "forward" ? this.snapshot.scrollAfter : this.snapshot.scrollBefore;
+    if (this.mode !== "scroll" || this.disposed || !target || !this.scrollWindows.length)
+      return false;
+    const left = joinWindows(this.scrollWindows);
+    this.scrollWindows = [target];
+    this.scrollRead = null;
+    this.snapshot = {
+      ...this.snapshot,
+      scroll: target,
+      contentWindow: target,
+      scrollBefore: direction === "forward" ? left : null,
+      scrollAfter: direction === "forward" ? null : left,
+      chapters: this.ranges(target),
+      hasBefore: target.hasBefore || Boolean(target.previousResourceId),
+      hasAfter: target.hasAfter || Boolean(target.nextResourceId),
+      error: null,
+    };
+    this.notify();
+    return true;
   }
 
   /** Re-measure from the current page's locator after a typography or viewport change. */
@@ -1005,6 +1077,8 @@ export class ReaderController {
         visible.at(-1)?.endOffset ?? 0,
       ),
       scroll: this.mode === "scroll" ? measured.window : null,
+      scrollBefore: null,
+      scrollAfter: null,
       scrollRevision: this.snapshot.scrollRevision + (this.mode === "scroll" ? 1 : 0),
       contentWindow: measured.window,
       pageIndex: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,

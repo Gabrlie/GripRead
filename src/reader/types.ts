@@ -57,6 +57,12 @@ export interface ReaderSnapshot {
   chapter: ReaderChapter | null;
   chapterProgress: number;
   scroll: ContentWindow | null;
+  /**
+   * Scrolling a book read chapter by chapter: the chapters shown above and
+   * below the current one, so reading runs on across chapter edges.
+   */
+  scrollBefore: ContentWindow | null;
+  scrollAfter: ContentWindow | null;
   scrollRevision: number;
   contentWindow: ContentWindow | null;
   pageIndex: number;

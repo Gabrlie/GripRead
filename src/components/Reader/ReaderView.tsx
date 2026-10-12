@@ -1109,11 +1109,19 @@ export function ReaderView() {
     setControls(false);
     if (controller) run(() => controller.seek(locator));
   };
+  const highlightIn = (resourceId: string | undefined) => {
+    const mark = search.highlight;
+    return mark && (!mark.resourceId || mark.resourceId === resourceId) ? mark : null;
+  };
   const openMatch = (index: number) => {
     const match = search.matches[index];
     if (!match) return;
     setSearchIndex(index);
-    search.setHighlight({ start: match.matchStart, end: match.matchEnd });
+    search.setHighlight({
+      start: match.matchStart,
+      end: match.matchEnd,
+      resourceId: match.locator.resourceId,
+    });
     seekTo(match.locator);
   };
   const canStartAutomatic =
@@ -1228,17 +1236,9 @@ export function ReaderView() {
             controller={controller}
             viewport={scrollBox}
             synchronize={synchronizeScroll}
-            onPreviousChapter={
-              state.scroll.previousResourceId
-                ? () => run(() => controller.seekChapter("previous"))
-                : undefined
-            }
-            onNextChapter={
-              state.scroll.nextResourceId
-                ? () => run(() => controller.seekChapter("next"))
-                : undefined
-            }
-            highlight={search.highlight}
+            before={state.scrollBefore}
+            after={state.scrollAfter}
+            highlight={highlightIn(state.scroll.resourceId)}
             headings={headings}
             onInteract={() => {
               // Showing or hiding the automatic panel does not stop turning.
@@ -1257,7 +1257,7 @@ export function ReaderView() {
                   key={visible.startOffset}
                   page={visible}
                   bookId={state.bookId}
-                  highlight={search.highlight}
+                  highlight={highlightIn(state.contentWindow?.resourceId)}
                   headings={headings}
                 />
               ))}

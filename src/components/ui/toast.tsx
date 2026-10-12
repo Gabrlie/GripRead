@@ -13,6 +13,12 @@ export const TOAST_MS = 2_500;
 export const LONG_TOAST_MS = 6_000;
 
 let current: Toast | null = null;
+let viewLogs: (() => void) | null = null;
+
+/** Lets error toasts offer 查看日志; the app root registers the page. */
+export function setLogViewer(open: (() => void) | null): void {
+  viewLogs = open;
+}
 let nextId = 1;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
@@ -23,7 +29,11 @@ const notify = () => listeners.forEach((listener) => listener());
  * replaces it, and it hides by itself.
  */
 export function toast(message: string | Omit<Toast, "id">): void {
-  const value = typeof message === "string" ? { text: message } : message;
+  let value = typeof message === "string" ? { text: message } : message;
+  if (value.error && !value.action && viewLogs) {
+    const open = viewLogs;
+    value = { ...value, action: { label: "查看日志", run: open } };
+  }
   current = { ...value, id: nextId++ };
   clearTimeout(timer);
   timer = setTimeout(

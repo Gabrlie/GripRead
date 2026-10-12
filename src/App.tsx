@@ -11,7 +11,8 @@ import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
-import { Toaster } from "./components/ui/toast";
+import { Toaster, setLogViewer } from "./components/ui/toast";
+import { LogPage } from "./components/Settings/LogPage";
 import {
   dismissWithEscape,
   flushWhenHidden,
@@ -90,6 +91,11 @@ const OPEN_LAYER =
 function MainContent() {
   const { activeTab, activeBook, setActiveTab } = useApp();
   const runtime = useRuntime();
+  const [showLogs, setShowLogs] = useState(false);
+  useEffect(() => {
+    setLogViewer(() => setShowLogs(true));
+    return () => setLogViewer(null);
+  }, []);
   const positionError = useSyncExternalStore(
     runtime.positions.subscribe,
     runtime.positions.getSnapshot,
@@ -263,6 +269,7 @@ function MainContent() {
         )}
       </div>
       <ImportModal />
+      {showLogs && <LogPage layer="z-[70]" onClose={() => setShowLogs(false)} />}
       <Toaster />
     </div>
   );

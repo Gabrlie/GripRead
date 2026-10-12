@@ -1036,3 +1036,43 @@ describe("ReaderPositions.forget", () => {
     ).toBe(false);
   });
 });
+
+describe("continuous scrolling across chapter resources", () => {
+  it("shows the neighbouring chapters and saves places in the chapter being read", async () => {
+    const service = chapteredService(["abcd", "efgh", "ijkl"]);
+    const controller = new ReaderController(service, {
+      measurer: { measure: oneUnitMeasurer },
+      maxUnits: 8,
+      mode: "scroll",
+    });
+    await controller.open("online");
+    const snapshot = () => controller.getSnapshot();
+    expect(snapshot().scroll?.resourceId).toBe("chapter-0");
+    // At the chapter's end the next chapter is read and shown below it.
+    controller.updateScrollPosition(2, 4);
+    expect(snapshot().hasAfter).toBe(true);
+    await controller.extendScroll("forward");
+    expect(snapshot().scrollAfter?.resourceId).toBe("chapter-1");
+    expect(controller.enterScrollChapter("forward")).toBe(true);
+    expect(snapshot().scroll?.resourceId).toBe("chapter-1");
+    expect(snapshot().scrollBefore?.text).toBe("abcd");
+    controller.updateScrollPosition(1, 3);
+    controller.capturePosition();
+    expect(snapshot().page?.locator.resourceId).toBe("chapter-1");
+    // Across a second edge.
+    await controller.extendScroll("forward");
+    expect(controller.enterScrollChapter("forward")).toBe(true);
+    controller.updateScrollPosition(2, 4);
+    controller.capturePosition();
+    expect(snapshot().page?.locator).toMatchObject({ resourceId: "chapter-2", offset: 2 });
+    await vi.waitFor(() => expect(service.saves.at(-1)).toMatchObject({ resourceId: "chapter-2" }));
+    expect(snapshot().scrollAfter).toBeNull();
+    await controller.extendScroll("forward");
+    expect(snapshot().scrollAfter).toBeNull();
+    // Back up into the chapter before.
+    expect(controller.enterScrollChapter("backward")).toBe(true);
+    expect(snapshot().scroll?.resourceId).toBe("chapter-1");
+    expect(snapshot().scrollAfter?.resourceId).toBe("chapter-2");
+    controller.dispose();
+  });
+});

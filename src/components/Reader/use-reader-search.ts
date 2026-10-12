@@ -33,7 +33,13 @@ export function useReaderSearch(
   const [complete, setComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
-  const [highlight, setHighlight] = useState<{ start: number; end: number } | null>(null);
+  // A search match names its chapter, so other chapters with the same
+  // offsets are never marked; read aloud marks the shown chapter.
+  const [highlight, setHighlight] = useState<{
+    start: number;
+    end: number;
+    resourceId?: string;
+  } | null>(null);
   const request = useRef(0);
   const operation = useRef<string | null>(null);
 
