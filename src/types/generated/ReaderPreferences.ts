@@ -24,4 +24,8 @@ serialDays?: number,
 /**
  * 退出时清理缓存: the default 数据管理 parts are cleared at the next start.
  */
-clearCacheOnExit?: boolean, };
+clearCacheOnExit?: boolean, 
+/**
+ * 自动更新: 更新目录 runs when the shelf opens; `None` is on.
+ */
+autoUpdateShelf?: boolean, };

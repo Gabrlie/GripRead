@@ -697,6 +697,10 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub clear_cache_on_exit: Option<bool>,
+    /// 自动更新: 更新目录 runs when the shelf opens; `None` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auto_update_shelf: Option<bool>,
 }
 
 /// A reading colour scheme with day and night variants (Legado ReadBookConfig).
@@ -1093,6 +1097,7 @@ impl Default for ReaderPreferences {
             pre_download_chapters: None,
             serial_days: None,
             clear_cache_on_exit: None,
+            auto_update_shelf: None,
         }
     }
 }

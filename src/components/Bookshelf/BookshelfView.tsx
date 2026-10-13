@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { useApp } from "../../context/AppContext";
-import { useLibrary, useRuntime, useShelf, useShelfPreferences } from "../../application/runtime";
+import {
+  useLibrary,
+  useRuntime,
+  useSettings,
+  useShelf,
+  useShelfPreferences,
+} from "../../application/runtime";
 import type { LibraryBook } from "../../types/generated";
 import {
   READING_GROUPS,
@@ -26,6 +32,11 @@ import { LibraryCover } from "./LibraryCover";
 import { DownloadManagerPage } from "./DownloadManagerPage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
+import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
+
+/** 自动更新 waits this long after the last one before entering the shelf runs it again. */
+const AUTO_UPDATE_GAP = 10 * 60_000;
+let lastAutoUpdate = 0;
 
 type ShelfBook = {
   entry: LibraryBook;
@@ -124,8 +135,11 @@ export function BookshelfView() {
   // Legado's 更新目录: every online shelf book that allows updates.
   const [updating, setUpdating] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  const handleUpdateOnline = () => {
-    if (updating) return;
+  const updatingRef = useRef(false);
+  /** `quiet` (自动更新) speaks up only about new chapters or failures. */
+  const handleUpdateOnline = (quiet = false) => {
+    if (updatingRef.current) return;
+    updatingRef.current = true;
     setUpdating("正在更新目录…");
     void updateOnlineToc(runtime.services.sources, [], (event) => {
       if (!event.done) setUpdating(`正在更新目录 ${event.updated}/${event.total}`);
@@ -133,16 +147,32 @@ export function BookshelfView() {
       .then((outcomes) => {
         const added = outcomes.reduce((sum, item) => sum + item.newChapters, 0);
         const failed = outcomes.filter((item) => item.error).length;
-        toast(
-          outcomes.length === 0
-            ? "书架上没有可以更新的网络书籍"
-            : `目录已更新：${added} 个新章节${failed ? `，${failed} 本失败` : ""}`,
-        );
+        if (!quiet || added > 0 || failed > 0)
+          toast(
+            outcomes.length === 0
+              ? "书架上没有可以更新的网络书籍"
+              : `目录已更新：${added} 个新章节${failed ? `，${failed} 本失败` : ""}`,
+          );
         return store.refresh();
       })
       .catch((failure: unknown) => toast({ text: String(failure), error: true }))
-      .finally(() => setUpdating(null));
+      .finally(() => {
+        updatingRef.current = false;
+        setUpdating(null);
+      });
   };
+  // 自动更新: entering the shelf updates its online books' contents.
+  const { state: settings } = useSettings();
+  const autoUpdate = settings.value ? settings.value.autoUpdateShelf !== false : null;
+  const hasOnline = !state.loading && state.books.some((book) => book.online);
+  useEffect(() => {
+    if (!autoUpdate || !hasOnline || Date.now() - lastAutoUpdate < AUTO_UPDATE_GAP) return;
+    lastAutoUpdate = Date.now();
+    handleUpdateOnline(true);
+    // Once per entry, when the setting and the shelf are known.
+  }, [autoUpdate, hasOnline]);
+  const content = useRef<HTMLDivElement>(null);
+  const pull = usePullRefresh(content, () => handleUpdateOnline());
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });
   useEffect(() => {
     if (!state.loading && !state.error) void groupStore.load(state.books);
@@ -285,7 +315,7 @@ export function BookshelfView() {
                     icon: "refresh",
                     label: "更新目录",
                     detail: updating ?? undefined,
-                    onSelect: handleUpdateOnline,
+                    onSelect: () => handleUpdateOnline(),
                   },
                   { icon: "download", label: "下载管理", onSelect: () => setOffline(true) },
                 ]
@@ -361,8 +391,30 @@ export function BookshelfView() {
         </div>
       </div>
 
+      {/* 下拉刷新, and the progress of an update however it started. */}
+      {(pull > 0 || updating) && (
+        <div
+          role="status"
+          className="fixed left-0 right-0 md:left-64 z-20 flex justify-center pointer-events-none top-[calc(116px+var(--safe-top))]"
+          style={{ transform: `translateY(${pull}px)` }}
+        >
+          <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 text-xs text-secondary shadow-sm">
+            <Icon
+              name="refresh"
+              size={14}
+              className={updating ? "animate-spin" : ""}
+              style={updating ? undefined : { transform: `rotate(${pull * 4}deg)` }}
+            />
+            {updating ?? (pull >= PULL_TRIGGER ? "松开更新目录" : "下拉更新目录")}
+          </span>
+        </div>
+      )}
+
       {/* Main Content Area: 留出状态栏、连续顶栏与分组栏总高度空间 */}
-      <div className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8">
+      <div
+        ref={content}
+        className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8"
+      >
         {/* Search Bar (Expandable) */}
         {isSearching && (
           <div className="mb-4 animate-in fade-in slide-in-from-top-2 duration-200">

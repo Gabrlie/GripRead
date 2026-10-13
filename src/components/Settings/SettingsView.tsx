@@ -281,6 +281,19 @@ export function SettingsView() {
                 </button>
               ))}
             </div>
+            <label className="flex items-center justify-between gap-3 pt-2 text-sm">
+              <span>
+                自动更新
+                <span className="block text-[11px] text-secondary">
+                  进入书架时更新网络书籍的目录
+                </span>
+              </span>
+              <Switch
+                aria-label="自动更新"
+                checked={value.autoUpdateShelf ?? true}
+                onCheckedChange={(autoUpdateShelf) => store.set({ autoUpdateShelf })}
+              />
+            </label>
           </div>
         </PageSection>
 

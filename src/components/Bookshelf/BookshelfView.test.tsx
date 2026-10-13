@@ -429,3 +429,74 @@ describe("real library presentation", () => {
     );
   });
 });
+
+describe("更新目录 on the shelf", () => {
+  const online = {
+    ...entry,
+    book: { ...entry.book, id: "online-book", title: "剑来" },
+    asset: null,
+    online: {
+      book: {
+        sourceUrl: "https://a.com",
+        sourceName: "甲站",
+        name: "剑来",
+        author: "",
+        kind: "",
+        coverUrl: "",
+        intro: "",
+        wordCount: "",
+        latestChapterTitle: "",
+        bookUrl: "https://a.com/1",
+        tocUrl: "",
+        variables: "",
+        reverseToc: false,
+      },
+      totalChapters: 20,
+      newChapters: 0,
+      lastCheckTime: null,
+      updateError: null,
+      canUpdate: true,
+      onShelf: true,
+      readChapter: null,
+      readChapterTitle: "",
+      cachedChapters: 0,
+    },
+  } as unknown as LibraryBook;
+
+  async function shelf(autoUpdateShelf: boolean | undefined) {
+    const app = runtime([online]);
+    vi.mocked(app.services.settings.getSettings).mockResolvedValue({
+      autoUpdateShelf,
+    } as never);
+    await app.settings.load();
+    await app.library.refresh();
+    view(app);
+    await screen.findAllByText("剑来");
+    return app;
+  }
+
+  it("updates by pulling down when 自动更新 is off", async () => {
+    const app = await shelf(false);
+    expect(app.services.sources.updateToc).not.toHaveBeenCalled();
+    const book = screen.getAllByText("剑来")[0];
+    fireEvent.touchStart(book, { touches: [{ clientY: 100 }] });
+    fireEvent.touchMove(book, { touches: [{ clientY: 300 }] });
+    expect(await screen.findByText("松开更新目录")).toBeTruthy();
+    fireEvent.touchEnd(book);
+    await waitFor(() =>
+      expect(app.services.sources.updateToc).toHaveBeenCalledWith(
+        expect.objectContaining({ bookIds: [] }),
+      ),
+    );
+  });
+
+  it("updates on entering the shelf", async () => {
+    const app = await shelf(undefined);
+    await waitFor(() => expect(app.services.sources.updateToc).toHaveBeenCalledTimes(1));
+    // Entering again soon after does not update again.
+    cleanup();
+    view(app);
+    await screen.findAllByText("剑来");
+    expect(app.services.sources.updateToc).toHaveBeenCalledTimes(1);
+  });
+});
