@@ -10,8 +10,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, State};
-
 use crate::commands::with_storage;
 use crate::commands::AppState;
 use crate::error::{AppError, ErrorCode};
@@ -256,14 +254,13 @@ fn search_sources(
         .collect())
 }
 
-#[tauri::command]
 pub async fn search_online_books(
+    state: &Arc<AppState>,
     request: SearchOnlineRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    operations: State<'_, SourceOperations>,
-    pages: State<'_, Arc<OnlinePages>>,
 ) -> Result<(), AppError> {
+    let app = state.clone();
+    let operations = &state.operations;
+    let pages = &state.pages;
     let storage = state.storage.clone();
     let sources = {
         let guard = storage
@@ -315,7 +312,7 @@ pub async fn search_online_books(
             searched.clone(),
             running.clone(),
             emit.clone(),
-            pages.inner().clone(),
+            pages.clone(),
         );
         let request = request.clone();
         spawn_engine(move || {
@@ -368,7 +365,7 @@ pub async fn search_online_books(
 
 /// Runs one step of a source's chain with a deadline.
 async fn run_step<T: Send + 'static>(
-    state: &State<'_, AppState>,
+    state: &AppState,
     source_url: String,
     step: impl FnOnce(&SourceSession) -> Result<T, SourceError> + Send + 'static,
 ) -> Result<T, AppError> {
@@ -389,13 +386,12 @@ async fn run_step<T: Send + 'static>(
     .await?
 }
 
-#[tauri::command]
 pub async fn explore_kinds(
+    state: &Arc<AppState>,
     request: ExploreKindsRequest,
-    state: State<'_, AppState>,
 ) -> Result<Vec<ExploreKind>, AppError> {
     let refresh = request.refresh;
-    run_step(&state, request.source_url, move |session| {
+    run_step(state, request.source_url, move |session| {
         if refresh {
             crate::sources::web_book::clear_explore_cache(session.env());
         }
@@ -404,13 +400,12 @@ pub async fn explore_kinds(
     .await
 }
 
-#[tauri::command]
 pub async fn explore_books(
+    state: &Arc<AppState>,
     request: ExploreBooksRequest,
-    state: State<'_, AppState>,
-    pages: State<'_, Arc<OnlinePages>>,
 ) -> Result<Vec<OnlineBook>, AppError> {
-    let pages = pages.inner().clone();
+    let pages = &state.pages;
+    let pages = pages.clone();
     let source_url = request.source_url.clone();
     // A category page is kept for ten minutes, so going back and forth
     // does not ask the source again.
@@ -418,7 +413,7 @@ pub async fn explore_books(
         "explore:{}\n{}\n{}",
         request.source_url, request.url, request.page
     );
-    let kept = with_storage(&state, {
+    let kept = with_storage(state, {
         let key = key.clone();
         move |storage| storage.cached_book_part(&key, "info", Some(EXPLORE_KEEP_MS))
     })
@@ -426,7 +421,7 @@ pub async fn explore_books(
     if let Some(books) = kept.and_then(|json| serde_json::from_str::<Vec<OnlineBook>>(&json).ok()) {
         return Ok(books);
     }
-    let books: Vec<OnlineBook> = run_step(&state, request.source_url, move |session| {
+    let books: Vec<OnlineBook> = run_step(state, request.source_url, move |session| {
         let books = session.explore(&request.url, request.page.max(1) as i64)?;
         for book in &books {
             pages.remember(&source_url, book);
@@ -435,24 +430,23 @@ pub async fn explore_books(
     })
     .await?;
     let json = serde_json::to_string(&books)?;
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.keep_book_part(&key, "info", &json)
     })
     .await?;
     Ok(books)
 }
 
-#[tauri::command]
 pub async fn online_book_info(
+    state: &Arc<AppState>,
     request: OnlineBookRequest,
-    state: State<'_, AppState>,
-    pages: State<'_, Arc<OnlinePages>>,
 ) -> Result<OnlineBook, AppError> {
-    let pages = pages.inner().clone();
+    let pages = &state.pages;
+    let pages = pages.clone();
     let source_url = request.book.source_url.clone();
     let key = crate::storage::book_cache_key(&source_url, &request.book.book_url);
     if !request.refresh.unwrap_or(false) {
-        let kept = with_storage(&state, {
+        let kept = with_storage(state, {
             let key = key.clone();
             move |storage| storage.cached_book_part(&key, "info", Some(BOOK_KEEP_MS))
         })
@@ -461,7 +455,7 @@ pub async fn online_book_info(
             return Ok(book);
         }
     }
-    let book = run_step(&state, source_url.clone(), move |session| {
+    let book = run_step(state, source_url.clone(), move |session| {
         let mut data = book_data(&request.book);
         pages.restore(&source_url, &mut data);
         let book = Rc::new(RefCell::new(data));
@@ -472,24 +466,23 @@ pub async fn online_book_info(
     })
     .await?;
     let json = serde_json::to_string(&book)?;
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.keep_book_part(&key, "info", &json)
     })
     .await?;
     Ok(book)
 }
 
-#[tauri::command]
 pub async fn online_book_chapters(
+    state: &Arc<AppState>,
     request: OnlineBookRequest,
-    state: State<'_, AppState>,
-    pages: State<'_, Arc<OnlinePages>>,
 ) -> Result<Vec<OnlineChapter>, AppError> {
-    let pages = pages.inner().clone();
+    let pages = &state.pages;
+    let pages = pages.clone();
     let source_url = request.book.source_url.clone();
     let key = crate::storage::book_cache_key(&source_url, &request.book.book_url);
     if !request.refresh.unwrap_or(false) {
-        let kept = with_storage(&state, {
+        let kept = with_storage(state, {
             let key = key.clone();
             move |storage| storage.cached_book_part(&key, "toc", Some(BOOK_KEEP_MS))
         })
@@ -500,7 +493,7 @@ pub async fn online_book_chapters(
             return Ok(chapters);
         }
     }
-    let chapters: Vec<OnlineChapter> = run_step(&state, source_url.clone(), move |session| {
+    let chapters: Vec<OnlineChapter> = run_step(state, source_url.clone(), move |session| {
         let mut data = book_data(&request.book);
         pages.restore(&source_url, &mut data);
         let book = Rc::new(RefCell::new(data));
@@ -512,22 +505,21 @@ pub async fn online_book_chapters(
     })
     .await?;
     let json = serde_json::to_string(&chapters)?;
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.keep_book_part(&key, "toc", &json)
     })
     .await?;
     Ok(chapters)
 }
 
-#[tauri::command]
 pub async fn online_chapter_content(
+    state: &Arc<AppState>,
     request: OnlineContentRequest,
-    state: State<'_, AppState>,
-    pages: State<'_, Arc<OnlinePages>>,
 ) -> Result<OnlineContent, AppError> {
-    let pages = pages.inner().clone();
+    let pages = &state.pages;
+    let pages = pages.clone();
     let source_url = request.book.source_url.clone();
-    run_step(&state, source_url.clone(), move |session| {
+    run_step(state, source_url.clone(), move |session| {
         let mut data = book_data(&request.book);
         pages.restore(&source_url, &mut data);
         let book = Rc::new(RefCell::new(data));
@@ -708,22 +700,20 @@ fn decoded_bytes(value: &crate::sources::value::Val) -> Option<Vec<u8>> {
 
 /// A cover image fetched with the source's headers and cookies, kept on
 /// the device after the first time.
-#[tauri::command]
 pub async fn online_cover(
+    state: &Arc<AppState>,
     request: OnlineCoverRequest,
-    state: State<'_, AppState>,
-) -> Result<tauri::ipc::Response, AppError> {
+) -> Result<Vec<u8>, AppError> {
     let storage = state.storage.clone();
     let bytes = on_engine_thread(move || cover_bytes(&storage, &request.source_url, &request.url))
         .await??;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(bytes)
 }
 
 /// Saves a source's cover as the book's own cover (加入书架, 换封面).
-#[tauri::command]
 pub async fn set_cover_from_source(
+    state: &Arc<AppState>,
     request: crate::models::SourceCoverRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let storage = state.storage.clone();
     on_engine_thread(move || {
@@ -747,6 +737,356 @@ fn image_extension(bytes: &[u8]) -> &'static str {
         [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
         _ => "jpg",
     }
+}
+
+/// Puts an online book on the shelf with its contents, or opens it for
+/// reading only (`on_shelf` false), as Legado's 加入书架 and 阅读 do.
+pub async fn add_online_book(
+    state: &Arc<AppState>,
+    request: AddOnlineBookRequest,
+) -> Result<LibraryBook, AppError> {
+    with_storage(state, move |storage| {
+        let id = storage.add_online_book(&request.book, &request.chapters, request.on_shelf)?;
+        storage.library_book(&id)
+    })
+    .await
+}
+
+/// 换源 for a kept online book.
+pub async fn change_online_source(
+    state: &Arc<AppState>,
+    request: crate::models::ChangeOnlineSourceRequest,
+) -> Result<crate::models::ChangeOnlineSourceResult, AppError> {
+    with_storage(state, move |storage| {
+        let moved =
+            storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
+        crate::online_reader::forget_shown(&request.book_id);
+        crate::app_log::info(
+            "source",
+            format!(
+                "换源：《{}》换到 {}，{}",
+                request.book.name,
+                request.book.source_name,
+                match moved {
+                    Some((index, true)) => format!("进度移到第 {} 章", index + 1),
+                    Some((index, false)) => format!("没有找到对应章节，停在第 {} 章", index + 1),
+                    None => "尚未阅读".into(),
+                }
+            ),
+        );
+        Ok(crate::models::ChangeOnlineSourceResult {
+            book: storage.library_book(&request.book_id)?,
+            chapter: moved.map(|(index, _)| index),
+            certain: moved.is_none_or(|(_, certain)| certain),
+            locator: storage.saved_position(&request.book_id)?,
+        })
+    })
+    .await
+}
+
+pub async fn find_online_book(
+    state: &Arc<AppState>,
+    request: crate::models::FindOnlineBookRequest,
+) -> Result<Option<LibraryBook>, AppError> {
+    with_storage(state, move |storage| {
+        storage
+            .find_online_book(&request.name, &request.author)?
+            .map(|id| storage.library_book(&id))
+            .transpose()
+    })
+    .await
+}
+
+pub async fn get_library_book(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<LibraryBook, AppError> {
+    with_storage(state, move |storage| storage.library_book(&request.book_id)).await
+}
+
+pub async fn set_online_on_shelf(
+    state: &Arc<AppState>,
+    request: SetOnlineBookFlagRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.set_online_on_shelf(&request.book_id, request.on)
+    })
+    .await
+}
+
+pub async fn set_online_can_update(
+    state: &Arc<AppState>,
+    request: SetOnlineBookFlagRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.set_online_can_update(&request.book_id, request.on)
+    })
+    .await
+}
+
+/// Leaving a book read from search: it is dropped unless it was added.
+/// Returns whether it was dropped.
+pub async fn leave_online_book(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<bool, AppError> {
+    with_storage(state, move |storage| {
+        if !storage.is_online_book(&request.book_id)? {
+            return Ok(false);
+        }
+        storage.drop_unshelved_online_book(&request.book_id)
+    })
+    .await
+}
+
+pub async fn list_online_chapters(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<Vec<OnlineChapter>, AppError> {
+    with_storage(state, move |storage| {
+        storage.online_chapters(&request.book_id)
+    })
+    .await
+}
+
+pub async fn clear_online_cache(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<(), AppError> {
+    crate::online_reader::forget_shown(&request.book_id);
+    with_storage(state, move |storage| {
+        storage.clear_online_cache(&request.book_id)
+    })
+    .await
+}
+
+/// Legado's 更新目录 over shelf books, a few at a time, streaming
+/// `online-toc` per book and once when done.
+pub async fn update_online_toc(
+    state: &Arc<AppState>,
+    request: UpdateOnlineTocRequest,
+) -> Result<(), AppError> {
+    let app = state.clone();
+    let operations = &state.operations;
+    let storage = state.storage.clone();
+    // The device's proxy may have gone since it was last checked.
+    let root = state.data_root.clone();
+    on_engine_thread(move || crate::network::refresh(&root)).await?;
+    let ids = if request.book_ids.is_empty() {
+        with_storage(state, |storage| storage.updatable_online_books()).await?
+    } else {
+        request.book_ids.clone()
+    };
+    let cancel = operations.register(&request.operation_id);
+    let cancels = operations.cancels();
+    let total = ids.len() as u32;
+    let queue = Arc::new(Mutex::new(ids));
+    let updated = Arc::new(AtomicU32::new(0));
+    let running = Arc::new(AtomicU32::new(UPDATE_WORKERS as u32));
+    for _ in 0..UPDATE_WORKERS {
+        let (storage, cancel, cancels, queue, updated, running, app) = (
+            storage.clone(),
+            cancel.clone(),
+            cancels.clone(),
+            queue.clone(),
+            updated.clone(),
+            running.clone(),
+            app.clone(),
+        );
+        let id = request.operation_id.clone();
+        spawn_engine(move || {
+            loop {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let Some(book_id) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
+                    break;
+                };
+                let outcome = crate::online_reader::refresh_toc(&storage, &book_id, cancel.clone());
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let (new_chapters, error) = match outcome {
+                    Ok(added) => (added, None),
+                    Err(error) => {
+                        crate::app_log::warn(
+                            "source",
+                            format!("更新目录失败（{book_id}）：{}", error.message),
+                        );
+                        if let Ok(guard) = storage.lock() {
+                            let _ = guard.record_online_update_error(&book_id, &error.message);
+                        }
+                        (0, Some(error.message))
+                    }
+                };
+                let done = updated.fetch_add(1, Ordering::AcqRel) + 1;
+                let _ = app.emit(
+                    "online-toc",
+                    OnlineTocEvent {
+                        operation_id: id.clone(),
+                        book_id,
+                        updated: done,
+                        total,
+                        new_chapters,
+                        error,
+                        done: false,
+                    },
+                );
+            }
+            if running.fetch_sub(1, Ordering::AcqRel) == 1 {
+                SourceOperations::finish(&cancels, &id);
+                let _ = app.emit(
+                    "online-toc",
+                    OnlineTocEvent {
+                        operation_id: id.clone(),
+                        book_id: String::new(),
+                        updated: updated.load(Ordering::Acquire),
+                        total,
+                        new_chapters: 0,
+                        error: None,
+                        done: true,
+                    },
+                );
+            }
+        })?;
+    }
+    Ok(())
+}
+
+/// 数据管理: what the app's data folder holds.
+pub async fn data_usage(state: &Arc<AppState>) -> Result<crate::models::DataUsage, AppError> {
+    with_storage(state, |storage| storage.data_usage()).await
+}
+
+/// 清理所选 in 数据管理.
+pub async fn clear_data(
+    state: &Arc<AppState>,
+    request: crate::models::ClearDataRequest,
+) -> Result<(), AppError> {
+    let cleared = with_storage(state, move |storage| storage.clear_data(&request.parts)).await?;
+    for id in cleared {
+        crate::online_reader::forget_shown(&id);
+    }
+    Ok(())
+}
+
+/// 转为本地书籍 for an online book whose chapters are all cached; returns
+/// the new local book.
+pub async fn convert_online_to_local(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<LibraryBook, AppError> {
+    let storage = state.storage.clone();
+    on_engine_thread(move || {
+        let (count, cached) = {
+            let guard = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            (
+                guard.online_chapter_count(&request.book_id)?,
+                guard.cached_online_chapters(&request.book_id)?,
+            )
+        };
+        let missing = count as usize - cached.len().min(count as usize);
+        if missing > 0 {
+            return Err(AppError::invalid_argument(format!(
+                "还有 {missing} 章没有缓存"
+            )));
+        }
+        let texts = (0..count)
+            .map(|index| crate::online_reader::raw_chapter(&storage, &request.book_id, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut guard = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        let local = guard.convert_online_to_local(&request.book_id, &texts)?;
+        crate::app_log::info("library", format!("网络书籍转为本地书籍：{local}"));
+        guard.library_book(&local)
+    })
+    .await?
+}
+
+fn downloads(app: &AppState) -> &crate::downloads::Downloads {
+    app.downloads()
+}
+
+/// 下载管理: adds a chapter range of an online book to the queue.
+pub async fn download_enqueue(
+    state: &Arc<AppState>,
+    request: crate::models::DownloadRequest,
+) -> Result<crate::models::DownloadJob, AppError> {
+    let app = state.clone();
+    let id = request.book_id.clone();
+    let title = with_storage(state, move |storage| Ok(storage.get_book(&id)?.title)).await?;
+    let queue = downloads(&app).clone();
+    on_engine_thread(move || queue.enqueue(&request.book_id, &title, request.start, request.end))
+        .await?
+}
+
+pub fn download_list(state: &Arc<AppState>) -> Vec<crate::models::DownloadJob> {
+    let app = state.clone();
+    downloads(&app).list()
+}
+
+pub fn download_pause(state: &Arc<AppState>, request: crate::models::DownloadJobRequest) {
+    let app = state.clone();
+    downloads(&app).pause(&request.id);
+}
+
+pub fn download_resume(state: &Arc<AppState>, request: crate::models::DownloadJobRequest) {
+    let app = state.clone();
+    downloads(&app).resume(&request.id);
+}
+
+pub fn download_cancel(state: &Arc<AppState>, request: crate::models::DownloadJobRequest) {
+    let app = state.clone();
+    downloads(&app).cancel(&request.id);
+}
+
+/// The notification's 停止.
+pub fn download_pause_all(state: &Arc<AppState>) {
+    let app = state.clone();
+    downloads(&app).pause_all();
+}
+
+pub fn download_clear_finished(state: &Arc<AppState>) {
+    let app = state.clone();
+    downloads(&app).clear_finished();
+}
+
+/// 网络设置.
+pub fn get_network_settings(state: &Arc<AppState>) -> crate::models::NetworkSettings {
+    crate::network::load(&state.data_root)
+}
+
+/// The device's proxy, checked again when asked.
+pub async fn network_state(state: &Arc<AppState>) -> Result<crate::models::NetworkState, AppError> {
+    let root = state.data_root.clone();
+    on_engine_thread(move || {
+        crate::network::refresh(&root);
+        crate::network::state()
+    })
+    .await
+}
+
+pub async fn save_network_settings(
+    state: &Arc<AppState>,
+    request: crate::models::NetworkSettings,
+) -> Result<crate::models::NetworkSettings, AppError> {
+    let root = state.data_root.clone();
+    on_engine_thread(move || {
+        crate::network::save(&root, &request)?;
+        Ok(request)
+    })
+    .await?
+}
+
+/// 测试 for DoH or the proxy, with the settings as entered (not yet saved).
+pub async fn check_network(
+    _state: &Arc<AppState>,
+    request: crate::models::NetworkCheckRequest,
+) -> Result<crate::models::NetworkCheck, AppError> {
+    on_engine_thread(move || crate::network::check(&request.settings, &request.kind)).await?
 }
 
 #[cfg(test)]
@@ -997,377 +1337,4 @@ mod tests {
         assert_eq!(back.index, 3);
         assert_eq!(back.variables["cid"], "1");
     }
-}
-
-/// Puts an online book on the shelf with its contents, or opens it for
-/// reading only (`on_shelf` false), as Legado's 加入书架 and 阅读 do.
-#[tauri::command]
-pub async fn add_online_book(
-    request: AddOnlineBookRequest,
-    state: State<'_, AppState>,
-) -> Result<LibraryBook, AppError> {
-    with_storage(&state, move |storage| {
-        let id = storage.add_online_book(&request.book, &request.chapters, request.on_shelf)?;
-        storage.library_book(&id)
-    })
-    .await
-}
-
-/// 换源 for a kept online book.
-#[tauri::command]
-pub async fn change_online_source(
-    request: crate::models::ChangeOnlineSourceRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::ChangeOnlineSourceResult, AppError> {
-    with_storage(&state, move |storage| {
-        let moved =
-            storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
-        crate::online_reader::forget_shown(&request.book_id);
-        crate::app_log::info(
-            "source",
-            format!(
-                "换源：《{}》换到 {}，{}",
-                request.book.name,
-                request.book.source_name,
-                match moved {
-                    Some((index, true)) => format!("进度移到第 {} 章", index + 1),
-                    Some((index, false)) => format!("没有找到对应章节，停在第 {} 章", index + 1),
-                    None => "尚未阅读".into(),
-                }
-            ),
-        );
-        Ok(crate::models::ChangeOnlineSourceResult {
-            book: storage.library_book(&request.book_id)?,
-            chapter: moved.map(|(index, _)| index),
-            certain: moved.is_none_or(|(_, certain)| certain),
-            locator: storage.saved_position(&request.book_id)?,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn find_online_book(
-    request: crate::models::FindOnlineBookRequest,
-    state: State<'_, AppState>,
-) -> Result<Option<LibraryBook>, AppError> {
-    with_storage(&state, move |storage| {
-        storage
-            .find_online_book(&request.name, &request.author)?
-            .map(|id| storage.library_book(&id))
-            .transpose()
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_library_book(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<LibraryBook, AppError> {
-    with_storage(&state, move |storage| {
-        storage.library_book(&request.book_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn set_online_on_shelf(
-    request: SetOnlineBookFlagRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.set_online_on_shelf(&request.book_id, request.on)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn set_online_can_update(
-    request: SetOnlineBookFlagRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.set_online_can_update(&request.book_id, request.on)
-    })
-    .await
-}
-
-/// Leaving a book read from search: it is dropped unless it was added.
-/// Returns whether it was dropped.
-#[tauri::command]
-pub async fn leave_online_book(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<bool, AppError> {
-    with_storage(&state, move |storage| {
-        if !storage.is_online_book(&request.book_id)? {
-            return Ok(false);
-        }
-        storage.drop_unshelved_online_book(&request.book_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_online_chapters(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<Vec<OnlineChapter>, AppError> {
-    with_storage(&state, move |storage| {
-        storage.online_chapters(&request.book_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn clear_online_cache(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    crate::online_reader::forget_shown(&request.book_id);
-    with_storage(&state, move |storage| {
-        storage.clear_online_cache(&request.book_id)
-    })
-    .await
-}
-
-/// Legado's 更新目录 over shelf books, a few at a time, streaming
-/// `online-toc` per book and once when done.
-#[tauri::command]
-pub async fn update_online_toc(
-    request: UpdateOnlineTocRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    operations: State<'_, SourceOperations>,
-) -> Result<(), AppError> {
-    let storage = state.storage.clone();
-    // The device's proxy may have gone since it was last checked.
-    let root = state.data_root.clone();
-    on_engine_thread(move || crate::network::refresh(&root)).await?;
-    let ids = if request.book_ids.is_empty() {
-        with_storage(&state, |storage| storage.updatable_online_books()).await?
-    } else {
-        request.book_ids.clone()
-    };
-    let cancel = operations.register(&request.operation_id);
-    let cancels = operations.cancels();
-    let total = ids.len() as u32;
-    let queue = Arc::new(Mutex::new(ids));
-    let updated = Arc::new(AtomicU32::new(0));
-    let running = Arc::new(AtomicU32::new(UPDATE_WORKERS as u32));
-    for _ in 0..UPDATE_WORKERS {
-        let (storage, cancel, cancels, queue, updated, running, app) = (
-            storage.clone(),
-            cancel.clone(),
-            cancels.clone(),
-            queue.clone(),
-            updated.clone(),
-            running.clone(),
-            app.clone(),
-        );
-        let id = request.operation_id.clone();
-        spawn_engine(move || {
-            loop {
-                if cancel.load(Ordering::Acquire) {
-                    break;
-                }
-                let Some(book_id) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
-                    break;
-                };
-                let outcome = crate::online_reader::refresh_toc(&storage, &book_id, cancel.clone());
-                if cancel.load(Ordering::Acquire) {
-                    break;
-                }
-                let (new_chapters, error) = match outcome {
-                    Ok(added) => (added, None),
-                    Err(error) => {
-                        crate::app_log::warn(
-                            "source",
-                            format!("更新目录失败（{book_id}）：{}", error.message),
-                        );
-                        if let Ok(guard) = storage.lock() {
-                            let _ = guard.record_online_update_error(&book_id, &error.message);
-                        }
-                        (0, Some(error.message))
-                    }
-                };
-                let done = updated.fetch_add(1, Ordering::AcqRel) + 1;
-                let _ = app.emit(
-                    "online-toc",
-                    OnlineTocEvent {
-                        operation_id: id.clone(),
-                        book_id,
-                        updated: done,
-                        total,
-                        new_chapters,
-                        error,
-                        done: false,
-                    },
-                );
-            }
-            if running.fetch_sub(1, Ordering::AcqRel) == 1 {
-                SourceOperations::finish(&cancels, &id);
-                let _ = app.emit(
-                    "online-toc",
-                    OnlineTocEvent {
-                        operation_id: id.clone(),
-                        book_id: String::new(),
-                        updated: updated.load(Ordering::Acquire),
-                        total,
-                        new_chapters: 0,
-                        error: None,
-                        done: true,
-                    },
-                );
-            }
-        })?;
-    }
-    Ok(())
-}
-
-/// 数据管理: what the app's data folder holds.
-#[tauri::command]
-pub async fn data_usage(state: State<'_, AppState>) -> Result<crate::models::DataUsage, AppError> {
-    with_storage(&state, |storage| storage.data_usage()).await
-}
-
-/// 清理所选 in 数据管理.
-#[tauri::command]
-pub async fn clear_data(
-    request: crate::models::ClearDataRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let cleared = with_storage(&state, move |storage| storage.clear_data(&request.parts)).await?;
-    for id in cleared {
-        crate::online_reader::forget_shown(&id);
-    }
-    Ok(())
-}
-
-/// 转为本地书籍 for an online book whose chapters are all cached; returns
-/// the new local book.
-#[tauri::command]
-pub async fn convert_online_to_local(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<LibraryBook, AppError> {
-    let storage = state.storage.clone();
-    on_engine_thread(move || {
-        let (count, cached) = {
-            let guard = storage
-                .lock()
-                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-            (
-                guard.online_chapter_count(&request.book_id)?,
-                guard.cached_online_chapters(&request.book_id)?,
-            )
-        };
-        let missing = count as usize - cached.len().min(count as usize);
-        if missing > 0 {
-            return Err(AppError::invalid_argument(format!(
-                "还有 {missing} 章没有缓存"
-            )));
-        }
-        let texts = (0..count)
-            .map(|index| crate::online_reader::raw_chapter(&storage, &request.book_id, index))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut guard = storage
-            .lock()
-            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-        let local = guard.convert_online_to_local(&request.book_id, &texts)?;
-        crate::app_log::info("library", format!("网络书籍转为本地书籍：{local}"));
-        guard.library_book(&local)
-    })
-    .await?
-}
-
-fn downloads(app: &AppHandle) -> tauri::State<'_, crate::downloads::Downloads> {
-    use tauri::Manager;
-    app.state::<crate::downloads::Downloads>()
-}
-
-/// 下载管理: adds a chapter range of an online book to the queue.
-#[tauri::command]
-pub async fn download_enqueue(
-    request: crate::models::DownloadRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<crate::models::DownloadJob, AppError> {
-    let id = request.book_id.clone();
-    let title = with_storage(&state, move |storage| Ok(storage.get_book(&id)?.title)).await?;
-    let queue = downloads(&app).inner().clone();
-    on_engine_thread(move || queue.enqueue(&request.book_id, &title, request.start, request.end))
-        .await?
-}
-
-#[tauri::command]
-pub fn download_list(app: AppHandle) -> Vec<crate::models::DownloadJob> {
-    downloads(&app).list()
-}
-
-#[tauri::command]
-pub fn download_pause(request: crate::models::DownloadJobRequest, app: AppHandle) {
-    downloads(&app).pause(&request.id);
-}
-
-#[tauri::command]
-pub fn download_resume(request: crate::models::DownloadJobRequest, app: AppHandle) {
-    downloads(&app).resume(&request.id);
-}
-
-#[tauri::command]
-pub fn download_cancel(request: crate::models::DownloadJobRequest, app: AppHandle) {
-    downloads(&app).cancel(&request.id);
-}
-
-/// The notification's 停止.
-#[tauri::command]
-pub fn download_pause_all(app: AppHandle) {
-    downloads(&app).pause_all();
-}
-
-#[tauri::command]
-pub fn download_clear_finished(app: AppHandle) {
-    downloads(&app).clear_finished();
-}
-
-/// 网络设置.
-#[tauri::command]
-pub fn get_network_settings(state: State<'_, AppState>) -> crate::models::NetworkSettings {
-    crate::network::load(&state.data_root)
-}
-
-/// The device's proxy, checked again when asked.
-#[tauri::command]
-pub async fn network_state(
-    state: State<'_, AppState>,
-) -> Result<crate::models::NetworkState, AppError> {
-    let root = state.data_root.clone();
-    on_engine_thread(move || {
-        crate::network::refresh(&root);
-        crate::network::state()
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn save_network_settings(
-    request: crate::models::NetworkSettings,
-    state: State<'_, AppState>,
-) -> Result<crate::models::NetworkSettings, AppError> {
-    let root = state.data_root.clone();
-    on_engine_thread(move || {
-        crate::network::save(&root, &request)?;
-        Ok(request)
-    })
-    .await?
-}
-
-/// 测试 for DoH or the proxy, with the settings as entered (not yet saved).
-#[tauri::command]
-pub async fn check_network(
-    request: crate::models::NetworkCheckRequest,
-) -> Result<crate::models::NetworkCheck, AppError> {
-    on_engine_thread(move || crate::network::check(&request.settings, &request.kind)).await?
 }

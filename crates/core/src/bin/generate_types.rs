@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let output = manifest_dir.join("../src/types/generated.ts");
+    let output = manifest_dir.join("../../src/types/generated.ts");
     if std::env::args().any(|argument| argument == "--check") {
-        let check_root = manifest_dir.join("target/generated-types-check");
+        let check_root = manifest_dir.join("../../target/generated-types-check");
         let check_output = check_root.join("generated.ts");
-        gripread_lib::typegen::write_generated_types(&check_output)?;
+        gripread_core::typegen::write_generated_types(&check_output)?;
         let actual_dir = output
             .parent()
             .map(|parent| parent.join("generated"))
@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!("generated TypeScript bindings are up to date");
     } else {
-        gripread_lib::typegen::write_generated_types(&output)?;
+        gripread_core::typegen::write_generated_types(&output)?;
         println!("generated {}", output.display());
     }
     Ok(())

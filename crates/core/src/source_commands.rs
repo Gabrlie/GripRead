@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
-use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::{with_storage, AppState};
 use crate::error::{AppError, ErrorCode};
@@ -74,7 +73,7 @@ pub(crate) fn engine_error(error: SourceError) -> AppError {
 pub(crate) async fn on_engine_thread<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         std::thread::Builder::new()
             .name("source-engine".into())
             .stack_size(ENGINE_STACK)
@@ -127,112 +126,102 @@ pub(crate) fn session_for(
     SourceSession::new(source, store, control)
 }
 
-#[tauri::command]
-pub async fn list_book_sources(
-    state: State<'_, AppState>,
-) -> Result<Vec<BookSourceSummary>, AppError> {
-    with_storage(&state, |storage| storage.list_book_sources()).await
+pub async fn list_book_sources(state: &Arc<AppState>) -> Result<Vec<BookSourceSummary>, AppError> {
+    with_storage(state, |storage| storage.list_book_sources()).await
 }
 
-#[tauri::command]
 pub async fn get_book_source(
+    state: &Arc<AppState>,
     request: SourceUrlRequest,
-    state: State<'_, AppState>,
 ) -> Result<BookSourceDetail, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.book_source_detail(&request.url)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn preview_source_import(
+    state: &Arc<AppState>,
     request: PreviewSourceImportRequest,
-    state: State<'_, AppState>,
 ) -> Result<SourceImportPreview, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.preview_source_import(&request.json)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn import_book_sources(
+    state: &Arc<AppState>,
     request: ImportSourcesRequest,
-    state: State<'_, AppState>,
 ) -> Result<Vec<BookSourceSummary>, AppError> {
-    with_storage(&state, move |storage| storage.import_sources(&request)).await
+    with_storage(state, move |storage| storage.import_sources(&request)).await
 }
 
-#[tauri::command]
 pub async fn save_book_source(
+    state: &Arc<AppState>,
     request: SaveBookSourceRequest,
-    state: State<'_, AppState>,
 ) -> Result<BookSourceSummary, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.save_book_source(&request.json, request.previous_url.as_deref())
     })
     .await
 }
 
-#[tauri::command]
 pub async fn delete_book_sources(
+    state: &Arc<AppState>,
     request: SourceUrlsRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.delete_book_sources(&request.urls)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn set_book_sources_switch(
+    state: &Arc<AppState>,
     request: SetSourcesSwitchRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.set_sources_switch(&request.urls, request.switch, request.on)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn change_book_sources_group(
+    state: &Arc<AppState>,
     request: SourceGroupRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.change_sources_group(&request.urls, &request.group, request.add)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn move_book_sources(
+    state: &Arc<AppState>,
     request: MoveSourcesRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.move_sources(&request.urls, request.top)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn export_book_sources(
+    state: &Arc<AppState>,
     request: SourceUrlsRequest,
-    state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.export_book_sources(&request.urls)
     })
     .await
 }
 
 /// Downloads source JSON from an address, as 网络导入 does.
-#[tauri::command]
-pub async fn fetch_source_text(request: FetchTextRequest) -> Result<String, AppError> {
+pub async fn fetch_source_text(
+    _state: &Arc<AppState>,
+    request: FetchTextRequest,
+) -> Result<String, AppError> {
     on_engine_thread(move || {
         let url = request.url.trim().to_string();
         if !crate::sources::util::is_absolute_url(&url) {
@@ -267,17 +256,20 @@ pub async fn fetch_source_text(request: FetchTextRequest) -> Result<String, AppE
 }
 
 /// Reads a picked source file (a path, or an Android document).
-#[tauri::command]
 pub async fn read_source_file(
+    state: &Arc<AppState>,
     request: PathRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<String, AppError> {
+    let app = state.clone();
     let data_root = state.data_root.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let operation = uuid::Uuid::new_v4().to_string();
-        let (path, _, _staged) =
-            crate::documents::resolve_named_source(&app, &data_root, &request.path, &operation)?;
+        let (path, _, _staged) = crate::documents::resolve_named_source(
+            &*app.platform,
+            &data_root,
+            &request.path,
+            &operation,
+        )?;
         let bytes = std::fs::read(&path)?;
         if bytes.len() > 32 * 1024 * 1024 {
             return Err(AppError::invalid_argument("文件太大，不像书源文件"));
@@ -289,17 +281,16 @@ pub async fn read_source_file(
 }
 
 /// Saves sources as a Legado export file; `false` when the reader cancelled.
-#[tauri::command]
 pub async fn export_book_sources_file(
+    state: &Arc<AppState>,
     request: ExportSourcesFileRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
+    let app = state.clone();
     let urls = request.urls.clone();
-    let json = with_storage(&state, move |storage| storage.export_book_sources(&urls)).await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let json = with_storage(state, move |storage| storage.export_book_sources(&urls)).await?;
+    tokio::task::spawn_blocking(move || {
         crate::documents::save_document(
-            &app,
+            &*app.platform,
             request.path.as_deref(),
             "bookSource.json",
             "application/json",
@@ -350,12 +341,11 @@ fn login_script(source: &BookSource) -> Option<String> {
     })
 }
 
-#[tauri::command]
 pub async fn get_source_login_form(
+    state: &Arc<AppState>,
     request: SourceUrlRequest,
-    state: State<'_, AppState>,
 ) -> Result<SourceLoginForm, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         let source = storage
             .book_source(&request.url)?
             .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这个书源"))?;
@@ -389,10 +379,9 @@ pub async fn get_source_login_form(
 }
 
 /// Saves the form and runs the source's `login()` or a button's action.
-#[tauri::command]
 pub async fn login_book_source(
+    state: &Arc<AppState>,
     request: SourceLoginRequest,
-    state: State<'_, AppState>,
 ) -> Result<SourceScriptReport, AppError> {
     let storage = state.storage.clone();
     on_engine_thread(move || {
@@ -439,23 +428,21 @@ pub async fn login_book_source(
     .await?
 }
 
-#[tauri::command]
 pub async fn get_source_variable(
+    state: &Arc<AppState>,
     request: SourceUrlRequest,
-    state: State<'_, AppState>,
 ) -> Result<Option<String>, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.source_cache_get(&source_custom_variable_key(&request.url))
     })
     .await
 }
 
-#[tauri::command]
 pub async fn set_source_variable(
+    state: &Arc<AppState>,
     request: SourceVariableRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         let key = source_custom_variable_key(&request.url);
         match request.value.filter(|value| !value.is_empty()) {
             Some(value) => storage.source_cache_put(&key, &value, 0),
@@ -465,22 +452,21 @@ pub async fn set_source_variable(
     .await
 }
 
-#[tauri::command]
 pub async fn clear_source_cookies(
+    state: &Arc<AppState>,
     request: SourceUrlRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.remove_source_cookie(&cookie_domain(&request.url))
     })
     .await
 }
 
-#[tauri::command]
 pub async fn cancel_source_operation(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    operations: State<'_, SourceOperations>,
 ) -> Result<CancelResult, AppError> {
+    let operations = &state.operations;
     let flag = operations
         .cancels
         .lock()
@@ -627,13 +613,12 @@ fn debug_run(session: &SourceSession, key: &str, emit: &dyn Fn(String)) -> Resul
     Ok(())
 }
 
-#[tauri::command]
 pub async fn debug_book_source(
+    state: &Arc<AppState>,
     request: DebugSourceRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    operations: State<'_, SourceOperations>,
 ) -> Result<(), AppError> {
+    let app = state.clone();
+    let operations = &state.operations;
     let storage = state.storage.clone();
     let source = load_source(&storage, &request.url)?;
     let cancel = operations.register(&request.operation_id);
@@ -760,13 +745,12 @@ fn check_one(
     failures
 }
 
-#[tauri::command]
 pub async fn check_book_sources(
+    state: &Arc<AppState>,
     request: CheckSourcesRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    operations: State<'_, SourceOperations>,
 ) -> Result<(), AppError> {
+    let app = state.clone();
+    let operations = &state.operations;
     let storage = state.storage.clone();
     let cancel = operations.register(&request.operation_id);
     let cancels = operations.cancels.clone();

@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 const invokeMock = vi.hoisted(() => vi.fn());
 const openMock = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+vi.mock("./transport", () => ({
+  call: invokeMock,
+  native: true,
+  androidApp: () => false,
+  listen: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openMock }));
 import { tauriServices } from "./ipc";

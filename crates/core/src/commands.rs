@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+use crate::api::Events;
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     BookInfo, BookRequest, BookTocSettings, Bookmark, BookmarkIdRequest, BookmarkRequest,
@@ -19,6 +19,7 @@ use crate::models::{
     TxtEncoding, TxtEncodingInfo, TxtEncodingRequest, TxtSourceRequest, TxtTocRule,
     TxtTocRuleIdRequest,
 };
+use crate::platform::Platform;
 use crate::storage::{
     before_import_commit, build_toc_from_context, duplicate_validation_retry,
     prepare_import_for_target, read_content_window_from_context, resolve_locator_from_context,
@@ -27,6 +28,9 @@ use crate::storage::{
 };
 use crate::txt_toc::TocBuild;
 
+/// Everything the commands share for the life of the app: storage, the
+/// operations in flight, the download queue, and the shell's events and
+/// platform.
 pub struct AppState {
     pub storage: Arc<Mutex<Storage>>,
     pub data_root: PathBuf,
@@ -34,6 +38,11 @@ pub struct AppState {
     txt_decodes: Arc<Mutex<HashMap<String, TxtDecodeOperation>>>,
     searches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     toc_builds: Arc<Mutex<HashMap<TocBuildKey, Arc<TocBuildFlight>>>>,
+    pub operations: crate::source_commands::SourceOperations,
+    pub pages: Arc<crate::online_commands::OnlinePages>,
+    pub events: Arc<dyn Events>,
+    pub platform: Arc<dyn Platform>,
+    downloads: crate::downloads::Downloads,
 }
 
 struct ImportOperation {
@@ -124,7 +133,19 @@ fn release_toc_build(
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf) -> Result<Self, AppError> {
+    /// Opens the data folder and starts the app's services: the log, network
+    /// settings, and the download queue, which reports through `events` and
+    /// the platform's notification.
+    pub fn open(
+        data_dir: PathBuf,
+        events: Arc<dyn Events>,
+        platform: Arc<dyn Platform>,
+    ) -> Result<Arc<Self>, AppError> {
+        crate::app_log::init(&data_dir);
+        crate::app_log::info(
+            "app",
+            format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
+        );
         let mut storage = Storage::open(&data_dir)?;
         match storage.purge_unshelved_online_books() {
             Ok(0) => {}
@@ -154,23 +175,66 @@ impl AppState {
         let data_root = storage.root_path().to_path_buf();
         // Storage now holds the exclusive data lock, so no other process owns these copies.
         crate::documents::clear_staging(&data_root)?;
-        Ok(Self {
-            storage: Arc::new(Mutex::new(storage)),
+        let storage = Arc::new(Mutex::new(storage));
+        if let Err(error) = crate::network::start(&data_root) {
+            crate::app_log::warn(
+                "network",
+                format!("网络设置无效，已用默认：{}", error.message),
+            );
+        }
+        let downloads = {
+            let (events, platform) = (events.clone(), platform.clone());
+            crate::downloads::Downloads::new(
+                Arc::new(crate::downloads::LibraryChapters(storage.clone())),
+                Arc::new(|| {
+                    let limits = crate::network::limits();
+                    (
+                        usize::from(limits.download_books),
+                        usize::from(limits.download_chapters),
+                    )
+                }),
+                Arc::new(move |jobs: &[crate::models::DownloadJob]| {
+                    if let Ok(payload) = serde_json::to_value(jobs) {
+                        events.emit("download-progress", payload);
+                    }
+                    platform.downloads_changed(jobs);
+                }),
+                Some(data_root.join("downloads.json")),
+            )
+        };
+        Ok(Arc::new(Self {
+            storage,
             data_root,
             imports: Arc::new(Mutex::new(HashMap::new())),
             txt_decodes: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
             toc_builds: Arc::new(Mutex::new(HashMap::new())),
-        })
+            operations: Default::default(),
+            pages: Default::default(),
+            events,
+            platform,
+            downloads,
+        }))
+    }
+
+    /// Sends `payload` to the page as `event`.
+    pub fn emit<T: serde::Serialize>(&self, event: &str, payload: T) -> Result<(), AppError> {
+        let payload = serde_json::to_value(payload)
+            .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?;
+        self.events.emit(event, payload);
+        Ok(())
+    }
+
+    pub fn downloads(&self) -> &crate::downloads::Downloads {
+        &self.downloads
     }
 }
 
-#[tauri::command]
 pub async fn start_import(
+    state: &Arc<AppState>,
     request: StartImportRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<ImportTask, AppError> {
+    let app = state.clone();
     if request.path.trim().is_empty() {
         return Err(AppError::invalid_argument("import path cannot be empty"));
     }
@@ -208,15 +272,15 @@ pub async fn start_import(
     let source = request.path;
     let requested_encoding = request.encoding.unwrap_or(TxtEncoding::Auto);
     let worker_app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let blocking_operation_id = worker_operation_id.clone();
         let blocking_imports = Arc::clone(&worker_imports);
         let blocking_app = worker_app.clone();
-        let blocking = tauri::async_runtime::spawn_blocking(move || {
+        let blocking = tokio::task::spawn_blocking(move || {
             // A staged document copy stays alive until this worker finishes,
             // because commit still derives the title from the source path.
             let (source, _staged) = crate::documents::resolve_source(
-                &blocking_app,
+                &*blocking_app.platform,
                 &data_root,
                 &source,
                 &blocking_operation_id,
@@ -333,7 +397,7 @@ pub async fn start_import(
                 // Build the directory after the shelf shows the book, so
                 // opening it is immediate; an early open joins this build.
                 // A failure leaves the book readable and is retried on open.
-                let built = tauri::async_runtime::spawn_blocking(move || {
+                let built = tokio::task::spawn_blocking(move || {
                     list_toc_current(&toc_storage, &toc_builds, &book_id)
                 })
                 .await;
@@ -367,13 +431,12 @@ pub async fn start_import(
     Ok(ImportTask { operation_id })
 }
 
-#[tauri::command]
 pub async fn get_import_status(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    state: State<'_, AppState>,
 ) -> Result<ImportStatus, AppError> {
     let imports = Arc::clone(&state.imports);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         imports
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?
@@ -390,13 +453,12 @@ pub async fn get_import_status(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("status worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn cancel_import(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    state: State<'_, AppState>,
 ) -> Result<CancelResult, AppError> {
     let imports = Arc::clone(&state.imports);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let imports = imports
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "import state lock is poisoned"))?;
@@ -421,10 +483,9 @@ pub async fn cancel_import(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("cancel worker stopped: {error}")))?
 }
 
-#[tauri::command]
-pub async fn list_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, AppError> {
+pub async fn list_books(state: &Arc<AppState>) -> Result<Vec<LibraryBook>, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let storage = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
@@ -434,10 +495,9 @@ pub async fn list_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, 
     .map_err(|error| AppError::new(ErrorCode::Io, format!("library worker stopped: {error}")))?
 }
 
-#[tauri::command]
-pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<LibraryGroup>, AppError> {
+pub async fn list_groups(state: &Arc<AppState>) -> Result<Vec<LibraryGroup>, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -452,13 +512,12 @@ pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<LibraryGroup>
     })?
 }
 
-#[tauri::command]
 pub async fn create_group(
+    state: &Arc<AppState>,
     request: CreateGroupRequest,
-    state: State<'_, AppState>,
 ) -> Result<LibraryGroup, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -473,13 +532,12 @@ pub async fn create_group(
     })?
 }
 
-#[tauri::command]
 pub async fn rename_group(
+    state: &Arc<AppState>,
     request: RenameGroupRequest,
-    state: State<'_, AppState>,
 ) -> Result<LibraryGroup, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -494,13 +552,9 @@ pub async fn rename_group(
     })?
 }
 
-#[tauri::command]
-pub async fn delete_group(
-    request: GroupRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn delete_group(state: &Arc<AppState>, request: GroupRequest) -> Result<(), AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -515,13 +569,12 @@ pub async fn delete_group(
     })?
 }
 
-#[tauri::command]
 pub async fn get_txt_encoding(
+    state: &Arc<AppState>,
     request: BookRequest,
-    state: State<'_, AppState>,
 ) -> Result<TxtEncodingInfo, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -531,12 +584,11 @@ pub async fn get_txt_encoding(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("encoding worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn reassociate_txt_source(
+    state: &Arc<AppState>,
     request: TxtSourceRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<TxtEncodingInfo, AppError> {
+    let app = state.clone();
     if request.book_id.trim().is_empty() || request.path.trim().is_empty() {
         return Err(AppError::invalid_argument(
             "book_id and source path cannot be empty",
@@ -545,13 +597,13 @@ pub async fn reassociate_txt_source(
     let storage = Arc::clone(&state.storage);
     let root = state.data_root.clone();
     let operation_id = Uuid::new_v4().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let snapshot = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
             .snapshot_txt_reassociation(&request.book_id)?;
         let (source, _staged) = crate::documents::resolve_source(
-            &app,
+            &*app.platform,
             &root,
             &request.path,
             &operation_id,
@@ -569,49 +621,47 @@ pub async fn reassociate_txt_source(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("source worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn start_txt_decode(
+    state: &Arc<AppState>,
     request: TxtEncodingRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<TxtDecodeTask, AppError> {
+    let app = state.clone();
     if request.book_id.trim().is_empty() {
         return Err(AppError::invalid_argument("book_id cannot be empty"));
     }
-    spawn_txt_decode(&state, app, request.book_id, Some(request.encoding))
+    spawn_txt_decode(state, app, request.book_id, Some(request.encoding))
 }
 
 /// Re-derives a book's text when its replace rules or Chinese conversion
 /// changed since it was produced, keeping the selected encoding. Returns the
 /// decode task, or `None` when the text is already current.
-#[tauri::command]
 pub async fn ensure_text_transforms(
+    state: &Arc<AppState>,
     request: BookRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<Option<TxtDecodeTask>, AppError> {
+    let app = state.clone();
     // Online chapters take the current transform each time they are read.
-    if for_online_book(&state, &request.book_id, |_| Ok(()))
+    if for_online_book(state, &request.book_id, |_| Ok(()))
         .await?
         .is_some()
     {
         return Ok(None);
     }
     let book_id = request.book_id.clone();
-    let pending = with_storage(&state, move |storage| {
+    let pending = with_storage(state, move |storage| {
         storage.text_transform_pending(&book_id)
     })
     .await?;
     if !pending {
         return Ok(None);
     }
-    spawn_txt_decode(&state, app, request.book_id, None).map(Some)
+    spawn_txt_decode(state, app, request.book_id, None).map(Some)
 }
 
 /// Starts the shared re-decode job; `requested` `None` keeps the encoding.
 fn spawn_txt_decode(
-    state: &State<'_, AppState>,
-    app: AppHandle,
+    state: &AppState,
+    app: Arc<AppState>,
     book_id: String,
     requested: Option<TxtEncoding>,
 ) -> Result<TxtDecodeTask, AppError> {
@@ -642,12 +692,12 @@ fn spawn_txt_decode(
     let worker_id = operation_id.clone();
     let worker_decodes = Arc::clone(&decodes);
     let worker_app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let blocking_decodes = Arc::clone(&worker_decodes);
         let blocking_app = worker_app.clone();
         let blocking_id = worker_id.clone();
         let blocking_book = book_id.clone();
-        let blocking = tauri::async_runtime::spawn_blocking(move || {
+        let blocking = tokio::task::spawn_blocking(move || {
             let snapshot = {
                 let storage = storage
                     .lock()
@@ -714,13 +764,12 @@ fn spawn_txt_decode(
     Ok(TxtDecodeTask { operation_id })
 }
 
-#[tauri::command]
 pub async fn get_txt_decode_status(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    state: State<'_, AppState>,
 ) -> Result<TxtDecodeStatus, AppError> {
     let decodes = Arc::clone(&state.txt_decodes);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         decodes
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "TXT decode state lock is poisoned"))?
@@ -737,13 +786,12 @@ pub async fn get_txt_decode_status(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("status worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn cancel_txt_decode(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    state: State<'_, AppState>,
 ) -> Result<CancelResult, AppError> {
     let decodes = Arc::clone(&state.txt_decodes);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let decodes = decodes
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "TXT decode state lock is poisoned"))?;
@@ -765,15 +813,14 @@ pub async fn cancel_txt_decode(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("cancel worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn set_txt_encoding(
+    state: &Arc<AppState>,
     request: TxtEncodingRequest,
-    state: State<'_, AppState>,
 ) -> Result<TxtEncodingInfo, AppError> {
     let storage = Arc::clone(&state.storage);
     let root = state.data_root.clone();
     let operation_id = Uuid::new_v4().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let snapshot = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -796,13 +843,9 @@ pub async fn set_txt_encoding(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("encoding worker stopped: {error}")))?
 }
 
-#[tauri::command]
-pub async fn list_toc(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<TocListing, AppError> {
+pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<TocListing, AppError> {
     let book_id = request.book_id.clone();
-    if let Some(listing) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(listing) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::toc(storage, &book_id)
     })
     .await?
@@ -811,7 +854,7 @@ pub async fn list_toc(
     }
     let storage = Arc::clone(&state.storage);
     let builds = Arc::clone(&state.toc_builds);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let build = list_toc_current(&storage, &builds, &request.book_id)?;
         let (settings, _) = lock_storage(&storage)?.book_toc_settings(&request.book_id)?;
         Ok(TocListing {
@@ -906,7 +949,7 @@ fn lock_storage(storage: &Mutex<Storage>) -> Result<std::sync::MutexGuard<'_, St
 /// Runs `work` on an engine thread when `book_id` is an online book, which
 /// reads chapter by chapter from its source; `None` for a local book.
 async fn for_online_book<T: Send + 'static>(
-    state: &State<'_, AppState>,
+    state: &AppState,
     book_id: &str,
     work: impl FnOnce(&Arc<Mutex<Storage>>) -> Result<T, AppError> + Send + 'static,
 ) -> Result<Option<T>, AppError> {
@@ -914,7 +957,7 @@ async fn for_online_book<T: Send + 'static>(
     let id = book_id.to_string();
     let online = {
         let storage = Arc::clone(&storage);
-        tauri::async_runtime::spawn_blocking(move || lock_storage(&storage)?.is_online_book(&id))
+        tokio::task::spawn_blocking(move || lock_storage(&storage)?.is_online_book(&id))
             .await
             .map_err(|error| AppError::new(ErrorCode::Io, format!("worker stopped: {error}")))??
     };
@@ -935,144 +978,137 @@ async fn for_online_book<T: Send + 'static>(
 
 /// Runs a short storage operation off the async runtime.
 pub(crate) async fn with_storage<T: Send + 'static>(
-    state: &State<'_, AppState>,
+    state: &AppState,
     operation: impl FnOnce(&mut Storage) -> Result<T, AppError> + Send + 'static,
 ) -> Result<T, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || operation(&mut *lock_storage(&storage)?))
+    tokio::task::spawn_blocking(move || operation(&mut *lock_storage(&storage)?))
         .await
         .map_err(|error| AppError::new(ErrorCode::Io, format!("storage worker stopped: {error}")))?
 }
 
-#[tauri::command]
-pub async fn list_txt_toc_rules(state: State<'_, AppState>) -> Result<Vec<TxtTocRule>, AppError> {
-    with_storage(&state, |storage| storage.list_txt_toc_rules()).await
+pub async fn list_txt_toc_rules(state: &Arc<AppState>) -> Result<Vec<TxtTocRule>, AppError> {
+    with_storage(state, |storage| storage.list_txt_toc_rules()).await
 }
 
-#[tauri::command]
 pub async fn save_txt_toc_rule(
+    state: &Arc<AppState>,
     request: SaveTxtTocRuleRequest,
-    state: State<'_, AppState>,
 ) -> Result<TxtTocRule, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.save_txt_toc_rule(&request.rule)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn delete_txt_toc_rule(
+    state: &Arc<AppState>,
     request: TxtTocRuleIdRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.delete_txt_toc_rule(&request.id)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn order_txt_toc_rules(
+    state: &Arc<AppState>,
     request: OrderTxtTocRulesRequest,
-    state: State<'_, AppState>,
 ) -> Result<Vec<TxtTocRule>, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.order_txt_toc_rules(&request.ids)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn import_txt_toc_rules(
+    state: &Arc<AppState>,
     request: ImportTxtTocRulesRequest,
-    state: State<'_, AppState>,
 ) -> Result<Vec<TxtTocRule>, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.import_txt_toc_rules(&request.json)
     })
     .await
 }
 
-#[tauri::command]
-pub async fn export_txt_toc_rules(state: State<'_, AppState>) -> Result<String, AppError> {
-    with_storage(&state, |storage| storage.export_txt_toc_rules()).await
+pub async fn export_txt_toc_rules(state: &Arc<AppState>) -> Result<String, AppError> {
+    with_storage(state, |storage| storage.export_txt_toc_rules()).await
 }
 
-#[tauri::command]
-pub async fn test_txt_toc_rule(request: TestTxtTocRuleRequest) -> Result<Vec<String>, AppError> {
+pub async fn test_txt_toc_rule(
+    _state: &Arc<AppState>,
+    request: TestTxtTocRuleRequest,
+) -> Result<Vec<String>, AppError> {
     crate::txt_toc::test_rule(&request.pattern, &request.sample)
 }
 
-#[tauri::command]
 pub async fn save_book_toc_settings(
+    state: &Arc<AppState>,
     request: SaveBookTocSettingsRequest,
-    state: State<'_, AppState>,
 ) -> Result<BookTocSettings, AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.save_book_toc_settings(&request.book_id, &request.settings)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn import_reader_font(
+    state: &Arc<AppState>,
     request: crate::models::PathRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<crate::models::ReaderAsset, AppError> {
+    let app = state.clone();
     let root = state.data_root.clone();
     let operation_id = Uuid::new_v4().to_string();
-    with_storage(&state, move |storage| {
-        let (path, name, _staged) =
-            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
+    with_storage(state, move |storage| {
+        let (path, name, _staged) = crate::documents::resolve_named_source(
+            &*app.platform,
+            &root,
+            &request.path,
+            &operation_id,
+        )?;
         storage.import_reader_font(&path, &name)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn list_reader_fonts(
-    state: State<'_, AppState>,
+    state: &Arc<AppState>,
 ) -> Result<Vec<crate::models::ReaderAsset>, AppError> {
-    with_storage(&state, |storage| storage.list_reader_fonts()).await
+    with_storage(state, |storage| storage.list_reader_fonts()).await
 }
 
 /// Font bytes as a raw IPC response, so the page can load them with FontFace.
-#[tauri::command]
 pub async fn read_reader_font(
+    state: &Arc<AppState>,
     request: crate::models::ReaderAssetRequest,
-    state: State<'_, AppState>,
-) -> Result<tauri::ipc::Response, AppError> {
-    let bytes = with_storage(&state, move |storage| storage.read_reader_font(&request.id)).await?;
-    Ok(tauri::ipc::Response::new(bytes))
+) -> Result<Vec<u8>, AppError> {
+    let bytes = with_storage(state, move |storage| storage.read_reader_font(&request.id)).await?;
+    Ok(bytes)
 }
 
-#[tauri::command]
 pub async fn delete_reader_font(
+    state: &Arc<AppState>,
     request: crate::models::ReaderAssetRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
+    with_storage(state, move |storage| {
         storage.delete_reader_font(&request.id)
     })
     .await
 }
 
-#[tauri::command]
 pub async fn get_book_info(
+    state: &Arc<AppState>,
     request: BookRequest,
-    state: State<'_, AppState>,
 ) -> Result<BookInfo, AppError> {
-    with_storage(&state, move |storage| storage.book_info(&request.book_id)).await
+    with_storage(state, move |storage| storage.book_info(&request.book_id)).await
 }
 
-#[tauri::command]
 pub async fn list_bookmarks(
+    state: &Arc<AppState>,
     request: BookRequest,
-    state: State<'_, AppState>,
 ) -> Result<Vec<Bookmark>, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1082,13 +1118,12 @@ pub async fn list_bookmarks(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("bookmark worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn add_bookmark(
+    state: &Arc<AppState>,
     request: BookmarkRequest,
-    state: State<'_, AppState>,
 ) -> Result<Bookmark, AppError> {
     let online_request = request.clone();
-    if let Some(bookmark) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(bookmark) = for_online_book(state, &request.book_id, move |storage| {
         lock_storage(storage)?.insert_bookmark(&online_request)
     })
     .await?
@@ -1096,7 +1131,7 @@ pub async fn add_bookmark(
         return Ok(bookmark);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let context = {
             let storage = storage
                 .lock()
@@ -1114,13 +1149,12 @@ pub async fn add_bookmark(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("bookmark worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn delete_bookmark(
+    state: &Arc<AppState>,
     request: BookmarkIdRequest,
-    state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1130,13 +1164,12 @@ pub async fn delete_bookmark(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("bookmark worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn search_book(
+    state: &Arc<AppState>,
     request: SearchRequest,
-    state: State<'_, AppState>,
 ) -> Result<SearchResponse, AppError> {
     let online_request = request.clone();
-    if let Some(response) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(response) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::search(storage, &online_request)
     })
     .await?
@@ -1162,7 +1195,7 @@ pub async fn search_book(
     };
     let searches = Arc::clone(&state.searches);
     let operation_id = request.operation_id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let result = (|| {
             let context = {
                 let storage = storage
@@ -1204,13 +1237,12 @@ pub async fn search_book(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("search worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn cancel_search(
+    state: &Arc<AppState>,
     request: ImportOperationRequest,
-    state: State<'_, AppState>,
 ) -> Result<CancelResult, AppError> {
     let searches = Arc::clone(&state.searches);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let searches = searches
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "search state lock is poisoned"))?;
@@ -1229,13 +1261,12 @@ pub async fn cancel_search(
     })?
 }
 
-#[tauri::command]
 pub async fn read_content_window(
+    state: &Arc<AppState>,
     request: ReadContentRequest,
-    state: State<'_, AppState>,
 ) -> Result<ContentWindow, AppError> {
     let online_request = request.clone();
-    if let Some(window) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(window) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::read_window(storage, &online_request)
     })
     .await?
@@ -1243,7 +1274,7 @@ pub async fn read_content_window(
         return Ok(window);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let context = {
             let storage = storage
                 .lock()
@@ -1263,13 +1294,12 @@ pub async fn read_content_window(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("content worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn resolve_reader_locator(
+    state: &Arc<AppState>,
     request: ResolveLocatorRequest,
-    state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
     let (book_id, progress) = (request.book_id.clone(), request.progress);
-    if let Some(locator) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(locator) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::resolve_progress(storage, &book_id, progress)
     })
     .await?
@@ -1277,7 +1307,7 @@ pub async fn resolve_reader_locator(
         return Ok(locator);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         if !request.progress.is_finite() || !(0.0..=1.0).contains(&request.progress) {
             return Err(AppError::invalid_argument(
                 "reader progress must be a finite number between 0 and 1",
@@ -1302,13 +1332,12 @@ pub async fn resolve_reader_locator(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("locator worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn resolve_reader_offset(
+    state: &Arc<AppState>,
     request: ResolveOffsetRequest,
-    state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
     let online_request = request.clone();
-    if let Some(locator) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(locator) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::resolve_offset(storage, &online_request)
     })
     .await?
@@ -1316,7 +1345,7 @@ pub async fn resolve_reader_offset(
         return Ok(locator);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let context = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1332,13 +1361,12 @@ pub async fn resolve_reader_offset(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("locator worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn save_reader_locator(
+    state: &Arc<AppState>,
     request: SaveLocatorRequest,
-    state: State<'_, AppState>,
 ) -> Result<ReaderLocator, AppError> {
     let locator = request.locator.clone();
-    if let Some(saved) = for_online_book(&state, &request.locator.book_id, move |storage| {
+    if let Some(saved) = for_online_book(state, &request.locator.book_id, move |storage| {
         let guard = lock_storage(storage)?;
         let index = crate::storage::resource_chapter(&locator.resource_id)
             .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?;
@@ -1353,7 +1381,7 @@ pub async fn save_reader_locator(
         return Ok(saved);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let context = {
             let storage = storage
                 .lock()
@@ -1375,14 +1403,13 @@ pub async fn save_reader_locator(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("position worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn get_saved_reader_locator(
+    state: &Arc<AppState>,
     request: BookRequest,
-    state: State<'_, AppState>,
 ) -> Result<Option<ReaderLocator>, AppError> {
     // A restored online book places its position once its contents are known.
     let book_id = request.book_id.clone();
-    if let Some(saved) = for_online_book(&state, &request.book_id, move |storage| {
+    if let Some(saved) = for_online_book(state, &request.book_id, move |storage| {
         if lock_storage(storage)?
             .pending_online_position(&book_id)?
             .is_some()
@@ -1397,7 +1424,7 @@ pub async fn get_saved_reader_locator(
         return Ok(saved);
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let storage = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
@@ -1407,10 +1434,9 @@ pub async fn get_saved_reader_locator(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("position worker stopped: {error}")))?
 }
 
-#[tauri::command]
-pub async fn get_settings(state: State<'_, AppState>) -> Result<ReaderPreferences, AppError> {
+pub async fn get_settings(state: &Arc<AppState>) -> Result<ReaderPreferences, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let storage = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
@@ -1420,13 +1446,12 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<ReaderPreference
     .map_err(|error| AppError::new(ErrorCode::Io, format!("settings worker stopped: {error}")))?
 }
 
-#[tauri::command]
 pub async fn save_settings(
+    state: &Arc<AppState>,
     request: SaveSettingsRequest,
-    state: State<'_, AppState>,
 ) -> Result<ReaderPreferences, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let storage = storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
@@ -1481,7 +1506,7 @@ fn is_terminal(phase: &ImportPhase) -> bool {
 
 fn publish_import_status(
     imports: &Mutex<HashMap<String, ImportOperation>>,
-    app: &AppHandle,
+    app: &AppState,
     status: ImportStatus,
 ) {
     let should_emit = if let Ok(mut operations) = imports.lock() {
@@ -1505,7 +1530,7 @@ fn publish_import_status(
 
 fn publish_txt_decode_status(
     decodes: &Mutex<HashMap<String, TxtDecodeOperation>>,
-    app: &AppHandle,
+    app: &AppState,
     status: TxtDecodeStatus,
 ) {
     let next_status = if let Ok(mut operations) = decodes.lock() {
@@ -1532,13 +1557,12 @@ fn publish_txt_decode_status(
     }
 }
 
-#[tauri::command]
 pub async fn update_book(
+    state: &Arc<AppState>,
     request: crate::models::UpdateBookRequest,
-    state: State<'_, AppState>,
 ) -> Result<crate::models::Book, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1548,22 +1572,15 @@ pub async fn update_book(
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
 /// A deleted online book's downloads go with it.
-fn forget_downloads(app: &tauri::AppHandle, book_id: &str) {
-    use tauri::Manager;
-    if let Some(queue) = app.try_state::<crate::downloads::Downloads>() {
-        queue.forget_book(book_id);
-    }
+fn forget_downloads(app: &AppState, book_id: &str) {
+    app.downloads().forget_book(book_id);
 }
 
-#[tauri::command]
-pub async fn remove_book(
-    request: BookRequest,
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn remove_book(state: &Arc<AppState>, request: BookRequest) -> Result<(), AppError> {
+    let app = state.clone();
     // Legado deletes an online book outright; its text is only a cache.
     let book_id = request.book_id.clone();
-    if for_online_book(&state, &request.book_id, move |storage| {
+    if for_online_book(state, &request.book_id, move |storage| {
         lock_storage(storage)?.delete_online_book(&book_id)
     })
     .await?
@@ -1573,7 +1590,7 @@ pub async fn remove_book(
         return Ok(());
     }
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1582,13 +1599,9 @@ pub async fn remove_book(
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
-#[tauri::command]
-pub async fn restore_book(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn restore_book(state: &Arc<AppState>, request: BookRequest) -> Result<(), AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1597,10 +1610,9 @@ pub async fn restore_book(
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
-#[tauri::command]
-pub async fn list_removed_books(state: State<'_, AppState>) -> Result<Vec<LibraryBook>, AppError> {
+pub async fn list_removed_books(state: &Arc<AppState>) -> Result<Vec<LibraryBook>, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1609,12 +1621,11 @@ pub async fn list_removed_books(state: State<'_, AppState>) -> Result<Vec<Librar
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
-#[tauri::command]
 pub async fn get_shelf_preferences(
-    state: State<'_, AppState>,
+    state: &Arc<AppState>,
 ) -> Result<crate::models::ShelfPreferences, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1623,13 +1634,12 @@ pub async fn get_shelf_preferences(
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
-#[tauri::command]
 pub async fn save_shelf_preferences(
+    state: &Arc<AppState>,
     request: crate::models::SaveShelfPreferencesRequest,
-    state: State<'_, AppState>,
 ) -> Result<crate::models::ShelfPreferences, AppError> {
     let storage = Arc::clone(&state.storage);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
@@ -1637,6 +1647,608 @@ pub async fn save_shelf_preferences(
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+
+pub async fn move_book(
+    state: &Arc<AppState>,
+    request: crate::models::MoveBookRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.move_book(&request.book_id, &request.placement)
+    })
+    .await
+}
+
+pub async fn update_bookmark_note(
+    state: &Arc<AppState>,
+    request: crate::models::BookmarkNoteRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.update_bookmark_note(&request.bookmark_id, &request.note)
+    })
+    .await
+}
+
+pub async fn add_reading_time(
+    state: &Arc<AppState>,
+    request: crate::models::ReadingTimeRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.add_reading_time(&request.book_id, &request.day, request.seconds)
+    })
+    .await
+}
+
+pub async fn reading_stats(
+    state: &Arc<AppState>,
+    request: crate::models::ReadingStatsRequest,
+) -> Result<crate::models::ReadingStats, AppError> {
+    with_storage(state, move |storage| storage.reading_stats(&request.today)).await
+}
+
+pub async fn set_book_cover(
+    state: &Arc<AppState>,
+    request: crate::models::BookCoverRequest,
+) -> Result<crate::models::ReaderAsset, AppError> {
+    let app = state.clone();
+    let root = state.data_root.clone();
+    let operation_id = Uuid::new_v4().to_string();
+    with_storage(state, move |storage| {
+        let (path, name, _staged) = crate::documents::resolve_named_source(
+            &*app.platform,
+            &root,
+            &request.path,
+            &operation_id,
+        )?;
+        storage.set_book_cover(&request.book_id, &path, &name)
+    })
+    .await
+}
+
+pub async fn clear_book_cover(state: &Arc<AppState>, request: BookRequest) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.clear_book_cover(&request.book_id)
+    })
+    .await
+}
+
+/// TXT files in a folder for batch import: on Android the system folder
+/// picker runs here and `path` is ignored; elsewhere `path` is the folder.
+pub async fn list_txt_folder(
+    state: &Arc<AppState>,
+    request: crate::models::PathRequest,
+) -> Result<Vec<crate::models::PickedFile>, AppError> {
+    let app = state.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::documents::list_txt_folder(&*app.platform, &request.path)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("folder worker stopped: {error}")))?
+}
+
+pub async fn import_reader_background(
+    state: &Arc<AppState>,
+    request: crate::models::PathRequest,
+) -> Result<crate::models::ReaderAsset, AppError> {
+    let app = state.clone();
+    let root = state.data_root.clone();
+    let operation_id = Uuid::new_v4().to_string();
+    with_storage(state, move |storage| {
+        let (path, name, _staged) = crate::documents::resolve_named_source(
+            &*app.platform,
+            &root,
+            &request.path,
+            &operation_id,
+        )?;
+        storage.import_reader_background(&path, &name)
+    })
+    .await
+}
+
+pub async fn list_replace_rules(
+    state: &Arc<AppState>,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(state, |storage| storage.list_replace_rules()).await
+}
+
+pub async fn save_replace_rule(
+    state: &Arc<AppState>,
+    request: crate::models::SaveReplaceRuleRequest,
+) -> Result<crate::models::ReplaceRule, AppError> {
+    with_storage(state, move |storage| {
+        storage.save_replace_rule(&request.rule)
+    })
+    .await
+}
+
+pub async fn delete_replace_rules(
+    state: &Arc<AppState>,
+    request: crate::models::ReplaceRuleIdsRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.delete_replace_rules(&request.ids)
+    })
+    .await
+}
+
+pub async fn order_replace_rules(
+    state: &Arc<AppState>,
+    request: crate::models::ReplaceRuleIdsRequest,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(state, move |storage| {
+        storage.order_replace_rules(&request.ids)
+    })
+    .await
+}
+
+pub async fn import_replace_rules(
+    state: &Arc<AppState>,
+    request: ImportTxtTocRulesRequest,
+) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
+    with_storage(state, move |storage| {
+        storage.import_replace_rules(&request.json)
+    })
+    .await
+}
+
+pub async fn export_replace_rules(state: &Arc<AppState>) -> Result<String, AppError> {
+    with_storage(state, |storage| storage.export_replace_rules()).await
+}
+
+/// Applies one rule to sample text, for the rule editor.
+pub async fn test_replace_rule(
+    _state: &Arc<AppState>,
+    request: crate::models::TestReplaceRuleRequest,
+) -> Result<String, AppError> {
+    let rule = crate::transform::TransformRule {
+        pattern: request.rule.pattern,
+        replacement: request.rule.replacement,
+        regex: request.rule.is_regex,
+    };
+    crate::transform::validate_rule(&rule)?;
+    let transform = crate::transform::TextTransform {
+        rules: vec![rule],
+        chinese: crate::models::ChineseConversion::Off,
+    };
+    Ok(crate::transform::apply(&request.sample, &transform).0)
+}
+
+pub async fn set_book_replace_rules(
+    state: &Arc<AppState>,
+    request: crate::models::BookReplaceRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.set_book_replace_rules(&request.book_id, request.enabled)
+    })
+    .await
+}
+
+/// The platform recorded in backups, for display when restoring.
+fn device_name() -> &'static str {
+    match std::env::consts::OS {
+        "android" => "Android",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "ios" => "iOS",
+        other => other,
+    }
+}
+
+/// Runs WebDAV work off the async runtime; it locks storage only briefly.
+async fn with_cloud<T: Send + 'static>(
+    state: &AppState,
+    operation: impl FnOnce(&Mutex<Storage>, &std::path::Path) -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    let storage = Arc::clone(&state.storage);
+    let root = state.data_root.clone();
+    tokio::task::spawn_blocking(move || operation(&storage, &root))
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, format!("cloud worker stopped: {error}")))?
+}
+
+fn merged_webdav(
+    storage: &Storage,
+    request: &crate::models::SaveWebDavRequest,
+) -> Result<crate::storage::StoredWebDav, AppError> {
+    let mut settings = storage.stored_webdav()?;
+    let url = request.url.trim().to_string();
+    if !url.is_empty() && !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::invalid_argument(
+            "the WebDAV address must start with https:// or http://",
+        ));
+    }
+    let folder = request.folder.trim().trim_matches('/').to_string();
+    if folder.contains("..") || folder.contains('\\') {
+        return Err(AppError::invalid_argument(
+            "the WebDAV folder name is invalid",
+        ));
+    }
+    settings.url = url;
+    settings.username = request.username.trim().to_string();
+    if let Some(password) = &request.password {
+        settings.password = password.clone();
+    }
+    settings.folder = folder;
+    settings.device_name = request.device_name.trim().chars().take(40).collect();
+    settings.auto_backup = request.auto_backup;
+    settings.sync_progress = request.sync_progress;
+    settings.sync_progress_plus = request.sync_progress_plus;
+    if let Some(on) = request.auto_sync_book_info {
+        settings.auto_sync_book_info = on;
+    }
+    settings.restore_ignore = request.restore_ignore.clone();
+    Ok(settings)
+}
+
+/// Writes a backup into the local backup folder (a path, or an Android tree URI).
+fn write_local_backup(
+    app: &AppState,
+    folder: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    crate::documents::write_to_folder(&*app.platform, folder, name, "application/json", bytes)
+}
+
+pub async fn get_webdav_settings(
+    state: &Arc<AppState>,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    with_storage(state, |storage| Ok(storage.stored_webdav()?.view())).await
+}
+
+pub async fn save_webdav_settings(
+    state: &Arc<AppState>,
+    request: crate::models::SaveWebDavRequest,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    with_storage(state, move |storage| {
+        let settings = merged_webdav(storage, &request)?;
+        storage.save_stored_webdav(&settings)?;
+        Ok(settings.view())
+    })
+    .await
+}
+
+/// Checks an address and account before saving them, with the round trip time.
+pub async fn test_webdav(
+    state: &Arc<AppState>,
+    request: crate::models::SaveWebDavRequest,
+) -> Result<crate::models::WebDavCheck, AppError> {
+    with_cloud(state, move |storage, _| {
+        let settings = merged_webdav(&*lock_storage(storage)?, &request)?;
+        crate::cloud::check(&settings)
+    })
+    .await
+}
+
+/// A manual backup to WebDAV, also written to the local backup folder when one is chosen.
+pub async fn backup_to_webdav(
+    state: &Arc<AppState>,
+) -> Result<crate::models::RemoteBackup, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, _| {
+        let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
+        crate::app_log::info("sync", format!("已备份到 WebDAV：{}", backup.name));
+        let folder = lock_storage(storage)?.stored_webdav()?.local_folder;
+        if let Some(folder) = folder {
+            write_local_backup(&app, &folder, &backup.name, &serde_json::to_vec(&document)?)?;
+        }
+        Ok(backup)
+    })
+    .await
+}
+
+/// The daily automatic backup, called at startup; `None` when not due.
+pub async fn run_automatic_backup(
+    state: &Arc<AppState>,
+) -> Result<Option<crate::models::RemoteBackup>, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, _| {
+        crate::cloud::automatic_backup(storage, device_name(), |folder, name, bytes| {
+            write_local_backup(&app, folder, name, bytes)
+        })
+    })
+    .await
+}
+
+/// Chooses the local backup folder (Legado 备份路径); `path` comes from the
+/// desktop folder dialog, Android shows its own picker. `None` clears it.
+pub async fn set_backup_folder(
+    state: &Arc<AppState>,
+    request: crate::models::OptionalPathRequest,
+) -> Result<crate::models::WebDavSettings, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, _| {
+        let picked = match request.path.as_deref() {
+            Some("") => None,
+            path => crate::documents::pick_writable_folder(&*app.platform, path)?,
+        };
+        let guard = lock_storage(storage)?;
+        let mut settings = guard.stored_webdav()?;
+        if request.path.as_deref() == Some("") {
+            settings.local_folder = None;
+            settings.local_folder_label = None;
+        } else if let Some((folder, label)) = picked {
+            settings.local_folder = Some(folder);
+            settings.local_folder_label = Some(label);
+        }
+        guard.save_stored_webdav(&settings)?;
+        Ok(settings.view())
+    })
+    .await
+}
+
+/// Removes a book from the app, and with `cloud` its cloud bookshelf copy.
+pub async fn delete_book(
+    state: &Arc<AppState>,
+    request: crate::models::DeleteBookRequest,
+) -> Result<(), AppError> {
+    let app = state.clone();
+    let book_id = request.book_id.clone();
+    if for_online_book(state, &request.book_id, move |storage| {
+        lock_storage(storage)?.delete_online_book(&book_id)
+    })
+    .await?
+    .is_some()
+    {
+        forget_downloads(&app, &request.book_id);
+        return Ok(());
+    }
+    with_cloud(state, move |storage, _| {
+        if request.cloud {
+            crate::cloud::delete_cloud_copy(storage, &request.book_id)?;
+        }
+        lock_storage(storage)?.delete_book(&request.book_id)
+    })
+    .await
+}
+
+pub async fn list_remote_backups(
+    state: &Arc<AppState>,
+) -> Result<Vec<crate::models::RemoteBackup>, AppError> {
+    with_cloud(state, |storage, _| crate::cloud::list_backups(storage)).await
+}
+
+pub async fn delete_remote_backup(
+    state: &Arc<AppState>,
+    request: crate::models::NameRequest,
+) -> Result<(), AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::cloud::delete_backup(storage, &request.name)
+    })
+    .await
+}
+
+pub async fn list_recovery_points(state: &Arc<AppState>) -> Result<Vec<String>, AppError> {
+    with_storage(state, |storage| storage.list_recovery_points()).await
+}
+
+fn read_backup_source(
+    app: &AppState,
+    storage: &Mutex<Storage>,
+    root: &std::path::Path,
+    source: &crate::models::BackupSource,
+) -> Result<crate::storage::BackupDocument, AppError> {
+    use crate::models::BackupSource;
+    match source {
+        BackupSource::Remote(name) => crate::cloud::fetch_backup(storage, name),
+        BackupSource::Recovery(name) => lock_storage(storage)?.read_recovery_point(name),
+        BackupSource::File(path) => {
+            let operation_id = Uuid::new_v4().to_string();
+            let (path, _, _staged) =
+                crate::documents::resolve_named_source(&*app.platform, root, path, &operation_id)?;
+            if std::fs::metadata(&path)?.len() > 64 * 1024 * 1024 {
+                return Err(AppError::invalid_argument("the backup file is too large"));
+            }
+            crate::storage::parse_backup(&std::fs::read(&path)?)
+        }
+    }
+}
+
+pub async fn preview_backup(
+    state: &Arc<AppState>,
+    request: crate::models::BackupSourceRequest,
+) -> Result<crate::models::BackupPreview, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, root| {
+        let document = read_backup_source(&app, storage, root, &request.source)?;
+        lock_storage(storage)?.preview_backup(&document)
+    })
+    .await
+}
+
+/// Writes a recovery point, then merges the backup into the library.
+pub async fn restore_backup(
+    state: &Arc<AppState>,
+    request: crate::models::BackupSourceRequest,
+) -> Result<crate::models::RestoreReport, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, root| {
+        let document = read_backup_source(&app, storage, root, &request.source)?;
+        // Covers come from the cloud when an account is set; a backup still
+        // restores without them.
+        if lock_storage(storage)?.stored_webdav()?.configured() {
+            if let Err(error) = crate::cloud::fetch_backup_covers(storage, &document) {
+                crate::app_log::warn("sync", format!("恢复时封面下载失败：{}", error.message));
+            }
+        }
+        let mut guard = lock_storage(storage)?;
+        let device = guard.stored_webdav()?.device(device_name());
+        let recovery_point = guard.write_recovery_point(&device)?;
+        let mut report = guard.restore_backup(&document)?;
+        report.recovery_point = recovery_point;
+        crate::app_log::info(
+            "sync",
+            format!(
+                "已恢复备份：书籍 {}，网络书籍 {}，书源 {}，进度 {}，书签 {}",
+                report.books_restored,
+                report.online_books_restored,
+                report.sources_restored,
+                report.positions_restored,
+                report.bookmarks_added
+            ),
+        );
+        Ok(report)
+    })
+    .await
+}
+
+/// Saves the current records to a file the reader picks (`path` comes from
+/// the desktop save dialog; Android shows its own screen). `false`: cancelled.
+pub async fn export_backup_file(
+    state: &Arc<AppState>,
+    request: crate::models::OptionalPathRequest,
+) -> Result<bool, AppError> {
+    let app = state.clone();
+    with_cloud(state, move |storage, _| {
+        let guard = lock_storage(storage)?;
+        let document = guard.export_backup(&guard.stored_webdav()?.device(device_name()))?;
+        drop(guard);
+        let bytes = serde_json::to_vec(&document)?;
+        let name = format!(
+            "gripread-{}",
+            crate::cloud::backup_file_name(&document, false)
+        );
+        crate::documents::save_document(
+            &*app.platform,
+            request.path.as_deref(),
+            &name,
+            "application/json",
+            &bytes,
+        )
+    })
+    .await
+}
+
+pub async fn list_cloud_books(
+    state: &Arc<AppState>,
+) -> Result<Vec<crate::models::CloudBook>, AppError> {
+    with_cloud(state, |storage, _| crate::cloud::list_cloud_books(storage)).await
+}
+
+pub async fn upload_cloud_books(
+    state: &Arc<AppState>,
+    request: crate::models::BookIdListRequest,
+) -> Result<crate::models::CloudUploadReport, AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::cloud::upload_books(storage, &request.book_ids, device_name())
+    })
+    .await
+}
+
+/// Downloads a cloud book for import; the import matches it to the shelf.
+pub async fn download_cloud_book(
+    state: &Arc<AppState>,
+    request: crate::models::NameRequest,
+) -> Result<crate::models::PickedFile, AppError> {
+    with_cloud(state, move |storage, root| {
+        crate::cloud::download_cloud_book(storage, root, &request.name)
+    })
+    .await
+}
+
+pub async fn delete_cloud_book(
+    state: &Arc<AppState>,
+    request: crate::models::NameRequest,
+) -> Result<(), AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::cloud::delete_cloud_book(storage, &request.name)
+    })
+    .await
+}
+
+/// Uploads the open book's position when progress sync is on (Legado 同步阅读进度).
+pub async fn upload_book_progress(
+    state: &Arc<AppState>,
+    request: crate::models::UploadProgressRequest,
+) -> Result<bool, AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::progress_sync::upload(
+            storage,
+            &request.book_id,
+            &request.chapter_title,
+            device_name(),
+        )
+    })
+    .await
+}
+
+/// Another device's newer position for the book, if it is still to be answered.
+pub async fn fetch_book_progress(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::progress_sync::fetch(storage, &request.book_id)
+    })
+    .await
+}
+
+pub async fn acknowledge_book_progress(
+    state: &Arc<AppState>,
+    request: crate::models::AcknowledgeProgressRequest,
+) -> Result<(), AppError> {
+    with_cloud(state, move |storage, _| {
+        crate::progress_sync::acknowledge(
+            storage,
+            &request.book_id,
+            &request.device_id,
+            request.revision,
+        )
+    })
+    .await
+}
+
+pub fn list_log_entries(
+    _state: &Arc<AppState>,
+    request: crate::models::LogQuery,
+) -> crate::models::LogPage {
+    crate::models::LogPage {
+        entries: crate::app_log::entries(request.level),
+        detail_until: crate::app_log::detail_until(),
+    }
+}
+
+pub fn set_detailed_log(
+    _state: &Arc<AppState>,
+    request: crate::models::SetFlagRequest,
+) -> Option<i64> {
+    crate::app_log::set_detailed(request.on)
+}
+
+pub fn clear_logs(_state: &Arc<AppState>) {
+    crate::app_log::clear();
+}
+
+/// The whole log as text, for 复制全部 and sharing.
+pub fn export_log_text(_state: &Arc<AppState>) -> String {
+    crate::app_log::export_text()
+}
+
+/// Errors and steps the page reports (uncaught errors, failed commands).
+pub fn log_frontend(_state: &Arc<AppState>, request: crate::models::FrontendLogRequest) {
+    let area = if request.area.trim().is_empty() {
+        "ui"
+    } else {
+        request.area.trim()
+    };
+    match request.level {
+        crate::app_log::LogLevel::Error => crate::app_log::error(area, &request.message),
+        crate::app_log::LogLevel::Warn => crate::app_log::warn(area, &request.message),
+        crate::app_log::LogLevel::Info => crate::app_log::info(area, &request.message),
+        crate::app_log::LogLevel::Detail => crate::app_log::detail(area, &request.message),
+    }
+}
+
+/// 阅读记录's 删除记录: the book's reading time no longer counts.
+pub async fn delete_reading_record(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.delete_reading_record(&request.book_id)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -1778,635 +2390,4 @@ mod tests {
         );
         assert!(builds.lock().unwrap().is_empty());
     }
-}
-
-#[tauri::command]
-pub async fn move_book(
-    request: crate::models::MoveBookRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.move_book(&request.book_id, &request.placement)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_bookmark_note(
-    request: crate::models::BookmarkNoteRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.update_bookmark_note(&request.bookmark_id, &request.note)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn add_reading_time(
-    request: crate::models::ReadingTimeRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.add_reading_time(&request.book_id, &request.day, request.seconds)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reading_stats(
-    request: crate::models::ReadingStatsRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::ReadingStats, AppError> {
-    with_storage(&state, move |storage| storage.reading_stats(&request.today)).await
-}
-
-#[tauri::command]
-pub async fn set_book_cover(
-    request: crate::models::BookCoverRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::ReaderAsset, AppError> {
-    let root = state.data_root.clone();
-    let operation_id = Uuid::new_v4().to_string();
-    with_storage(&state, move |storage| {
-        let (path, name, _staged) =
-            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
-        storage.set_book_cover(&request.book_id, &path, &name)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn clear_book_cover(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.clear_book_cover(&request.book_id)
-    })
-    .await
-}
-
-/// TXT files in a folder for batch import: on Android the system folder
-/// picker runs here and `path` is ignored; elsewhere `path` is the folder.
-#[tauri::command]
-pub async fn list_txt_folder(
-    request: crate::models::PathRequest,
-    app: AppHandle,
-) -> Result<Vec<crate::models::PickedFile>, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::documents::list_txt_folder(&app, &request.path)
-    })
-    .await
-    .map_err(|error| AppError::new(ErrorCode::Io, format!("folder worker stopped: {error}")))?
-}
-
-#[tauri::command]
-pub async fn import_reader_background(
-    request: crate::models::PathRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::ReaderAsset, AppError> {
-    let root = state.data_root.clone();
-    let operation_id = Uuid::new_v4().to_string();
-    with_storage(&state, move |storage| {
-        let (path, name, _staged) =
-            crate::documents::resolve_named_source(&app, &root, &request.path, &operation_id)?;
-        storage.import_reader_background(&path, &name)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_replace_rules(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
-    with_storage(&state, |storage| storage.list_replace_rules()).await
-}
-
-#[tauri::command]
-pub async fn save_replace_rule(
-    request: crate::models::SaveReplaceRuleRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::ReplaceRule, AppError> {
-    with_storage(&state, move |storage| {
-        storage.save_replace_rule(&request.rule)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_replace_rules(
-    request: crate::models::ReplaceRuleIdsRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.delete_replace_rules(&request.ids)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn order_replace_rules(
-    request: crate::models::ReplaceRuleIdsRequest,
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
-    with_storage(&state, move |storage| {
-        storage.order_replace_rules(&request.ids)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn import_replace_rules(
-    request: ImportTxtTocRulesRequest,
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
-    with_storage(&state, move |storage| {
-        storage.import_replace_rules(&request.json)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn export_replace_rules(state: State<'_, AppState>) -> Result<String, AppError> {
-    with_storage(&state, |storage| storage.export_replace_rules()).await
-}
-
-/// Applies one rule to sample text, for the rule editor.
-#[tauri::command]
-pub async fn test_replace_rule(
-    request: crate::models::TestReplaceRuleRequest,
-) -> Result<String, AppError> {
-    let rule = crate::transform::TransformRule {
-        pattern: request.rule.pattern,
-        replacement: request.rule.replacement,
-        regex: request.rule.is_regex,
-    };
-    crate::transform::validate_rule(&rule)?;
-    let transform = crate::transform::TextTransform {
-        rules: vec![rule],
-        chinese: crate::models::ChineseConversion::Off,
-    };
-    Ok(crate::transform::apply(&request.sample, &transform).0)
-}
-
-#[tauri::command]
-pub async fn set_book_replace_rules(
-    request: crate::models::BookReplaceRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.set_book_replace_rules(&request.book_id, request.enabled)
-    })
-    .await
-}
-
-/// The platform recorded in backups, for display when restoring.
-fn device_name() -> &'static str {
-    match std::env::consts::OS {
-        "android" => "Android",
-        "macos" => "macOS",
-        "windows" => "Windows",
-        "linux" => "Linux",
-        "ios" => "iOS",
-        other => other,
-    }
-}
-
-/// Runs WebDAV work off the async runtime; it locks storage only briefly.
-async fn with_cloud<T: Send + 'static>(
-    state: &State<'_, AppState>,
-    operation: impl FnOnce(&Mutex<Storage>, &std::path::Path) -> Result<T, AppError> + Send + 'static,
-) -> Result<T, AppError> {
-    let storage = Arc::clone(&state.storage);
-    let root = state.data_root.clone();
-    tauri::async_runtime::spawn_blocking(move || operation(&storage, &root))
-        .await
-        .map_err(|error| AppError::new(ErrorCode::Io, format!("cloud worker stopped: {error}")))?
-}
-
-fn merged_webdav(
-    storage: &Storage,
-    request: &crate::models::SaveWebDavRequest,
-) -> Result<crate::storage::StoredWebDav, AppError> {
-    let mut settings = storage.stored_webdav()?;
-    let url = request.url.trim().to_string();
-    if !url.is_empty() && !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(AppError::invalid_argument(
-            "the WebDAV address must start with https:// or http://",
-        ));
-    }
-    let folder = request.folder.trim().trim_matches('/').to_string();
-    if folder.contains("..") || folder.contains('\\') {
-        return Err(AppError::invalid_argument(
-            "the WebDAV folder name is invalid",
-        ));
-    }
-    settings.url = url;
-    settings.username = request.username.trim().to_string();
-    if let Some(password) = &request.password {
-        settings.password = password.clone();
-    }
-    settings.folder = folder;
-    settings.device_name = request.device_name.trim().chars().take(40).collect();
-    settings.auto_backup = request.auto_backup;
-    settings.sync_progress = request.sync_progress;
-    settings.sync_progress_plus = request.sync_progress_plus;
-    if let Some(on) = request.auto_sync_book_info {
-        settings.auto_sync_book_info = on;
-    }
-    settings.restore_ignore = request.restore_ignore.clone();
-    Ok(settings)
-}
-
-/// Writes a backup into the local backup folder (a path, or an Android tree URI).
-fn write_local_backup<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-    folder: &str,
-    name: &str,
-    bytes: &[u8],
-) -> Result<(), AppError> {
-    crate::documents::write_to_folder(app, folder, name, "application/json", bytes)
-}
-
-#[tauri::command]
-pub async fn get_webdav_settings(
-    state: State<'_, AppState>,
-) -> Result<crate::models::WebDavSettings, AppError> {
-    with_storage(&state, |storage| Ok(storage.stored_webdav()?.view())).await
-}
-
-#[tauri::command]
-pub async fn save_webdav_settings(
-    request: crate::models::SaveWebDavRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::WebDavSettings, AppError> {
-    with_storage(&state, move |storage| {
-        let settings = merged_webdav(storage, &request)?;
-        storage.save_stored_webdav(&settings)?;
-        Ok(settings.view())
-    })
-    .await
-}
-
-/// Checks an address and account before saving them, with the round trip time.
-#[tauri::command]
-pub async fn test_webdav(
-    request: crate::models::SaveWebDavRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::WebDavCheck, AppError> {
-    with_cloud(&state, move |storage, _| {
-        let settings = merged_webdav(&*lock_storage(storage)?, &request)?;
-        crate::cloud::check(&settings)
-    })
-    .await
-}
-
-/// A manual backup to WebDAV, also written to the local backup folder when one is chosen.
-#[tauri::command]
-pub async fn backup_to_webdav(
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::RemoteBackup, AppError> {
-    with_cloud(&state, move |storage, _| {
-        let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
-        crate::app_log::info("sync", format!("已备份到 WebDAV：{}", backup.name));
-        let folder = lock_storage(storage)?.stored_webdav()?.local_folder;
-        if let Some(folder) = folder {
-            write_local_backup(&app, &folder, &backup.name, &serde_json::to_vec(&document)?)?;
-        }
-        Ok(backup)
-    })
-    .await
-}
-
-/// The daily automatic backup, called at startup; `None` when not due.
-#[tauri::command]
-pub async fn run_automatic_backup(
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<Option<crate::models::RemoteBackup>, AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::cloud::automatic_backup(storage, device_name(), |folder, name, bytes| {
-            write_local_backup(&app, folder, name, bytes)
-        })
-    })
-    .await
-}
-
-/// Chooses the local backup folder (Legado 备份路径); `path` comes from the
-/// desktop folder dialog, Android shows its own picker. `None` clears it.
-#[tauri::command]
-pub async fn set_backup_folder(
-    request: crate::models::OptionalPathRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::WebDavSettings, AppError> {
-    with_cloud(&state, move |storage, _| {
-        let picked = match request.path.as_deref() {
-            Some("") => None,
-            path => crate::documents::pick_writable_folder(&app, path)?,
-        };
-        let guard = lock_storage(storage)?;
-        let mut settings = guard.stored_webdav()?;
-        if request.path.as_deref() == Some("") {
-            settings.local_folder = None;
-            settings.local_folder_label = None;
-        } else if let Some((folder, label)) = picked {
-            settings.local_folder = Some(folder);
-            settings.local_folder_label = Some(label);
-        }
-        guard.save_stored_webdav(&settings)?;
-        Ok(settings.view())
-    })
-    .await
-}
-
-/// Removes a book from the app, and with `cloud` its cloud bookshelf copy.
-#[tauri::command]
-pub async fn delete_book(
-    request: crate::models::DeleteBookRequest,
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let book_id = request.book_id.clone();
-    if for_online_book(&state, &request.book_id, move |storage| {
-        lock_storage(storage)?.delete_online_book(&book_id)
-    })
-    .await?
-    .is_some()
-    {
-        forget_downloads(&app, &request.book_id);
-        return Ok(());
-    }
-    with_cloud(&state, move |storage, _| {
-        if request.cloud {
-            crate::cloud::delete_cloud_copy(storage, &request.book_id)?;
-        }
-        lock_storage(storage)?.delete_book(&request.book_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_remote_backups(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::RemoteBackup>, AppError> {
-    with_cloud(&state, |storage, _| crate::cloud::list_backups(storage)).await
-}
-
-#[tauri::command]
-pub async fn delete_remote_backup(
-    request: crate::models::NameRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::cloud::delete_backup(storage, &request.name)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_recovery_points(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
-    with_storage(&state, |storage| storage.list_recovery_points()).await
-}
-
-fn read_backup_source<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-    storage: &Mutex<Storage>,
-    root: &std::path::Path,
-    source: &crate::models::BackupSource,
-) -> Result<crate::storage::BackupDocument, AppError> {
-    use crate::models::BackupSource;
-    match source {
-        BackupSource::Remote(name) => crate::cloud::fetch_backup(storage, name),
-        BackupSource::Recovery(name) => lock_storage(storage)?.read_recovery_point(name),
-        BackupSource::File(path) => {
-            let operation_id = Uuid::new_v4().to_string();
-            let (path, _, _staged) =
-                crate::documents::resolve_named_source(app, root, path, &operation_id)?;
-            if std::fs::metadata(&path)?.len() > 64 * 1024 * 1024 {
-                return Err(AppError::invalid_argument("the backup file is too large"));
-            }
-            crate::storage::parse_backup(&std::fs::read(&path)?)
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn preview_backup(
-    request: crate::models::BackupSourceRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::BackupPreview, AppError> {
-    with_cloud(&state, move |storage, root| {
-        let document = read_backup_source(&app, storage, root, &request.source)?;
-        lock_storage(storage)?.preview_backup(&document)
-    })
-    .await
-}
-
-/// Writes a recovery point, then merges the backup into the library.
-#[tauri::command]
-pub async fn restore_backup(
-    request: crate::models::BackupSourceRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<crate::models::RestoreReport, AppError> {
-    with_cloud(&state, move |storage, root| {
-        let document = read_backup_source(&app, storage, root, &request.source)?;
-        // Covers come from the cloud when an account is set; a backup still
-        // restores without them.
-        if lock_storage(storage)?.stored_webdav()?.configured() {
-            if let Err(error) = crate::cloud::fetch_backup_covers(storage, &document) {
-                crate::app_log::warn("sync", format!("恢复时封面下载失败：{}", error.message));
-            }
-        }
-        let mut guard = lock_storage(storage)?;
-        let device = guard.stored_webdav()?.device(device_name());
-        let recovery_point = guard.write_recovery_point(&device)?;
-        let mut report = guard.restore_backup(&document)?;
-        report.recovery_point = recovery_point;
-        crate::app_log::info(
-            "sync",
-            format!(
-                "已恢复备份：书籍 {}，网络书籍 {}，书源 {}，进度 {}，书签 {}",
-                report.books_restored,
-                report.online_books_restored,
-                report.sources_restored,
-                report.positions_restored,
-                report.bookmarks_added
-            ),
-        );
-        Ok(report)
-    })
-    .await
-}
-
-/// Saves the current records to a file the reader picks (`path` comes from
-/// the desktop save dialog; Android shows its own screen). `false`: cancelled.
-#[tauri::command]
-pub async fn export_backup_file(
-    request: crate::models::OptionalPathRequest,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<bool, AppError> {
-    with_cloud(&state, move |storage, _| {
-        let guard = lock_storage(storage)?;
-        let document = guard.export_backup(&guard.stored_webdav()?.device(device_name()))?;
-        drop(guard);
-        let bytes = serde_json::to_vec(&document)?;
-        let name = format!(
-            "gripread-{}",
-            crate::cloud::backup_file_name(&document, false)
-        );
-        crate::documents::save_document(
-            &app,
-            request.path.as_deref(),
-            &name,
-            "application/json",
-            &bytes,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_cloud_books(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::CloudBook>, AppError> {
-    with_cloud(&state, |storage, _| crate::cloud::list_cloud_books(storage)).await
-}
-
-#[tauri::command]
-pub async fn upload_cloud_books(
-    request: crate::models::BookIdListRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::CloudUploadReport, AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::cloud::upload_books(storage, &request.book_ids, device_name())
-    })
-    .await
-}
-
-/// Downloads a cloud book for import; the import matches it to the shelf.
-#[tauri::command]
-pub async fn download_cloud_book(
-    request: crate::models::NameRequest,
-    state: State<'_, AppState>,
-) -> Result<crate::models::PickedFile, AppError> {
-    with_cloud(&state, move |storage, root| {
-        crate::cloud::download_cloud_book(storage, root, &request.name)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_cloud_book(
-    request: crate::models::NameRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::cloud::delete_cloud_book(storage, &request.name)
-    })
-    .await
-}
-
-/// Uploads the open book's position when progress sync is on (Legado 同步阅读进度).
-#[tauri::command]
-pub async fn upload_book_progress(
-    request: crate::models::UploadProgressRequest,
-    state: State<'_, AppState>,
-) -> Result<bool, AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::progress_sync::upload(
-            storage,
-            &request.book_id,
-            &request.chapter_title,
-            device_name(),
-        )
-    })
-    .await
-}
-
-/// Another device's newer position for the book, if it is still to be answered.
-#[tauri::command]
-pub async fn fetch_book_progress(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::progress_sync::fetch(storage, &request.book_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn acknowledge_book_progress(
-    request: crate::models::AcknowledgeProgressRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_cloud(&state, move |storage, _| {
-        crate::progress_sync::acknowledge(
-            storage,
-            &request.book_id,
-            &request.device_id,
-            request.revision,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub fn list_log_entries(request: crate::models::LogQuery) -> crate::models::LogPage {
-    crate::models::LogPage {
-        entries: crate::app_log::entries(request.level),
-        detail_until: crate::app_log::detail_until(),
-    }
-}
-
-#[tauri::command]
-pub fn set_detailed_log(request: crate::models::SetFlagRequest) -> Option<i64> {
-    crate::app_log::set_detailed(request.on)
-}
-
-#[tauri::command]
-pub fn clear_logs() {
-    crate::app_log::clear();
-}
-
-/// The whole log as text, for 复制全部 and sharing.
-#[tauri::command]
-pub fn export_log_text() -> String {
-    crate::app_log::export_text()
-}
-
-/// Errors and steps the page reports (uncaught errors, failed commands).
-#[tauri::command]
-pub fn log_frontend(request: crate::models::FrontendLogRequest) {
-    let area = if request.area.trim().is_empty() {
-        "ui"
-    } else {
-        request.area.trim()
-    };
-    match request.level {
-        crate::app_log::LogLevel::Error => crate::app_log::error(area, &request.message),
-        crate::app_log::LogLevel::Warn => crate::app_log::warn(area, &request.message),
-        crate::app_log::LogLevel::Info => crate::app_log::info(area, &request.message),
-        crate::app_log::LogLevel::Detail => crate::app_log::detail(area, &request.message),
-    }
-}
-
-/// 阅读记录's 删除记录: the book's reading time no longer counts.
-#[tauri::command]
-pub async fn delete_reading_record(
-    request: BookRequest,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    with_storage(&state, move |storage| {
-        storage.delete_reading_record(&request.book_id)
-    })
-    .await
 }

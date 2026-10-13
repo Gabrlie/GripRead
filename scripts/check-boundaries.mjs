@@ -64,12 +64,13 @@ export function checkBoundaries(root) {
         errors.push(`${path}: production pages cannot import test or mock data`);
     }
   }
-  for (const file of ["models.rs", "storage.rs", "txt.rs"])
-    if (/\btauri\b/.test(readFileSync(resolve(root, "src-tauri/src", file), "utf8")))
-      errors.push(`${file}: storage/domain cannot depend on Tauri`);
+  // The core serves every shell (the app, the server); it names no platform.
+  const core = resolve(root, "crates/core/Cargo.toml");
+  if (existsSync(core) && /^\s*tauri[\w-]*\s*=/m.test(readFileSync(core, "utf8")))
+    errors.push("crates/core/Cargo.toml: the core cannot depend on Tauri");
   // The source engine runs untrusted rules and scripts; it stays free of the
   // application's IPC.
-  const engine = resolve(root, "src-tauri/src/sources");
+  const engine = resolve(root, "crates/core/src/sources");
   const engineFiles = [];
   function walkRust(dir) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

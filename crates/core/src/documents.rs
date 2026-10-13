@@ -10,9 +10,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Runtime};
-
 use crate::error::{AppError, ErrorCode};
+use crate::platform::Platform;
 
 const STAGING_DIRECTORY: &str = "document-staging";
 const COPY_CHUNK: usize = 64 * 1024;
@@ -54,8 +53,8 @@ pub fn clear_staging(data_root: &Path) -> Result<(), AppError> {
 
 /// Resolves a picked source to a readable path. Ordinary paths pass through;
 /// document URIs are staged and must stay alive until storage has read them.
-pub fn resolve_source<R: Runtime>(
-    app: &AppHandle<R>,
+pub fn resolve_source(
+    platform: &dyn Platform,
     data_root: &Path,
     source: &str,
     operation_id: &str,
@@ -64,15 +63,15 @@ pub fn resolve_source<R: Runtime>(
     if !is_document_uri(source) {
         return Ok((PathBuf::from(source), None));
     }
-    let (file, name) = open_document(app, source)?;
+    let (file, name) = platform.open_document(source)?;
     let staged = stage_document(data_root, operation_id, name.as_deref(), file, cancel)?;
     Ok((staged.path().to_path_buf(), Some(staged)))
 }
 
 /// Resolves a picked file of any kind, keeping its display name and
 /// extension; used for reading fonts.
-pub fn resolve_named_source<R: Runtime>(
-    app: &AppHandle<R>,
+pub fn resolve_named_source(
+    platform: &dyn Platform,
     data_root: &Path,
     source: &str,
     operation_id: &str,
@@ -85,7 +84,7 @@ pub fn resolve_named_source<R: Runtime>(
             .unwrap_or_default();
         return Ok((path, name, None));
     }
-    let (file, name) = open_document(app, source)?;
+    let (file, name) = platform.open_document(source)?;
     let name = sanitize_component(name.as_deref().unwrap_or("")).unwrap_or_else(|| "file".into());
     let staged = stage_named(
         data_root,
@@ -196,180 +195,47 @@ fn staged_file_name(display_name: Option<&str>) -> String {
     }
 }
 
-#[cfg(target_os = "android")]
-fn open_document<R: Runtime>(
-    app: &AppHandle<R>,
-    uri: &str,
-) -> Result<(File, Option<String>), AppError> {
-    use std::os::fd::FromRawFd;
-    use tauri::Manager;
-
-    #[derive(serde::Serialize)]
-    struct Payload<'a> {
-        uri: &'a str,
-    }
-    #[derive(serde::Deserialize)]
-    struct Response {
-        fd: i32,
-        name: Option<String>,
-    }
-    let plugin = app.state::<DocumentPlugin<R>>();
-    let response: Response = plugin
-        .0
-        .run_mobile_plugin("openDocument", Payload { uri })
-        .map_err(|error| AppError::new(ErrorCode::FileNotFound, error.to_string()))?;
-    // SAFETY: the Kotlin plugin detaches the descriptor and transfers its
-    // ownership to this process; it is closed when the File is dropped.
-    let file = unsafe { File::from_raw_fd(response.fd) };
-    Ok((file, response.name))
-}
-
-#[cfg(not(target_os = "android"))]
-fn open_document<R: Runtime>(
-    _app: &AppHandle<R>,
-    _uri: &str,
-) -> Result<(File, Option<String>), AppError> {
-    Err(AppError::new(
-        ErrorCode::InvalidPath,
-        "document URIs are only supported on Android",
-    ))
-}
-
-/// Lists `.txt` files in a folder and its subfolders (three levels), sorted by name.
-#[cfg(not(target_os = "android"))]
-pub fn list_txt_folder<R: Runtime>(
-    _app: &AppHandle<R>,
+/// TXT files in a folder for batch import (the platform's folder picker on Android).
+pub fn list_txt_folder(
+    platform: &dyn Platform,
     path: &str,
 ) -> Result<Vec<crate::models::PickedFile>, AppError> {
-    fn walk(
-        dir: &std::path::Path,
-        depth: usize,
-        found: &mut Vec<crate::models::PickedFile>,
-    ) -> Result<(), AppError> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let kind = entry.file_type()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            if kind.is_dir() && depth < 3 {
-                walk(&entry.path(), depth + 1, found)?;
-            } else if kind.is_file() && name.to_ascii_lowercase().ends_with(".txt") {
-                found.push(crate::models::PickedFile {
-                    path: entry.path().to_string_lossy().to_string(),
-                    name,
-                });
-            }
-            if found.len() >= 1000 {
-                break;
-            }
-        }
-        Ok(())
-    }
-    let root = std::path::Path::new(path);
-    if !root.is_dir() {
-        return Err(AppError::new(
-            ErrorCode::InvalidPath,
-            "the folder was not found",
-        ));
-    }
-    let mut found = Vec::new();
-    walk(root, 0, &mut found)?;
-    found.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(found)
+    platform.list_txt_folder(path)
 }
 
-/// Runs the system folder picker and lists the `.txt` documents in the tree;
-/// an empty list means the picker was closed.
-#[cfg(target_os = "android")]
-pub fn list_txt_folder<R: Runtime>(
-    app: &AppHandle<R>,
-    _path: &str,
-) -> Result<Vec<crate::models::PickedFile>, AppError> {
-    use tauri::Manager;
-    #[derive(serde::Deserialize)]
-    struct Response {
-        files: Vec<crate::models::PickedFile>,
-    }
-    let plugin = app.state::<DocumentPlugin<R>>();
-    let response: Response = plugin
-        .0
-        .run_mobile_plugin("pickFolder", serde_json::json!({}))
-        .map_err(|error| AppError::new(ErrorCode::FileNotFound, error.to_string()))?;
-    Ok(response.files)
-}
-
-#[cfg(target_os = "android")]
-struct DocumentPlugin<R: Runtime>(tauri::plugin::PluginHandle<R>);
-
-/// Writes `bytes` to a file the reader chooses: the system "save as" screen
-/// on Android, or `path` from the save dialog elsewhere. Returns whether a
-/// file was written (`false` when the screen was closed).
-#[cfg(target_os = "android")]
-pub fn save_document<R: Runtime>(
-    app: &AppHandle<R>,
-    _path: Option<&str>,
+/// Writes `bytes` to a file the reader chooses; `false` when nothing was chosen.
+pub fn save_document(
+    platform: &dyn Platform,
+    path: Option<&str>,
     name: &str,
     mime: &str,
     bytes: &[u8],
 ) -> Result<bool, AppError> {
-    use std::os::fd::FromRawFd;
-    use tauri::Manager;
-    #[derive(serde::Serialize)]
-    struct Payload<'a> {
-        name: &'a str,
-        mime: &'a str,
-    }
-    #[derive(serde::Deserialize)]
-    struct Response {
-        fd: Option<i32>,
-    }
-    let plugin = app.state::<DocumentPlugin<R>>();
-    let response: Response = plugin
-        .0
-        .run_mobile_plugin("createDocument", Payload { name, mime })
-        .map_err(|error| AppError::new(ErrorCode::InvalidPath, error.to_string()))?;
-    let Some(fd) = response.fd else {
-        return Ok(false);
-    };
-    // SAFETY: the Kotlin plugin detaches the descriptor and transfers its
-    // ownership to this process; it is closed when the File is dropped.
-    let mut file = unsafe { File::from_raw_fd(fd) };
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(true)
+    platform.save_document(path, name, mime, bytes)
 }
 
-#[cfg(not(target_os = "android"))]
-pub fn save_document<R: Runtime>(
-    _app: &AppHandle<R>,
+/// Chooses a folder backups can be written to; `None` when cancelled.
+pub fn pick_writable_folder(
+    platform: &dyn Platform,
     path: Option<&str>,
-    _name: &str,
-    _mime: &str,
-    bytes: &[u8],
-) -> Result<bool, AppError> {
-    let Some(path) = path else {
-        return Ok(false);
-    };
-    let target = Path::new(path);
-    let partial = target.with_extension("part");
-    fs::write(&partial, bytes)?;
-    fs::rename(&partial, target)?;
-    Ok(true)
+) -> Result<Option<(String, String)>, AppError> {
+    platform.pick_writable_folder(path)
 }
 
 /// Writes `name` into a local backup folder: a filesystem path, or on
 /// Android a document tree the reader granted (replacing a file of that name).
-pub fn write_to_folder<R: Runtime>(
-    app: &AppHandle<R>,
+pub fn write_to_folder(
+    platform: &dyn Platform,
     folder: &str,
     name: &str,
     mime: &str,
     bytes: &[u8],
 ) -> Result<(), AppError> {
     if is_document_uri(folder) {
-        return write_tree_document(app, folder, name, mime, bytes);
+        let mut file = platform.open_tree_document(folder, name, mime)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        return Ok(());
     }
     let directory = Path::new(folder);
     if !directory.is_dir() {
@@ -383,111 +249,6 @@ pub fn write_to_folder<R: Runtime>(
     fs::write(&partial, bytes)?;
     fs::rename(&partial, &target)?;
     Ok(())
-}
-
-#[cfg(target_os = "android")]
-fn write_tree_document<R: Runtime>(
-    app: &AppHandle<R>,
-    tree: &str,
-    name: &str,
-    mime: &str,
-    bytes: &[u8],
-) -> Result<(), AppError> {
-    use std::os::fd::FromRawFd;
-    use tauri::Manager;
-    #[derive(serde::Serialize)]
-    struct Payload<'a> {
-        tree: &'a str,
-        name: &'a str,
-        mime: &'a str,
-    }
-    #[derive(serde::Deserialize)]
-    struct Response {
-        fd: i32,
-    }
-    let plugin = app.state::<DocumentPlugin<R>>();
-    let response: Response = plugin
-        .0
-        .run_mobile_plugin("openTreeDocument", Payload { tree, name, mime })
-        .map_err(|error| AppError::new(ErrorCode::InvalidPath, error.to_string()))?;
-    // SAFETY: the Kotlin plugin detaches the descriptor and transfers its
-    // ownership to this process; it is closed when the File is dropped.
-    let mut file = unsafe { File::from_raw_fd(response.fd) };
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "android"))]
-fn write_tree_document<R: Runtime>(
-    _app: &AppHandle<R>,
-    _tree: &str,
-    _name: &str,
-    _mime: &str,
-    _bytes: &[u8],
-) -> Result<(), AppError> {
-    Err(AppError::new(
-        ErrorCode::InvalidPath,
-        "document folders are only supported on Android",
-    ))
-}
-
-/// Chooses a folder that backups can be written to, returning its address
-/// and a label. Android shows the system picker and keeps write access;
-/// elsewhere `path` comes from the folder dialog. `None`: cancelled.
-#[cfg(target_os = "android")]
-pub fn pick_writable_folder<R: Runtime>(
-    app: &AppHandle<R>,
-    _path: Option<&str>,
-) -> Result<Option<(String, String)>, AppError> {
-    use tauri::Manager;
-    #[derive(serde::Deserialize)]
-    struct Response {
-        uri: Option<String>,
-        name: Option<String>,
-    }
-    let plugin = app.state::<DocumentPlugin<R>>();
-    let response: Response = plugin
-        .0
-        .run_mobile_plugin("pickWritableFolder", serde_json::json!({}))
-        .map_err(|error| AppError::new(ErrorCode::InvalidPath, error.to_string()))?;
-    Ok(response.uri.map(|uri| {
-        let label = response.name.unwrap_or_else(|| uri.clone());
-        (uri, label)
-    }))
-}
-
-#[cfg(not(target_os = "android"))]
-pub fn pick_writable_folder<R: Runtime>(
-    _app: &AppHandle<R>,
-    path: Option<&str>,
-) -> Result<Option<(String, String)>, AppError> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    if !Path::new(path).is_dir() {
-        return Err(AppError::new(
-            ErrorCode::InvalidPath,
-            "the backup folder was not found",
-        ));
-    }
-    Ok(Some((path.to_string(), path.to_string())))
-}
-
-/// Registers the Android document helper in `gen/android` (`DocumentPlugin.kt`).
-pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("gripread-documents")
-        .setup(|_app, _api| {
-            #[cfg(target_os = "android")]
-            {
-                use tauri::Manager;
-                let handle =
-                    _api.register_android_plugin("com.gripread.reader", "DocumentPlugin")?;
-                _app.manage(DocumentPlugin(handle));
-            }
-            Ok(())
-        })
-        .build()
 }
 
 #[cfg(test)]

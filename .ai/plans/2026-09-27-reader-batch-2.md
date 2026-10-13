@@ -25,7 +25,7 @@ Each numbered slice is a reviewable commit boundary; a large slice may use multi
 
 ## Interfaces
 
-The [navigation decision](../notes/implemented/2026-09-27-reader-navigation-and-modes.md) records the shared ownership and links authoritative declarations. The existing [Rust declarations](../../src-tauri/src/models.rs), [service ports](../../src/services/contracts.ts), [IPC adapter](../../src/services/ipc.ts), and [controller types](../../src/reader/types.ts) change together with all consumers and mocks. `ContentWindow` and persisted `ReaderLocator` retain their wire formats; derived layout bounds preserve book/resource identity, content version, and whole-book length.
+The [navigation decision](../notes/implemented/2026-09-27-reader-navigation-and-modes.md) records the shared ownership and links authoritative declarations. The existing [Rust declarations](../../crates/core/src/models.rs), [service ports](../../src/services/contracts.ts), [IPC adapter](../../src/services/ipc.ts), and [controller types](../../src/reader/types.ts) change together with all consumers and mocks. `ContentWindow` and persisted `ReaderLocator` retain their wire formats; derived layout bounds preserve book/resource identity, content version, and whole-book length.
 
 Use the [phased preference proposal](../notes/implemented/2026-09-24-reader-preferences-v2-and-assets.md) for compatibility. Batch 2 adds only mode, scroll speed, and effect choices to the existing settings record. Asset storage and the larger nested settings migration remain separate. The existing whole-book resolver remains available while chapter targeting gains an exact offset path.
 

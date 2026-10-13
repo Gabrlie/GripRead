@@ -1,0 +1,60 @@
+[package]
+name = "gripread-core"
+version = "0.1.0"
+description = "GripRead's library, reader, sources, and sync, free of any platform shell"
+authors = ["GripRead contributors"]
+edition = "2021"
+rust-version = "1.87"
+
+[lib]
+name = "gripread_core"
+
+[[bin]]
+name = "generate-types"
+path = "src/bin/generate_types.rs"
+
+[features]
+# Native end-to-end builds may inject storage failures.
+native-test = []
+
+[dependencies]
+fs2 = "0.4.3"
+chardetng = "0.1.17"
+encoding_rs = "0.8.35"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+regex = "1.13.1"
+ts-rs = "12.0.1"
+thiserror = "2.0.20"
+uuid = { version = "1.24.1", features = ["v4", "serde"] }
+fancy-regex = "0.19.2"
+aho-corasick = "1.1.5"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "brotli", "socks-proxy"] }
+rquickjs = { version = "0.14", default-features = false, features = ["classes", "properties"] }
+scraper = { version = "0.27", features = ["deterministic"] }
+sxd-document = "0.3"
+sxd-xpath = "0.4"
+serde_json_path = "0.7"
+url = "2"
+md-5 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+des = "0.8"
+cbc = "0.1"
+ecb = "0.1"
+base64 = "0.22"
+hex = "0.4"
+cipher = { version = "0.4", features = ["block-padding", "alloc"] }
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+ego-tree = "0.11"
+tokio = { version = "1.53", features = ["rt"] }
+
+# rquickjs ships no pregenerated bindings for Android; generate them there.
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { version = "0.14", default-features = false, features = ["classes", "properties", "bindgen"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["rt", "macros"] }

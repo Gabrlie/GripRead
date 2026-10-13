@@ -1,9 +1,9 @@
-import { addPluginListener, invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { addPluginListener } from "@tauri-apps/api/core";
 import type { AppServices } from "./contracts";
 import { appLog } from "./log";
+import { androidApp, call, listen, native } from "./transport";
+import { finishSave, pickFiles, pickSaveTarget, pickTxtFolderFiles } from "./files";
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
-import { listen } from "@tauri-apps/api/event";
 
 import type {
   SearchOnlineRequest,
@@ -196,7 +196,7 @@ const QUIET_CODES = new Set([
 ]);
 
 function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(command, args).catch((error: unknown) => {
+  return call<T>(command, args).catch((error: unknown) => {
     const normalized = normalizeError(error);
     if (!QUIET_CODES.has(normalized.code))
       appLog.write("warn", "command", `${command}：${normalized.message}`);
@@ -207,9 +207,7 @@ function invokeCommand<T>(command: string, args?: Record<string, unknown>): Prom
 export const tauriServices: AppServices = {
   library: {
     pickAndImportTxt: async (encoding) => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "TXT 文本", extensions: ["txt"] }],
       });
       if (selected === null) return null;
@@ -261,27 +259,24 @@ export const tauriServices: AppServices = {
         request: { bookId, placement } satisfies MoveBookRequest,
       }),
     pickTxtFiles: async () => {
-      const selected = await open({
+      const selected = await pickFiles({
         multiple: true,
-        directory: false,
         filters: [{ name: "TXT 文本", extensions: ["txt"] }],
       });
-      if (selected === null) return [];
-      return Array.isArray(selected) ? selected : [selected];
+      return selected;
     },
     pickTxtFolder: async () => {
-      // Android lists the folder inside the system picker (DocumentPlugin.kt).
-      const android = /Android/i.test(navigator.userAgent);
-      const folder = android ? "" : await open({ multiple: false, directory: true });
-      if (folder === null || Array.isArray(folder)) return [];
+      // Android lists the folder inside the system picker (DocumentPlugin.kt);
+      // the web version uploads the folder's TXT files.
+      const folder = androidApp() ? "" : await pickTxtFolderFiles();
+      if (folder === null) return [];
+      if (typeof folder !== "string") return folder;
       return invokeCommand<PickedFile[]>("list_txt_folder", {
         request: { path: folder } satisfies PathRequest,
       });
     },
     pickBookCover: async (bookId) => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
       });
       if (selected === null || Array.isArray(selected)) return false;
@@ -314,14 +309,11 @@ export const tauriServices: AppServices = {
       invokeCommand<ReadingStats>("reading_stats", {
         request: { today } satisfies ReadingStatsRequest,
       }),
-    onImportProgress: (listener) =>
-      listen<ImportStatus>("import-progress", (event) => listener(event.payload)),
+    onImportProgress: (listener) => listen<ImportStatus>("import-progress", listener),
     getTxtEncoding: (bookId) =>
       invokeCommand<TxtEncodingInfo>("get_txt_encoding", { request: { bookId } }),
     pickAndReassociateTxt: async (bookId) => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "TXT 文本", extensions: ["txt"] }],
       });
       if (selected === null) return null;
@@ -341,8 +333,7 @@ export const tauriServices: AppServices = {
       invokeCommand<CancelResult>("cancel_txt_decode", {
         request: { operationId } satisfies ImportOperationRequest,
       }),
-    onTxtDecodeProgress: (listener) =>
-      listen<TxtDecodeStatus>("txt-decode-progress", (event) => listener(event.payload)),
+    onTxtDecodeProgress: (listener) => listen<TxtDecodeStatus>("txt-decode-progress", listener),
     getBookInfo: (bookId) =>
       invokeCommand<BookInfo>("get_book_info", { request: { bookId } satisfies BookRequest }),
   },
@@ -426,9 +417,7 @@ export const tauriServices: AppServices = {
         request: { settings } satisfies SaveSettingsRequest,
       }),
     pickAndImportFont: async () => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "字体", extensions: ["ttf", "otf", "ttc", "woff", "woff2"] }],
       });
       if (selected === null) return null;
@@ -439,9 +428,7 @@ export const tauriServices: AppServices = {
     },
     listFonts: () => invokeCommand<ReaderAsset[]>("list_reader_fonts"),
     pickBackgroundImage: async () => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
@@ -485,12 +472,10 @@ export const tauriServices: AppServices = {
       invokeCommand<WebDavCheck>("test_webdav", { request: request satisfies SaveWebDavRequest }),
     setBackupFolder: async (clear) => {
       // Android shows its own folder picker (DocumentPlugin.kt).
-      const android = /Android/i.test(navigator.userAgent);
       let path: string | null = clear ? "" : null;
-      if (!clear && !android) {
-        const picked = await open({ multiple: false, directory: true });
-        if (picked === null || Array.isArray(picked))
-          return invokeCommand<WebDavSettings>("get_webdav_settings");
+      if (!clear && !androidApp()) {
+        const picked = native ? await pickTxtFolderFiles() : null;
+        if (typeof picked !== "string") return invokeCommand<WebDavSettings>("get_webdav_settings");
         path = picked;
       }
       return invokeCommand<WebDavSettings>("set_backup_folder", {
@@ -504,9 +489,7 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("delete_remote_backup", { request: { name } satisfies NameRequest }),
     listRecoveryPoints: () => invokeCommand<string[]>("list_recovery_points"),
     pickBackupFile: async () => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "GripRead 备份", extensions: ["json"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
@@ -522,17 +505,19 @@ export const tauriServices: AppServices = {
       }),
     exportBackupFile: async () => {
       // Android shows its own "save as" screen (DocumentPlugin.kt).
-      const android = /Android/i.test(navigator.userAgent);
+      const android = androidApp();
       const path = android
         ? null
-        : await save({
+        : await pickSaveTarget({
             defaultPath: `gripread-backup-${new Date().toISOString().slice(0, 10)}.json`,
             filters: [{ name: "GripRead 备份", extensions: ["json"] }],
           });
       if (!android && path === null) return false;
-      return invokeCommand<boolean>("export_backup_file", {
-        request: { path } satisfies OptionalPathRequest,
-      });
+      return finishSave(
+        await invokeCommand<boolean>("export_backup_file", {
+          request: { path } satisfies OptionalPathRequest,
+        }),
+      );
     },
     listCloudBooks: () => invokeCommand<CloudBook[]>("list_cloud_books"),
     uploadBooks: (bookIds) =>
@@ -575,9 +560,7 @@ export const tauriServices: AppServices = {
     fetchText: (url) =>
       invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),
     pickSourceFile: async () => {
-      const selected = await open({
-        multiple: false,
-        directory: false,
+      const selected = await pickFiles({
         filters: [{ name: "书源", extensions: ["json", "txt"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
@@ -609,17 +592,19 @@ export const tauriServices: AppServices = {
       }),
     exportSourcesFile: async (urls) => {
       // Android shows its own "save as" screen (DocumentPlugin.kt).
-      const android = /Android/i.test(navigator.userAgent);
+      const android = androidApp();
       const path = android
         ? null
-        : await save({
+        : await pickSaveTarget({
             defaultPath: "bookSource.json",
             filters: [{ name: "书源", extensions: ["json"] }],
           });
       if (!android && path === null) return false;
-      return invokeCommand<boolean>("export_book_sources_file", {
-        request: { path, urls } satisfies ExportSourcesFileRequest,
-      });
+      return finishSave(
+        await invokeCommand<boolean>("export_book_sources_file", {
+          request: { path, urls } satisfies ExportSourcesFileRequest,
+        }),
+      );
     },
     getLoginForm: (url) =>
       invokeCommand<SourceLoginForm>("get_source_login_form", {
@@ -641,14 +626,12 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("clear_source_cookies", { request: { url } satisfies SourceUrlRequest }),
     debug: (request) =>
       invokeCommand<void>("debug_book_source", { request: request satisfies DebugSourceRequest }),
-    onDebug: (listener) =>
-      listen<SourceDebugEvent>("source-debug", (event) => listener(event.payload)),
+    onDebug: (listener) => listen<SourceDebugEvent>("source-debug", listener),
     check: (request) =>
       invokeCommand<void>("check_book_sources", {
         request: request satisfies CheckSourcesRequest,
       }),
-    onCheck: (listener) =>
-      listen<SourceCheckEvent>("source-check", (event) => listener(event.payload)),
+    onCheck: (listener) => listen<SourceCheckEvent>("source-check", listener),
     cancel: (operationId) =>
       invokeCommand<CancelResult>("cancel_source_operation", {
         request: { operationId } satisfies ImportOperationRequest,
@@ -657,8 +640,7 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("search_online_books", {
         request: request satisfies SearchOnlineRequest,
       }),
-    onSearch: (listener) =>
-      listen<OnlineSearchEvent>("online-search", (event) => listener(event.payload)),
+    onSearch: (listener) => listen<OnlineSearchEvent>("online-search", listener),
     exploreKinds: (sourceUrl, refresh = false) =>
       invokeCommand<ExploreKind[]>("explore_kinds", {
         request: { sourceUrl, refresh } satisfies ExploreKindsRequest,
@@ -734,8 +716,7 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("update_online_toc", {
         request: request satisfies UpdateOnlineTocRequest,
       }),
-    onTocUpdate: (listener) =>
-      listen<OnlineTocEvent>("online-toc", (event) => listener(event.payload)),
+    onTocUpdate: (listener) => listen<OnlineTocEvent>("online-toc", listener),
     enqueueDownload: (bookId, start, end) =>
       invokeCommand<DownloadJob>("download_enqueue", {
         request: { bookId, start, end } satisfies DownloadRequest,
@@ -749,8 +730,7 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("download_cancel", { request: { id } satisfies DownloadJobRequest }),
     pauseAllDownloads: () => invokeCommand<void>("download_pause_all"),
     clearFinishedDownloads: () => invokeCommand<void>("download_clear_finished"),
-    onDownloads: (listener) =>
-      listen<DownloadJob[]>("download-progress", (event) => listener(event.payload)),
+    onDownloads: (listener) => listen<DownloadJob[]>("download-progress", listener),
     onDownloadStop: async (listener) => {
       // Only the Android plugin has the notification; elsewhere nothing stops it.
       try {

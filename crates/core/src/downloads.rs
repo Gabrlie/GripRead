@@ -410,58 +410,27 @@ impl ChapterStore for LibraryChapters {
     }
 }
 
-/// The Android foreground service and notification while jobs run.
-pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("gripread-downloads")
-        .setup(|_app, _api| {
-            #[cfg(target_os = "android")]
-            {
-                use tauri::Manager;
-                let handle =
-                    _api.register_android_plugin("com.gripread.reader", "DownloadPlugin")?;
-                _app.manage(DownloadPlugin(handle));
-            }
-            Ok(())
-        })
-        .build()
-}
-
-#[cfg(target_os = "android")]
-pub struct DownloadPlugin<R: tauri::Runtime>(pub tauri::plugin::PluginHandle<R>);
-
-/// Shows, updates, or ends the notification for the jobs now in the queue.
-pub fn notify<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, jobs: &[DownloadJob]) {
-    #[cfg(target_os = "android")]
+/// The download notification's contents for the jobs now in the queue:
+/// shown while any job runs or waits (`active`), ended otherwise.
+pub fn notification(jobs: &[DownloadJob]) -> serde_json::Value {
+    let active: Vec<&DownloadJob> = jobs
+        .iter()
+        .filter(|job| matches!(job.state, DownloadState::Running | DownloadState::Queued))
+        .collect();
+    match active
+        .iter()
+        .find(|job| job.state == DownloadState::Running)
+        .or(active.first())
     {
-        use tauri::Manager;
-        let Some(plugin) = _app.try_state::<DownloadPlugin<R>>() else {
-            return;
-        };
-        let active: Vec<&DownloadJob> = jobs
-            .iter()
-            .filter(|job| matches!(job.state, DownloadState::Running | DownloadState::Queued))
-            .collect();
-        let payload = if let Some(first) = active
-            .iter()
-            .find(|job| job.state == DownloadState::Running)
-            .or(active.first())
-        {
-            serde_json::json!({
-                "active": true,
-                "title": format!("正在缓存 {} 本", active.len()),
-                "text": format!("{} {}/{}", first.title, first.cached + first.failed, first.total),
-                "progress": first.cached + first.failed,
-                "max": first.total,
-            })
-        } else {
-            serde_json::json!({ "active": false })
-        };
-        let _ = plugin
-            .0
-            .run_mobile_plugin::<serde_json::Value>("update", payload);
+        Some(first) => serde_json::json!({
+            "active": true,
+            "title": format!("正在缓存 {} 本", active.len()),
+            "text": format!("{} {}/{}", first.title, first.cached + first.failed, first.total),
+            "progress": first.cached + first.failed,
+            "max": first.total,
+        }),
+        None => serde_json::json!({ "active": false }),
     }
-    #[cfg(not(target_os = "android"))]
-    let _ = jobs;
 }
 
 #[cfg(test)]

@@ -11,9 +11,9 @@ pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             {
                 let handle =
                     _api.register_android_plugin("com.gripread.reader", "WebViewPlugin")?;
-                crate::sources::webview::set_host(Some(std::sync::Arc::new(android::Host::new(
-                    handle,
-                ))));
+                gripread_core::sources::webview::set_host(Some(std::sync::Arc::new(
+                    android::Host::new(handle),
+                )));
             }
             Ok(())
         })
@@ -22,7 +22,7 @@ pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 #[cfg(target_os = "android")]
 mod android {
-    use crate::sources::webview::{BrowseRequest, WebRequest, WebResult, WebViewHost};
+    use gripread_core::sources::webview::{BrowseRequest, WebRequest, WebResult, WebViewHost};
     use std::sync::{Condvar, Mutex};
 
     /// Pages rendered at once; more wait their turn.

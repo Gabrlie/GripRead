@@ -9,9 +9,7 @@ function fixture(files, run) {
   const root = mkdtempSync(join(tmpdir(), "gripread-boundaries-"));
   try {
     for (const [file, content] of Object.entries({
-      "src-tauri/src/models.rs": "",
-      "src-tauri/src/storage.rs": "",
-      "src-tauri/src/txt.rs": "",
+      "crates/core/Cargo.toml": '[dependencies]\nserde = "1"\n',
       ...files,
     })) {
       const path = join(root, file);
@@ -69,14 +67,28 @@ test("lets component tests import shared test helpers but not production pages",
 test("keeps the source engine free of Tauri", () => {
   fixture(
     {
-      "src-tauri/src/sources/js/mod.rs": "use tauri::AppHandle;",
-      "src-tauri/src/sources/rule.rs": "fn rule() {}",
+      "crates/core/src/sources/js/mod.rs": "use tauri::AppHandle;",
+      "crates/core/src/sources/rule.rs": "fn rule() {}",
       "src/main.ts": "",
     },
     (root) => {
       const errors = checkBoundaries(root);
       assert.deepEqual(errors, [
-        "src-tauri/src/sources/js/mod.rs: the source engine cannot depend on Tauri",
+        "crates/core/src/sources/js/mod.rs: the source engine cannot depend on Tauri",
+      ]);
+    },
+  );
+});
+
+test("keeps the core free of Tauri", () => {
+  fixture(
+    {
+      "crates/core/Cargo.toml": '[dependencies]\ntauri = { version = "2" }\n',
+      "src/main.ts": "",
+    },
+    (root) => {
+      assert.deepEqual(checkBoundaries(root), [
+        "crates/core/Cargo.toml: the core cannot depend on Tauri",
       ]);
     },
   );

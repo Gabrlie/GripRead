@@ -1538,6 +1538,20 @@ dependencies = [
 name = "gripread"
 version = "0.1.0"
 dependencies = [
+ "gripread-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-wdio",
+ "tauri-plugin-wdio-webdriver",
+]
+
+[[package]]
+name = "gripread-core"
+version = "0.1.0"
+dependencies = [
  "aes",
  "aho-corasick",
  "base64 0.22.1",
@@ -1565,12 +1579,8 @@ dependencies = [
  "sha2",
  "sxd-document",
  "sxd-xpath",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-wdio",
- "tauri-plugin-wdio-webdriver",
  "thiserror 2.0.20",
+ "tokio",
  "ts-rs",
  "ureq",
  "url",

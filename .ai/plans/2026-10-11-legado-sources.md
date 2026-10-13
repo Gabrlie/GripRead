@@ -10,7 +10,7 @@ Find, follow, cache, and read online novels through Legado text sources (`bookSo
 
 Milestones, each committed separately:
 
-- (S1) A Rust rule engine in `src-tauri/src/sources/`: Legado rule analysis (Jsoup default syntax, CSS, XPath, JSONPath, regex, templates, variables), URL construction and HTTP with cookies, charsets, and request rates, a synchronous QuickJS host for `java.*` and the other script objects, and the search, explore, info, table-of-contents, and content chains, all against local fixtures.
+- (S1) A Rust rule engine in `crates/core/src/sources/`: Legado rule analysis (Jsoup default syntax, CSS, XPath, JSONPath, regex, templates, variables), URL construction and HTTP with cookies, charsets, and request rates, a synchronous QuickJS host for `java.*` and the other script objects, and the search, explore, info, table-of-contents, and content chains, all against local fixtures.
 - (S2) Source storage, import (URL, file, pasted JSON) with a preview, the 书源管理 page with Legado's sort, groups, and batch actions, the tabbed source editor, debugging, `loginUi` login, and source checking.
 - (S3) Progressive multi-source search with Legado's merging, the 发现 tab, and the online book information page.
 - (S4) Online books on the shelf and in the reader, one reader resource per chapter, chapter cache, pre-download, table-of-contents updates, and offline caching.

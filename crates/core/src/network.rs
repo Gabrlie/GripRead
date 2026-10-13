@@ -140,7 +140,7 @@ fn net_config(settings: &NetworkSettings, system: &NetworkState) -> NetConfig {
 
 static LIMITS: RwLock<Option<ConcurrencyLimits>> = RwLock::new(None);
 
-type Detector = Box<dyn Fn() -> Option<String> + Send + Sync>;
+pub type Detector = Box<dyn Fn() -> Option<String> + Send + Sync>;
 /// How the platform reports its proxy as `host:port` (the Android plugin);
 /// without one the `HTTPS_PROXY`/`HTTP_PROXY` environment variables are read.
 static DETECTOR: OnceLock<Detector> = OnceLock::new();
@@ -181,29 +181,10 @@ pub fn limits() -> ConcurrencyLimits {
         .unwrap_or_else(|| preset_limits(ConcurrencyPreset::Balanced))
 }
 
-/// Registers the Android plugin that reports the device's proxy.
-pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("gripread-network")
-        .setup(|_app, _api| {
-            #[cfg(target_os = "android")]
-            {
-                #[derive(serde::Deserialize)]
-                struct Found {
-                    host: Option<String>,
-                    port: Option<u16>,
-                }
-                let handle =
-                    _api.register_android_plugin("com.gripread.reader", "NetworkPlugin")?;
-                let _ = DETECTOR.set(Box::new(move || {
-                    let found: Found = handle
-                        .run_mobile_plugin("systemProxy", serde_json::json!({}))
-                        .ok()?;
-                    Some(format!("{}:{}", found.host?, found.port?))
-                }));
-            }
-            Ok(())
-        })
-        .build()
+/// Installs how the platform reports its proxy as `host:port` (the Android
+/// shell's `NetworkPlugin`); a second call is ignored.
+pub fn set_detector(detector: Detector) {
+    let _ = DETECTOR.set(detector);
 }
 
 fn path(root: &Path) -> PathBuf {

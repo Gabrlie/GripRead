@@ -26,7 +26,7 @@ Arbitrary Java classes and Android-only APIs other than the WebView are not comp
 
 ### Runtime
 
-The engine lives in `src-tauri/src/sources/` and runs scripts in QuickJS with blocking host calls, as recorded in the [engine decision](../notes/implemented/2026-10-11-source-engine.md). ColorTxt's Node execution and asynchronous rewriting are not used. Rule execution runs outside the UI thread with bounded memory, a deadline, request timeouts, and cancellation. Requests carry Legado's desktop Chrome User-Agent unless the source sets one, and addresses are percent-encoded as OkHttp sends them. Source scripts receive only declared host capabilities: requests through the source's rules, the source's cache, cookies, and login state, and Jsoup-style elements. They get no arbitrary files, database access, or UI IPC. Script-level synchronous HTTP semantics are unrelated to WebDAV synchronization.
+The engine lives in `crates/core/src/sources/` and runs scripts in QuickJS with blocking host calls, as recorded in the [engine decision](../notes/implemented/2026-10-11-source-engine.md). ColorTxt's Node execution and asynchronous rewriting are not used. Rule execution runs outside the UI thread with bounded memory, a deadline, request timeouts, and cancellation. Requests carry Legado's desktop Chrome User-Agent unless the source sets one, and addresses are percent-encoded as OkHttp sends them. Source scripts receive only declared host capabilities: requests through the source's rules, the source's cache, cookies, and login state, and Jsoup-style elements. They get no arbitrary files, database access, or UI IPC. Script-level synchronous HTTP semantics are unrelated to WebDAV synchronization.
 
 ### Capability status
 

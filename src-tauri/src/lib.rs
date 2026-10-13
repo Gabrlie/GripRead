@@ -1,75 +1,32 @@
-pub mod app_log;
-mod cloud;
-pub mod commands;
-pub mod documents;
-mod downloads;
-pub mod error;
-pub mod m1_txt;
-pub mod models;
-mod network;
-mod online_commands;
-mod online_reader;
-mod progress_sync;
-mod relocation;
-pub mod source_commands;
-pub mod sources;
-pub mod storage;
-mod transform;
-pub mod txt;
-pub mod txt_toc;
-pub mod typegen;
-mod webdav;
+//! The Tauri app: the core's commands behind one `rpc` command, its events
+//! as Tauri events, and the platform plugins (documents, downloads, network,
+//! and the WebView for sources).
+
+mod plugins;
 mod webview;
 
-use commands::{acknowledge_book_progress, delete_book, fetch_book_progress, upload_book_progress};
-use commands::{
-    add_bookmark, cancel_import, cancel_search, cancel_txt_decode, create_group, delete_bookmark,
-    delete_group, delete_txt_toc_rule, export_txt_toc_rules, get_book_info, get_import_status,
-    get_saved_reader_locator, get_settings, get_shelf_preferences, get_txt_decode_status,
-    get_txt_encoding, import_txt_toc_rules, list_bookmarks, list_books, list_groups,
-    list_removed_books, list_toc, list_txt_toc_rules, order_txt_toc_rules, read_content_window,
-    reassociate_txt_source, remove_book, rename_group, resolve_reader_locator,
-    resolve_reader_offset, restore_book, save_book_toc_settings, save_reader_locator,
-    save_settings, save_shelf_preferences, save_txt_toc_rule, search_book, set_txt_encoding,
-    start_import, start_txt_decode, test_txt_toc_rule, update_book, AppState,
-};
-use commands::{
-    add_reading_time, clear_book_cover, delete_reader_font, import_reader_background,
-    import_reader_font, list_reader_fonts, list_txt_folder, move_book, read_reader_font,
-    reading_stats, set_book_cover, update_bookmark_note,
-};
-use commands::{
-    backup_to_webdav, clear_logs, delete_cloud_book, delete_reading_record, delete_remote_backup,
-    download_cloud_book, export_backup_file, export_log_text, get_webdav_settings,
-    list_cloud_books, list_log_entries, list_recovery_points, list_remote_backups, log_frontend,
-    preview_backup, restore_backup, run_automatic_backup, save_webdav_settings, set_backup_folder,
-    set_detailed_log, test_webdav, upload_cloud_books,
-};
-use commands::{
-    delete_replace_rules, ensure_text_transforms, export_replace_rules, import_replace_rules,
-    list_replace_rules, order_replace_rules, save_replace_rule, set_book_replace_rules,
-    test_replace_rule,
-};
-use online_commands::{
-    add_online_book, change_online_source, check_network, clear_data, clear_online_cache,
-    convert_online_to_local, data_usage, download_cancel, download_clear_finished,
-    download_enqueue, download_list, download_pause, download_pause_all, download_resume,
-    explore_books, explore_kinds, find_online_book, get_library_book, get_network_settings,
-    leave_online_book, list_online_chapters, network_state, online_book_chapters, online_book_info,
-    online_chapter_content, online_cover, save_network_settings, search_online_books,
-    set_cover_from_source, set_online_can_update, set_online_on_shelf, update_online_toc,
-    OnlinePages,
-};
-use source_commands::{
-    cancel_source_operation, change_book_sources_group, check_book_sources, clear_source_cookies,
-    debug_book_source, delete_book_sources, export_book_sources, fetch_source_text,
-    get_book_source, get_source_login_form, get_source_variable, import_book_sources,
-    list_book_sources, login_book_source, move_book_sources, preview_source_import,
-    save_book_source, set_book_sources_switch, set_source_variable, SourceOperations,
-};
-use source_commands::{export_book_sources_file, read_source_file};
+use gripread_core::api::{self, Reply};
+use gripread_core::commands::AppState;
+use gripread_core::error::AppError;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::ipc::{InvokeResponseBody, Response};
 use tauri::{Emitter, Manager};
+
+/// Runs a core command by name (see `gripread_core::api`).
+#[tauri::command]
+async fn rpc(
+    name: String,
+    args: Option<serde_json::Value>,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Response, AppError> {
+    let state = state.inner().clone();
+    let reply = api::dispatch(&state, &name, args.unwrap_or(serde_json::Value::Null)).await?;
+    Ok(Response::new(match reply {
+        Reply::Json(value) => InvokeResponseBody::Json(value.to_string()),
+        Reply::Bytes(bytes) => InvokeResponseBody::Raw(bytes),
+    }))
+}
 
 #[derive(Default)]
 struct ExitPermission(AtomicBool);
@@ -92,10 +49,10 @@ fn request_exit(app: tauri::AppHandle) {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(documents::init())
-        .plugin(downloads::plugin())
+        .plugin(plugins::documents())
+        .plugin(plugins::downloads())
         .plugin(webview::plugin())
-        .plugin(network::plugin());
+        .plugin(plugins::network());
     #[cfg(feature = "native-test")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
@@ -108,38 +65,14 @@ pub fn run() {
             let data_dir = std::env::var_os("GRIPREAD_TEST_DATA_DIR")
                 .map(std::path::PathBuf::from)
                 .ok_or("native-test builds require an isolated GRIPREAD_TEST_DATA_DIR")?;
-            app_log::init(&data_dir);
-            app_log::info(
-                "app",
-                format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
-            );
-            let state = AppState::new(data_dir.clone())?;
-            if let Err(error) = network::start(&state.data_root) {
-                app_log::warn(
-                    "network",
-                    format!("网络设置无效，已用默认：{}", error.message),
-                );
-            }
             let handle = app.handle().clone();
-            app.manage(downloads::Downloads::new(
-                std::sync::Arc::new(downloads::LibraryChapters(state.storage.clone())),
-                std::sync::Arc::new(|| {
-                    let limits = network::limits();
-                    (
-                        usize::from(limits.download_books),
-                        usize::from(limits.download_chapters),
-                    )
-                }),
-                std::sync::Arc::new(move |jobs: &[models::DownloadJob]| {
-                    let _ = handle.emit("download-progress", jobs.to_vec());
-                    downloads::notify(&handle, jobs);
-                }),
-                Some(state.data_root.join("downloads.json")),
-            ));
+            let state = AppState::open(
+                data_dir,
+                Arc::new(plugins::TauriEvents(handle.clone())),
+                Arc::new(plugins::AppPlatform(handle)),
+            )?;
             app.manage(state);
             app.manage(ExitPermission::default());
-            app.manage(SourceOperations::default());
-            app.manage(std::sync::Arc::new(OnlinePages::default()));
             #[cfg(target_os = "macos")]
             {
                 // AppKit's predefined Quit invokes terminate: directly and
@@ -175,158 +108,13 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            list_book_sources,
-            get_book_source,
-            preview_source_import,
-            import_book_sources,
-            save_book_source,
-            delete_book_sources,
-            set_book_sources_switch,
-            change_book_sources_group,
-            move_book_sources,
-            export_book_sources,
-            fetch_source_text,
-            get_source_login_form,
-            login_book_source,
-            get_source_variable,
-            set_source_variable,
-            clear_source_cookies,
-            debug_book_source,
-            check_book_sources,
-            cancel_source_operation,
-            read_source_file,
-            export_book_sources_file,
-            search_online_books,
-            explore_kinds,
-            explore_books,
-            online_book_info,
-            online_book_chapters,
-            online_chapter_content,
-            online_cover,
-            set_cover_from_source,
-            add_online_book,
-            clear_data,
-            data_usage,
-            convert_online_to_local,
-            change_online_source,
-            find_online_book,
-            get_library_book,
-            set_online_on_shelf,
-            set_online_can_update,
-            leave_online_book,
-            list_online_chapters,
-            clear_online_cache,
-            update_online_toc,
-            get_network_settings,
-            network_state,
-            save_network_settings,
-            check_network,
-            download_enqueue,
-            download_list,
-            download_pause,
-            download_resume,
-            download_cancel,
-            download_pause_all,
-            download_clear_finished,
-            start_import,
-            get_import_status,
-            cancel_import,
-            list_books,
-            list_groups,
-            create_group,
-            rename_group,
-            delete_group,
-            move_book,
-            get_txt_encoding,
-            reassociate_txt_source,
-            start_txt_decode,
-            get_txt_decode_status,
-            cancel_txt_decode,
-            set_txt_encoding,
-            read_content_window,
-            save_reader_locator,
-            get_saved_reader_locator,
-            resolve_reader_locator,
-            resolve_reader_offset,
-            get_settings,
-            save_settings,
-            list_toc,
-            list_bookmarks,
-            add_bookmark,
-            delete_bookmark,
-            search_book,
-            cancel_search,
-            complete_exit,
-            request_exit,
-            update_book,
-            remove_book,
-            restore_book,
-            list_removed_books,
-            get_shelf_preferences,
-            save_shelf_preferences,
-            list_txt_toc_rules,
-            save_txt_toc_rule,
-            delete_txt_toc_rule,
-            order_txt_toc_rules,
-            import_txt_toc_rules,
-            export_txt_toc_rules,
-            test_txt_toc_rule,
-            save_book_toc_settings,
-            get_book_info,
-            import_reader_font,
-            list_reader_fonts,
-            read_reader_font,
-            delete_reader_font,
-            update_bookmark_note,
-            add_reading_time,
-            reading_stats,
-            set_book_cover,
-            clear_book_cover,
-            list_txt_folder,
-            import_reader_background,
-            ensure_text_transforms,
-            list_replace_rules,
-            save_replace_rule,
-            delete_replace_rules,
-            order_replace_rules,
-            import_replace_rules,
-            export_replace_rules,
-            test_replace_rule,
-            set_book_replace_rules,
-            get_webdav_settings,
-            save_webdav_settings,
-            test_webdav,
-            backup_to_webdav,
-            run_automatic_backup,
-            list_remote_backups,
-            delete_remote_backup,
-            list_recovery_points,
-            preview_backup,
-            restore_backup,
-            export_backup_file,
-            list_log_entries,
-            delete_reading_record,
-            set_detailed_log,
-            clear_logs,
-            export_log_text,
-            log_frontend,
-            list_cloud_books,
-            upload_cloud_books,
-            download_cloud_book,
-            delete_cloud_book,
-            set_backup_folder,
-            delete_book,
-            upload_book_progress,
-            fetch_book_progress,
-            acknowledge_book_progress
-        ])
+        .invoke_handler(tauri::generate_handler![rpc, complete_exit, request_exit])
         .build(tauri::generate_context!())
         .expect("error while building GripRead")
         .run(|app, event| {
             if let tauri::RunEvent::Resumed = event {
-                let root = app.state::<AppState>().data_root.clone();
-                std::thread::spawn(move || network::refresh(&root));
+                let root = app.state::<Arc<AppState>>().data_root.clone();
+                std::thread::spawn(move || gripread_core::network::refresh(&root));
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app
