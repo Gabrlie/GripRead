@@ -96,6 +96,22 @@ function MainContent() {
     setLogViewer(() => setShowLogs(true));
     return () => setLogViewer(null);
   }, []);
+  // The Android download notification's 停止 pauses the queue.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    const sources = runtime.services.sources;
+    void sources
+      .onDownloadStop(() => void sources.pauseAllDownloads())
+      .then((unsubscribe) => {
+        if (active) stop = unsubscribe;
+        else unsubscribe();
+      });
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [runtime]);
   const positionError = useSyncExternalStore(
     runtime.positions.subscribe,
     runtime.positions.getSnapshot,

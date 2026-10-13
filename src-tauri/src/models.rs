@@ -1760,28 +1760,6 @@ pub struct OnlineTocEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct CacheOnlineChaptersRequest {
-    pub operation_id: String,
-    pub book_id: String,
-    /// Chapter positions to keep, from `start` up to but not including `end`.
-    pub start: u32,
-    pub end: u32,
-}
-
-/// Progress of 离线缓存, streamed as `online-cache`.
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineCacheEvent {
-    pub operation_id: String,
-    pub book_id: String,
-    pub cached: u32,
-    pub failed: u32,
-    pub total: u32,
-    pub done: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct SetOnlineBookFlagRequest {
     pub book_id: String,
     pub on: bool,
@@ -1979,4 +1957,47 @@ pub struct DataUsage {
 #[serde(rename_all = "camelCase")]
 pub struct ClearDataRequest {
     pub parts: Vec<String>,
+}
+
+/// Where a 下载管理 job is.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadState {
+    Queued,
+    Running,
+    Paused,
+    Done,
+    Cancelled,
+}
+
+/// One book's chapter range in the download queue.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadJob {
+    pub id: String,
+    pub book_id: String,
+    pub title: String,
+    /// The chapter range `[start, end)`.
+    pub start: u32,
+    pub end: u32,
+    pub state: DownloadState,
+    /// Chapters in the range kept on the device.
+    pub cached: u32,
+    pub failed: u32,
+    pub total: u32,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadRequest {
+    pub book_id: String,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadJobRequest {
+    pub id: String,
 }

@@ -81,6 +81,7 @@ import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { keepOnlineCover, updateOnlineToc } from "../../application/online";
 import { rememberChaptersWhenRead } from "../../application/shelf";
 import { appLog } from "../../services/log";
+import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow } from "../../types/generated";
 
@@ -559,6 +560,7 @@ export function ReaderView() {
   // A book read from search is only kept if the reader adds it (Legado
   // asks the same when leaving a book that is not on the shelf).
   const shelfChoice = useRef<"add" | "leave" | null>(null);
+  const [cachingRange, setCachingRange] = useState(false);
   const [changingSource, setChangingSource] = useState(false);
   const [askShelf, setAskShelf] = useState<{ toDetail: boolean } | null>(null);
   const close = useCallback(
@@ -1180,6 +1182,7 @@ export function ReaderView() {
           }}
           txtTools={!activeBook.online}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
+          onCache={activeBook.online ? () => setCachingRange(true) : undefined}
           replaceEnabled={useReplaceRules}
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
           conversion={style?.chineseConversion ?? "off"}
@@ -1505,6 +1508,13 @@ export function ReaderView() {
       )}
       {cloudProgress && (
         <CloudProgressDialog prompt={cloudProgress} onAnswer={answerCloudProgress} />
+      )}
+      {cachingRange && activeBook.online && (
+        <CacheRangeDialog
+          book={activeBook}
+          current={state.contentWindow?.resourceIndex ?? undefined}
+          onClose={() => setCachingRange(false)}
+        />
       )}
       {changingSource && activeBook.online && (
         <ChangeSourceDialog

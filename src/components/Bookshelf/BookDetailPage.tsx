@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
 import { READING_GROUPS, shelfGroupOf } from "../../application/shelf";
-import type { BookInfo, LibraryBook, ShelfPlacement } from "../../types/generated";
+import type { BookInfo, DownloadJob, LibraryBook, ShelfPlacement } from "../../types/generated";
 import { ENCODING_NAMES } from "../Reader/dialogs/EncodingDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -11,6 +11,7 @@ import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { updateOnlineToc } from "../../application/online";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
+import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { SourceDetailsDialog } from "../Online/SourceDetailsDialog";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
@@ -646,55 +647,38 @@ function OnlineActions({
   const online = book.online!;
   const id = book.book.id;
   const [updating, setUpdating] = useState(false);
-  const [caching, setCaching] = useState<{ operationId: string; text: string } | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const [changing, setChanging] = useState(false);
   const [converting, setConverting] = useState<"ask" | "busy" | null>(null);
-  const operation = useRef<string | null>(null);
   const complete = online.totalChapters > 0 && online.cachedChapters >= online.totalChapters;
+  // This book's job in 下载管理, which keeps running after the page closes.
+  const [job, setJob] = useState<DownloadJob | null>(null);
+  const downloading = useRef(false);
 
   useEffect(() => {
     let stop: (() => void) | undefined;
     let active = true;
-    void service
-      .onCache((event) => {
-        if (event.operationId !== operation.current) return;
-        if (event.done) {
-          operation.current = null;
-          setCaching(null);
-          toast(`已缓存 ${event.cached} 章${event.failed ? `，${event.failed} 章失败` : ""}`);
-          onChanged();
-          return;
-        }
-        setCaching({
-          operationId: event.operationId,
-          text: `缓存中 ${event.cached + event.failed}/${event.total}`,
-        });
-      })
-      .then((unsubscribe) => {
-        if (active) stop = unsubscribe;
-        else unsubscribe();
-      });
+    const take = (jobs: DownloadJob[]) => {
+      if (!active) return;
+      const mine = jobs.find(
+        (item) => item.bookId === id && (item.state === "running" || item.state === "queued"),
+      );
+      // A download that just ended changed the cached count.
+      if (!mine && downloading.current) onChanged();
+      downloading.current = Boolean(mine);
+      setJob(mine ?? null);
+    };
+    void service.listDownloads().then(take, () => undefined);
+    void service.onDownloads(take).then((unsubscribe) => {
+      if (active) stop = unsubscribe;
+      else unsubscribe();
+    });
     return () => {
       active = false;
       stop?.();
-      if (operation.current) void service.cancel(operation.current);
     };
-  }, [service]);
-
-  const cache = (count: number | null) => {
-    const start = online.readChapter ?? 0;
-    const end = count === null ? online.totalChapters : start + count;
-    const operationId = `cache-${Date.now()}`;
-    operation.current = operationId;
-    setCaching({ operationId, text: "准备缓存" });
-    void service
-      .cacheChapters({ operationId, bookId: id, start, end })
-      .catch((failure: unknown) => {
-        operation.current = null;
-        setCaching(null);
-        toast({ text: String(failure), error: true });
-      });
-  };
+    // The first onChanged is enough: it only asks the page to reload.
+  }, [service, id]);
 
   return (
     <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
@@ -733,47 +717,48 @@ function OnlineActions({
             });
         }}
       />
-      {caching ? (
-        <ActionTile
-          icon="close"
-          label={caching.text}
-          onClick={() => void service.cancel(caching.operationId)}
-        />
-      ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger aria-label="离线缓存" className={TILE_CLASS}>
-            <Icon name="download" size={18} className="text-secondary" />
-            <span>缓存</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={() => cache(50)}>
-              <Icon name="download" size={15} />
-              缓存后面 50 章
+      <DropdownMenu>
+        <DropdownMenuTrigger aria-label="离线缓存" className={TILE_CLASS}>
+          <Icon name="download" size={18} className="text-secondary" />
+          <span>
+            {job
+              ? job.state === "queued"
+                ? "等待缓存"
+                : `缓存中 ${job.cached + job.failed}/${job.total}`
+              : "缓存"}
+          </span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem onClick={() => setChoosing(true)}>
+            <Icon name="download" size={15} />
+            选择章节缓存
+          </DropdownMenuItem>
+          {job && (
+            <DropdownMenuItem onClick={() => void service.pauseDownload(job.id)}>
+              <Icon name="close" size={15} />
+              暂停缓存
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => cache(null)}>
-              <Icon name="download" size={15} />
-              缓存后面全部
+          )}
+          <DropdownMenuItem
+            onClick={() =>
+              void service.clearOnlineCache(id).then(() => {
+                toast("已清除缓存");
+                onChanged();
+              })
+            }
+          >
+            <Icon name="delete" size={15} />
+            清除缓存
+          </DropdownMenuItem>
+          {complete && onConverted && (
+            <DropdownMenuItem onClick={() => setConverting("ask")}>
+              <Icon name="collections_bookmark" size={15} />
+              转为本地书籍
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() =>
-                void service.clearOnlineCache(id).then(() => {
-                  toast("已清除缓存");
-                  onChanged();
-                })
-              }
-            >
-              <Icon name="delete" size={15} />
-              清除缓存
-            </DropdownMenuItem>
-            {complete && onConverted && (
-              <DropdownMenuItem onClick={() => setConverting("ask")}>
-                <Icon name="collections_bookmark" size={15} />
-                转为本地书籍
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {choosing && <CacheRangeDialog book={book} onClose={() => setChoosing(false)} />}
       {converting && (
         <Dialog open onOpenChange={(open) => !open && converting === "ask" && setConverting(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">

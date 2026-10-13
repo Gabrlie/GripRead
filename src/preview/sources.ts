@@ -8,7 +8,7 @@ import type {
   SourceDebugEvent,
   SourceImportItem,
   OnlineTocEvent,
-  OnlineCacheEvent,
+  DownloadJob,
   LibraryBook,
 } from "../types/generated";
 
@@ -76,7 +76,8 @@ export function createMemorySourceService(
   const debugListeners = new Set<(event: SourceDebugEvent) => void>();
   const checkListeners = new Set<(event: SourceCheckEvent) => void>();
   const tocListeners = new Set<(event: OnlineTocEvent) => void>();
-  const cacheListeners = new Set<(event: OnlineCacheEvent) => void>();
+  const downloadListeners = new Set<(jobs: DownloadJob[]) => void>();
+  const downloads: DownloadJob[] = [];
   const kept = new Map<string, LibraryBook>();
   const keptChapters = new Map<string, OnlineChapter[]>();
   const find = (url: string) => sources.find((raw) => raw.bookSourceUrl === url);
@@ -501,21 +502,38 @@ export function createMemorySourceService(
       tocListeners.add(listener);
       return () => tocListeners.delete(listener);
     },
-    cacheChapters: async (request) => {
-      for (const listener of cacheListeners)
-        listener({
-          operationId: request.operationId,
-          bookId: request.bookId,
-          cached: 0,
-          failed: 0,
-          total: 0,
-          done: true,
-        });
+    enqueueDownload: async (bookId, start, end) => {
+      const entry = kept.get(bookId);
+      const job: DownloadJob = {
+        id: `download-${downloads.length + 1}`,
+        bookId,
+        title: entry?.book.title ?? bookId,
+        start,
+        end,
+        state: "done",
+        cached: end - start,
+        failed: 0,
+        total: end - start,
+        createdAt: Date.now(),
+      };
+      downloads.push(job);
+      for (const listener of downloadListeners) listener([...downloads]);
+      return job;
     },
-    onCache: async (listener) => {
-      cacheListeners.add(listener);
-      return () => cacheListeners.delete(listener);
+    listDownloads: async () => [...downloads],
+    pauseDownload: async () => undefined,
+    resumeDownload: async () => undefined,
+    cancelDownload: async () => undefined,
+    pauseAllDownloads: async () => undefined,
+    clearFinishedDownloads: async () => {
+      downloads.splice(0, downloads.length);
+      for (const listener of downloadListeners) listener([]);
     },
+    onDownloads: async (listener) => {
+      downloadListeners.add(listener);
+      return () => downloadListeners.delete(listener);
+    },
+    onDownloadStop: async () => () => undefined,
   };
 }
 

@@ -16,11 +16,10 @@ use crate::commands::with_storage;
 use crate::commands::AppState;
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
-    AddOnlineBookRequest, BookRequest, CacheOnlineChaptersRequest, ExploreBooksRequest,
-    ExploreKindsRequest, LibraryBook, OnlineBook, OnlineBookRequest, OnlineCacheEvent,
-    OnlineChapter, OnlineContent, OnlineContentRequest, OnlineCoverRequest, OnlineSearchEvent,
-    OnlineSearchResult, OnlineTocEvent, SearchOnlineRequest, SetOnlineBookFlagRequest,
-    SourceFailure, UpdateOnlineTocRequest,
+    AddOnlineBookRequest, BookRequest, ExploreBooksRequest, ExploreKindsRequest, LibraryBook,
+    OnlineBook, OnlineBookRequest, OnlineChapter, OnlineContent, OnlineContentRequest,
+    OnlineCoverRequest, OnlineSearchEvent, OnlineSearchResult, OnlineTocEvent, SearchOnlineRequest,
+    SetOnlineBookFlagRequest, SourceFailure, UpdateOnlineTocRequest,
 };
 use crate::source_commands::{
     engine_error, load_source, on_engine_thread, session_for, spawn_engine, SourceOperations,
@@ -1224,45 +1223,6 @@ pub async fn update_online_toc(
     Ok(())
 }
 
-/// Legado's 离线缓存: fetches a range of chapters in the background,
-/// streaming `online-cache` as each one finishes.
-#[tauri::command]
-pub async fn cache_online_chapters(
-    request: CacheOnlineChaptersRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    operations: State<'_, SourceOperations>,
-) -> Result<(), AppError> {
-    let storage = state.storage.clone();
-    let cancel = operations.register(&request.operation_id);
-    let cancels = operations.cancels();
-    spawn_engine(move || {
-        let event = |cached, failed, total, done| OnlineCacheEvent {
-            operation_id: request.operation_id.clone(),
-            book_id: request.book_id.clone(),
-            cached,
-            failed,
-            total,
-            done,
-        };
-        let last = std::cell::Cell::new((0, 0, 0));
-        let _ = crate::online_reader::cache_range(
-            &storage,
-            &request.book_id,
-            request.start,
-            request.end,
-            &|| cancel.load(Ordering::Acquire),
-            &|cached, failed, total| {
-                last.set((cached, failed, total));
-                let _ = app.emit("online-cache", event(cached, failed, total, false));
-            },
-        );
-        SourceOperations::finish(&cancels, &request.operation_id);
-        let (cached, failed, total) = last.get();
-        let _ = app.emit("online-cache", event(cached, failed, total, true));
-    })
-}
-
 /// 数据管理: what the app's data folder holds.
 #[tauri::command]
 pub async fn data_usage(state: State<'_, AppState>) -> Result<crate::models::DataUsage, AppError> {
@@ -1317,4 +1277,54 @@ pub async fn convert_online_to_local(
         guard.library_book(&local)
     })
     .await?
+}
+
+fn downloads(app: &AppHandle) -> tauri::State<'_, crate::downloads::Downloads> {
+    use tauri::Manager;
+    app.state::<crate::downloads::Downloads>()
+}
+
+/// 下载管理: adds a chapter range of an online book to the queue.
+#[tauri::command]
+pub async fn download_enqueue(
+    request: crate::models::DownloadRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::models::DownloadJob, AppError> {
+    let id = request.book_id.clone();
+    let title = with_storage(&state, move |storage| Ok(storage.get_book(&id)?.title)).await?;
+    let queue = downloads(&app).inner().clone();
+    on_engine_thread(move || queue.enqueue(&request.book_id, &title, request.start, request.end))
+        .await?
+}
+
+#[tauri::command]
+pub fn download_list(app: AppHandle) -> Vec<crate::models::DownloadJob> {
+    downloads(&app).list()
+}
+
+#[tauri::command]
+pub fn download_pause(request: crate::models::DownloadJobRequest, app: AppHandle) {
+    downloads(&app).pause(&request.id);
+}
+
+#[tauri::command]
+pub fn download_resume(request: crate::models::DownloadJobRequest, app: AppHandle) {
+    downloads(&app).resume(&request.id);
+}
+
+#[tauri::command]
+pub fn download_cancel(request: crate::models::DownloadJobRequest, app: AppHandle) {
+    downloads(&app).cancel(&request.id);
+}
+
+/// The notification's 停止.
+#[tauri::command]
+pub fn download_pause_all(app: AppHandle) {
+    downloads(&app).pause_all();
+}
+
+#[tauri::command]
+pub fn download_clear_finished(app: AppHandle) {
+    downloads(&app).clear_finished();
 }

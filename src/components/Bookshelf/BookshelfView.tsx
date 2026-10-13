@@ -23,7 +23,7 @@ import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 import { LibraryCover } from "./LibraryCover";
-import { OfflineCachePage } from "./OfflineCachePage";
+import { DownloadManagerPage } from "./DownloadManagerPage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 
@@ -287,7 +287,7 @@ export function BookshelfView() {
                     detail: updating ?? undefined,
                     onSelect: handleUpdateOnline,
                   },
-                  { icon: "download", label: "离线缓存", onSelect: () => setOffline(true) },
+                  { icon: "download", label: "下载管理", onSelect: () => setOffline(true) },
                 ]
               : []),
             {
@@ -479,7 +479,7 @@ export function BookshelfView() {
       </div>
 
       <LibraryManager mode={manager} onClose={() => setManager(null)} />
-      {offline && <OfflineCachePage onClose={() => setOffline(false)} />}
+      {offline && <DownloadManagerPage onClose={() => setOffline(false)} />}
       {infoBook && (
         <BookDetailPage
           book={state.books.find((entry) => entry.book.id === infoBook.book.id) ?? infoBook}

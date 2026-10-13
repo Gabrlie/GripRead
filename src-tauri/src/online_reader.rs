@@ -31,7 +31,7 @@ const PRE_DOWNLOAD_AHEAD: u32 = 10;
 /// A chapter that failed this many times is skipped by pre-download.
 const PRE_DOWNLOAD_FAILURES: u32 = 3;
 
-type Shared = Arc<Mutex<Storage>>;
+pub type Shared = Arc<Mutex<Storage>>;
 
 fn lock(storage: &Shared) -> Result<std::sync::MutexGuard<'_, Storage>, AppError> {
     storage
@@ -603,42 +603,6 @@ fn pre_download(storage: Shared, book_id: String, index: u32) {
             set.remove(&book_id);
         }
     }
-}
-
-/// Fetches chapters `start..end` that are not kept yet, for 离线缓存.
-/// Reports each finished chapter; stops when `stop` says so.
-pub fn cache_range(
-    storage: &Shared,
-    book_id: &str,
-    start: u32,
-    end: u32,
-    stop: &dyn Fn() -> bool,
-    report: &dyn Fn(u32, u32, u32),
-) -> Result<(), AppError> {
-    let (count, cached) = {
-        let guard = lock(storage)?;
-        (
-            guard.online_chapter_count(book_id)?,
-            guard.cached_online_chapters(book_id)?,
-        )
-    };
-    let end = end.min(count);
-    let wanted: Vec<u32> = (start..end)
-        .filter(|index| !cached.contains(index))
-        .collect();
-    let total = wanted.len() as u32;
-    let (mut done, mut failed) = (0, 0);
-    for index in wanted {
-        if stop() {
-            break;
-        }
-        match raw_chapter(storage, book_id, index) {
-            Ok(_) => done += 1,
-            Err(_) => failed += 1,
-        }
-        report(done, failed, total);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

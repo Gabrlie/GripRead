@@ -39,6 +39,8 @@ interface ReaderTopBarProps {
   txtTools?: boolean;
   /** 换源, for an online book. */
   onChangeSource?: () => void;
+  /** 缓存 a chapter range, for an online book. */
+  onCache?: () => void;
 }
 
 const CONVERSION_LABELS: Record<ChineseConversion, string> = {
@@ -66,6 +68,7 @@ export function ReaderTopBar({
   onOpenDetail,
   txtTools = true,
   onChangeSource,
+  onCache,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -107,6 +110,18 @@ export function ReaderTopBar({
           </h1>
           <p className="text-[11px] text-secondary truncate leading-tight mt-0.5">{subtitle}</p>
         </button>
+        {onCache && (
+          <Button
+            aria-label="缓存"
+            title="缓存"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-secondary rounded-full"
+            onClick={onCache}
+          >
+            <Icon name="download" size={19} />
+          </Button>
+        )}
         {onChangeSource && (
           <Button
             aria-label="换源"

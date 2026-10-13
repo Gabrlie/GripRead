@@ -1547,8 +1547,20 @@ pub async fn update_book(
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
+/// A deleted online book's downloads go with it.
+fn forget_downloads(app: &tauri::AppHandle, book_id: &str) {
+    use tauri::Manager;
+    if let Some(queue) = app.try_state::<crate::downloads::Downloads>() {
+        queue.forget_book(book_id);
+    }
+}
+
 #[tauri::command]
-pub async fn remove_book(request: BookRequest, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn remove_book(
+    request: BookRequest,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     // Legado deletes an online book outright; its text is only a cache.
     let book_id = request.book_id.clone();
     if for_online_book(&state, &request.book_id, move |storage| {
@@ -1557,6 +1569,7 @@ pub async fn remove_book(request: BookRequest, state: State<'_, AppState>) -> Re
     .await?
     .is_some()
     {
+        forget_downloads(&app, &request.book_id);
         return Ok(());
     }
     let storage = Arc::clone(&state.storage);
@@ -2115,6 +2128,7 @@ pub async fn set_backup_folder(
 #[tauri::command]
 pub async fn delete_book(
     request: crate::models::DeleteBookRequest,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let book_id = request.book_id.clone();
@@ -2124,6 +2138,7 @@ pub async fn delete_book(
     .await?
     .is_some()
     {
+        forget_downloads(&app, &request.book_id);
         return Ok(());
     }
     with_cloud(&state, move |storage, _| {

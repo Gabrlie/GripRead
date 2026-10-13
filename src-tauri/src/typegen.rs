@@ -166,6 +166,10 @@ const IPC_TYPES: &[&str] = &[
     "ClearDataRequest",
     "DataPart",
     "DataUsage",
+    "DownloadJob",
+    "DownloadJobRequest",
+    "DownloadRequest",
+    "DownloadState",
     "ShelfBookCache",
     "LogLevel",
     "LogEntry",
@@ -175,8 +179,6 @@ const IPC_TYPES: &[&str] = &[
     "FrontendLogRequest",
     "UpdateOnlineTocRequest",
     "OnlineTocEvent",
-    "CacheOnlineChaptersRequest",
-    "OnlineCacheEvent",
     "SetOnlineBookFlagRequest",
 ];
 
@@ -346,6 +348,10 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ClearDataRequest>(&config)?;
     export_all::<DataPart>(&config)?;
     export_all::<DataUsage>(&config)?;
+    export_all::<DownloadJob>(&config)?;
+    export_all::<DownloadJobRequest>(&config)?;
+    export_all::<DownloadRequest>(&config)?;
+    export_all::<DownloadState>(&config)?;
     export_all::<ShelfBookCache>(&config)?;
     export_all::<crate::app_log::LogLevel>(&config)?;
     export_all::<crate::app_log::LogEntry>(&config)?;
@@ -355,8 +361,6 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<FrontendLogRequest>(&config)?;
     export_all::<UpdateOnlineTocRequest>(&config)?;
     export_all::<OnlineTocEvent>(&config)?;
-    export_all::<CacheOnlineChaptersRequest>(&config)?;
-    export_all::<OnlineCacheEvent>(&config)?;
     export_all::<SetOnlineBookFlagRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;

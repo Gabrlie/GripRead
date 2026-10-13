@@ -63,11 +63,10 @@ import type {
   AddOnlineBookRequest,
   UpdateOnlineTocRequest,
   OnlineTocEvent,
-  CacheOnlineChaptersRequest,
-  OnlineCacheEvent,
   ChangeOnlineSourceRequest,
   ChangeOnlineSourceResult,
   DataUsage,
+  DownloadJob,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -274,9 +273,18 @@ export interface SourceService {
   /** 更新目录 for these books, or every shelf book that allows it when empty. */
   updateToc(request: UpdateOnlineTocRequest): Promise<void>;
   onTocUpdate(listener: (event: OnlineTocEvent) => void): Promise<Unsubscribe>;
-  /** 离线缓存 of a chapter range; progress arrives through `onCache`. */
-  cacheChapters(request: CacheOnlineChaptersRequest): Promise<void>;
-  onCache(listener: (event: OnlineCacheEvent) => void): Promise<Unsubscribe>;
+  /** 下载管理: adds a chapter range `[start, end)` of an online book to the queue. */
+  enqueueDownload(bookId: string, start: number, end: number): Promise<DownloadJob>;
+  listDownloads(): Promise<DownloadJob[]>;
+  pauseDownload(id: string): Promise<void>;
+  resumeDownload(id: string): Promise<void>;
+  cancelDownload(id: string): Promise<void>;
+  pauseAllDownloads(): Promise<void>;
+  clearFinishedDownloads(): Promise<void>;
+  /** Every job after each change. */
+  onDownloads(listener: (jobs: DownloadJob[]) => void): Promise<Unsubscribe>;
+  /** The Android notification's 停止. */
+  onDownloadStop(listener: () => void): Promise<Unsubscribe>;
 }
 export interface AppServices {
   library: LibraryService;

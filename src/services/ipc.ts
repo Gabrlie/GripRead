@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { addPluginListener, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { AppServices } from "./contracts";
 import { appLog } from "./log";
@@ -115,8 +115,6 @@ import type {
   AddOnlineBookRequest,
   UpdateOnlineTocRequest,
   OnlineTocEvent,
-  CacheOnlineChaptersRequest,
-  OnlineCacheEvent,
   SetOnlineBookFlagRequest,
   FindOnlineBookRequest,
   ChangeOnlineSourceRequest,
@@ -124,6 +122,9 @@ import type {
   SourceCoverRequest,
   ClearDataRequest,
   DataUsage,
+  DownloadJob,
+  DownloadJobRequest,
+  DownloadRequest,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -714,11 +715,29 @@ export const tauriServices: AppServices = {
       }),
     onTocUpdate: (listener) =>
       listen<OnlineTocEvent>("online-toc", (event) => listener(event.payload)),
-    cacheChapters: (request) =>
-      invokeCommand<void>("cache_online_chapters", {
-        request: request satisfies CacheOnlineChaptersRequest,
+    enqueueDownload: (bookId, start, end) =>
+      invokeCommand<DownloadJob>("download_enqueue", {
+        request: { bookId, start, end } satisfies DownloadRequest,
       }),
-    onCache: (listener) =>
-      listen<OnlineCacheEvent>("online-cache", (event) => listener(event.payload)),
+    listDownloads: () => invokeCommand<DownloadJob[]>("download_list"),
+    pauseDownload: (id) =>
+      invokeCommand<void>("download_pause", { request: { id } satisfies DownloadJobRequest }),
+    resumeDownload: (id) =>
+      invokeCommand<void>("download_resume", { request: { id } satisfies DownloadJobRequest }),
+    cancelDownload: (id) =>
+      invokeCommand<void>("download_cancel", { request: { id } satisfies DownloadJobRequest }),
+    pauseAllDownloads: () => invokeCommand<void>("download_pause_all"),
+    clearFinishedDownloads: () => invokeCommand<void>("download_clear_finished"),
+    onDownloads: (listener) =>
+      listen<DownloadJob[]>("download-progress", (event) => listener(event.payload)),
+    onDownloadStop: async (listener) => {
+      // Only the Android plugin has the notification; elsewhere nothing stops it.
+      try {
+        const handle = await addPluginListener("gripread-downloads", "stop", listener);
+        return () => void handle.unregister();
+      } catch {
+        return () => undefined;
+      }
+    },
   },
 };
