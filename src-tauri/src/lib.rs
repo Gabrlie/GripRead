@@ -55,7 +55,7 @@ use online_commands::{
     convert_online_to_local, data_usage, download_cancel, download_clear_finished,
     download_enqueue, download_list, download_pause, download_pause_all, download_resume,
     explore_books, explore_kinds, find_online_book, get_library_book, get_network_settings,
-    leave_online_book, list_online_chapters, online_book_chapters, online_book_info,
+    leave_online_book, list_online_chapters, network_state, online_book_chapters, online_book_info,
     online_chapter_content, online_cover, save_network_settings, search_online_books,
     set_cover_from_source, set_online_can_update, set_online_on_shelf, update_online_toc,
     OnlinePages,
@@ -94,7 +94,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(documents::init())
         .plugin(downloads::plugin())
-        .plugin(webview::plugin());
+        .plugin(webview::plugin())
+        .plugin(network::plugin());
     #[cfg(feature = "native-test")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
@@ -113,7 +114,7 @@ pub fn run() {
                 format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
             );
             let state = AppState::new(data_dir.clone())?;
-            if let Err(error) = network::apply(&network::load(&state.data_root)) {
+            if let Err(error) = network::start(&state.data_root) {
                 app_log::warn(
                     "network",
                     format!("网络设置无效，已用默认：{}", error.message),
@@ -218,6 +219,7 @@ pub fn run() {
             clear_online_cache,
             update_online_toc,
             get_network_settings,
+            network_state,
             save_network_settings,
             check_network,
             download_enqueue,
@@ -322,6 +324,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building GripRead")
         .run(|app, event| {
+            if let tauri::RunEvent::Resumed = event {
+                let root = app.state::<AppState>().data_root.clone();
+                std::thread::spawn(move || network::refresh(&root));
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app
                     .state::<ExitPermission>()

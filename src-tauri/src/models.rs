@@ -2056,6 +2056,15 @@ pub struct NetworkSettings {
     pub custom: ConcurrencyLimits,
 }
 
+/// The device's own proxy (`host:port`), which requests use when the app
+/// has none and which turns DoH off like the app's proxy does.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkState {
+    #[ts(optional)]
+    pub system_proxy: Option<String>,
+}
+
 /// What a 测试 found: the time taken and a short description.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

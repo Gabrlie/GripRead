@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [Legado book sources task](plans/2026-10-11-legado-sources.md) is in progress. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
+The [Legado book sources task](plans/2026-10-11-legado-sources.md) is completed on branch `codex/legado-sources`, awaiting merge. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-S1–S5 (engine, source management, search and discover, online books on the shelf and in the reader, 换源, backups, and progress sync) and three device bug rounds, including the Android WebView, background downloads, and network settings, are implemented; device acceptance of the Android build is next. The macOS native suite needs a run on macOS.
+Book sources (S1–S5 and four device bug rounds) are closed; the WebView awaits a source to test it on the device. The next stage is the user's choice. The macOS native suite needs a run on macOS.

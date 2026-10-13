@@ -422,6 +422,7 @@ export function previewServices(): AppServices {
         network = settings;
         return settings;
       },
+      networkState: async () => ({}),
       checkNetwork: async (_settings, kind) =>
         kind === "doh"
           ? { millis: 42, detail: "www.baidu.com → 110.242.68.66" }

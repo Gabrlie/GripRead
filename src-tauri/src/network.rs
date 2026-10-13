@@ -1,15 +1,16 @@
 //! 网络设置: kept in `network.json` in the data folder (never in backups),
-//! applied to the source engine's client at start and on every change, and
-//! the limits searches and downloads read.
+//! applied to the source engine's client at start, on every change, and
+//! when the app returns to the foreground (the device's proxy may have
+//! changed), and the limits searches and downloads read.
 
 use crate::error::AppError;
 use crate::models::{
-    ConcurrencyLimits, ConcurrencyPreset, NetworkCheck, NetworkSettings, ProxyKind,
+    ConcurrencyLimits, ConcurrencyPreset, NetworkCheck, NetworkSettings, NetworkState, ProxyKind,
 };
 use crate::sources::network::{DohServer, NetConfig};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 const FILE: &str = "network.json";
@@ -118,11 +119,19 @@ pub fn proxy_url(settings: &NetworkSettings) -> Option<String> {
     ))
 }
 
-fn net_config(settings: &NetworkSettings) -> NetConfig {
+/// Requests go through the app's proxy, else the device's; through either
+/// the proxy resolves names, so DoH is off.
+fn net_config(settings: &NetworkSettings, system: &NetworkState) -> NetConfig {
     let limits = limits_of(settings);
+    let proxy = proxy_url(settings).or_else(|| {
+        system
+            .system_proxy
+            .as_ref()
+            .map(|address| format!("http://{address}"))
+    });
     NetConfig {
-        proxy: proxy_url(settings),
-        doh: doh_server(settings),
+        doh: doh_server(settings).filter(|_| proxy.is_none()),
+        proxy,
         max_requests: usize::from(limits.requests),
         per_host: usize::from(limits.per_host),
         window: Duration::from_millis(u64::from(limits.window_ms)),
@@ -131,6 +140,38 @@ fn net_config(settings: &NetworkSettings) -> NetConfig {
 
 static LIMITS: RwLock<Option<ConcurrencyLimits>> = RwLock::new(None);
 
+type Detector = Box<dyn Fn() -> Option<String> + Send + Sync>;
+/// How the platform reports its proxy as `host:port` (the Android plugin);
+/// without one the `HTTPS_PROXY`/`HTTP_PROXY` environment variables are read.
+static DETECTOR: OnceLock<Detector> = OnceLock::new();
+static SYSTEM: RwLock<Option<NetworkState>> = RwLock::new(None);
+
+fn detect() -> NetworkState {
+    let system_proxy = match DETECTOR.get() {
+        Some(detector) => detector(),
+        None => ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+            .iter()
+            .find_map(|name| std::env::var(name).ok())
+            .map(|value| {
+                let value = value.trim();
+                let value = value.split_once("://").map_or(value, |(_, rest)| rest);
+                value.trim_end_matches('/').to_string()
+            }),
+    };
+    NetworkState {
+        system_proxy: system_proxy.filter(|address| !address.is_empty()),
+    }
+}
+
+/// The device's proxy as last detected.
+pub fn state() -> NetworkState {
+    SYSTEM
+        .read()
+        .ok()
+        .and_then(|state| state.clone())
+        .unwrap_or_default()
+}
+
 /// The limits searches and downloads use now.
 pub fn limits() -> ConcurrencyLimits {
     LIMITS
@@ -138,6 +179,31 @@ pub fn limits() -> ConcurrencyLimits {
         .ok()
         .and_then(|limits| *limits)
         .unwrap_or_else(|| preset_limits(ConcurrencyPreset::Balanced))
+}
+
+/// Registers the Android plugin that reports the device's proxy.
+pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("gripread-network")
+        .setup(|_app, _api| {
+            #[cfg(target_os = "android")]
+            {
+                #[derive(serde::Deserialize)]
+                struct Found {
+                    host: Option<String>,
+                    port: Option<u16>,
+                }
+                let handle =
+                    _api.register_android_plugin("com.gripread.reader", "NetworkPlugin")?;
+                let _ = DETECTOR.set(Box::new(move || {
+                    let found: Found = handle
+                        .run_mobile_plugin("systemProxy", serde_json::json!({}))
+                        .ok()?;
+                    Some(format!("{}:{}", found.host?, found.port?))
+                }));
+            }
+            Ok(())
+        })
+        .build()
 }
 
 fn path(root: &Path) -> PathBuf {
@@ -151,14 +217,41 @@ pub fn load(root: &Path) -> NetworkSettings {
         .unwrap_or_default()
 }
 
-/// Applies settings to the engine; an invalid proxy is refused.
+/// Applies settings to the engine with the device's proxy as detected now;
+/// an invalid proxy is refused.
 pub fn apply(settings: &NetworkSettings) -> Result<(), AppError> {
-    crate::sources::network::configure(net_config(settings))
+    apply_as(settings, detect())
+}
+
+fn apply_as(settings: &NetworkSettings, system: NetworkState) -> Result<(), AppError> {
+    crate::sources::network::configure(net_config(settings, &system))
         .map_err(|error| AppError::invalid_argument(error.message))?;
+    if let Ok(mut state) = SYSTEM.write() {
+        *state = Some(system);
+    }
     if let Ok(mut limits) = LIMITS.write() {
         *limits = Some(limits_of(settings));
     }
     Ok(())
+}
+
+/// Applies the saved settings at start, then once more on another thread
+/// when the device reports a proxy (asking it may wait on the UI thread).
+pub fn start(root: &Path) -> Result<(), AppError> {
+    let result = apply_as(&load(root), NetworkState::default());
+    let root = root.to_path_buf();
+    std::thread::spawn(move || refresh(&root));
+    result
+}
+
+/// Applies the saved settings again when the device's proxy changed.
+pub fn refresh(root: &Path) {
+    if detect() == state() {
+        return;
+    }
+    if let Err(error) = apply(&load(root)) {
+        crate::app_log::warn("network", format!("系统代理无效：{}", error.message));
+    }
 }
 
 pub fn save(root: &Path, settings: &NetworkSettings) -> Result<(), AppError> {
@@ -235,6 +328,22 @@ mod tests {
             Some("socks5://me:p%40ss@10.0.0.2:7890")
         );
         settings.doh_enabled = true;
+        let system = NetworkState {
+            system_proxy: Some("127.0.0.1:8080".into()),
+        };
+        let config = net_config(&settings, &system);
+        assert_eq!(
+            config.proxy.as_deref(),
+            Some("socks5://me:p%40ss@10.0.0.2:7890")
+        );
+        assert_eq!(config.doh, None);
+        settings.proxy_kind = ProxyKind::None;
+        let config = net_config(&settings, &system);
+        assert_eq!(config.proxy.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(config.doh, None, "the device's proxy turns DoH off too");
+        assert!(net_config(&settings, &NetworkState::default())
+            .doh
+            .is_some());
         settings.doh_server = "custom".into();
         settings.doh_custom_url = "http://insecure".into();
         assert_eq!(doh_server(&settings), None);

@@ -69,6 +69,7 @@ import type {
   DownloadJob,
   NetworkCheck,
   NetworkSettings,
+  NetworkState,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -173,6 +174,8 @@ export interface SettingsService {
   saveNetwork(settings: NetworkSettings): Promise<NetworkSettings>;
   /** 测试 with the settings as entered: `doh` resolves a host, `proxy` fetches a page. */
   checkNetwork(settings: NetworkSettings, kind: "doh" | "proxy"): Promise<NetworkCheck>;
+  /** The device's own proxy, checked again. */
+  networkState(): Promise<NetworkState>;
 }
 /** WebDAV backups and the cloud bookshelf (Sync specification). */
 export interface SyncService {

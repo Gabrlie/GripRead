@@ -1335,6 +1335,19 @@ pub fn get_network_settings(state: State<'_, AppState>) -> crate::models::Networ
     crate::network::load(&state.data_root)
 }
 
+/// The device's proxy, checked again when asked.
+#[tauri::command]
+pub async fn network_state(
+    state: State<'_, AppState>,
+) -> Result<crate::models::NetworkState, AppError> {
+    let root = state.data_root.clone();
+    on_engine_thread(move || {
+        crate::network::refresh(&root);
+        crate::network::state()
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn save_network_settings(
     request: crate::models::NetworkSettings,

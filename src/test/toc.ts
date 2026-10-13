@@ -52,6 +52,7 @@ export function fontServiceMocks(): Pick<
   | "getNetwork"
   | "saveNetwork"
   | "checkNetwork"
+  | "networkState"
 > {
   return {
     pickAndImportFont: vi.fn(async () => null),
@@ -62,5 +63,6 @@ export function fontServiceMocks(): Pick<
     getNetwork: vi.fn(async () => PREVIEW_NETWORK),
     saveNetwork: vi.fn(async (settings) => settings),
     checkNetwork: vi.fn(async () => ({ millis: 10, detail: "ok" })),
+    networkState: vi.fn(async () => ({})),
   };
 }

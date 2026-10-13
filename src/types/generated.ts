@@ -166,6 +166,7 @@ export type { ConcurrencyLimits } from "./generated/ConcurrencyLimits";
 export type { ConcurrencyPreset } from "./generated/ConcurrencyPreset";
 export type { NetworkCheck } from "./generated/NetworkCheck";
 export type { NetworkCheckRequest } from "./generated/NetworkCheckRequest";
+export type { NetworkState } from "./generated/NetworkState";
 export type { NetworkSettings } from "./generated/NetworkSettings";
 export type { ProxyKind } from "./generated/ProxyKind";
 export type { DataPart } from "./generated/DataPart";

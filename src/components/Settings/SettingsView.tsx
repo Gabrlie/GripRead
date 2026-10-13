@@ -330,7 +330,7 @@ export function SettingsView() {
           />
         </PageSection>
 
-        <PageSection>
+        <PageSection title="更多">
           <PageLink icon="public" label="网络设置" onClick={() => setPage("network")} />
           <PageLink icon="storage" label="数据管理" onClick={() => setPage("cache")} />
           <PageLink icon="bug_report" label="日志" onClick={() => setPage("logs")} />

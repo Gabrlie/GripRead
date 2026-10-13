@@ -58,6 +58,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
 
   const parts = usage?.parts ?? [];
   const total = parts.reduce((sum, part) => sum + part.bytes, 0);
+  const cached = parts.reduce((sum, part) => sum + (part.clearable ? part.bytes : 0), 0);
   const chosenBytes = useMemo(
     () => parts.filter((part) => chosen?.has(part.key)).reduce((sum, part) => sum + part.bytes, 0),
     [parts, chosen],
@@ -88,6 +89,10 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
   return (
     <FullPage label="数据管理" onClose={onClose}>
       <section className="rounded-2xl bg-surface-container-low p-4 space-y-4">
+        <p className="flex items-baseline gap-2">
+          <span className="text-2xl font-semibold tabular-nums">{formatSize(cached)}</span>
+          <span className="text-xs text-secondary">缓存</span>
+        </p>
         <div
           role="img"
           aria-label="数据占用"

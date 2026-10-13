@@ -126,6 +126,7 @@ import type {
   NetworkCheck,
   NetworkCheckRequest,
   NetworkSettings,
+  NetworkState,
   DownloadJobRequest,
   DownloadRequest,
 } from "../types/generated";
@@ -459,6 +460,7 @@ export const tauriServices: AppServices = {
     getNetwork: () => invokeCommand<NetworkSettings>("get_network_settings"),
     saveNetwork: (settings) =>
       invokeCommand<NetworkSettings>("save_network_settings", { request: settings }),
+    networkState: () => invokeCommand<NetworkState>("network_state"),
     checkNetwork: (settings, kind) =>
       invokeCommand<NetworkCheck>("check_network", {
         request: { settings, kind } satisfies NetworkCheckRequest,

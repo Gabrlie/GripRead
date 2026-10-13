@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "../../application/runtime";
 import type {
   ConcurrencyLimits,
   ConcurrencyPreset,
   NetworkSettings,
+  NetworkState,
   ProxyKind,
 } from "../../types/generated";
 import { describeError } from "../Cloud/format";
@@ -73,32 +74,59 @@ function Choice<T extends string>({
   );
 }
 
+/** Typing waits this long before the change is saved. */
+const SAVE_DELAY = 500;
+
 /**
  * 网络设置: DNS over HTTPS, a proxy the app's requests go through (the
- * device's own stays as it is), and how many requests run at once.
+ * device's own stays as it is), and how many requests run at once. Changes
+ * save by themselves, like the other settings.
  */
 export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
   const runtime = useRuntime();
   const service = runtime.services.settings;
-  const [saved, setSaved] = useState<NetworkSettings | null>(null);
   const [draft, setDraft] = useState<NetworkSettings | null>(null);
+  const [system, setSystem] = useState<NetworkState>({});
   const [checking, setChecking] = useState<"doh" | "proxy" | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const pending = useRef<NetworkSettings | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
+
+  const flush = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    const value = pending.current;
+    pending.current = null;
+    if (!value) return;
+    // One save at a time, in the order the changes were made.
+    saving.current = saving.current.then(() =>
+      service.saveNetwork(value).then(
+        () => setFailure(null),
+        (error: unknown) => setFailure(describeError(error)),
+      ),
+    );
+  }, [service]);
 
   useEffect(() => {
     let active = true;
     void service.getNetwork().then(
       (value) => {
-        if (!active) return;
-        setSaved(value);
-        setDraft(value);
+        if (active) setDraft(value);
       },
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
+      (error: unknown) => toast({ text: describeError(error), error: true }),
+    );
+    void service.networkState().then(
+      (value) => {
+        if (active) setSystem(value);
+      },
+      () => undefined,
     );
     return () => {
       active = false;
+      flush();
     };
-  }, [service]);
+  }, [service, flush]);
 
   if (!draft)
     return (
@@ -106,8 +134,19 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
         {null}
       </FullPage>
     );
-  const set = (patch: Partial<NetworkSettings>) => setDraft({ ...draft, ...patch });
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const set = (patch: Partial<NetworkSettings>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    pending.current = next;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, SAVE_DELAY);
+  };
+  const ownProxy = draft.proxyKind !== "none" && draft.proxyHost.trim() !== "";
+  const dohOff = ownProxy
+    ? "使用代理时 DoH 不生效"
+    : system.systemProxy
+      ? `检测到系统代理 ${system.systemProxy}，DoH 不生效`
+      : null;
 
   const check = (kind: "doh" | "proxy") => {
     setChecking(kind);
@@ -115,36 +154,24 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
       .checkNetwork(draft, kind)
       .then(
         (found) => toast(`${found.detail}（${found.millis} ms）`),
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
+        (error: unknown) => toast({ text: describeError(error), error: true }),
       )
       .finally(() => setChecking(null));
-  };
-
-  const save = () => {
-    setBusy(true);
-    void service
-      .saveNetwork(draft)
-      .then(
-        (value) => {
-          setSaved(value);
-          setDraft(value);
-          toast("网络设置已保存");
-        },
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      )
-      .finally(() => setBusy(false));
   };
 
   return (
     <FullPage
       label="网络设置"
-      onClose={onClose}
-      actions={
-        <Button size="sm" variant="ghost" disabled={!dirty || busy} onClick={save}>
-          保存
-        </Button>
-      }
+      onClose={() => {
+        flush();
+        onClose();
+      }}
     >
+      {failure && (
+        <p role="alert" className="px-1 text-xs text-error">
+          未保存：{failure}
+        </p>
+      )}
       <PageSection title="DNS over HTTPS">
         <div className="p-4 space-y-3">
           <label className="flex items-center justify-between gap-3 text-sm">
@@ -164,6 +191,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
             value={draft.dohServer}
             onChange={(dohServer) => set({ dohServer })}
           />
+          {draft.dohEnabled && dohOff && <p className="text-[11px] text-secondary">{dohOff}</p>}
           {draft.dohServer === "custom" && (
             <Input
               aria-label="DoH 地址"
@@ -241,7 +269,11 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
               </Button>
             </>
           )}
-          <p className="text-[11px] text-secondary">只用于书源、封面和下载，不改变系统代理。</p>
+          <p className="text-[11px] text-secondary">
+            {!ownProxy && system.systemProxy
+              ? `未设置时使用系统代理 ${system.systemProxy}。`
+              : "只用于书源、封面和下载，不改变系统代理。"}
+          </p>
         </div>
       </PageSection>
 

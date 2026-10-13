@@ -1,6 +1,6 @@
 # Stage 5: Legado-compatible book sources
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
@@ -49,4 +49,6 @@ Bug round 2 (device report on the round 1 build, with the user's 65-source list 
 
 Bug round 3 (device report on the round 2 build): books added from their online page show on the shelf at once; 读完 waits for the end of the last chapter and keeps serials in 在读 within the 连载判定 range (schema 19 `online_books.last_grown_at`); introductions keep the first line's indentation; detail pages show 总字数 (the small TXT a converted book gave came from sources serving fragments of chapters, not from conversion); badges have no cap; 未上传 counts local books only; 换源 offers 继续 after 停止 and no longer focuses its filter; long presses select text only in reader text, introductions, and fields; 数据管理 replaces 缓存管理 with a storage bar, shelf-safe clearing, and 退出时清理缓存; downloads run in an app-wide queue with 下载管理, chapter ranges, concurrency, and an Android foreground notification; sources get an Android WebView for rendering, web logins, and verification; and 网络设置 adds DoH, an app proxy, and concurrency presets. A race where the reader and a background download wrote the same chapter's partial file was fixed. Verification: Rust tests for the 读完 inputs, intro tidying, 总字数, data usage and clearing, the download queue's concurrency, pausing, and persistence, WebView chains through a fake host, DoH messages, the per-site limiter, presets, and proxy addresses; frontend tests for the shelf refresh, 继续, 读完 cases, 数据管理, 下载管理, the range dialog, 查看日志, and 网络设置; a live DoH check against the four servers from this host. WebView sources, the notification, and the proxy need the device.
 
-Next is device acceptance of this build.
+Bug round 4 (device report on the round 3 build) closes the stage: curl turns drew a wide character after a curly quote or Latin letter at its box edge, ahead of the space justification puts in front of it, so spacing jumped during the turn (local and online books alike; reproduced and checked against the DOM in Chromium); full pages now align their last line to the bottom like Legado's 底部对齐, which removes the blank under a chapter's first heading-led page; 数据管理 shows the total cache size; requests use the device's HTTP proxy when the app has none, and either proxy turns DoH off; 网络设置 saves by itself; and 网络设置, 数据管理, 日志, and 关于 sit in a 更多 settings group. Verification: frontend tests for glyph placement, the cache total, and auto-saving with the system proxy note; a Rust test for proxy and DoH selection; `pnpm check`, Android clippy, and a debug APK.
+
+Known limits at close: the Android WebView (rendering, web login, and `startBrowser`) is untested on the device for lack of a source that needs it; `getVerificationCode` captchas, responses with folded header lines, and the proxy for WebDAV remain unsupported; 退出时清理缓存 runs at the next start.

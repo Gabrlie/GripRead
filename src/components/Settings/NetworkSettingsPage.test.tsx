@@ -10,11 +10,12 @@ import { NetworkSettingsPage } from "./NetworkSettingsPage";
 afterEach(cleanup);
 
 describe("网络设置", () => {
-  it("tests DoH, sets a proxy and custom limits, and saves", async () => {
+  it("tests DoH, and saves a proxy and custom limits by itself", async () => {
     const settings = {
       getNetwork: vi.fn(async () => PREVIEW_NETWORK),
       saveNetwork: vi.fn(async (value) => value),
       checkNetwork: vi.fn(async () => ({ millis: 40, detail: "www.baidu.com → 1.2.3.4" })),
+      networkState: vi.fn(async () => ({ systemProxy: "127.0.0.1:8080" })),
     };
     const runtime = new AppRuntime({
       library: {
@@ -26,16 +27,24 @@ describe("网络设置", () => {
       sync: {},
       sources: {},
     } as unknown as AppServices);
-    render(
+    const view = render(
       <RuntimeContext.Provider value={runtime}>
         <NetworkSettingsPage onClose={() => undefined} />
       </RuntimeContext.Provider>,
     );
-    const save = await screen.findByRole("button", { name: "保存" });
-    expect(save.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(await screen.findByRole("switch", { name: /使用 DoH/ }));
+    expect(await screen.findByText("检测到系统代理 127.0.0.1:8080，DoH 不生效")).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(settings.saveNetwork).toHaveBeenCalledWith(
+        expect.objectContaining({ dohEnabled: true }),
+      ),
+    );
     await userEvent.click(screen.getByRole("button", { name: "测试 DoH" }));
     await vi.waitFor(() =>
-      expect(settings.checkNetwork).toHaveBeenCalledWith(PREVIEW_NETWORK, "doh"),
+      expect(settings.checkNetwork).toHaveBeenCalledWith(
+        expect.objectContaining({ dohEnabled: true }),
+        "doh",
+      ),
     );
     await userEvent.click(screen.getByRole("radio", { name: "SOCKS5" }));
     await userEvent.type(screen.getByRole("textbox", { name: "代理地址" }), "10.0.0.2");
@@ -43,7 +52,9 @@ describe("网络设置", () => {
     const requests = screen.getByRole("textbox", { name: "同时请求数" });
     await userEvent.clear(requests);
     await userEvent.type(requests, "20");
-    await userEvent.click(save);
+    expect(screen.getByText("使用代理时 DoH 不生效")).toBeTruthy();
+    // Leaving right away still saves the last change.
+    view.unmount();
     await vi.waitFor(() =>
       expect(settings.saveNetwork).toHaveBeenCalledWith(
         expect.objectContaining({
