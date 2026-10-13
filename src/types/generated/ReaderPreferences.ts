@@ -15,4 +15,9 @@ style: ReadingStyle,
 /**
  * Legado's 预下载章节数: online chapters fetched ahead while reading.
  */
-preDownloadChapters?: number, };
+preDownloadChapters?: number, 
+/**
+ * 连载判定: an online book whose contents grew within these days is not
+ * moved to 读完 at its end; `None` is 30, `0` turns it off.
+ */
+serialDays?: number, };

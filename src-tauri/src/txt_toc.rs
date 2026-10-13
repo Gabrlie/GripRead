@@ -320,19 +320,34 @@ fn clean_title(raw: &str) -> String {
     title.chars().take(MAX_TITLE_CHARS).collect()
 }
 
-/// The preface without a leading label such as 简介： or 内容简介.
+/// The preface without a leading label such as 简介： or 内容简介; the text
+/// after the label keeps its paragraph indentation.
 fn clean_intro(preface: &str) -> String {
     static LABEL: OnceLock<PlainRegex> = OnceLock::new();
-    LABEL
-        .get_or_init(|| {
-            PlainRegex::new(
-                r"^\s*(?:【\s*)?(?:内容简介|作品简介|简介|文案|内容提要)\s*(?:】)?[:：]?\s*",
-            )
-            .expect("valid")
-        })
-        .replace(preface.trim(), "")
-        .trim()
-        .to_string()
+    let label = LABEL.get_or_init(|| {
+        PlainRegex::new(
+            r"^\s*(?:【\s*)?(?:内容简介|作品简介|简介|文案|内容提要)\s*(?:】)?[:：]?[ \t]*",
+        )
+        .expect("valid")
+    });
+    tidy_intro(&label.replace(preface, ""))
+}
+
+/// An introduction without blank lines around it or trailing spaces; the
+/// first line keeps its paragraph indentation like the others.
+pub fn tidy_intro(text: &str) -> String {
+    let start = text
+        .char_indices()
+        .take_while(|(_, c)| c.is_whitespace())
+        .filter(|(_, c)| *c == '\n')
+        .last()
+        .map_or(0, |(index, _)| index + 1);
+    let kept = &text[start..];
+    // Only whitespace left: nothing to keep.
+    if kept.trim().is_empty() {
+        return String::new();
+    }
+    kept.trim_end().to_string()
 }
 
 fn shorten(text: &str, limit: usize) -> String {
@@ -486,7 +501,11 @@ mod tests {
         let volumes: Vec<bool> = build.entries.iter().map(|entry| entry.volume).collect();
         assert_eq!(volumes, [false, true, false, false, true, false]);
         assert_eq!(build.intro.as_deref(), Some("这是一本书的简介。"));
-        assert_eq!(clean_intro("内容简介：\n　　少年求道。"), "少年求道。");
+        assert_eq!(clean_intro("内容简介：\n　　少年求道。"), "　　少年求道。");
+        assert_eq!(
+            tidy_intro("\n \n　　第一段\n　　第二段 \n"),
+            "　　第一段\n　　第二段"
+        );
         assert_eq!(clean_intro("【简介】山河远行"), "山河远行");
         assert_eq!(build.rule_id.as_deref(), Some("legado-1"));
         let starts: Vec<u64> = build

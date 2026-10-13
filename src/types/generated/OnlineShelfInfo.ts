@@ -32,4 +32,12 @@ readChapter: number | null, readChapterTitle: string,
 /**
  * Chapters whose text is kept on the device.
  */
-cachedChapters: number, };
+cachedChapters: number, 
+/**
+ * The kept text length of the chapter being read, for 读完.
+ */
+readChapterLength?: number, 
+/**
+ * The contents grew within the 连载判定 range: still being written.
+ */
+serial?: boolean, };

@@ -55,6 +55,11 @@ function formatSize(bytes: number): string {
  * progress and reading time, the introduction, the shelf group, and every
  * per-book action (read, contents, edit, cover, move, remove).
  */
+/** 总字数 as readers know it: 万字 above ten thousand. */
+export function formatWords(count: number): string {
+  return count >= 10_000 ? `${(count / 10_000).toFixed(1)} 万字` : `${count} 字`;
+}
+
 export function BookDetailPage({
   book,
   onOpen,
@@ -164,7 +169,10 @@ export function BookDetailPage({
         ["作者", book.book.author || "作者未知"],
         ["来源", online.book.sourceName],
         ["章节", `${online.totalChapters} 章`],
-        ["已缓存", `${online.cachedChapters} 章`],
+        [
+          "已缓存",
+          `${online.cachedChapters} 章${info?.wordCount ? ` · ${formatWords(info.wordCount)}` : ""}`,
+        ],
         ["读至", online.readChapterTitle || (book.locator ? "全文" : "尚未阅读")],
         ["最新章节", online.book.latestChapterTitle || "—"],
         ["阅读进度", progress],
@@ -176,6 +184,7 @@ export function BookDetailPage({
         ["文件大小", info ? formatSize(info.sourceByteLength) : "—"],
         ["文本编码", book.txtEncoding ? ENCODING_NAMES[book.txtEncoding.detected] : "—"],
         ["章节", info?.chapterCount != null ? `${info.chapterCount} 章` : "—"],
+        ["总字数", info?.wordCount != null ? formatWords(info.wordCount) : "—"],
         ["读至", labels?.current ?? (book.locator ? "全文" : "尚未阅读")],
         ["最新章节", labels?.latest ?? "全文"],
         ["阅读进度", progress],
@@ -325,7 +334,8 @@ export function BookDetailPage({
               简介
             </h2>
             <p
-              className={`text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] text-on-surface/90 ${expanded ? "" : "line-clamp-4"}`}
+              data-selectable="true"
+              className={`text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-on-surface/90 ${expanded ? "" : "line-clamp-4"}`}
             >
               {info ? info.intro || "这本书没有简介。" : "正在读取…"}
             </p>

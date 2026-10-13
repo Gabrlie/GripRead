@@ -60,6 +60,33 @@ describe("online search", () => {
     expect(from.event.results.length).toBe(2);
   });
 
+  it("lists a book on the shelf as soon as it is added", async () => {
+    const sources = service();
+    const listBooks = vi.fn(async () => []);
+    const runtime = new AppRuntime({
+      library: {
+        listBooks,
+        listRemovedBooks: vi.fn(async () => []),
+        onImportProgress: vi.fn(async () => () => undefined),
+      },
+      reader: {},
+      settings: {},
+      sync: {},
+      sources,
+    } as unknown as AppServices);
+    render(
+      <RuntimeContext.Provider value={runtime}>
+        <SearchPage service={sources} onRead={() => undefined} onClose={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    await userEvent.type(screen.getByRole("textbox", { name: "书名或作者" }), "剑来");
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
+    const results = await screen.findByRole("list", { name: "搜索结果" });
+    await userEvent.click((await within(results).findAllByRole("button"))[0]);
+    await userEvent.click(await screen.findByRole("button", { name: "加入书架" }));
+    await vi.waitFor(() => expect(listBooks).toHaveBeenCalled());
+  });
+
   it("reads a chapter chosen in the contents without adding the book", async () => {
     const sources = service();
     const add = vi.spyOn(sources, "addOnlineBook");
@@ -171,6 +198,46 @@ describe("换源", () => {
         book: expect.objectContaining({ sourceUrl: "https://api.example-b.com" }),
       }),
     );
+  });
+});
+
+describe("换源 while searching", () => {
+  it("stops, continues, and leaves the filter unfocused", async () => {
+    const sources = service();
+    const kept = await sources.addOnlineBook({
+      book: PREVIEW_BOOKS[0],
+      chapters: await sources.chapters(PREVIEW_BOOKS[0]),
+      onShelf: true,
+    });
+    let listener: ((event: never) => void) | null = null;
+    vi.spyOn(sources, "onSearch").mockImplementation(async (next) => {
+      listener = next as never;
+      return () => undefined;
+    });
+    const search = vi.spyOn(sources, "search").mockImplementation(async (request) => {
+      listener?.({
+        operationId: request.operationId,
+        results: [],
+        searched: 1,
+        total: 3,
+        done: false,
+      } as never);
+    });
+    const cancel = vi.spyOn(sources, "cancel");
+    render(
+      <ChangeSourceDialog
+        service={sources}
+        book={kept}
+        onChanged={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "停止" }));
+    expect(cancel).toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "筛选书源" }));
+    await userEvent.click(screen.getByRole("button", { name: "继续" }));
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "停止" })).toBeTruthy();
   });
 });
 

@@ -689,6 +689,7 @@ impl Storage {
         let added = (chapters.len() as u32).saturating_sub(before);
         tx.execute(
             "UPDATE online_books SET new_chapters = CASE WHEN ?2 > 0 THEN ?2 ELSE new_chapters END,
+                last_grown_at = CASE WHEN ?2 > 0 THEN ?3 ELSE last_grown_at END,
                 last_check_time = ?3, update_error = NULL WHERE book_id = ?1",
             params![book_id, added, now_millis()],
         )?;
@@ -875,7 +876,7 @@ impl Storage {
             .conn
             .query_row(
                 "SELECT book_json, new_chapters, last_check_time, update_error, can_update,
-                        on_shelf FROM online_books WHERE book_id = ?1",
+                        on_shelf, last_grown_at FROM online_books WHERE book_id = ?1",
                 params![book_id],
                 |row| {
                     Ok((
@@ -885,22 +886,41 @@ impl Storage {
                         row.get(3)?,
                         row.get(4)?,
                         row.get(5)?,
+                        row.get(6)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((json, new_chapters, last_check_time, update_error, can_update, on_shelf)) = row
+        let Some((
+            json,
+            new_chapters,
+            last_check_time,
+            update_error,
+            can_update,
+            on_shelf,
+            last_grown_at,
+        )) = row
         else {
             return Ok(None);
         };
+        let serial_days = self
+            .get_settings()
+            .ok()
+            .and_then(|settings| settings.serial_days);
+        let range_ms = i64::from(serial_days.unwrap_or(30)) * 86_400_000;
+        let serial =
+            range_ms > 0 && last_grown_at.is_some_and(|grown: i64| now_millis() - grown < range_ms);
         let read_chapter = locator.and_then(|locator| resource_chapter(&locator.resource_id));
-        let read_chapter_title = match read_chapter {
-            Some(index) => self
-                .online_chapter(book_id, index)?
-                .map(|chapter| chapter.title)
-                .unwrap_or_default(),
-            None => String::new(),
+        let read = match read_chapter {
+            Some(index) => self.online_chapter(book_id, index)?,
+            None => None,
         };
+        let read_chapter_length = read.as_ref().and_then(|chapter| {
+            fs::read_to_string(self.online_chapter_path(book_id, chapter))
+                .ok()
+                .map(|text| text.encode_utf16().count() as u32)
+        });
+        let read_chapter_title = read.map(|chapter| chapter.title).unwrap_or_default();
         Ok(Some(OnlineShelfInfo {
             book: serde_json::from_str(&json)?,
             total_chapters: self.online_chapter_count(book_id)?,
@@ -912,13 +932,23 @@ impl Storage {
             read_chapter,
             read_chapter_title,
             cached_chapters: self.cached_online_chapters(book_id)?.len() as u32,
+            read_chapter_length,
+            serial: serial.then_some(true),
         }))
     }
 }
 
 /// `online_books` columns the shelf shows: details JSON, new chapters, last
-/// check, update error, 允许更新, and on the shelf.
-type ShelfRow = (String, u32, Option<i64>, Option<String>, bool, bool);
+/// check, update error, 允许更新, on the shelf, and when the contents grew.
+type ShelfRow = (
+    String,
+    u32,
+    Option<i64>,
+    Option<String>,
+    bool,
+    bool,
+    Option<i64>,
+);
 
 fn nonempty(text: &str) -> Option<&str> {
     let text = text.trim();
@@ -1274,5 +1304,42 @@ mod tests {
         let stats = storage.reading_stats("2026-10-12").unwrap();
         assert_eq!(stats.books[0].book_id, local);
         assert_eq!(stats.total_seconds, 600);
+    }
+
+    #[test]
+    fn grown_contents_mark_a_serial_and_the_read_chapter_has_a_length() {
+        let (_dir, mut storage) = storage();
+        let toc = chapters(&["第1章", "第2章"], "a");
+        let id = storage.add_online_book(&book("a"), &toc, true).unwrap();
+        let info = |storage: &Storage| storage.library_book(&id).unwrap().online.unwrap();
+        assert_eq!(info(&storage).serial, None);
+        storage
+            .replace_online_toc(
+                &id,
+                &book("a"),
+                &chapters(&["第1章", "第2章", "第3章"], "a"),
+            )
+            .unwrap();
+        assert_eq!(info(&storage).serial, Some(true));
+        let mut settings = storage.get_settings().unwrap();
+        settings.serial_days = Some(0);
+        storage.save_settings(&settings).unwrap();
+        assert_eq!(info(&storage).serial, None);
+
+        let chapter = storage.online_chapter(&id, 1).unwrap().unwrap();
+        let path = storage.online_chapter_path(&id, &chapter);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "第2章\n正文").unwrap();
+        storage
+            .save_position_record(&ReaderLocator {
+                book_id: id.clone(),
+                content_version: chapter_version(&id, &chapter),
+                resource_id: chapter_resource(1),
+                offset: 2,
+                context_before: String::new(),
+                context_after: String::new(),
+            })
+            .unwrap();
+        assert_eq!(info(&storage).read_chapter_length, Some(6));
     }
 }

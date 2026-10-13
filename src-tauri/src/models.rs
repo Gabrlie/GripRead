@@ -381,6 +381,11 @@ pub struct BookInfo {
     pub source_byte_length: u64,
     pub chapter_count: Option<u64>,
     pub reading_seconds: u64,
+    /// Characters other than whitespace: the whole text of a local book, the
+    /// kept chapters of an online one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub word_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -513,6 +518,14 @@ pub struct OnlineShelfInfo {
     pub read_chapter_title: String,
     /// Chapters whose text is kept on the device.
     pub cached_chapters: u32,
+    /// The kept text length of the chapter being read, for 读完.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub read_chapter_length: Option<u32>,
+    /// The contents grew within the 连载判定 range: still being written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub serial: Option<bool>,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -675,6 +688,11 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pre_download_chapters: Option<u8>,
+    /// 连载判定: an online book whose contents grew within these days is not
+    /// moved to 读完 at its end; `None` is 30, `0` turns it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub serial_days: Option<u16>,
 }
 
 /// A reading colour scheme with day and night variants (Legado ReadBookConfig).
@@ -1069,6 +1087,7 @@ impl Default for ReaderPreferences {
             auto_scroll_speed: default_auto_scroll_speed(),
             style: ReadingStyle::default(),
             pre_download_chapters: None,
+            serial_days: None,
         }
     }
 }

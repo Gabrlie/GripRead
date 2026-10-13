@@ -110,17 +110,26 @@ export const READING_GROUPS: { id: "all" | ShelfState; name: string }[] = [
   { id: "finished", name: "读完" },
 ];
 
+/** A book ends this close to its end, at most the length of a short page. */
+const LAST_PAGE_UNITS = 2_000;
+
 /**
  * The reading state derived from progress: unread without a position,
- * finished once the position reaches the last chapter (or 99% of a book
- * without chapters), reading otherwise.
+ * finished once the end is reached, reading otherwise. The end is the last
+ * chapter read through (98% of a local book, or within its last page; 90%
+ * of an online book's last chapter). An online book still being written
+ * (its contents grew within the 连载判定 range) stays in 在读.
  */
 export function automaticState(book: LibraryBook, entries: TocEntry[] | null): ShelfState {
   const saved = book.locator;
   if (book.online) {
     if (!saved) return "unread";
-    const last = book.online.totalChapters - 1;
-    return last > 0 && (book.online.readChapter ?? 0) >= last ? "finished" : "reading";
+    const online = book.online;
+    const last = online.totalChapters - 1;
+    const inLast = last >= 0 && (online.readChapter ?? -1) >= last;
+    const length = online.readChapterLength ?? 0;
+    const through = length > 0 && saved.offset >= length * 0.9;
+    return inLast && through && !online.serial ? "finished" : "reading";
   }
   if (!saved || saved.contentVersion !== book.book.contentVersion)
     return saved ? "reading" : "unread";
@@ -128,10 +137,11 @@ export function automaticState(book: LibraryBook, entries: TocEntry[] | null): S
     (entry) => entry.locator.contentVersion === book.book.contentVersion,
   );
   const last = current.at(-1);
-  if (current.length > 1 && last && saved.offset >= last.locator.offset) return "finished";
+  const inLast = current.length <= 1 || (last !== undefined && saved.offset >= last.locator.offset);
   const total = book.totalLength ?? 0;
-  if (total > 0 && saved.offset / total >= 0.99) return "finished";
-  return "reading";
+  const atEnd =
+    total > 0 && (saved.offset / total >= 0.98 || total - saved.offset <= LAST_PAGE_UNITS);
+  return inLast && atEnd ? "finished" : "reading";
 }
 
 /**

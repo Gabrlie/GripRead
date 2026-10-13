@@ -7,4 +7,9 @@ export type BookInfo = { bookId: string,
 /**
  * Text before the first chapter, when the book has one.
  */
-intro: string | null, sourceByteLength: number, chapterCount: number | null, readingSeconds: number, };
+intro: string | null, sourceByteLength: number, chapterCount: number | null, readingSeconds: number, 
+/**
+ * Characters other than whitespace: the whole text of a local book, the
+ * kept chapters of an online one.
+ */
+wordCount?: number, };

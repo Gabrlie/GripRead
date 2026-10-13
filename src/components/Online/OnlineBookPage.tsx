@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { RuntimeContext } from "../../application/runtime";
 import type { SourceService } from "../../services/contracts";
 import type {
   LibraryBook,
@@ -51,6 +52,7 @@ export function OnlineBookPage({
   const [refresh, setRefresh] = useState(0);
   const [kept, setKept] = useState<LibraryBook | null>(null);
   const [busy, setBusy] = useState(false);
+  const runtime = useContext(RuntimeContext);
   const origin = result.origins[originIndex] ?? result.origins[0];
 
   useEffect(() => {
@@ -103,6 +105,7 @@ export function OnlineBookPage({
         const added = await service.getLibraryBook(kept.book.id);
         setKept(added);
         void keepOnlineCover(service, added);
+        void runtime?.library.refresh();
         return added;
       }
       return kept;
@@ -112,6 +115,8 @@ export function OnlineBookPage({
     if (shelf) {
       setKept(entry);
       void keepOnlineCover(service, entry);
+      // The shelf lists the book at once, not after its next refresh.
+      void runtime?.library.refresh();
     }
     return entry;
   };
@@ -135,6 +140,7 @@ export function OnlineBookPage({
         await service.setOnShelf(kept.book.id, false);
         await service.leaveOnlineBook(kept.book.id);
         setKept(null);
+        void runtime?.library.refresh();
         toast("已移出书架");
         return;
       }
@@ -253,7 +259,9 @@ export function OnlineBookPage({
       {shown.intro && (
         <section className="rounded-xl bg-surface-container-low p-3">
           <h3 className="text-[11px] text-secondary mb-1">简介</h3>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{shown.intro}</p>
+          <p data-selectable="true" className="text-sm leading-relaxed whitespace-pre-wrap">
+            {shown.intro}
+          </p>
         </section>
       )}
 

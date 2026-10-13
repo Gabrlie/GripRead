@@ -63,13 +63,23 @@ export function ChangeSourceDialog({
   const [filter, setFilter] = useState("");
   const [switching, setSwitching] = useState<string | null>(null);
   const operation = useRef(`change-${Date.now()}`);
+  // 停止 ends the search; 继续 searches again, keeping the rows found.
+  const [round, setRound] = useState(0);
+  const [stopped, setStopped] = useState(false);
+  const found = useRef(new Map<string, OnlineSearchEvent["results"][number]>());
 
   useEffect(() => {
     let stop: (() => void) | undefined;
     let active = true;
-    const operationId = operation.current;
+    const operationId = `change-${Date.now()}-${round}`;
+    operation.current = operationId;
     void service
-      .onSearch((next) => next.operationId === operationId && setEvent(next))
+      .onSearch((next) => {
+        if (next.operationId !== operationId) return;
+        for (const result of next.results)
+          found.current.set(`${result.name}\n${result.author}`, result);
+        setEvent({ ...next, results: [...found.current.values()] });
+      })
       .then((unsubscribe) => {
         if (!active) {
           unsubscribe();
@@ -90,7 +100,7 @@ export function ChangeSourceDialog({
       stop?.();
       void service.cancel(operationId);
     };
-  }, [service, book.book.title]);
+  }, [service, book.book.title, round]);
 
   // Rows keep the order they first appeared in, so choosing one while the
   // search goes on never hits a row that moved.
@@ -167,10 +177,13 @@ export function ChangeSourceDialog({
       .finally(() => setSwitching(null));
   };
 
-  const running = event !== null && !event.done;
+  const running = !stopped && event !== null && !event.done;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md h-[70dvh] p-5 gap-3 flex flex-col">
+      <DialogContent
+        initialFocus={false}
+        className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md h-[70dvh] p-5 gap-3 flex flex-col"
+      >
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">换源</DialogTitle>
         </DialogHeader>
@@ -197,19 +210,38 @@ export function ChangeSourceDialog({
           <p role="status" className="flex-1 text-[11px] text-secondary">
             {running
               ? `正在搜索 ${event.searched}/${event.total}，找到 ${candidates.length} 个`
-              : event
-                ? `找到 ${candidates.length} 个书源`
-                : "正在搜索…"}
+              : stopped
+                ? `已停止，找到 ${candidates.length} 个`
+                : event
+                  ? `找到 ${candidates.length} 个书源`
+                  : "正在搜索…"}
           </p>
-          {running && (
+          {running && !stopped ? (
             <Button
               size="sm"
               variant="ghost"
               className="h-7"
-              onClick={() => void service.cancel(operation.current)}
+              onClick={() => {
+                setStopped(true);
+                void service.cancel(operation.current);
+              }}
             >
               停止
             </Button>
+          ) : (
+            stopped && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7"
+                onClick={() => {
+                  setStopped(false);
+                  setRound((value) => value + 1);
+                }}
+              >
+                继续
+              </Button>
+            )
           )}
         </div>
         <ul className="flex-1 min-h-0 overflow-y-auto space-y-1" aria-label="可换的书源">

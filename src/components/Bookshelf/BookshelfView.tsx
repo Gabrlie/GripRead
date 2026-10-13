@@ -639,11 +639,11 @@ function NewChaptersMark({ book }: { book: LibraryBook }) {
     <span
       aria-label={`还有 ${count} 章未读`}
       data-fresh={fresh ? "true" : undefined}
-      className={`absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center shadow-xs ${
+      className={`absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums shadow-xs ${
         fresh ? "bg-error text-on-error" : "bg-surface-container-highest/90 text-on-surface-variant"
       }`}
     >
-      {count > 999 ? "999+" : count}
+      {count}
     </span>
   );
 }

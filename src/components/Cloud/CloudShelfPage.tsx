@@ -58,9 +58,11 @@ export function CloudShelfPage({
       setBusy(null);
     }
   };
-  const localCount = library.books.length;
+  // Online books are not uploaded, so only local books count.
+  const localBooks = library.books.filter((book) => !book.online);
+  const localCount = localBooks.length;
   const uploadedLocal = new Set(books?.map((book) => book.localBookId).filter(Boolean));
-  const notUploaded = library.books.filter((book) => !uploadedLocal.has(book.book.id)).length;
+  const notUploaded = localBooks.filter((book) => !uploadedLocal.has(book.book.id)).length;
 
   return (
     <FullPage
@@ -104,8 +106,7 @@ export function CloudShelfPage({
       )}
       {configured && (
         <p className="px-1 text-[11px] text-secondary">
-          书籍保存在 WebDAV 的 GripRead/Books
-          文件夹；下载会完整取回文件并加入书架，已在书架的同一本书不会重复。
+          书籍保存在 WebDAV 的 GripRead/Books 文件夹。
           {books && notUploaded > 0 && ` 本机还有 ${notUploaded} 本未上传。`}
         </p>
       )}

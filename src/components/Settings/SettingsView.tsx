@@ -27,6 +27,14 @@ import { CacheManagerPage } from "./CacheManagerPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
+const SERIAL_DAYS: [number, string][] = [
+  [0, "关闭"],
+  [7, "7 天"],
+  [30, "30 天"],
+  [90, "90 天"],
+  [180, "180 天"],
+];
+
 type Page =
   "records" | "sources" | "replace" | "toc" | "backup" | "cloud" | "about" | "logs" | "cache";
 
@@ -234,6 +242,35 @@ export function SettingsView() {
                 onCheckedChange={(oledBlack) => store.set({ oledBlack })}
               />
             </label>
+          </div>
+        </PageSection>
+
+        <PageSection title="书架">
+          <div className="p-4 space-y-2">
+            <span className="text-sm">
+              连载判定
+              <span className="block text-[11px] text-secondary">
+                这段时间内更新过的网络书籍读到最后也不移入读完
+              </span>
+            </span>
+            <div
+              role="radiogroup"
+              aria-label="连载判定"
+              className="grid grid-cols-5 gap-1.5 bg-surface-container p-1 rounded-lg"
+            >
+              {SERIAL_DAYS.map(([days, label]) => (
+                <button
+                  key={days}
+                  type="button"
+                  role="radio"
+                  aria-checked={(value.serialDays ?? 30) === days}
+                  onClick={() => store.set({ serialDays: days })}
+                  className={`h-8 rounded-md text-xs ${(value.serialDays ?? 30) === days ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </PageSection>
 

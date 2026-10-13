@@ -49,7 +49,7 @@ pub use portable::{
 };
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 
-const CURRENT_SCHEMA_VERSION: i64 = 18;
+const CURRENT_SCHEMA_VERSION: i64 = 19;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -144,6 +144,33 @@ pub(crate) struct PreparedTxtReassociation {
 struct AssetRecord {
     asset: BookAsset,
     relative_path: String,
+}
+
+/// Characters other than whitespace in a UTF-8 text file (总字数), kept by
+/// path, size, and modification time so a detail page opens quickly.
+fn text_word_count(path: &Path) -> u64 {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    type Counts = HashMap<PathBuf, (u64, Option<std::time::SystemTime>, u64)>;
+    static COUNTS: OnceLock<Mutex<Counts>> = OnceLock::new();
+    let Ok(meta) = fs::metadata(path) else {
+        return 0;
+    };
+    let stamp = (meta.len(), meta.modified().ok());
+    let counts = COUNTS.get_or_init(Default::default);
+    if let Some((len, modified, count)) = counts.lock().ok().and_then(|map| map.get(path).copied())
+    {
+        if (len, modified) == stamp {
+            return count;
+        }
+    }
+    let count = fs::read_to_string(path)
+        .map(|text| text.chars().filter(|c| !c.is_whitespace()).count() as u64)
+        .unwrap_or(0);
+    if let Ok(mut map) = counts.lock() {
+        map.insert(path.to_path_buf(), (stamp.0, stamp.1, count));
+    }
+    count
 }
 
 /// A short database/filesystem snapshot used to validate a duplicate import
@@ -971,6 +998,15 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (18, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 19 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch("ALTER TABLE online_books ADD COLUMN last_grown_at INTEGER;")?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (19, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -2773,6 +2809,12 @@ impl Storage {
                 source_byte_length: 0,
                 chapter_count: Some(u64::from(self.online_chapter_count(book_id)?)),
                 reading_seconds: reading_seconds.max(0) as u64,
+                word_count: Some(
+                    self.online_chapters(book_id)?
+                        .iter()
+                        .map(|chapter| text_word_count(&self.online_chapter_path(book_id, chapter)))
+                        .sum(),
+                ),
             });
         }
         let record = self.asset_for_book(book_id)?;
@@ -2812,6 +2854,9 @@ impl Storage {
             source_byte_length: source_byte_length
                 .map_or(record.asset.byte_length, |length| length.max(0) as u64),
             chapter_count,
+            word_count: managed_path(&self.root, &record.relative_path, "books")
+                .ok()
+                .map(|path| text_word_count(&path)),
         })
     }
 
@@ -3873,7 +3918,7 @@ impl Storage {
             params![title, author, now_millis(), request.book_id],
         )?;
         if let Some(intro) = request.intro.as_deref() {
-            let intro = intro.trim();
+            let intro = crate::txt_toc::tidy_intro(intro);
             tx.execute(
                 "UPDATE books SET intro = ?2 WHERE id = ?1",
                 // An empty intro is kept, so chapter detection does not refill it.
@@ -6605,7 +6650,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 18);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 19);
     }
 
     #[test]
@@ -7753,6 +7798,8 @@ mod tests {
         );
         let info = storage.book_info(&id).unwrap();
         assert_eq!(info.source_byte_length, "第一章 开始\n内容\n".len() as u64);
+        // 总字数 leaves out spaces and line breaks.
+        assert_eq!(info.word_count, Some(7));
     }
 
     #[test]
@@ -8440,12 +8487,13 @@ mod tests {
             book_id: id.clone(),
             title: "time".into(),
             author: None,
-            intro: Some("  自己写的简介  ".into()),
+            intro: Some("\n  自己写的简介  ".into()),
         };
         storage.update_book(&intro).unwrap();
+        // The first line keeps its indentation; blank lines and trailing spaces go.
         assert_eq!(
             storage.book_info(&id).unwrap().intro.as_deref(),
-            Some("自己写的简介")
+            Some("  自己写的简介")
         );
     }
 

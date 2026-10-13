@@ -2,7 +2,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LibraryService, ReaderService } from "../services/contracts";
 import type { LibraryBook, LibraryGroup, TocEntry } from "../types/generated";
-import { ShelfStore, chapterLabels, gainedChapters, rememberChaptersWhenRead } from "./shelf";
+import {
+  ShelfStore,
+  automaticState,
+  chapterLabels,
+  gainedChapters,
+  rememberChaptersWhenRead,
+} from "./shelf";
 import { ruleServiceMocks, tocEntry, tocListing } from "../test/toc";
 
 function deferred<T>() {
@@ -337,5 +343,40 @@ describe("remaining chapters", () => {
     expect(gainedChapters(reading, labels)).toBe(true);
     rememberChaptersWhenRead("book", 4);
     expect(gainedChapters(reading, labels)).toBe(false);
+  });
+});
+
+describe("读完", () => {
+  const toc = [0, 5000, 9000].map((offset, index) =>
+    tocEntry(index, `第${index + 1}章`, { ...entry.locator!, offset }),
+  );
+  const local = (offset: number) => ({
+    ...entry,
+    totalLength: 10_000,
+    locator: { ...entry.locator!, offset },
+  });
+
+  it("waits for the end of a local book's last chapter", () => {
+    expect(automaticState(local(6000), toc)).toBe("reading");
+    // The last chapter's start leaves it to be read.
+    expect(automaticState({ ...local(9000), totalLength: 20_000 }, toc)).toBe("reading");
+    expect(automaticState(local(9850), toc)).toBe("finished");
+  });
+
+  it("finishes an online book through its last chapter unless it is still being written", () => {
+    const online = (offset: number, serial?: boolean) =>
+      ({
+        ...entry,
+        locator: { ...entry.locator!, resourceId: "chapter-9", offset },
+        online: {
+          totalChapters: 10,
+          readChapter: 9,
+          readChapterLength: 3000,
+          ...(serial ? { serial } : {}),
+        },
+      }) as unknown as LibraryBook;
+    expect(automaticState(online(100), null)).toBe("reading");
+    expect(automaticState(online(2900), null)).toBe("finished");
+    expect(automaticState(online(2900, true), null)).toBe("reading");
   });
 });

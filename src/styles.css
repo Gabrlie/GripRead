@@ -386,6 +386,25 @@
       "Microsoft YaHei", sans-serif;
   }
 
+  /*
+   * Long presses select text only where reading happens: reader text, an
+   * introduction, and fields. Elsewhere a press is a press.
+   */
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .reader-prose,
+  [data-selectable="true"],
+  input,
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
   /* Android sets these from native insets (src/services/insets.ts). */
   :root {
     --safe-top: env(safe-area-inset-top, 0px);
