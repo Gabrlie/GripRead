@@ -101,32 +101,53 @@ function appendHighlighted(
  * that space over its paragraph gaps, so its last line sits at the bottom.
  * Gaps do not change line wrapping, so pages and offsets stay as measured.
  * Call it once the page is laid out; a short last page stays as it is.
+ * It reads the layout once and returns the fill it set (`""` for none), so
+ * copies of the same page can take it without laying out again.
  */
-export function alignPageBottom(page: HTMLElement): void {
+export function alignPageBottom(page: HTMLElement): string {
   page.style.removeProperty("--reader-fill");
   const paragraphs = Array.from(page.getElementsByClassName(READER_PARAGRAPH_CLASS)).filter(
     (paragraph) => paragraph.getBoundingClientRect().height > 0,
   );
-  if (paragraphs.length < 2) return;
-  const style = page.ownerDocument.defaultView?.getComputedStyle(page);
+  if (paragraphs.length < 2) return "";
+  const view = page.ownerDocument.defaultView;
+  const style = view?.getComputedStyle(page);
   const box = page.getBoundingClientRect();
   const bottom =
     box.top + (page.clientHeight || box.height) - (parseFloat(style?.paddingBottom ?? "") || 0);
-  const last = paragraphs[paragraphs.length - 1];
-  const left = bottom - last.getBoundingClientRect().bottom;
+  const left = bottom - paragraphs[paragraphs.length - 1].getBoundingClientRect().bottom;
   const fontSize = parseFloat(style?.fontSize ?? "") || 16;
   const line = parseFloat(style?.lineHeight ?? "") || fontSize * 1.5;
-  if (!(left > 0.5) || left > line * 1.3) return;
-  const gaps = paragraphs.length - 1;
-  // A heading's bottom margin absorbs part of the gap after it, so settle
-  // the remainder over a few more layouts.
-  let fill = left / gaps;
-  for (let round = 0; round < 3; round += 1) {
-    page.style.setProperty("--reader-fill", `${Math.max(0, fill)}px`);
-    const rest = bottom - last.getBoundingClientRect().bottom;
-    if (Math.abs(rest) <= 0.25) return;
-    fill += rest / gaps;
+  if (!(left > 0.5) || left > line * 1.3) return "";
+  // A heading's bottom margin collapses with the gap after it, so that gap
+  // only grows once the fill passes the difference: each gap has such a
+  // threshold (zero for ordinary ones), and the fill spreads over the gaps
+  // past theirs.
+  const thresholds = paragraphs.slice(0, -1).map((paragraph, index) => {
+    if ((paragraph as HTMLElement).dataset.heading !== "true") return 0;
+    const below = parseFloat(view?.getComputedStyle(paragraph).marginBottom ?? "") || 0;
+    const above = parseFloat(view?.getComputedStyle(paragraphs[index + 1]).marginTop ?? "") || 0;
+    return Math.max(0, below - above);
+  });
+  const fill = spreadFill(left, thresholds);
+  const value = `${fill}px`;
+  page.style.setProperty("--reader-fill", value);
+  return value;
+}
+
+/**
+ * The fill `f` with `Σ max(0, f - threshold)` equal to `left`: gaps join as
+ * the fill passes their thresholds.
+ */
+export function spreadFill(left: number, thresholds: readonly number[]): number {
+  const sorted = [...thresholds].sort((a, b) => a - b);
+  let sum = 0;
+  for (let count = 1; count <= sorted.length; count += 1) {
+    sum += sorted[count - 1];
+    const fill = (left + sum) / count;
+    if (count === sorted.length || fill <= sorted[count]) return fill;
   }
+  return 0;
 }
 
 /** Whether the character at `offset` in `text` continues a line started earlier. */

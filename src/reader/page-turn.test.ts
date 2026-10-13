@@ -112,6 +112,24 @@ describe("PageTurnAdapter", () => {
     adapter.dispose();
   });
 
+  it("gives copies the fill of the page on screen without measuring them", async () => {
+    const { host, adapter, first, pages } = setup();
+    adapter.setPages(pages, 0);
+    await adapter.present(first, "open", context(pages, 0));
+    const shown = document.createElement("div");
+    Object.assign(shown.dataset, { testid: "reader-page", aligned: "true", start: "0", end: "10" });
+    shown.style.setProperty("--reader-fill", "3.5px");
+    document.body.append(shown);
+    const measured = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    adapter.hold();
+    const copy = host.querySelector<HTMLElement>('[aria-hidden="true"][data-start="0"]');
+    expect(copy?.style.getPropertyValue("--reader-fill")).toBe("3.5px");
+    expect(measured.mock.contexts.filter((element) => element === copy)).toHaveLength(0);
+    measured.mockRestore();
+    shown.remove();
+    adapter.dispose();
+  });
+
   it("settles a curl interrupted by the toolbar or a new turn and keeps turning", async () => {
     const { host, adapter, tick, first, second, pages } = setup();
     adapter.setPages(pages, 0);

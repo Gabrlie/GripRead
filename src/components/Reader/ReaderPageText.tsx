@@ -8,10 +8,12 @@ interface ReaderPageTextProps {
   /** Absolute UTF-16 range to highlight. */
   highlight: { start: number; end: number } | null;
   headings: HeadingIndex;
+  /** The typography in effect; a change aligns the page again. */
+  layout?: string;
 }
 
 /** Renders a measured page with the same paragraph renderer used for measurement. */
-export function ReaderPageText({ page, bookId, highlight, headings }: ReaderPageTextProps) {
+export function ReaderPageText({ page, bookId, highlight, headings, layout }: ReaderPageTextProps) {
   const content = useRef<HTMLDivElement>(null);
   // A match may cross a page boundary; clip it to the visible slice so each
   // page shows the part it contains.
@@ -32,7 +34,10 @@ export function ReaderPageText({ page, bookId, highlight, headings }: ReaderPage
           : { start: highlightStart, end: highlightEnd },
     });
     alignPageBottom(content.current);
+    // Page-turn copies of this page take its fill instead of measuring.
+    content.current.dataset.aligned = "true";
   }, [
+    layout,
     page.text,
     page.continued,
     page.startOffset,

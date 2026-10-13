@@ -281,7 +281,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     held.style.zIndex = "1";
     this.held = held;
     this.mount.append(held);
-    alignPages(held);
+    this.alignPages(held);
     this.updateVisibility();
   }
 
@@ -304,7 +304,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.stopAnimation();
     const overlay = this.screenElement(this.previousSpread, this.takeOutgoingChrome());
     this.mount.append(overlay);
-    alignPages(overlay);
+    this.alignPages(overlay);
     this.overlay = overlay;
     this.releaseHold();
     this.updateVisibility();
@@ -451,7 +451,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     if (effect === "cover") above.style.zIndex = "1";
     surface.append(outgoing, incoming);
     this.mount.append(surface);
-    alignPages(surface);
+    this.alignPages(surface);
     this.overlay = surface;
     this.updateVisibility();
     const draw = (progress: number) => {
@@ -554,6 +554,26 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     await finished;
   }
 
+  /**
+   * Copies align their pages' bottoms like the visible pages: a page shown
+   * now (ReaderPageText, current for this layout) gives its fill, so only
+   * copies of pages not on screen are laid out for it.
+   */
+  private alignPages(root: HTMLElement): void {
+    const document = root.ownerDocument;
+    for (const page of root.querySelectorAll<HTMLElement>("[data-start]")) {
+      const shown = document.querySelector<HTMLElement>(
+        `[data-testid="reader-page"][data-aligned][data-start="${page.dataset.start}"][data-end="${page.dataset.end}"]`,
+      );
+      if (!shown) {
+        alignPageBottom(page);
+        continue;
+      }
+      const fill = shown.style.getPropertyValue("--reader-fill");
+      if (fill) page.style.setProperty("--reader-fill", fill);
+    }
+  }
+
   private rasterize(
     pages: readonly ReaderDisplayedPage[],
     chrome: HTMLElement[],
@@ -563,7 +583,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     const element = this.screenElement(pages, chrome);
     element.style.visibility = "hidden";
     this.mount.append(element);
-    alignPages(element);
+    this.alignPages(element);
     try {
       const background =
         element.ownerDocument.defaultView?.getComputedStyle(element).backgroundColor || "#ffffff";
@@ -699,9 +719,4 @@ function samePage(left: ReaderDisplayedPage, right: ReaderDisplayedPage): boolea
 function clampIndex(index: number, count: number): number {
   if (count <= 0 || !Number.isFinite(index)) return 0;
   return Math.min(count - 1, Math.max(0, Math.trunc(index)));
-}
-
-/** Copies align their pages' bottoms like the visible pages once laid out. */
-function alignPages(root: HTMLElement): void {
-  for (const page of root.querySelectorAll<HTMLElement>("[data-start]")) alignPageBottom(page);
 }

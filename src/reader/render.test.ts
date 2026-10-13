@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { continuesLine, renderReaderText } from "./render";
+import { continuesLine, renderReaderText, spreadFill } from "./render";
 
 function render(text: string, continued = false, highlight?: { start: number; end: number }) {
   const container = document.createElement("div");
@@ -137,5 +137,18 @@ describe("leading paragraph spaces", () => {
     const continued = document.createElement("div");
     renderReaderText(continued, "　　接上页", { continued: true });
     expect(continued.querySelector("span[hidden]")).toBeNull();
+  });
+});
+
+describe("bottom alignment", () => {
+  it("spreads the space over the gaps past their thresholds", () => {
+    expect(spreadFill(12, [0, 0, 0])).toBe(4);
+    // A heading gap absorbs 3px first: below that only the other two grow.
+    expect(spreadFill(4, [3, 0, 0])).toBe(2);
+    // Past it all three grow: 5 + 5 + (5 - 3) = 12.
+    expect(spreadFill(12, [3, 0, 0])).toBe(5);
+    // Past the threshold all three share: 2f - 0 + (f - 3) = 21 → f = 8.
+    expect(spreadFill(21, [3, 0, 0])).toBe(8);
+    expect(spreadFill(5, [2])).toBe(7);
   });
 });

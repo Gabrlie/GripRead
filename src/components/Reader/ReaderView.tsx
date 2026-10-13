@@ -1262,6 +1262,7 @@ export function ReaderView() {
                   bookId={state.bookId}
                   highlight={highlightIn(state.contentWindow?.resourceId)}
                   headings={headings}
+                  layout={layoutSignature}
                 />
               ))}
             </div>
