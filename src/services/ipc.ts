@@ -122,7 +122,8 @@ import type {
   ChangeOnlineSourceRequest,
   ChangeOnlineSourceResult,
   SourceCoverRequest,
-  StorageUsage,
+  ClearDataRequest,
+  DataUsage,
 } from "../types/generated";
 
 const ERROR_CODES = new Set<ErrorCode>([
@@ -652,9 +653,9 @@ export const tauriServices: AppServices = {
       invokeCommand<OnlineChapter[]>("online_book_chapters", {
         request: { book, refresh } satisfies OnlineBookRequest,
       }),
-    storageUsage: () => invokeCommand<StorageUsage>("storage_usage"),
-    clearAllOnlineCaches: () => invokeCommand<void>("clear_all_online_caches"),
-    clearCoverCache: () => invokeCommand<void>("clear_cover_cache"),
+    dataUsage: () => invokeCommand<DataUsage>("data_usage"),
+    clearData: (parts) =>
+      invokeCommand<void>("clear_data", { request: { parts } satisfies ClearDataRequest }),
     convertToLocal: (bookId) =>
       invokeCommand<LibraryBook>("convert_online_to_local", {
         request: { bookId } satisfies BookRequest,

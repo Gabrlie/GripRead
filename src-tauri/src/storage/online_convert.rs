@@ -1,25 +1,6 @@
-//! Saving a fully cached online book as a local TXT book, and what the
-//! app's data folder holds (缓存管理).
+//! Saving a fully cached online book as a local TXT book.
 
 use super::*;
-use crate::models::{StoragePart, StorageUsage};
-
-fn folder_size(path: &Path) -> u64 {
-    let Ok(entries) = fs::read_dir(path) else {
-        return fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-    };
-    entries
-        .flatten()
-        .map(|entry| {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => folder_size(&path),
-                Ok(_) => entry.metadata().map(|meta| meta.len()).unwrap_or(0),
-                Err(_) => 0,
-            }
-        })
-        .sum()
-}
 
 /// A few characters around `offset` of `units`, to find the place again.
 fn context(units: &[u16], offset: usize) -> (String, String) {
@@ -32,92 +13,6 @@ fn context(units: &[u16], offset: usize) -> (String, String) {
 }
 
 impl Storage {
-    /// The data folder by part, and each online book's chapter cache.
-    pub fn storage_usage(&self) -> Result<StorageUsage, AppError> {
-        let part = |key: &str, label: &str, folders: &[&str]| StoragePart {
-            key: key.into(),
-            label: label.into(),
-            bytes: folders
-                .iter()
-                .map(|folder| folder_size(&self.root.join(folder)))
-                .sum(),
-        };
-        let database: u64 = fs::read_dir(&self.root)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|entry| {
-                        entry.file_name().to_str().is_some_and(|name| {
-                            name.ends_with(".sqlite3") || name.contains(".sqlite3-")
-                        })
-                    })
-                    .map(|entry| entry.metadata().map(|meta| meta.len()).unwrap_or(0))
-                    .sum()
-            })
-            .unwrap_or(0);
-        let mut parts = vec![
-            part("books", "本地书籍", &["books", "sources"]),
-            part("chapters", "章节缓存", &["online"]),
-            part("covers", "封面缓存", &["online-covers", "cloud-covers"]),
-            part("assets", "封面、字体与背景", &["assets"]),
-            part("logs", "日志", &["logs"]),
-            part("backups", "恢复点", &["backups"]),
-        ];
-        parts.push(StoragePart {
-            key: "database".into(),
-            label: "数据库".into(),
-            bytes: database,
-        });
-        let mut books = Vec::new();
-        let mut statement = self.conn.prepare(
-            "SELECT o.book_id, b.title FROM online_books o JOIN books b ON b.id = o.book_id
-             ORDER BY b.title",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(statement);
-        for (id, title) in rows {
-            let bytes = folder_size(&self.online_cache_dir(&id));
-            if bytes > 0 {
-                books.push(StoragePart {
-                    key: id,
-                    label: title,
-                    bytes,
-                });
-            }
-        }
-        Ok(StorageUsage { parts, books })
-    }
-
-    pub fn clear_all_online_caches(&self) -> Result<(), AppError> {
-        let ids: Vec<String> = {
-            let mut statement = self.conn.prepare("SELECT book_id FROM online_books")?;
-            let rows = statement
-                .query_map([], |row| row.get(0))?
-                .collect::<Result<Vec<String>, _>>()?;
-            rows
-        };
-        for id in ids {
-            self.clear_online_cache(&id)?;
-        }
-        Ok(())
-    }
-
-    pub fn clear_cover_cache(&self) -> Result<(), AppError> {
-        for folder in ["online-covers", "cloud-covers"] {
-            match fs::remove_dir_all(self.root.join(folder)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        self.conn.execute("DELETE FROM online_cover_cache", [])?;
-        Ok(())
-    }
-
     /// 转为本地书籍: every chapter as one TXT imported like any other, then
     /// the position, bookmarks, reading time, group, state, and cover move to
     /// it and the online book goes. `texts` are the chapters' cached texts,

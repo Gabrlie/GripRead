@@ -36,6 +36,8 @@ use crate::txt_toc::{
 mod online;
 mod online_cache;
 mod online_convert;
+mod usage;
+pub use usage::DEFAULT_CLEARED;
 mod portable;
 mod sources;
 pub use online::{

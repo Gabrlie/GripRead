@@ -1263,22 +1263,23 @@ pub async fn cache_online_chapters(
     })
 }
 
-/// 缓存管理: what the app's data folder holds.
+/// 数据管理: what the app's data folder holds.
 #[tauri::command]
-pub async fn storage_usage(
+pub async fn data_usage(state: State<'_, AppState>) -> Result<crate::models::DataUsage, AppError> {
+    with_storage(&state, |storage| storage.data_usage()).await
+}
+
+/// 清理所选 in 数据管理.
+#[tauri::command]
+pub async fn clear_data(
+    request: crate::models::ClearDataRequest,
     state: State<'_, AppState>,
-) -> Result<crate::models::StorageUsage, AppError> {
-    with_storage(&state, |storage| storage.storage_usage()).await
-}
-
-#[tauri::command]
-pub async fn clear_all_online_caches(state: State<'_, AppState>) -> Result<(), AppError> {
-    with_storage(&state, |storage| storage.clear_all_online_caches()).await
-}
-
-#[tauri::command]
-pub async fn clear_cover_cache(state: State<'_, AppState>) -> Result<(), AppError> {
-    with_storage(&state, |storage| storage.clear_cover_cache()).await
+) -> Result<(), AppError> {
+    let cleared = with_storage(&state, move |storage| storage.clear_data(&request.parts)).await?;
+    for id in cleared {
+        crate::online_reader::forget_shown(&id);
+    }
+    Ok(())
 }
 
 /// 转为本地书籍 for an online book whose chapters are all cached; returns

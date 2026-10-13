@@ -377,21 +377,27 @@ export function createMemorySourceService(
       throw new Error("预览模式不加载封面");
     },
     setCoverFromSource: async () => undefined,
-    storageUsage: async () => ({
+    dataUsage: async () => ({
       parts: [
-        { key: "books", label: "本地书籍", bytes: 12_400_000 },
-        { key: "chapters", label: "章节缓存", bytes: 3_200_000 },
-        { key: "covers", label: "封面缓存", bytes: 860_000 },
-        { key: "logs", label: "日志", bytes: 24_000 },
+        { key: "unshelved", label: "未加入书架的网络书籍", bytes: 1_800_000, clearable: true },
+        { key: "shelved", label: "书架书籍的章节缓存", bytes: 3_200_000, clearable: true },
+        { key: "covers", label: "封面缓存", bytes: 860_000, clearable: true },
+        { key: "requests", label: "书源详情与目录缓存", bytes: 240_000, clearable: true },
+        { key: "logs", label: "日志", bytes: 24_000, clearable: true },
+        { key: "books", label: "本地书籍", bytes: 12_400_000, clearable: false },
+        { key: "database", label: "数据库", bytes: 2_100_000, clearable: false },
       ],
-      books: [...kept.values()].map((entry) => ({
-        key: entry.book.id,
-        label: entry.book.title,
-        bytes: 400_000,
-      })),
+      books: [...kept.values()]
+        .filter((entry) => entry.online?.onShelf)
+        .map((entry) => ({
+          bookId: entry.book.id,
+          title: entry.book.title,
+          bytes: 400_000,
+          cachedChapters: entry.online?.cachedChapters ?? 0,
+          totalChapters: entry.online?.totalChapters ?? 0,
+        })),
     }),
-    clearAllOnlineCaches: async () => undefined,
-    clearCoverCache: async () => undefined,
+    clearData: async () => undefined,
     convertToLocal: async (bookId) => {
       const entry = kept.get(bookId);
       if (!entry) throw new Error("书籍不存在");

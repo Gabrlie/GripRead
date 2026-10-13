@@ -23,7 +23,7 @@ import { CloudShelfPage } from "../Cloud/CloudShelfPage";
 import { formatTime } from "../Cloud/format";
 import { APP_VERSION, AboutPage } from "./AboutPage";
 import { LogPage } from "./LogPage";
-import { CacheManagerPage } from "./CacheManagerPage";
+import { DataManagerPage } from "./DataManagerPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
@@ -321,7 +321,7 @@ export function SettingsView() {
         </PageSection>
 
         <PageSection>
-          <PageLink icon="storage" label="缓存管理" onClick={() => setPage("cache")} />
+          <PageLink icon="storage" label="数据管理" onClick={() => setPage("cache")} />
           <PageLink icon="bug_report" label="日志" onClick={() => setPage("logs")} />
           <PageLink
             icon="info"
@@ -359,7 +359,7 @@ export function SettingsView() {
       {page === "backup" && <BackupPage onClose={close} />}
       {page === "about" && <AboutPage onClose={close} />}
       {page === "logs" && <LogPage onClose={close} />}
-      {page === "cache" && <CacheManagerPage onClose={close} />}
+      {page === "cache" && <DataManagerPage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

@@ -20,4 +20,8 @@ preDownloadChapters?: number,
  * 连载判定: an online book whose contents grew within these days is not
  * moved to 读完 at its end; `None` is 30, `0` turns it off.
  */
-serialDays?: number, };
+serialDays?: number, 
+/**
+ * 退出时清理缓存: the default 数据管理 parts are cleared at the next start.
+ */
+clearCacheOnExit?: boolean, };

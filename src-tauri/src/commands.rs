@@ -137,6 +137,20 @@ impl AppState {
                 format!("清理未加入书架的书失败：{}", error.message),
             ),
         }
+        // 退出时清理缓存: Android has no dependable exit, so the caches the
+        // last session left are cleared as this one starts.
+        if storage
+            .get_settings()
+            .is_ok_and(|settings| settings.clear_cache_on_exit == Some(true))
+        {
+            let parts: Vec<String> = crate::storage::DEFAULT_CLEARED
+                .iter()
+                .map(|part| part.to_string())
+                .collect();
+            if let Err(error) = storage.clear_data(&parts) {
+                crate::app_log::warn("library", format!("清理缓存失败：{}", error.message));
+            }
+        }
         let data_root = storage.root_path().to_path_buf();
         // Storage now holds the exclusive data lock, so no other process owns these copies.
         crate::documents::clear_staging(&data_root)?;

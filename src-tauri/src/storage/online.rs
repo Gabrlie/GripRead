@@ -1342,4 +1342,64 @@ mod tests {
             .unwrap();
         assert_eq!(info(&storage).read_chapter_length, Some(6));
     }
+
+    #[test]
+    fn data_usage_splits_the_shelf_and_clearing_keeps_it() {
+        let (_dir, mut storage) = storage();
+        let shelved = storage
+            .add_online_book(&book("a"), &chapters(&["第1章", "第2章"], "a"), true)
+            .unwrap();
+        let other = storage
+            .add_online_book(
+                &{
+                    let mut b = book("b");
+                    b.name = "雪中".into();
+                    b
+                },
+                &chapters(&["第1章"], "b"),
+                false,
+            )
+            .unwrap();
+        for id in [&shelved, &other] {
+            let chapter = storage.online_chapter(id, 0).unwrap().unwrap();
+            let path = storage.online_chapter_path(id, &chapter);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "正文正文").unwrap();
+            crate::storage::mark_chapter_cached(id, &chapter);
+        }
+        let usage = storage.data_usage().unwrap();
+        let bytes = |key: &str| {
+            usage
+                .parts
+                .iter()
+                .find(|part| part.key == key)
+                .unwrap()
+                .bytes
+        };
+        assert!(bytes("shelved") > 0 && bytes("unshelved") > 0);
+        assert_eq!(usage.books.len(), 1);
+        assert_eq!(
+            (
+                usage.books[0].cached_chapters,
+                usage.books[0].total_chapters
+            ),
+            (1, 2)
+        );
+        let defaults: Vec<String> = crate::storage::DEFAULT_CLEARED
+            .iter()
+            .map(|part| part.to_string())
+            .collect();
+        assert_eq!(storage.clear_data(&defaults).unwrap(), vec![other.clone()]);
+        let usage = storage.data_usage().unwrap();
+        let bytes = |key: &str| {
+            usage
+                .parts
+                .iter()
+                .find(|part| part.key == key)
+                .unwrap()
+                .bytes
+        };
+        assert_eq!(bytes("unshelved"), 0);
+        assert!(bytes("shelved") > 0, "shelf books keep their chapters");
+    }
 }

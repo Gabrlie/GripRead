@@ -693,6 +693,10 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub serial_days: Option<u16>,
+    /// 退出时清理缓存: the default 数据管理 parts are cleared at the next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub clear_cache_on_exit: Option<bool>,
 }
 
 /// A reading colour scheme with day and night variants (Legado ReadBookConfig).
@@ -1088,6 +1092,7 @@ impl Default for ReaderPreferences {
             style: ReadingStyle::default(),
             pre_download_chapters: None,
             serial_days: None,
+            clear_cache_on_exit: None,
         }
     }
 }
@@ -1941,20 +1946,37 @@ pub struct FrontendLogRequest {
     pub message: String,
 }
 
-/// One part of the app's data folder (缓存管理).
+/// One part of the app's data folder (数据管理).
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct StoragePart {
-    /// A part name, or an online book's id.
+pub struct DataPart {
     pub key: String,
     pub label: String,
     pub bytes: u64,
+    /// A cache 数据管理 can clear.
+    pub clearable: bool,
+}
+
+/// An online book on the shelf with its chapter cache.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfBookCache {
+    pub book_id: String,
+    pub title: String,
+    pub bytes: u64,
+    pub cached_chapters: u32,
+    pub total_chapters: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct StorageUsage {
-    pub parts: Vec<StoragePart>,
-    /// Online books with cached chapters, by size.
-    pub books: Vec<StoragePart>,
+pub struct DataUsage {
+    pub parts: Vec<DataPart>,
+    pub books: Vec<ShelfBookCache>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearDataRequest {
+    pub parts: Vec<String>,
 }
