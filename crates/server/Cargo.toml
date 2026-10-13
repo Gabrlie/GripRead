@@ -23,5 +23,6 @@ uuid = { version = "1.24.1", features = ["v4"] }
 tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
+ureq = { version = "3", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

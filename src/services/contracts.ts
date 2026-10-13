@@ -70,6 +70,8 @@ import type {
   NetworkCheck,
   NetworkSettings,
   NetworkState,
+  SyncServerStatus,
+  ConnectSyncServerRequest,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -211,6 +213,20 @@ export interface SyncService {
   /** Another device's position for the book that has not been answered yet. */
   fetchProgress(bookId: string): Promise<ProgressPrompt | null>;
   acknowledgeProgress(bookId: string, deviceId: string, revision: number): Promise<void>;
+  /** 设置 › 服务器同步: this device's connection to the GripRead server. */
+  getServer(): Promise<SyncServerStatus>;
+  /** Signs in with the server's password; the first sync starts at once. */
+  connectServer(request: ConnectSyncServerRequest): Promise<SyncServerStatus>;
+  disconnectServer(): Promise<SyncServerStatus>;
+  syncServerNow(): Promise<void>;
+  setServerAutoDownload(on: boolean): Promise<SyncServerStatus>;
+  /** The book open in the reader, which is told of other devices' positions. */
+  setSyncOpenBook(bookId: string | null): Promise<void>;
+  onServerStatus(listener: (status: SyncServerStatus) => void): Promise<Unsubscribe>;
+  /** Records from the server changed the library. */
+  onSyncApplied(listener: () => void): Promise<Unsubscribe>;
+  /** Another device's position arrived for this open book. */
+  onSyncProgress(listener: (bookId: string) => void): Promise<Unsubscribe>;
 }
 /** Legado book sources: management, login, debugging, and checks (Sources specification). */
 export interface SourceService {

@@ -23,6 +23,7 @@ pub mod source_commands;
 pub mod sources;
 pub mod storage;
 pub mod sync;
+pub mod sync_client;
 pub mod transform;
 pub mod txt;
 pub mod txt_toc;

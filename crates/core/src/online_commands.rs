@@ -1062,6 +1062,8 @@ pub fn get_network_settings(state: &Arc<AppState>) -> crate::models::NetworkSett
 /// The device's proxy, checked again when asked.
 pub async fn network_state(state: &Arc<AppState>) -> Result<crate::models::NetworkState, AppError> {
     let root = state.data_root.clone();
+    // A changed network is also a moment to catch up with the server.
+    state.sync.now();
     on_engine_thread(move || {
         crate::network::refresh(&root);
         crate::network::state()

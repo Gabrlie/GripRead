@@ -482,17 +482,33 @@ export function ReaderView() {
     setCloudProgress(null);
     if (!bookId) return;
     let cancelled = false;
-    runtime.services.sync.getWebDav().then(
-      (settings) => {
+    const sync = runtime.services.sync;
+    // With the GripRead server, progress always syncs and is offered here.
+    void Promise.all([sync.getWebDav(), sync.getServer().catch(() => null)]).then(
+      ([settings, server]) => {
         if (cancelled) return;
-        progressSyncOn.current = settings.configured && settings.syncProgress;
-        progressSyncPlus.current = progressSyncOn.current && settings.syncProgressPlus;
+        const connected = server?.connected ?? false;
+        progressSyncOn.current = connected || (settings.configured && settings.syncProgress);
+        progressSyncPlus.current =
+          connected || (progressSyncOn.current && settings.syncProgressPlus);
         checkCloudProgress();
       },
       () => undefined,
     );
+    void sync.setSyncOpenBook(bookId).catch(() => undefined);
+    let stop: (() => void) | undefined;
+    void sync
+      .onSyncProgress((arrived) => {
+        if (arrived === bookId) checkCloudProgress();
+      })
+      .then((unsubscribe) => {
+        if (cancelled) unsubscribe();
+        else stop = unsubscribe;
+      });
     return () => {
       cancelled = true;
+      stop?.();
+      void sync.setSyncOpenBook(null).catch(() => undefined);
     };
   }, [bookId, checkCloudProgress, runtime.services.sync]);
   useEffect(() => {

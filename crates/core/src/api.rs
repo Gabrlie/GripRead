@@ -84,6 +84,12 @@ pub fn mutates(name: &str) -> bool {
 
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
+    "connect_sync_server",
+    "disconnect_sync_server",
+    "get_sync_server",
+    "set_sync_auto_download",
+    "set_sync_open_book",
+    "sync_now",
     "acknowledge_book_progress",
     "add_bookmark",
     "add_online_book",
@@ -228,8 +234,17 @@ pub const COMMANDS: &[&str] = &[
     "upload_cloud_books",
 ];
 
-/// Runs the command `name` with the page's arguments.
+/// Runs the command `name` with the page's arguments; one that may change
+/// what sync carries starts a sync once changes pause.
 pub async fn dispatch(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, AppError> {
+    let reply = run(state, name, args).await;
+    if reply.is_ok() && mutates(name) {
+        state.sync.changed();
+    }
+    reply
+}
+
+async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, AppError> {
     match name {
         "acknowledge_book_progress" => {
             reply(crate::commands::acknowledge_book_progress(state, request(args)?).await)
@@ -561,6 +576,22 @@ pub async fn dispatch(state: &Arc<AppState>, name: &str, args: Value) -> Result<
         }
         "upload_cloud_books" => {
             reply(crate::commands::upload_cloud_books(state, request(args)?).await)
+        }
+        "get_sync_server" => reply(crate::commands::get_sync_server(state).await),
+        "connect_sync_server" => {
+            reply(crate::commands::connect_sync_server(state, request(args)?).await)
+        }
+        "disconnect_sync_server" => reply(crate::commands::disconnect_sync_server(state).await),
+        "sync_now" => {
+            crate::commands::sync_now(state);
+            reply(Ok(()))
+        }
+        "set_sync_auto_download" => reply(Ok::<_, AppError>(
+            crate::commands::set_sync_auto_download(state, request(args)?),
+        )),
+        "set_sync_open_book" => {
+            crate::commands::set_sync_open_book(state, request(args)?);
+            reply(Ok(()))
         }
         _ => Err(AppError::new(
             ErrorCode::InvalidArgument,

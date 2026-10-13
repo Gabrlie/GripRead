@@ -96,6 +96,25 @@ function MainContent() {
     setLogViewer(() => setShowLogs(true));
     return () => setLogViewer(null);
   }, []);
+  // Records from the GripRead server changed the library or preferences.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    void runtime.services.sync
+      .onSyncApplied(() => {
+        void runtime.library.refresh();
+        void runtime.settings.load();
+        void runtime.shelfPreferences.load();
+      })
+      .then((unsubscribe) => {
+        if (active) stop = unsubscribe;
+        else unsubscribe();
+      });
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [runtime]);
   // A changed network or proxy (a proxy app turned off) is checked again,
   // once the burst of change reports settles.
   useEffect(() => {

@@ -5,6 +5,7 @@
  */
 import type { AppServices } from "../services/contracts";
 import type {
+  SyncServerStatus,
   Bookmark,
   BookTocSettings,
   ContentWindow,
@@ -115,6 +116,15 @@ const PREFERENCES: ReaderPreferences = {
 };
 
 export function previewServices(): AppServices {
+  let server: SyncServerStatus = {
+    connected: false,
+    address: "",
+    deviceName: "",
+    syncing: false,
+    lastSync: null,
+    lastError: null,
+    autoDownload: true,
+  };
   let preferences = { ...PREFERENCES };
   let webdav: WebDavSettings = {
     url: "",
@@ -495,6 +505,24 @@ export function previewServices(): AppServices {
       uploadProgress: async () => false,
       fetchProgress: async () => null,
       acknowledgeProgress: async () => undefined,
+      getServer: async () => server,
+      connectServer: async (request) =>
+        (server = {
+          ...server,
+          connected: true,
+          address: request.address,
+          deviceName: request.deviceName,
+          lastSync: Date.now(),
+        }),
+      disconnectServer: async () => (server = { ...server, connected: false, address: "" }),
+      syncServerNow: async () => {
+        server = { ...server, lastSync: Date.now() };
+      },
+      setServerAutoDownload: async (on) => (server = { ...server, autoDownload: on }),
+      setSyncOpenBook: async () => undefined,
+      onServerStatus: async () => () => undefined,
+      onSyncApplied: async () => () => undefined,
+      onSyncProgress: async () => () => undefined,
     },
     sources: createMemorySourceService(PREVIEW_SOURCES, PREVIEW_BOOKS),
   };

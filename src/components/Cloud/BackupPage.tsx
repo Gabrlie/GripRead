@@ -11,6 +11,7 @@ import type {
   WebDavCheck,
   WebDavSettings,
 } from "../../types/generated";
+import { ServerPausedNote } from "./ServerPausedNote";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -162,6 +163,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
 
   return (
     <FullPage label="备份与恢复" onClose={onClose}>
+      <ServerPausedNote />
       <PageSection title="WebDAV 账号">
         <div className="p-4 space-y-3">
           {field("服务器地址", "url", "留空使用坚果云", { inputMode: "url" })}
@@ -401,7 +403,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               从文件恢复
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setIgnoring(true)}>
-              恢复忽略列表
+              同步排除
               {settings.restoreIgnore.length > 0 && (
                 <span className="ml-1 text-[11px] text-secondary">
                   {settings.restoreIgnore.length} 项
@@ -491,8 +493,10 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
         <Dialog open onOpenChange={(open) => !open && setIgnoring(false)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[80dvh] overflow-y-auto p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">恢复忽略列表</DialogTitle>
-              <DialogDescription>开启的内容在恢复时保留本机的，不会被备份覆盖。</DialogDescription>
+              <DialogTitle className="font-title-editorial text-base">同步排除</DialogTitle>
+              <DialogDescription>
+                开启的内容保留本机的：恢复备份时不覆盖，连接服务器时既不上传也不被覆盖。
+              </DialogDescription>
             </DialogHeader>
             <ul className="space-y-1">
               {RESTORE_CATEGORIES.map(([category, label, note]) => (

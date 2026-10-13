@@ -169,6 +169,9 @@ const IPC_TYPES: &[&str] = &[
     "NetworkCheck",
     "NetworkCheckRequest",
     "NetworkState",
+    "SyncServerStatus",
+    "ConnectSyncServerRequest",
+    "SwitchRequest",
     "NetworkSettings",
     "ProxyKind",
     "DataPart",
@@ -358,6 +361,9 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<NetworkCheck>(&config)?;
     export_all::<NetworkCheckRequest>(&config)?;
     export_all::<NetworkState>(&config)?;
+    export_all::<SyncServerStatus>(&config)?;
+    export_all::<ConnectSyncServerRequest>(&config)?;
+    export_all::<SwitchRequest>(&config)?;
     export_all::<NetworkSettings>(&config)?;
     export_all::<ProxyKind>(&config)?;
     export_all::<DataPart>(&config)?;

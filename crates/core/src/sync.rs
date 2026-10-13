@@ -177,20 +177,32 @@ fn sha256_file(path: &Path) -> Result<String, AppError> {
 
 /// Imports a received book file unless the library has it already; the
 /// records waiting for it apply. The file must have the hash it was sent as.
-pub fn store_book(storage: &Mutex<Storage>, sha256: &str, file: &Path) -> Result<bool, AppError> {
+pub fn import_book_file(
+    storage: &Mutex<Storage>,
+    sha256: &str,
+    file: &Path,
+) -> Result<bool, AppError> {
     if !valid_sha256(sha256) || sha256_file(file)? != sha256 {
         return Err(AppError::invalid_argument("书籍文件与它的校验值不符"));
     }
-    if lock(storage)?.book_for_source(sha256)?.is_some() {
+    let mut guard = lock(storage)?;
+    if guard.book_for_source(sha256)?.is_some() {
         return Ok(false);
     }
     let operation = uuid::Uuid::new_v4().to_string();
     let cancel = std::sync::atomic::AtomicBool::new(false);
-    let mut guard = lock(storage)?;
     let imported = guard.import_txt(file, &operation, &cancel, |_, _, _| {})?;
     guard.apply_pending_restore(&imported.book.id)?;
-    log_own_changes(&mut guard, "server")?;
     Ok(true)
+}
+
+/// The server's import of a received book file, logging what it changed.
+pub fn store_book(storage: &Mutex<Storage>, sha256: &str, file: &Path) -> Result<bool, AppError> {
+    let imported = import_book_file(storage, sha256, file)?;
+    if imported {
+        log_own_changes(&mut *lock(storage)?, "server")?;
+    }
+    Ok(imported)
 }
 
 /// Keeps a received cover in the cover cache, checked against its name.

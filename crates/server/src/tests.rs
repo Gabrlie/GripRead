@@ -416,3 +416,155 @@ async fn devices_push_records_and_files_and_pull_the_web_versions_edits() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_device_syncs_with_a_running_server_both_ways() {
+    let folder = Folder::new();
+    let app = server(&folder, Some("secret1"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    // A phone with a book it renamed connects.
+    let phone = AppState::open(
+        folder.0.join("phone"),
+        Arc::new(api::NoEvents),
+        Arc::new(gripread_core::platform::Filesystem),
+    )
+    .unwrap();
+    let file = folder.0.join("剑来.txt");
+    std::fs::write(&file, "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。").unwrap();
+    let book_id = {
+        let mut storage = phone.storage.lock().unwrap();
+        let id = storage
+            .import_txt(
+                &file,
+                "phone",
+                &std::sync::atomic::AtomicBool::new(false),
+                |_, _, _| {},
+            )
+            .unwrap()
+            .book
+            .id;
+        storage
+            .update_book(&gripread_core::models::UpdateBookRequest {
+                book_id: id.clone(),
+                title: "云海".into(),
+                author: None,
+                intro: None,
+            })
+            .unwrap();
+        id
+    };
+    let sync = phone.sync.clone();
+    let request = gripread_core::models::ConnectSyncServerRequest {
+        address: address.clone(),
+        password: "secret1".into(),
+        device_name: "手机".into(),
+    };
+    let status = tokio::task::spawn_blocking(move || {
+        let status = sync.connect(&request).unwrap();
+        sync.sync_and_wait(std::time::Duration::from_secs(20));
+        status
+    })
+    .await
+    .unwrap();
+    assert!(status.connected);
+    assert_eq!(phone.sync.status().last_error, None);
+
+    // The server's library has the book, file and all, under its new name.
+    let app = server_client(&address);
+    let token = app.login().await;
+    let books = app.rpc(&token, "list_books").await;
+    assert_eq!(books[0]["book"]["title"], "云海");
+    let on_server = books[0]["book"]["id"].as_str().unwrap().to_string();
+
+    // The web version renames it; the phone hears of it without asking.
+    app.rpc_with(
+        &token,
+        "update_book",
+        json!({ "request": { "bookId": on_server, "title": "云海新编", "author": null, "intro": null } }),
+    )
+    .await;
+    let mut title = String::new();
+    for _ in 0..60 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        title = phone
+            .storage
+            .lock()
+            .unwrap()
+            .library_book(&book_id)
+            .unwrap()
+            .book
+            .title;
+        if title == "云海新编" {
+            break;
+        }
+    }
+    assert_eq!(title, "云海新编");
+}
+
+/// Plain HTTP to a running server, for tests of the device client.
+struct ServerClient {
+    address: String,
+    agent: ureq::Agent,
+}
+
+fn server_client(address: &str) -> ServerClient {
+    ServerClient {
+        address: address.to_string(),
+        agent: ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into(),
+    }
+}
+
+impl ServerClient {
+    async fn login(&self) -> String {
+        let (agent, url) = (
+            self.agent.clone(),
+            format!("{}/api/auth/login", self.address),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut response = agent
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .send(json!({ "password": "secret1", "device": "测试" }).to_string())
+                .unwrap();
+            let body: Value =
+                serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap();
+            body["token"].as_str().unwrap().to_string()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn rpc(&self, token: &str, name: &str) -> Value {
+        self.rpc_with(token, name, Value::Null).await
+    }
+
+    async fn rpc_with(&self, token: &str, name: &str, args: Value) -> Value {
+        let (agent, url, token) = (
+            self.agent.clone(),
+            format!("{}/api/rpc/{name}", self.address),
+            token.to_string(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut response = agent
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {token}"))
+                .send(if args.is_null() {
+                    String::new()
+                } else {
+                    args.to_string()
+                })
+                .unwrap();
+            let text = response.body_mut().read_to_string().unwrap();
+            serde_json::from_str(&text).unwrap_or(Value::Null)
+        })
+        .await
+        .unwrap()
+    }
+}

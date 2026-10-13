@@ -18,6 +18,7 @@ pub fn routes() -> Router<Arc<Server>> {
     Router::new()
         .route("/api/sync/push", post(push))
         .route("/api/sync/pull", get(pull))
+        .route("/api/sync/wait", get(wait))
         .route("/api/blobs/book/{sha256}", put(put_book).get(get_book))
         .route("/api/blobs/cover/{name}", put(put_cover).get(get_cover))
 }
@@ -146,6 +147,63 @@ async fn pull(
     match result {
         Ok(reply) => Json(reply).into_response(),
         Err(error) => app_error(error),
+    }
+}
+
+/// How long a device's long poll waits for a new record.
+const WAIT: Duration = Duration::from_secs(25);
+
+#[derive(Deserialize)]
+struct WaitQuery {
+    #[serde(default)]
+    since: i64,
+}
+
+fn log_head(core: &AppState) -> Option<i64> {
+    let guard = core.storage.lock().ok()?;
+    guard.sync_log_since(i64::MAX, 1).ok().map(|(_, head)| head)
+}
+
+/// A device's long poll: answers `{ head }` once the log passes `since`, or
+/// after a while with the head as it is.
+async fn wait(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    Query(query): Query<WaitQuery>,
+) -> Response {
+    if server.signed_in(&headers, None).is_none() {
+        return unauthorized();
+    }
+    // Listen before looking, so a record logged in between is not missed.
+    let mut events = server.events.subscribe();
+    let core = server.core.clone();
+    let head = tokio::task::spawn_blocking(move || log_head(&core))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0);
+    if head > query.since {
+        return Json(json!({ "head": head })).into_response();
+    }
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Ok(text)) => {
+                let Ok(event) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
+                if event["event"] == "sync" {
+                    if let Some(head) = event["payload"]["head"]
+                        .as_i64()
+                        .filter(|head| *head > query.since)
+                    {
+                        return Json(json!({ "head": head })).into_response();
+                    }
+                }
+            }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(_)) | Err(_) => return Json(json!({ "head": head })).into_response(),
+        }
     }
 }
 

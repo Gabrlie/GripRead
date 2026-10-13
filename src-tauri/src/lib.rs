@@ -113,8 +113,11 @@ pub fn run() {
         .expect("error while building GripRead")
         .run(|app, event| {
             if let tauri::RunEvent::Resumed = event {
-                let root = app.state::<Arc<AppState>>().data_root.clone();
+                let state = app.state::<Arc<AppState>>();
+                let root = state.data_root.clone();
                 std::thread::spawn(move || gripread_core::network::refresh(&root));
+                // Back in the foreground: catch up with the server.
+                state.sync.now();
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app

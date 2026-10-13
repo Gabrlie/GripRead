@@ -145,7 +145,51 @@ pub fn upload(
 
 /// The cloud progress of a book when another device wrote a version this
 /// device has not answered yet and it differs from the current position.
+/// With the server: a prompt for the position record native sync holds for
+/// the book; `None` when sync holds none.
+pub fn fetch_synced(
+    storage: &Mutex<Storage>,
+    book_id: &str,
+) -> Result<Option<Option<ProgressPrompt>>, AppError> {
+    let guard = lock(storage)?;
+    let Some(value) = guard.synced_progress(book_id)? else {
+        return Ok(None);
+    };
+    let own = guard.stored_webdav()?.device_id;
+    let updated = value["updatedAt"].as_i64().unwrap_or(0);
+    let online = guard.is_online_book(book_id)?;
+    let record = RemoteProgress {
+        version: 1,
+        source_sha256: String::new(),
+        device_id: value["deviceId"].as_str().unwrap_or_default().to_string(),
+        device_name: value["deviceName"].as_str().unwrap_or_default().to_string(),
+        revision: updated.max(0) as u64,
+        written_at: updated,
+        locator: if online {
+            PortableLocator {
+                content_version: String::new(),
+                offset: 0,
+                total_length: 0,
+                context_before: String::new(),
+                context_after: String::new(),
+            }
+        } else {
+            serde_json::from_value(value["position"].clone())?
+        },
+        chapter_title: String::new(),
+        chapter: if online {
+            serde_json::from_value(value["position"].clone()).ok()
+        } else {
+            None
+        },
+    };
+    prompt(&guard, book_id, &own, record).map(Some)
+}
+
 pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressPrompt>, AppError> {
+    if let Some(prompt) = fetch_synced(storage, book_id)? {
+        return Ok(prompt);
+    }
     let (settings, source) = {
         let guard = lock(storage)?;
         let settings = guard.stored_webdav()?;
@@ -164,8 +208,20 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
             AppError::new(ErrorCode::Io, format!("cloud progress is invalid: {error}"))
         })?;
     let guard = lock(storage)?;
+    prompt(&guard, book_id, &settings.device_id, record)
+}
+
+/// A prompt for another device's position, unless this device wrote it,
+/// already answered it, or is there already.
+fn prompt(
+    guard: &Storage,
+    book_id: &str,
+    own_device: &str,
+    record: RemoteProgress,
+) -> Result<Option<ProgressPrompt>, AppError> {
     let mut state = guard.progress_state(book_id)?;
-    if record.device_id == settings.device_id
+    if record.device_id.is_empty()
+        || record.device_id == own_device
         || (state.handled_device == record.device_id && state.handled_revision == record.revision)
     {
         return Ok(None);

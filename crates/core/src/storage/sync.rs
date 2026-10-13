@@ -140,13 +140,23 @@ impl Storage {
     /// Every record this library has now, minus excluded ones.
     pub fn sync_snapshot(&self) -> Result<BTreeMap<String, Value>, AppError> {
         let mut records = BTreeMap::new();
+        let settings = self.stored_webdav()?;
+        // Progress names the device that read, for another device's prompt.
+        let progress = |position: Value, updated_at: i64| {
+            json!({
+                "position": position,
+                "updatedAt": updated_at,
+                "deviceId": settings.device_id,
+                "deviceName": settings.device("另一台设备"),
+            })
+        };
         for shelf in self.shelf_books_with_sources()? {
             let book = self.portable_book(&shelf)?;
             let key = format!("book:{}", shelf.source_sha256);
             if let Some(position) = &book.position {
                 records.insert(
                     format!("progress:{key}"),
-                    json!({ "position": position, "updatedAt": book.position_updated_at }),
+                    progress(serde_json::to_value(position)?, book.position_updated_at),
                 );
             }
             records.insert(
@@ -167,7 +177,7 @@ impl Storage {
             if let Some(position) = &book.position {
                 records.insert(
                     format!("progress:{key}"),
-                    json!({ "position": position, "updatedAt": book.position_updated_at }),
+                    progress(serde_json::to_value(position)?, book.position_updated_at),
                 );
             }
             records.insert(
@@ -219,7 +229,6 @@ impl Storage {
             "prefs:shelf".into(),
             serde_json::to_value(self.get_shelf_preferences()?)?,
         );
-        let settings = self.stored_webdav()?;
         records.retain(|key, _| {
             !record_categories(key)
                 .into_iter()
@@ -255,10 +264,22 @@ impl Storage {
     pub fn sync_pending(&self) -> Result<Vec<SyncChange>, AppError> {
         let snapshot = self.sync_snapshot()?;
         let synced = self.synced_records()?;
+        let updated = |value: &Value| value["updatedAt"].as_i64().unwrap_or(0);
         let mut changes: Vec<SyncChange> = snapshot
             .iter()
             .filter(|(key, value)| {
-                synced.get(*key).map(|(hash, _)| hash.as_str()) != Some(&record_hash(value))
+                let Some((hash, synced)) = synced.get(*key) else {
+                    return true;
+                };
+                if hash == &record_hash(value) {
+                    return false;
+                }
+                // A position goes out only when newer than the one synced; an
+                // older one here waits for the reader to answer the prompt.
+                !key.starts_with("progress:")
+                    || synced
+                        .as_ref()
+                        .is_none_or(|synced| updated(value) > updated(synced))
             })
             .map(|(key, value)| SyncChange {
                 key: key.clone(),
@@ -551,6 +572,11 @@ impl Storage {
                 _ => pending.reading_time = book.reading_time.clone(),
             });
         };
+        // Another device's position is offered when the book opens (see
+        // progress_sync); it applies only where this book was never read.
+        if part == "progress" && self.saved_position(&book_id)?.is_some() {
+            return Ok(());
+        }
         if part == "bookmarks" {
             // Three-way: what the other side added comes in, what it removed
             // since the last sync goes, and bookmarks made here stay.
@@ -622,6 +648,11 @@ impl Storage {
         let mut parts = Parts::NONE;
         match part {
             "progress" => {
+                if self.saved_position(&book_id)?.is_some()
+                    || self.pending_online_position(&book_id)?.is_some()
+                {
+                    return Ok(());
+                }
                 book.position = serde_json::from_value(value["position"].clone())?;
                 book.position_updated_at = value["updatedAt"].as_i64().unwrap_or(0);
                 parts.progress = true;
@@ -657,6 +688,33 @@ impl Storage {
         }
         self.restore_online_book(&book, parts, &mut RestoreReport::default())?;
         Ok(())
+    }
+
+    /// The position record sync holds for this book (another device's, or
+    /// this device's own when it sent the latest).
+    pub fn synced_progress(&self, book_id: &str) -> Result<Option<Value>, AppError> {
+        let key = if self.is_online_book(book_id)? {
+            let book = self.get_book(book_id)?;
+            format!(
+                "progress:online:{}",
+                online_key(&book.title, book.author.as_deref().unwrap_or(""))
+            )
+        } else {
+            match self.book_source_file(book_id) {
+                Ok((_, sha256, _)) => format!("progress:book:{sha256}"),
+                Err(_) => return Ok(None),
+            }
+        };
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM sync_records WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(value.and_then(|text| serde_json::from_str(&text).ok()))
     }
 
     /// The server's log: keeps `change` as the latest record for its key.

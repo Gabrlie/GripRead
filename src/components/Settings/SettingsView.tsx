@@ -11,6 +11,7 @@ import type {
   LibraryBook,
   ReaderPreferences,
   ReadingStats,
+  SyncServerStatus,
   WebDavSettings,
 } from "../../types/generated";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
@@ -26,6 +27,7 @@ import { LogPage } from "./LogPage";
 import { DataManagerPage } from "./DataManagerPage";
 import { NetworkSettingsPage } from "./NetworkSettingsPage";
 import { ServerAccountPage } from "./ServerAccountPage";
+import { ServerSyncPage } from "./ServerSyncPage";
 import { native } from "../../services/transport";
 
 type ThemeMode = ReaderPreferences["theme"];
@@ -49,7 +51,8 @@ type Page =
   | "logs"
   | "cache"
   | "network"
-  | "account";
+  | "account"
+  | "server";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -119,9 +122,15 @@ export function SettingsView() {
   const [detail, setDetail] = useState<LibraryBook | null>(null);
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [webdav, setWebdav] = useState<WebDavSettings | null>(null);
+  const [server, setServer] = useState<SyncServerStatus | null>(null);
   useEffect(() => {
     if (page !== null) return;
     let cancelled = false;
+    if (native)
+      runtime.services.sync.getServer().then(
+        (value) => !cancelled && setServer(value),
+        () => undefined,
+      );
     runtime.services.library.readingStats(localDay()).then(
       (value) => !cancelled && setStats(value),
       () => undefined,
@@ -322,6 +331,20 @@ export function SettingsView() {
         </PageSection>
 
         <PageSection title="备份与云端">
+          {native && (
+            <PageLink
+              icon="sync"
+              label="服务器同步"
+              detail={
+                server?.connected
+                  ? server.lastError
+                    ? `同步失败：${server.lastError}`
+                    : `已连接 ${server.address.replace(/^https?:\/\//, "")}`
+                  : "连接自建的 GripRead 服务器，代替 WebDAV 同步"
+              }
+              onClick={() => setPage("server")}
+            />
+          )}
           <PageLink
             icon="cloud"
             label="备份与恢复"
@@ -389,6 +412,7 @@ export function SettingsView() {
       {page === "backup" && <BackupPage onClose={close} />}
       {page === "about" && <AboutPage onClose={close} />}
       {page === "account" && <ServerAccountPage onClose={close} />}
+      {page === "server" && <ServerSyncPage onClose={close} />}
       {page === "logs" && <LogPage onClose={close} />}
       {page === "cache" && <DataManagerPage onClose={close} />}
       {page === "network" && <NetworkSettingsPage onClose={close} />}

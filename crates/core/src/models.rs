@@ -2085,3 +2085,32 @@ pub struct NetworkCheckRequest {
     /// `doh` or `proxy`.
     pub kind: String,
 }
+
+/// 设置 › 服务器: this device's connection to the GripRead server. The
+/// session token stays in the data folder, never in backups.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncServerStatus {
+    pub connected: bool,
+    pub address: String,
+    pub device_name: String,
+    pub syncing: bool,
+    pub last_sync: Option<i64>,
+    pub last_error: Option<String>,
+    /// 自动下载服务器上的书.
+    pub auto_download: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectSyncServerRequest {
+    pub address: String,
+    pub password: String,
+    pub device_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchRequest {
+    pub on: bool,
+}

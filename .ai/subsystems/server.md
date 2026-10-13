@@ -4,7 +4,7 @@ Status: planned
 
 ## Scope
 
-`gripread-server` serves one reader's library to a browser (the web version) and, in later stages, to the app on their devices as the replacement for WebDAV while they are connected. It runs the same core as the app ([shared core decision](../notes/implemented/2026-10-13-shared-core.md)), so the web version reads, searches sources, downloads, and backs up exactly as a device does. It is single-user. Long-running work that devices cannot keep doing in the background, scheduled 更新目录 and RSS polling, belongs to the server once those stages begin. Pages that need the Android WebView, the Android notification, and system pickers are device features.
+`gripread-server` serves one reader's library to a browser (the web version) and to the app on their devices, which sync with it instead of WebDAV while connected ([Sync](sync.md)). It runs the same core as the app ([shared core decision](../notes/implemented/2026-10-13-shared-core.md)), so the web version reads, searches sources, downloads, and backs up exactly as a device does. It is single-user. Long-running work that devices cannot keep doing in the background, scheduled 更新目录 and RSS polling, belongs to the server once those stages begin. Pages that need the Android WebView, the Android notification, and system pickers are device features.
 
 ## Interfaces
 
@@ -14,6 +14,7 @@ Configuration comes from the environment: `GRIPREAD_DATA` (the data folder, `/da
 - `GET /api/events` is a WebSocket carrying the core's events as `{ event, payload }`.
 - `POST /api/upload?name=` stores one file and answers an `upload:<id>/<name>` path; `GET /api/export` downloads, once, the file the last command saved for the reader.
 - `POST /api/sync/push` (`{ device, changes }`) and `GET /api/sync/pull?since=` carry sync records ([decision](../notes/implemented/2026-10-13-native-sync-records.md)); a push answers the book files and covers the server lacks, and every new record is announced on the event socket as `sync { head }`.
+- `GET /api/sync/wait?since=` is a device's long poll: it answers `{ head }` once a record past `since` is logged, or after 25 seconds.
 - `PUT`/`GET /api/blobs/book/{sha256}` and `/api/blobs/cover/{sha256}.{ext}` send and fetch original book files and covers, checked against their hash.
 - `/api/auth/status`, `setup`, `login`, `logout`, `password`, and `sessions` manage the account; everything else under `/api` needs a session.
 - Other paths serve the built page, with `index.html` for unknown routes.

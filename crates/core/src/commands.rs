@@ -43,6 +43,7 @@ pub struct AppState {
     pub events: Arc<dyn Events>,
     pub platform: Arc<dyn Platform>,
     downloads: crate::downloads::Downloads,
+    pub sync: crate::sync_client::SyncClient,
 }
 
 struct ImportOperation {
@@ -202,7 +203,10 @@ impl AppState {
                 Some(data_root.join("downloads.json")),
             )
         };
+        let sync =
+            crate::sync_client::SyncClient::start(&data_root, storage.clone(), events.clone());
         Ok(Arc::new(Self {
+            sync,
             storage,
             data_root,
             imports: Arc::new(Mutex::new(HashMap::new())),
@@ -1891,6 +1895,61 @@ fn write_local_backup(
     crate::documents::write_to_folder(&*app.platform, folder, name, "application/json", bytes)
 }
 
+/// While the GripRead server is connected, WebDAV pauses (its settings stay).
+fn webdav_paused(state: &AppState) -> Result<(), AppError> {
+    if state.sync.connected() {
+        return Err(AppError::invalid_argument("已连接服务器，WebDAV 已暂停"));
+    }
+    Ok(())
+}
+
+/// 设置 › 服务器.
+pub async fn get_sync_server(
+    state: &Arc<AppState>,
+) -> Result<crate::models::SyncServerStatus, AppError> {
+    Ok(state.sync.status())
+}
+
+pub async fn connect_sync_server(
+    state: &Arc<AppState>,
+    request: crate::models::ConnectSyncServerRequest,
+) -> Result<crate::models::SyncServerStatus, AppError> {
+    let sync = state.sync.clone();
+    tokio::task::spawn_blocking(move || sync.connect(&request))
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+
+pub async fn disconnect_sync_server(
+    state: &Arc<AppState>,
+) -> Result<crate::models::SyncServerStatus, AppError> {
+    let sync = state.sync.clone();
+    tokio::task::spawn_blocking(move || sync.disconnect())
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?;
+    Ok(state.sync.status())
+}
+
+pub fn sync_now(state: &Arc<AppState>) {
+    state.sync.now();
+}
+
+pub fn set_sync_auto_download(
+    state: &Arc<AppState>,
+    request: crate::models::SwitchRequest,
+) -> crate::models::SyncServerStatus {
+    state.sync.set_auto_download(request.on);
+    state.sync.status()
+}
+
+/// The reader opened or closed a book: another device's position for it is
+/// offered while it stays open.
+pub fn set_sync_open_book(state: &Arc<AppState>, request: crate::models::OptionalPathRequest) {
+    state
+        .sync
+        .set_open_book(request.path.filter(|id| !id.is_empty()));
+}
+
 pub async fn get_webdav_settings(
     state: &Arc<AppState>,
 ) -> Result<crate::models::WebDavSettings, AppError> {
@@ -1925,6 +1984,7 @@ pub async fn test_webdav(
 pub async fn backup_to_webdav(
     state: &Arc<AppState>,
 ) -> Result<crate::models::RemoteBackup, AppError> {
+    webdav_paused(state)?;
     let app = state.clone();
     with_cloud(state, move |storage, _| {
         let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
@@ -1942,6 +2002,9 @@ pub async fn backup_to_webdav(
 pub async fn run_automatic_backup(
     state: &Arc<AppState>,
 ) -> Result<Option<crate::models::RemoteBackup>, AppError> {
+    if state.sync.connected() {
+        return Ok(None);
+    }
     let app = state.clone();
     with_cloud(state, move |storage, _| {
         crate::cloud::automatic_backup(storage, device_name(), |folder, name, bytes| {
@@ -2006,6 +2069,7 @@ pub async fn delete_book(
 pub async fn list_remote_backups(
     state: &Arc<AppState>,
 ) -> Result<Vec<crate::models::RemoteBackup>, AppError> {
+    webdav_paused(state)?;
     with_cloud(state, |storage, _| crate::cloud::list_backups(storage)).await
 }
 
@@ -2013,6 +2077,7 @@ pub async fn delete_remote_backup(
     state: &Arc<AppState>,
     request: crate::models::NameRequest,
 ) -> Result<(), AppError> {
+    webdav_paused(state)?;
     with_cloud(state, move |storage, _| {
         crate::cloud::delete_backup(storage, &request.name)
     })
@@ -2123,6 +2188,7 @@ pub async fn export_backup_file(
 pub async fn list_cloud_books(
     state: &Arc<AppState>,
 ) -> Result<Vec<crate::models::CloudBook>, AppError> {
+    webdav_paused(state)?;
     with_cloud(state, |storage, _| crate::cloud::list_cloud_books(storage)).await
 }
 
@@ -2130,6 +2196,7 @@ pub async fn upload_cloud_books(
     state: &Arc<AppState>,
     request: crate::models::BookIdListRequest,
 ) -> Result<crate::models::CloudUploadReport, AppError> {
+    webdav_paused(state)?;
     with_cloud(state, move |storage, _| {
         crate::cloud::upload_books(storage, &request.book_ids, device_name())
     })
@@ -2141,6 +2208,7 @@ pub async fn download_cloud_book(
     state: &Arc<AppState>,
     request: crate::models::NameRequest,
 ) -> Result<crate::models::PickedFile, AppError> {
+    webdav_paused(state)?;
     with_cloud(state, move |storage, root| {
         crate::cloud::download_cloud_book(storage, root, &request.name)
     })
@@ -2151,6 +2219,7 @@ pub async fn delete_cloud_book(
     state: &Arc<AppState>,
     request: crate::models::NameRequest,
 ) -> Result<(), AppError> {
+    webdav_paused(state)?;
     with_cloud(state, move |storage, _| {
         crate::cloud::delete_cloud_book(storage, &request.name)
     })
@@ -2162,6 +2231,10 @@ pub async fn upload_book_progress(
     state: &Arc<AppState>,
     request: crate::models::UploadProgressRequest,
 ) -> Result<bool, AppError> {
+    if state.sync.connected() {
+        state.sync.now();
+        return Ok(true);
+    }
     with_cloud(state, move |storage, _| {
         crate::progress_sync::upload(
             storage,
@@ -2178,6 +2251,19 @@ pub async fn fetch_book_progress(
     state: &Arc<AppState>,
     request: BookRequest,
 ) -> Result<Option<crate::models::ProgressPrompt>, AppError> {
+    if state.sync.connected() {
+        // Opening a book pulls first, so the prompt sees the latest position.
+        let sync = state.sync.clone();
+        tokio::task::spawn_blocking(move || sync.sync_and_wait(std::time::Duration::from_secs(4)))
+            .await
+            .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?;
+        let storage = state.storage.clone();
+        return tokio::task::spawn_blocking(move || {
+            Ok(crate::progress_sync::fetch_synced(&storage, &request.book_id)?.flatten())
+        })
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?;
+    }
     with_cloud(state, move |storage, _| {
         crate::progress_sync::fetch(storage, &request.book_id)
     })

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLibrary, useRuntime } from "../../application/runtime";
 import type { CloudBook } from "../../types/generated";
+import { ServerPausedNote } from "./ServerPausedNote";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -94,6 +95,7 @@ export function CloudShelfPage({
         )
       }
     >
+      <ServerPausedNote />
       {configured === false && (
         <div className="rounded-xl bg-surface-container-low p-4 space-y-3 text-sm">
           <p>云书架使用 WebDAV 保存书籍文件。请先设置 WebDAV 账号。</p>

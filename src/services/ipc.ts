@@ -127,6 +127,9 @@ import type {
   NetworkCheckRequest,
   NetworkSettings,
   NetworkState,
+  SyncServerStatus,
+  ConnectSyncServerRequest,
+  SwitchRequest,
   DownloadJobRequest,
   DownloadRequest,
 } from "../types/generated";
@@ -542,6 +545,25 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("acknowledge_book_progress", {
         request: { bookId, deviceId, revision } satisfies AcknowledgeProgressRequest,
       }),
+    getServer: () => invokeCommand<SyncServerStatus>("get_sync_server"),
+    connectServer: (request) =>
+      invokeCommand<SyncServerStatus>("connect_sync_server", {
+        request: request satisfies ConnectSyncServerRequest,
+      }),
+    disconnectServer: () => invokeCommand<SyncServerStatus>("disconnect_sync_server"),
+    syncServerNow: () => invokeCommand<void>("sync_now"),
+    setServerAutoDownload: (on) =>
+      invokeCommand<SyncServerStatus>("set_sync_auto_download", {
+        request: { on } satisfies SwitchRequest,
+      }),
+    setSyncOpenBook: (bookId) =>
+      invokeCommand<void>("set_sync_open_book", {
+        request: { path: bookId } satisfies OptionalPathRequest,
+      }),
+    onServerStatus: (listener) => listen<SyncServerStatus>("sync-status", listener),
+    onSyncApplied: (listener) => listen<null>("sync-applied", () => listener()),
+    onSyncProgress: (listener) =>
+      listen<{ bookId: string }>("sync-progress", (payload) => listener(payload.bookId)),
   },
   sources: {
     listSources: () => invokeCommand<BookSourceSummary[]>("list_book_sources"),
