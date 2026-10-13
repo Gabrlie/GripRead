@@ -52,6 +52,8 @@ pub struct AnalyzeUrl {
     pub use_web_view: bool,
     pub web_js: Option<String>,
     pub body_js: Option<String>,
+    /// The content rule's `sourceRegex`, which a WebView watches resources for.
+    pub source_regex: Option<String>,
 }
 
 fn set_header(headers: &mut Vec<(String, String)>, key: &str, value: &str) {
@@ -340,6 +342,7 @@ impl AnalyzeUrl {
             retry: 0,
             use_web_view: false,
             web_js: None,
+            source_regex: None,
             body_js: None,
         };
         let option = option.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
@@ -452,7 +455,7 @@ impl AnalyzeUrl {
     /// Fetches the page, as `getStrResponse`.
     pub fn get_str_response(&self, env: &Env) -> SourceResult<HttpResponse> {
         if self.use_web_view {
-            return Err(SourceError::unsupported("需要 WebView，暂不支持"));
+            return self.web_view_response(env);
         }
         if super::util::is_data_url(&self.url) {
             return data_url_response(&self.url);
@@ -475,6 +478,43 @@ impl AnalyzeUrl {
             response.body = hex::encode(&response.bytes);
         }
         Ok(response)
+    }
+}
+
+impl AnalyzeUrl {
+    /// `webView: true`, as Legado's getStrResponse: a GET page loads in the
+    /// WebView with the request's headers; a POST is sent first and its
+    /// answer loads at its address. `webJs` decides the body.
+    fn web_view_response(&self, env: &Env) -> SourceResult<HttpResponse> {
+        let started = std::time::Instant::now();
+        let request = self.request();
+        let (url, html) = match self.method {
+            HttpMethod::Post => {
+                let response = http::execute(env, &request)?;
+                (response.url, Some(response.body))
+            }
+            HttpMethod::Get | HttpMethod::Head => (self.url.clone(), None),
+        };
+        let result = super::webview::render(
+            env,
+            super::webview::WebRequest {
+                url,
+                html,
+                headers: request.headers,
+                js: self.web_js.clone(),
+                source_regex: self.source_regex.clone(),
+                ..Default::default()
+            },
+        )?;
+        Ok(HttpResponse {
+            url: result.url,
+            code: 200,
+            message: "OK".to_string(),
+            headers: Vec::new(),
+            bytes: result.body.as_bytes().to_vec(),
+            body: result.body,
+            call_time_ms: started.elapsed().as_millis() as u64,
+        })
     }
 }
 

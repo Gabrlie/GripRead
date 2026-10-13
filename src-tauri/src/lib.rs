@@ -18,6 +18,7 @@ pub mod txt;
 pub mod txt_toc;
 pub mod typegen;
 mod webdav;
+mod webview;
 
 use commands::{acknowledge_book_progress, delete_book, fetch_book_progress, upload_book_progress};
 use commands::{
@@ -90,7 +91,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(documents::init())
-        .plugin(downloads::plugin());
+        .plugin(downloads::plugin())
+        .plugin(webview::plugin());
     #[cfg(feature = "native-test")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())

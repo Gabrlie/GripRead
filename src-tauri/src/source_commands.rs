@@ -405,16 +405,30 @@ pub async fn login_book_source(
             guard.source_cache_put(&login_info_key(&source.url()), &info, 0)?;
         }
         let script = login_script(&source).unwrap_or_default();
+        let control = Control::new(Arc::new(AtomicBool::new(false)), Some(Instant::now() + Duration::from_secs(120)));
+        // A web login (Legado's loginUrl as an address, or a button that
+        // opens one) is a page the reader logs in on; its cookies are kept.
+        let page = match &request.action {
+            Some(action) if crate::sources::util::is_absolute_url(action) => Some(action.clone()),
+            None if source.login_ui().is_none() => source
+                .login_url()
+                .filter(|url| crate::sources::util::is_absolute_url(url)),
+            _ => None,
+        };
+        if let Some(page) = page {
+            let session = session_for(&storage, source, control).map_err(engine_error)?;
+            let result = session.browse(&page, "登录").map_err(engine_error)?;
+            return Ok(SourceScriptReport {
+                result: format!("已关闭网页 {}", result.url),
+                logs: session.logs(),
+            });
+        }
         let body = match &request.action {
-            Some(action) if crate::sources::util::is_absolute_url(action) => {
-                return Err(AppError::invalid_argument("这个按钮要打开网页，需要 WebView，暂不支持"));
-            }
             Some(action) => format!("{script}\n{action}"),
             None => format!(
                 "{script}\nif (typeof login == 'function') {{ login.apply(this) }} else {{ throw new Error('书源没有 login 函数') }}"
             ),
         };
-        let control = Control::new(Arc::new(AtomicBool::new(false)), Some(Instant::now() + Duration::from_secs(120)));
         let session = session_for(&storage, source, control).map_err(engine_error)?;
         let result = session.run_script(&body, None).map_err(engine_error)?;
         Ok(SourceScriptReport {

@@ -213,6 +213,24 @@ impl SourceSession {
             .run(|scope| work(scope, &AnalyzeRule::new(self.env.clone())))
     }
 
+    /// Shows a page of the source (a web login, or a login button's address)
+    /// with its headers and cookies; returns after the reader closes it.
+    pub fn browse(&self, url: &str, title: &str) -> SourceResult<super::webview::WebResult> {
+        self.host.run(|scope| {
+            let rule = AnalyzeRule::new(self.env.clone());
+            let headers = super::url::source_headers(&rule, scope, true)?;
+            super::webview::browse(
+                &self.env,
+                super::webview::BrowseRequest {
+                    url: url.to_string(),
+                    title: title.to_string(),
+                    headers,
+                    html: None,
+                },
+            )
+        })
+    }
+
     /// Runs a script with the source's bindings, as a login button or a
     /// source's own action does.
     pub fn run_script(&self, script: &str, book: Option<&BookRef>) -> SourceResult<Val> {
@@ -977,8 +995,13 @@ pub fn content(
             if url.web_js.is_none() {
                 url.web_js = source.rule("ruleContent", "webJs");
             }
+            url.source_regex = source.rule("ruleContent", "sourceRegex");
             let mut response = fetch(scope, &rule, &url)?;
-            if let Some(pattern) = source.rule("ruleContent", "sourceRegex") {
+            // A WebView already answered with the matched resource.
+            if let Some(pattern) = source
+                .rule("ruleContent", "sourceRegex")
+                .filter(|_| !url.use_web_view)
+            {
                 if let Ok(regex) = super::rule::regex::compile(&pattern) {
                     if let Ok(Some(found)) = regex.find(&response.body) {
                         response.body = found.as_str().to_string();

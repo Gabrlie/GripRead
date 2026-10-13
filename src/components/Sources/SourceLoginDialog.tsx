@@ -66,9 +66,7 @@ export function SourceLoginDialog({
           <DialogTitle className="font-title-editorial text-base">登录</DialogTitle>
         </DialogHeader>
         {form?.browserOnly && (
-          <p className="text-sm text-secondary">
-            这个书源需要在网页中登录，需要 WebView，暂不支持。
-          </p>
+          <p className="text-sm text-secondary">这个书源在网页中登录，登录后关闭网页即可。</p>
         )}
         {form && !form.browserOnly && inputs.length === 0 && buttons.length === 0 && (
           <p className="text-sm text-secondary">
@@ -113,9 +111,9 @@ export function SourceLoginDialog({
           <Button variant="ghost" size="sm" onClick={onClose}>
             关闭
           </Button>
-          {form && !form.browserOnly && (
+          {form && (
             <Button size="sm" disabled={busy} onClick={() => run(null)}>
-              {busy ? "登录中…" : "登录"}
+              {busy ? "登录中…" : form.browserOnly ? "打开网页登录" : "登录"}
             </Button>
           )}
         </div>

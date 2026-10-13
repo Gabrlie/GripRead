@@ -359,3 +359,78 @@ fn cookies_from_redirects_are_kept_and_sent_and_rates_space_requests() {
     // Two requests (the redirect is part of the first) at one per 150 ms.
     assert!(started.elapsed() >= std::time::Duration::from_millis(150));
 }
+
+#[test]
+fn web_view_pages_render_through_the_host_with_cookies() {
+    use crate::sources::webview::{testing, WebResult};
+    let store = Arc::new(MemoryStore::default());
+    store.cookie_put("example.invalid", "sid=1");
+    let source = BookSource::from_value(serde_json::json!({
+        "bookSourceUrl": "https://example.invalid",
+        "bookSourceName": "网页",
+        "searchUrl": "/s?q={{key}},{\"webView\":true}",
+        "ruleSearch": {"bookList": "li", "name": "a@text", "bookUrl": "a@href"},
+        "ruleToc": {"chapterList": "li", "chapterName": "a@text", "chapterUrl": "a@href"},
+        "ruleContent": {"content": "id.c@text", "webJs": "document.body.innerHTML"}
+    }))
+    .unwrap();
+    let session = SourceSession::new(source, store.clone(), Control::unlimited()).unwrap();
+    let host = testing::fake(|request| {
+        Ok(WebResult {
+            url: request.url.clone(),
+            body: if request.url.contains("/s?") {
+                r#"<ul><li><a href="/b/1">剑来</a></li></ul>"#.into()
+            } else {
+                r#"<div id="c">渲染出的正文</div>"#.into()
+            },
+            cookies: Some("cf=ok".into()),
+        })
+    });
+    testing::with_host(host.clone(), || {
+        let results = session.search("剑来", 1).unwrap();
+        assert_eq!(results[0].name, "剑来");
+        assert_eq!(results[0].book_url, "https://example.invalid/b/1");
+        // The stored session went to the page, and the page's cookie came back.
+        let seen = host.seen.lock().unwrap()[0].clone();
+        assert!(seen
+            .headers
+            .iter()
+            .any(|(key, value)| key == "Cookie" && value.contains("sid=1")));
+        assert!(store
+            .cookie_get("example.invalid")
+            .unwrap()
+            .contains("cf=ok"));
+
+        let book = book_ref(results[0].clone());
+        let chapter = ChapterData {
+            title: "第一章".into(),
+            url: "https://example.invalid/c/1,{\"webView\":true}".into(),
+            ..Default::default()
+        };
+        let content = session.content(&book, &chapter, None, &[]).unwrap();
+        assert_eq!(content.text, "渲染出的正文");
+        let seen = host.seen.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(seen.js.as_deref(), Some("document.body.innerHTML"));
+
+        let rendered = session
+            .run_script(
+                "java.webView('<p>x</p>', 'https://example.invalid/p', 'document.title')",
+                None,
+            )
+            .unwrap();
+        assert!(rendered.to_text().contains("渲染出的正文"));
+        let seen = host.seen.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(seen.html.as_deref(), Some("<p>x</p>"));
+        let page = session
+            .run_script(
+                "java.startBrowserAwait('https://example.invalid/v', '验证').body()",
+                None,
+            )
+            .unwrap();
+        assert_eq!(page.to_text(), "<html>done</html>");
+        assert!(store
+            .cookie_get("example.invalid")
+            .unwrap()
+            .contains("token=abc"));
+    });
+}

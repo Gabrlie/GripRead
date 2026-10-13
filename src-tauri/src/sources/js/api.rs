@@ -946,15 +946,77 @@ pub(super) fn java_object<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> JsResult
         let body = cache_file(&scope, &path, 0).map_err(|error| source_failure(ctx, error))?;
         string(ctx, &body)
     })?;
-    for name in [
-        "webView",
-        "webViewGetSource",
-        "webViewGetOverrideUrl",
-        "startBrowser",
-        "startBrowserAwait",
-        "getVerificationCode",
-        "openUrl",
+    // Legado's BackstageWebView: (html, url, js), with a resource or
+    // navigation pattern for the GetSource and GetOverrideUrl forms.
+    for (name, pattern) in [
+        ("webView", None),
+        ("webViewGetSource", Some(false)),
+        ("webViewGetOverrideUrl", Some(true)),
     ] {
+        let st = state.clone();
+        define(ctx, &java, name, move |ctx, args| {
+            let html = opt_text(args, 0).filter(|html| !html.trim().is_empty());
+            let base = st.rule().base_url();
+            let url = match text(args, 1) {
+                url if url.trim().is_empty() => base,
+                url => crate::sources::util::absolute_url(&base, &url),
+            };
+            let js = opt_text(args, 2).filter(|js| !js.trim().is_empty());
+            let regex = opt_text(args, 3).filter(|regex| !regex.is_empty());
+            let rule = st.rule();
+            let headers = crate::sources::url::source_headers(&rule, &scope(ctx, &st), true)
+                .unwrap_or_default();
+            let request = crate::sources::webview::WebRequest {
+                url,
+                html,
+                headers,
+                js,
+                source_regex: regex.clone().filter(|_| pattern == Some(false)),
+                override_url_regex: regex.filter(|_| pattern == Some(true)),
+                ..Default::default()
+            };
+            match crate::sources::webview::render(&st.env, request) {
+                Ok(result) => string(ctx, &result.body),
+                Err(error) => Err(source_failure(ctx, error)),
+            }
+        })?;
+    }
+    // A page shown to the reader for login or verification; the Await form
+    // returns the page as a response once they close it.
+    for (name, wait) in [("startBrowser", false), ("startBrowserAwait", true)] {
+        let st = state.clone();
+        define(ctx, &java, name, move |ctx, args| {
+            let base = st.rule().base_url();
+            let url = crate::sources::util::absolute_url(&base, &text(args, 0));
+            let rule = st.rule();
+            let headers = crate::sources::url::source_headers(&rule, &scope(ctx, &st), true)
+                .unwrap_or_default();
+            let request = crate::sources::webview::BrowseRequest {
+                url: url.clone(),
+                title: opt_text(args, 1).unwrap_or_default(),
+                headers,
+                html: None,
+            };
+            let result = crate::sources::webview::browse(&st.env, request)
+                .map_err(|error| source_failure(ctx, error))?;
+            if !wait {
+                return Ok(Value::new_undefined(ctx.clone()));
+            }
+            response_object(
+                ctx,
+                &HttpResponse {
+                    url: result.url,
+                    code: 200,
+                    message: "OK".into(),
+                    headers: Vec::new(),
+                    bytes: result.body.as_bytes().to_vec(),
+                    body: result.body,
+                    call_time_ms: 0,
+                },
+            )
+        })?;
+    }
+    for name in ["getVerificationCode", "openUrl"] {
         define(ctx, &java, name, move |ctx, _| {
             Err(throw(
                 ctx,
