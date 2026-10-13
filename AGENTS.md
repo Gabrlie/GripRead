@@ -15,4 +15,4 @@ Read [current status](.ai/status.md) and the [workflow](.ai/engineering/workflow
 
 ## Git
 
-Use `main` as the default branch and `codex/` for new feature branches. Preserve existing changes and avoid destructive history operations. Use Conventional Commits as defined in the [workflow](.ai/engineering/workflow.md). Commit only reviewed changes within the assigned scope.
+Develop on `dev` and merge it into `main` once stable; `main` stays the default and stable branch. Preserve existing changes and avoid destructive history operations. Use Conventional Commits as defined in the [workflow](.ai/engineering/workflow.md). Commit only reviewed changes within the assigned scope.
