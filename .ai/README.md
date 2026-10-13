@@ -15,6 +15,7 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 | Standard feeds and article state | [RSS](subsystems/rss.md) |
 | WebDAV, conflicts, and backup | [Sync](subsystems/sync.md) |
 | Progress-bounded retrieval and generation | [AIGC](subsystems/aigc.md) |
+| Web version and deployment | [Server](subsystems/server.md) |
 | Change ownership and commits | [Workflow](engineering/workflow.md) |
 | Checks and evidence | [Verification](engineering/testing.md) |
 | Stage dependencies | [Roadmap](plans/roadmap.md) |
@@ -34,4 +35,4 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 - [Portable backups](notes/implemented/2026-10-11-portable-backups.md) records the backup format.
 - [Reading-first extension boundaries](notes/proposed/2026-09-17-reading-first-extensions.md) records the approved direction for deferred integrations.
 
-Add decision links here only when they guide current work. Source modules should own their local README and any additional instructions when the corresponding code exists.
+Add decision links here only when they guide current work. Source modules own their local README once their code exists.

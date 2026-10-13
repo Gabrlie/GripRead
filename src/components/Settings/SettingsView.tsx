@@ -25,6 +25,8 @@ import { APP_VERSION, AboutPage } from "./AboutPage";
 import { LogPage } from "./LogPage";
 import { DataManagerPage } from "./DataManagerPage";
 import { NetworkSettingsPage } from "./NetworkSettingsPage";
+import { ServerAccountPage } from "./ServerAccountPage";
+import { native } from "../../services/transport";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
@@ -46,7 +48,8 @@ type Page =
   | "about"
   | "logs"
   | "cache"
-  | "network";
+  | "network"
+  | "account";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -344,6 +347,9 @@ export function SettingsView() {
         </PageSection>
 
         <PageSection title="更多">
+          {!native && (
+            <PageLink icon="person" label="服务器账号" onClick={() => setPage("account")} />
+          )}
           <PageLink icon="public" label="网络设置" onClick={() => setPage("network")} />
           <PageLink icon="storage" label="数据管理" onClick={() => setPage("cache")} />
           <PageLink icon="bug_report" label="日志" onClick={() => setPage("logs")} />
@@ -382,6 +388,7 @@ export function SettingsView() {
       {page === "toc" && <TocRulesPage service={runtime.services.reader} onClose={close} />}
       {page === "backup" && <BackupPage onClose={close} />}
       {page === "about" && <AboutPage onClose={close} />}
+      {page === "account" && <ServerAccountPage onClose={close} />}
       {page === "logs" && <LogPage onClose={close} />}
       {page === "cache" && <DataManagerPage onClose={close} />}
       {page === "network" && <NetworkSettingsPage onClose={close} />}

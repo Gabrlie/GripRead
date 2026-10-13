@@ -4,6 +4,16 @@ GripRead is a lightweight, local-first novel and RSS reader designed for continu
 
 The planned stack is Tauri 2, React, TypeScript, Vite, Tailwind CSS, shadcn/ui, and Motion for React. Start with the [product scope](.ai/product/requirements.md), [architecture](.ai/architecture.md), and [roadmap](.ai/plans/roadmap.md). The [current status](.ai/status.md) distinguishes implemented work from planned capabilities.
 
+## Server
+
+`gripread-server` serves the web version of your library from one container; see [Server](.ai/subsystems/server.md).
+
+```sh
+docker run -d -p 8080:8080 -v gripread-data:/data ghcr.io/gabrlie/gripread:latest
+```
+
+Open `http://<host>:8080`, set a password on the first visit, and put a reverse proxy with HTTPS in front of it for use outside your network. [`docker-compose.example.yml`](docker-compose.example.yml) is a compose starting point. To build the image yourself: `docker build -t gripread .`.
+
 ## Development
 
 Read [AGENTS.md](AGENTS.md) and the [.ai documentation map](.ai/README.md). The current M0 repair connects the product shell to local TXT services. Install dependencies and run:

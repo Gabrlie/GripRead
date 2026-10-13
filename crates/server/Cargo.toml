@@ -1,0 +1,26 @@
+[package]
+name = "gripread-server"
+version = "0.1.0"
+description = "GripRead's self-hosted server: the web version and the hub devices sync with"
+authors = ["GripRead contributors"]
+edition = "2021"
+rust-version = "1.87"
+
+[dependencies]
+gripread-core = { path = "../core" }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "io-util", "sync", "time"] }
+tower-http = { version = "0.6", features = ["fs"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+argon2 = "0.5"
+rand = "0.8"
+sha2 = "0.10.9"
+hex = "0.4"
+base64 = "0.22"
+uuid = { version = "1.24.1", features = ["v4"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

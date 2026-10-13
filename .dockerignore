@@ -1,0 +1,10 @@
+target
+node_modules
+dist
+.git
+.ai
+**/.native-target
+src-tauri/target
+src-tauri/gen
+tests
+coverage

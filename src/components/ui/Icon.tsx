@@ -1,6 +1,7 @@
 import type { SVGProps } from "react";
 import {
   ArrowLeftRight,
+  UserRound,
   HardDrive,
   BookOpen,
   Compass,
@@ -97,6 +98,7 @@ const icons = {
   more_horiz: MoreHorizontal,
   folder_open: FolderOpen,
   sync: RefreshCw,
+  person: UserRound,
   cloud: Cloud,
   grid_view: Grid2X2,
   view_list: List,

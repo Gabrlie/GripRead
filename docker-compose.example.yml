@@ -1,0 +1,15 @@
+# Copy to docker-compose.yml, then `docker compose up -d`.
+# Put a reverse proxy with HTTPS (Caddy, nginx) in front for use outside your network.
+services:
+  gripread:
+    image: ghcr.io/gabrlie/gripread:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - gripread-data:/data
+    # environment:
+    #   GRIPREAD_PASSWORD: change-me # sets the password on first start only
+
+volumes:
+  gripread-data:

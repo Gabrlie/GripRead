@@ -37,6 +37,7 @@ const requirements = {
   ".ai/subsystems/rss.md": subsystem,
   ".ai/subsystems/sync.md": subsystem,
   ".ai/subsystems/aigc.md": subsystem,
+  ".ai/subsystems/server.md": subsystem,
   ".ai/engineering/workflow.md": {
     headings: [
       "Scope and task ownership",
