@@ -24,6 +24,7 @@ import { formatTime } from "../Cloud/format";
 import { APP_VERSION, AboutPage } from "./AboutPage";
 import { LogPage } from "./LogPage";
 import { DataManagerPage } from "./DataManagerPage";
+import { NetworkSettingsPage } from "./NetworkSettingsPage";
 
 type ThemeMode = ReaderPreferences["theme"];
 type PaperTone = ReaderPreferences["paperTone"];
@@ -36,7 +37,16 @@ const SERIAL_DAYS: [number, string][] = [
 ];
 
 type Page =
-  "records" | "sources" | "replace" | "toc" | "backup" | "cloud" | "about" | "logs" | "cache";
+  | "records"
+  | "sources"
+  | "replace"
+  | "toc"
+  | "backup"
+  | "cloud"
+  | "about"
+  | "logs"
+  | "cache"
+  | "network";
 
 const THEMES: [ThemeMode, string][] = [
   ["system", "跟随系统"],
@@ -321,6 +331,7 @@ export function SettingsView() {
         </PageSection>
 
         <PageSection>
+          <PageLink icon="public" label="网络设置" onClick={() => setPage("network")} />
           <PageLink icon="storage" label="数据管理" onClick={() => setPage("cache")} />
           <PageLink icon="bug_report" label="日志" onClick={() => setPage("logs")} />
           <PageLink
@@ -360,6 +371,7 @@ export function SettingsView() {
       {page === "about" && <AboutPage onClose={close} />}
       {page === "logs" && <LogPage onClose={close} />}
       {page === "cache" && <DataManagerPage onClose={close} />}
+      {page === "network" && <NetworkSettingsPage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

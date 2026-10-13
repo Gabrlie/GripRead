@@ -19,6 +19,7 @@ import type {
 } from "../types/generated";
 import { DEFAULT_READING_STYLE } from "../types/generated";
 import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "./sources";
+import { PREVIEW_NETWORK } from "./network";
 import type { CloudBook, RemoteBackup, WebDavSettings } from "../types/generated";
 
 const BOOK_ID = "preview-book";
@@ -169,6 +170,7 @@ export function previewServices(): AppServices {
     },
   ];
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
+  let network = PREVIEW_NETWORK;
   let position: ReaderLocator | null = contextFor(ENTRIES[3].locator.offset);
   let settings: BookTocSettings = { ruleId: null, splitLongChapters: false };
   let shelfState: ShelfState | null = null;
@@ -415,6 +417,15 @@ export function previewServices(): AppServices {
       pickBackgroundImage: async () => null,
       readFont: unsupported,
       deleteFont: unsupported,
+      getNetwork: async () => network,
+      saveNetwork: async (settings) => {
+        network = settings;
+        return settings;
+      },
+      checkNetwork: async (_settings, kind) =>
+        kind === "doh"
+          ? { millis: 42, detail: "www.baidu.com → 110.242.68.66" }
+          : { millis: 120, detail: "HTTP 200" },
     },
     sync: {
       getWebDav: async () => webdav,

@@ -27,7 +27,7 @@ Views depend on presentation/service interfaces; services depend on domain types
 
 Library and Reader provide stable book identity and content locations. Sources can supply normalized content to Reader; Reader does not depend on the source interpreter. RSS has its own article model and can share rendering utilities without adopting novel rules or locators. Sync consumes explicit serializable records and excludes device-only fields. AIGC consumes read-only content and position interfaces; the reading path never depends on an AI provider or index being available.
 
-Do not create generic plugin frameworks or placeholder runtime services for deferred modules. Add their adapters when their stage is assigned. Shared behavior must have a named owner before extracting it into a utility.
+Platform features the engine needs reach it through narrow host interfaces installed by the app, such as the Android WebView for sources ([decision](notes/implemented/2026-10-13-webview-host-and-downloads.md)); Android-only work lives in app plugins (`DocumentPlugin`, `DownloadPlugin`, `WebViewPlugin`) beside `MainActivity`. Do not create generic plugin frameworks or placeholder runtime services for deferred modules. Add their adapters when their stage is assigned. Shared behavior must have a named owner before extracting it into a utility.
 
 ## Interfaces and jobs
 

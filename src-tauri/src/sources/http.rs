@@ -8,7 +8,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use ureq::http::{Method, Request};
-use ureq::tls::TlsConfig;
 
 use super::context::{Control, Env};
 use super::error::{SourceError, SourceResult};
@@ -74,21 +73,6 @@ impl HttpResponse {
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.code)
     }
-}
-
-fn agent() -> &'static ureq::Agent {
-    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    AGENT.get_or_init(|| {
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .max_redirects(0)
-            // Legado's client accepts any certificate; many book sites have
-            // broken or expired ones.
-            .tls_config(TlsConfig::builder().disable_verification(true).build())
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .build()
-            .into()
-    })
 }
 
 /// Second-level labels that are public suffixes in common book-site domains.
@@ -372,6 +356,8 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
             builder = builder.header("Cookie", cookie);
         }
         let deadline = request.timeout;
+        // 网络设置's limits: a place among all requests and in the site's window.
+        let _permit = super::network::acquire(&host_of(&url), &env.control)?;
         let result = match &body {
             Some(bytes) => builder
                 .body(bytes.clone())
@@ -452,11 +438,12 @@ fn run<B: ureq::AsSendBody>(
     request: Request<B>,
     timeout: Duration,
 ) -> SourceResult<ureq::http::Response<ureq::Body>> {
-    let request = agent()
+    let agent = super::network::agent();
+    let request = agent
         .configure_request(request)
         .timeout_global(Some(timeout))
         .build();
-    agent()
+    agent
         .run(request)
         .map_err(|error| SourceError::network(format!("网络请求失败：{error}")))
 }

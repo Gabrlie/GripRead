@@ -162,6 +162,12 @@ export type { ChangeOnlineSourceRequest } from "./generated/ChangeOnlineSourceRe
 export type { ChangeOnlineSourceResult } from "./generated/ChangeOnlineSourceResult";
 export type { SourceCoverRequest } from "./generated/SourceCoverRequest";
 export type { ClearDataRequest } from "./generated/ClearDataRequest";
+export type { ConcurrencyLimits } from "./generated/ConcurrencyLimits";
+export type { ConcurrencyPreset } from "./generated/ConcurrencyPreset";
+export type { NetworkCheck } from "./generated/NetworkCheck";
+export type { NetworkCheckRequest } from "./generated/NetworkCheckRequest";
+export type { NetworkSettings } from "./generated/NetworkSettings";
+export type { ProxyKind } from "./generated/ProxyKind";
 export type { DataPart } from "./generated/DataPart";
 export type { DataUsage } from "./generated/DataUsage";
 export type { DownloadJob } from "./generated/DownloadJob";

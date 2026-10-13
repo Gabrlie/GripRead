@@ -123,6 +123,9 @@ import type {
   ClearDataRequest,
   DataUsage,
   DownloadJob,
+  NetworkCheck,
+  NetworkCheckRequest,
+  NetworkSettings,
   DownloadJobRequest,
   DownloadRequest,
 } from "../types/generated";
@@ -452,6 +455,13 @@ export const tauriServices: AppServices = {
     deleteFont: (id) =>
       invokeCommand<void>("delete_reader_font", {
         request: { id } satisfies ReaderAssetRequest,
+      }),
+    getNetwork: () => invokeCommand<NetworkSettings>("get_network_settings"),
+    saveNetwork: (settings) =>
+      invokeCommand<NetworkSettings>("save_network_settings", { request: settings }),
+    checkNetwork: (settings, kind) =>
+      invokeCommand<NetworkCheck>("check_network", {
+        request: { settings, kind } satisfies NetworkCheckRequest,
       }),
   },
   sync: {

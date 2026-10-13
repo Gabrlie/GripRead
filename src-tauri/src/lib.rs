@@ -6,6 +6,7 @@ mod downloads;
 pub mod error;
 pub mod m1_txt;
 pub mod models;
+mod network;
 mod online_commands;
 mod online_reader;
 mod progress_sync;
@@ -50,13 +51,14 @@ use commands::{
     test_replace_rule,
 };
 use online_commands::{
-    add_online_book, change_online_source, clear_data, clear_online_cache, convert_online_to_local,
-    data_usage, download_cancel, download_clear_finished, download_enqueue, download_list,
-    download_pause, download_pause_all, download_resume, explore_books, explore_kinds,
-    find_online_book, get_library_book, leave_online_book, list_online_chapters,
-    online_book_chapters, online_book_info, online_chapter_content, online_cover,
-    search_online_books, set_cover_from_source, set_online_can_update, set_online_on_shelf,
-    update_online_toc, OnlinePages,
+    add_online_book, change_online_source, check_network, clear_data, clear_online_cache,
+    convert_online_to_local, data_usage, download_cancel, download_clear_finished,
+    download_enqueue, download_list, download_pause, download_pause_all, download_resume,
+    explore_books, explore_kinds, find_online_book, get_library_book, get_network_settings,
+    leave_online_book, list_online_chapters, online_book_chapters, online_book_info,
+    online_chapter_content, online_cover, save_network_settings, search_online_books,
+    set_cover_from_source, set_online_can_update, set_online_on_shelf, update_online_toc,
+    OnlinePages,
 };
 use source_commands::{
     cancel_source_operation, change_book_sources_group, check_book_sources, clear_source_cookies,
@@ -111,10 +113,22 @@ pub fn run() {
                 format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
             );
             let state = AppState::new(data_dir.clone())?;
+            if let Err(error) = network::apply(&network::load(&state.data_root)) {
+                app_log::warn(
+                    "network",
+                    format!("网络设置无效，已用默认：{}", error.message),
+                );
+            }
             let handle = app.handle().clone();
             app.manage(downloads::Downloads::new(
                 std::sync::Arc::new(downloads::LibraryChapters(state.storage.clone())),
-                std::sync::Arc::new(|| (2, 4)),
+                std::sync::Arc::new(|| {
+                    let limits = network::limits();
+                    (
+                        usize::from(limits.download_books),
+                        usize::from(limits.download_chapters),
+                    )
+                }),
                 std::sync::Arc::new(move |jobs: &[models::DownloadJob]| {
                     let _ = handle.emit("download-progress", jobs.to_vec());
                     downloads::notify(&handle, jobs);
@@ -203,6 +217,9 @@ pub fn run() {
             list_online_chapters,
             clear_online_cache,
             update_online_toc,
+            get_network_settings,
+            save_network_settings,
+            check_network,
             download_enqueue,
             download_list,
             download_pause,

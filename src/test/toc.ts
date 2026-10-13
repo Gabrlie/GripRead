@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { ReaderService, SettingsService } from "../services/contracts";
 import type { ReaderLocator, TocEntry, TocListing } from "../types/generated";
+import { PREVIEW_NETWORK } from "../preview/network";
 
 /** A directory listing produced by automatic detection. */
 export function tocListing(entries: TocEntry[] = [], ruleName = "目录"): TocListing {
@@ -43,7 +44,14 @@ export function ruleServiceMocks(): Pick<
 /** Asset methods of the settings service with an empty font list. */
 export function fontServiceMocks(): Pick<
   SettingsService,
-  "pickAndImportFont" | "listFonts" | "readFont" | "deleteFont" | "pickBackgroundImage"
+  | "pickAndImportFont"
+  | "listFonts"
+  | "readFont"
+  | "deleteFont"
+  | "pickBackgroundImage"
+  | "getNetwork"
+  | "saveNetwork"
+  | "checkNetwork"
 > {
   return {
     pickAndImportFont: vi.fn(async () => null),
@@ -51,5 +59,8 @@ export function fontServiceMocks(): Pick<
     listFonts: vi.fn(async () => []),
     readFont: vi.fn(async () => new ArrayBuffer(0)),
     deleteFont: vi.fn(async () => undefined),
+    getNetwork: vi.fn(async () => PREVIEW_NETWORK),
+    saveNetwork: vi.fn(async (settings) => settings),
+    checkNetwork: vi.fn(async () => ({ millis: 10, detail: "ok" })),
   };
 }

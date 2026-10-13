@@ -164,6 +164,12 @@ const IPC_TYPES: &[&str] = &[
     "ChangeOnlineSourceResult",
     "SourceCoverRequest",
     "ClearDataRequest",
+    "ConcurrencyLimits",
+    "ConcurrencyPreset",
+    "NetworkCheck",
+    "NetworkCheckRequest",
+    "NetworkSettings",
+    "ProxyKind",
     "DataPart",
     "DataUsage",
     "DownloadJob",
@@ -346,6 +352,12 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ChangeOnlineSourceResult>(&config)?;
     export_all::<SourceCoverRequest>(&config)?;
     export_all::<ClearDataRequest>(&config)?;
+    export_all::<ConcurrencyLimits>(&config)?;
+    export_all::<ConcurrencyPreset>(&config)?;
+    export_all::<NetworkCheck>(&config)?;
+    export_all::<NetworkCheckRequest>(&config)?;
+    export_all::<NetworkSettings>(&config)?;
+    export_all::<ProxyKind>(&config)?;
     export_all::<DataPart>(&config)?;
     export_all::<DataUsage>(&config)?;
     export_all::<DownloadJob>(&config)?;

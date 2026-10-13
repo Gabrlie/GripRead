@@ -7,6 +7,7 @@ pub mod http;
 pub mod js;
 pub mod lenient_json;
 pub mod model;
+pub mod network;
 pub mod rule;
 #[cfg(test)]
 pub mod test_server;

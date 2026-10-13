@@ -137,9 +137,14 @@ fn write_cache(path: &Path, text: &str) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let partial = path.with_extension("part");
+    // The reader and the background download can fetch the same chapter at
+    // once; each writes its own partial file and the last rename wins.
+    let partial = path.with_extension(format!("part-{}", uuid::Uuid::new_v4().simple()));
     fs::write(&partial, text)?;
-    fs::rename(&partial, path)?;
+    if let Err(error) = fs::rename(&partial, path) {
+        let _ = fs::remove_file(&partial);
+        return Err(error.into());
+    }
     Ok(())
 }
 

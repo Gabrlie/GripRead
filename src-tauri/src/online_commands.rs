@@ -31,7 +31,6 @@ use crate::sources::url::AnalyzeUrl;
 use crate::sources::web_book::{ExploreKind, SourceSession};
 use crate::storage::split_groups;
 
-const SEARCH_WORKERS: usize = 8;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const STEP_TIMEOUT: Duration = Duration::from_secs(90);
 const PAGE_CACHE_LIMIT: usize = 64;
@@ -278,7 +277,8 @@ pub async fn search_online_books(
     let found: Arc<Mutex<(Vec<OnlineBook>, Vec<SourceFailure>)>> = Arc::default();
     let searched = Arc::new(AtomicU32::new(0));
     let queue = Arc::new(Mutex::new(sources.into_iter().rev().collect::<Vec<_>>()));
-    let workers = SEARCH_WORKERS.min(total.max(1) as usize);
+    // 网络设置 decides how many sources are asked at once.
+    let workers = usize::from(crate::network::limits().search).min(total.max(1) as usize);
     let running = Arc::new(AtomicU32::new(workers as u32));
     let emit = {
         let app = app.clone();
@@ -1327,4 +1327,31 @@ pub fn download_pause_all(app: AppHandle) {
 #[tauri::command]
 pub fn download_clear_finished(app: AppHandle) {
     downloads(&app).clear_finished();
+}
+
+/// 网络设置.
+#[tauri::command]
+pub fn get_network_settings(state: State<'_, AppState>) -> crate::models::NetworkSettings {
+    crate::network::load(&state.data_root)
+}
+
+#[tauri::command]
+pub async fn save_network_settings(
+    request: crate::models::NetworkSettings,
+    state: State<'_, AppState>,
+) -> Result<crate::models::NetworkSettings, AppError> {
+    let root = state.data_root.clone();
+    on_engine_thread(move || {
+        crate::network::save(&root, &request)?;
+        Ok(request)
+    })
+    .await?
+}
+
+/// 测试 for DoH or the proxy, with the settings as entered (not yet saved).
+#[tauri::command]
+pub async fn check_network(
+    request: crate::models::NetworkCheckRequest,
+) -> Result<crate::models::NetworkCheck, AppError> {
+    on_engine_thread(move || crate::network::check(&request.settings, &request.kind)).await?
 }

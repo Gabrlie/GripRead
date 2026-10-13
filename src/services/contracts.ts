@@ -67,6 +67,8 @@ import type {
   ChangeOnlineSourceResult,
   DataUsage,
   DownloadJob,
+  NetworkCheck,
+  NetworkSettings,
 } from "../types/generated";
 
 export type Unsubscribe = () => void;
@@ -166,6 +168,11 @@ export interface SettingsService {
   readFont(id: string): Promise<ArrayBuffer>;
   /** Also clears the font from saved preferences when it was selected. */
   deleteFont(id: string): Promise<void>;
+  /** 网络设置: DoH, the app's proxy, and request limits (kept on the device). */
+  getNetwork(): Promise<NetworkSettings>;
+  saveNetwork(settings: NetworkSettings): Promise<NetworkSettings>;
+  /** 测试 with the settings as entered: `doh` resolves a host, `proxy` fetches a page. */
+  checkNetwork(settings: NetworkSettings, kind: "doh" | "proxy"): Promise<NetworkCheck>;
 }
 /** WebDAV backups and the cloud bookshelf (Sync specification). */
 export interface SyncService {

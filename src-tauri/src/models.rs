@@ -2001,3 +2001,73 @@ pub struct DownloadRequest {
 pub struct DownloadJobRequest {
     pub id: String,
 }
+
+/// 网络设置's request limits (省心, 均衡, 极速, or 自定义).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcurrencyPreset {
+    Relaxed,
+    Balanced,
+    Fast,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConcurrencyLimits {
+    /// Requests in flight at once, over all sources.
+    pub requests: u16,
+    /// 限流阈值: requests to one site within the window.
+    pub per_host: u16,
+    /// 时间窗口, in milliseconds.
+    pub window_ms: u32,
+    /// Sources searched at once.
+    pub search: u16,
+    /// Books downloading at once.
+    pub download_books: u16,
+    /// Chapters in flight per downloading book.
+    pub download_chapters: u16,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyKind {
+    None,
+    Http,
+    Socks5,
+}
+
+/// 网络设置: DNS over HTTPS, a proxy for the app, and request limits. Kept on
+/// the device only, never in backups.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkSettings {
+    pub doh_enabled: bool,
+    /// `ali`, `tencent`, `cloudflare`, `google`, or `custom`.
+    pub doh_server: String,
+    pub doh_custom_url: String,
+    pub proxy_kind: ProxyKind,
+    pub proxy_host: String,
+    pub proxy_port: u16,
+    pub proxy_username: String,
+    pub proxy_password: String,
+    pub preset: ConcurrencyPreset,
+    /// The 自定义 values; the presets have their own.
+    pub custom: ConcurrencyLimits,
+}
+
+/// What a 测试 found: the time taken and a short description.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkCheck {
+    pub millis: u32,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkCheckRequest {
+    pub settings: NetworkSettings,
+    /// `doh` or `proxy`.
+    pub kind: String,
+}
