@@ -430,6 +430,16 @@ export function rasterizePage(
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   const range = document.createRange();
   const metrics = new Map<string, { ascent: number; descent: number }>();
+  // Lines are told apart by their paragraph and top, so a line split into
+  // several text nodes (a highlight) is placed as one.
+  const blocks = new Map<Element, number>();
+  const glyphs: (LaidGlyph & {
+    font: string;
+    color: string;
+    alpha: number;
+    ascent: number;
+    descent: number;
+  })[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
     if (!parent || parent.hidden) continue;
@@ -437,8 +447,6 @@ export function rasterizePage(
     const parentStyle = view?.getComputedStyle(parent);
     const font = parentStyle ? fontOf(parentStyle) : "16px serif";
     context.font = font;
-    context.fillStyle = parentStyle?.color ?? "#000000";
-    context.globalAlpha = alphaOf(parent);
     let fontMetrics = metrics.get(font);
     if (!fontMetrics) {
       const measured = context.measureText("国");
@@ -448,7 +456,17 @@ export function rasterizePage(
       };
       metrics.set(font, fontMetrics);
     }
-    const tabular = parentStyle?.fontVariantNumeric.includes("tabular-nums") ?? false;
+    const block = parent.closest(".reader-paragraph") ?? parent;
+    if (!blocks.has(block)) blocks.set(block, blocks.size);
+    const shared = {
+      font,
+      color: parentStyle?.color ?? "#000000",
+      alpha: alphaOf(parent),
+      ascent: fontMetrics.ascent,
+      descent: fontMetrics.descent,
+      spacing: parseFloat(parentStyle?.letterSpacing ?? "") || 0,
+      tabular: parentStyle?.fontVariantNumeric.includes("tabular-nums") ?? false,
+    };
     let offset = 0;
     for (const character of text) {
       const start = offset;
@@ -458,23 +476,86 @@ export function rasterizePage(
       range.setEnd(node, offset);
       const rect = range.getClientRects()[0];
       if (!rect || rect.width === 0) continue;
-      const lineHeight = rect.height;
-      const baseline =
-        rect.top -
-        origin.top +
-        (lineHeight - (fontMetrics.ascent + fontMetrics.descent)) / 2 +
-        fontMetrics.ascent;
-      const advance = context.measureText(character).width;
-      context.fillText(
+      glyphs.push({
+        ...shared,
         character,
-        glyphLeft(character, rect.left - origin.left, rect.width, advance, tabular),
-        baseline,
-      );
+        line: `${blocks.get(block)}:${Math.round(rect.top)}`,
+        left: rect.left - origin.left,
+        top: rect.top - origin.top,
+        width: rect.width,
+        height: rect.height,
+        advance: context.measureText(character).width,
+      });
     }
   }
+  const lefts = glyphLefts(glyphs);
+  glyphs.forEach((glyph, index) => {
+    context.font = glyph.font;
+    context.fillStyle = glyph.color;
+    context.globalAlpha = glyph.alpha;
+    const baseline = glyph.top + (glyph.height - (glyph.ascent + glyph.descent)) / 2 + glyph.ascent;
+    context.fillText(glyph.character, lefts[index], baseline);
+  });
   range.detach?.();
   context.globalAlpha = 1;
   return canvas;
+}
+
+/** A character's box as laid out, relative to the page. */
+export interface LaidGlyph {
+  character: string;
+  /** Glyphs with the same key share a line. */
+  line: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** The plain glyph's width on the canvas. */
+  advance: number;
+  /** CSS letter-spacing in pixels. */
+  spacing: number;
+  tabular: boolean;
+}
+
+/** Characters a justified line can widen around (CJK ideographs, kana, full-width marks). */
+const WIDE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u3000-\u303f\uff00-\uffef]/u;
+
+/**
+ * Where each glyph starts. Justification widens a box after its glyph,
+ * and also before a wide character that follows a narrow one (a curly
+ * quote, a Latin letter), so such a glyph sits that much inside its box.
+ * A line's usual widening is the smallest among its wide characters
+ * (compressed punctuation aside); anything beyond it is space in front,
+ * and the line's last character has none after it.
+ */
+export function glyphLefts(glyphs: readonly LaidGlyph[]): number[] {
+  const lines = new Map<string, number[]>();
+  glyphs.forEach((glyph, index) => {
+    const line = lines.get(glyph.line);
+    if (line) line.push(index);
+    else lines.set(glyph.line, [index]);
+  });
+  const lefts = glyphs.map((glyph) =>
+    glyphLeft(glyph.character, glyph.left, glyph.width, glyph.advance, glyph.tabular),
+  );
+  const extra = (glyph: LaidGlyph) => glyph.width - glyph.advance - glyph.spacing;
+  for (const line of lines.values()) {
+    const first = line[0];
+    const last = line[line.length - 1];
+    const wide = line.filter((index) => WIDE.test(glyphs[index].character));
+    const widenings = wide
+      .filter((index) => index !== last)
+      .map((index) => extra(glyphs[index]))
+      .filter((value) => value > -0.5);
+    if (!widenings.length) continue;
+    const usual = Math.max(0, Math.min(...widenings));
+    for (const index of wide) {
+      if (index === first) continue;
+      const before = extra(glyphs[index]) - (index === last ? 0 : usual);
+      if (before > 0.5) lefts[index] = glyphs[index].left + before;
+    }
+  }
+  return lefts;
 }
 
 /** Opening CJK punctuation; the browser trims its leading half when compressed. */

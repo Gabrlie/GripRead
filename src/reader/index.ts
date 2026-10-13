@@ -9,7 +9,7 @@ export {
   utf16Boundaries,
 } from "./pagination";
 export type { DomReaderMeasurerOptions, ReaderMeasurer, ReaderPage } from "./pagination";
-export { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
+export { alignPageBottom, continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
 export type { RenderTextOptions } from "./render";
 export { InstantReaderAdapter } from "./instant";
 export { HeadingIndex, NO_HEADINGS } from "./headings";

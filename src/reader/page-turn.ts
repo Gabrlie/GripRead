@@ -1,7 +1,7 @@
 import { animate, type AnimationPlaybackControls } from "motion";
 import type { PageTurnEffect } from "../types/generated";
 import { curlGeometry, drawCurl, rasterizePage, type Point } from "./curl";
-import { renderReaderText } from "./render";
+import { alignPageBottom, renderReaderText } from "./render";
 import { NO_HEADINGS, type HeadingIndex } from "./headings";
 import type {
   ReaderDisplayedPage,
@@ -281,6 +281,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     held.style.zIndex = "1";
     this.held = held;
     this.mount.append(held);
+    alignPages(held);
     this.updateVisibility();
   }
 
@@ -303,6 +304,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.stopAnimation();
     const overlay = this.screenElement(this.previousSpread, this.takeOutgoingChrome());
     this.mount.append(overlay);
+    alignPages(overlay);
     this.overlay = overlay;
     this.releaseHold();
     this.updateVisibility();
@@ -449,6 +451,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     if (effect === "cover") above.style.zIndex = "1";
     surface.append(outgoing, incoming);
     this.mount.append(surface);
+    alignPages(surface);
     this.overlay = surface;
     this.updateVisibility();
     const draw = (progress: number) => {
@@ -560,6 +563,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     const element = this.screenElement(pages, chrome);
     element.style.visibility = "hidden";
     this.mount.append(element);
+    alignPages(element);
     try {
       const background =
         element.ownerDocument.defaultView?.getComputedStyle(element).backgroundColor || "#ffffff";
@@ -695,4 +699,9 @@ function samePage(left: ReaderDisplayedPage, right: ReaderDisplayedPage): boolea
 function clampIndex(index: number, count: number): number {
   if (count <= 0 || !Number.isFinite(index)) return 0;
   return Math.min(count - 1, Math.max(0, Math.trunc(index)));
+}
+
+/** Copies align their pages' bottoms like the visible pages once laid out. */
+function alignPages(root: HTMLElement): void {
+  for (const page of root.querySelectorAll<HTMLElement>("[data-start]")) alignPageBottom(page);
 }

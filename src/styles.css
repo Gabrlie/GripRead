@@ -698,7 +698,8 @@ html.shelf-hide-scrollbar body::-webkit-scrollbar,
   text-indent: var(--reader-indent, 0);
 }
 .reader-prose > .reader-paragraph:not(:first-of-type) {
-  margin-top: var(--reader-paragraph-gap, 0);
+  /* --reader-fill: alignPageBottom (src/reader/render.ts). */
+  margin-top: calc(var(--reader-paragraph-gap, 0px) + var(--reader-fill, 0px));
 }
 .reader-prose > .reader-paragraph[data-continued] {
   text-indent: 0;

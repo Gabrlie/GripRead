@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { renderReaderText } from "../../reader";
+import { alignPageBottom, renderReaderText } from "../../reader";
 import type { HeadingIndex, ReaderDisplayedPage } from "../../reader";
 
 interface ReaderPageTextProps {
@@ -31,6 +31,7 @@ export function ReaderPageText({ page, bookId, highlight, headings }: ReaderPage
           ? null
           : { start: highlightStart, end: highlightEnd },
     });
+    alignPageBottom(content.current);
   }, [
     page.text,
     page.continued,

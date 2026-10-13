@@ -95,6 +95,40 @@ function appendHighlighted(
   if (markEnd < end) paragraph.append(text.slice(markEnd, end));
 }
 
+/**
+ * Legado's 底部对齐: a page that is full but for less than a line (a chapter
+ * heading, which is taller than a line, often leaves most of one) spreads
+ * that space over its paragraph gaps, so its last line sits at the bottom.
+ * Gaps do not change line wrapping, so pages and offsets stay as measured.
+ * Call it once the page is laid out; a short last page stays as it is.
+ */
+export function alignPageBottom(page: HTMLElement): void {
+  page.style.removeProperty("--reader-fill");
+  const paragraphs = Array.from(page.getElementsByClassName(READER_PARAGRAPH_CLASS)).filter(
+    (paragraph) => paragraph.getBoundingClientRect().height > 0,
+  );
+  if (paragraphs.length < 2) return;
+  const style = page.ownerDocument.defaultView?.getComputedStyle(page);
+  const box = page.getBoundingClientRect();
+  const bottom =
+    box.top + (page.clientHeight || box.height) - (parseFloat(style?.paddingBottom ?? "") || 0);
+  const last = paragraphs[paragraphs.length - 1];
+  const left = bottom - last.getBoundingClientRect().bottom;
+  const fontSize = parseFloat(style?.fontSize ?? "") || 16;
+  const line = parseFloat(style?.lineHeight ?? "") || fontSize * 1.5;
+  if (!(left > 0.5) || left > line * 1.3) return;
+  const gaps = paragraphs.length - 1;
+  // A heading's bottom margin absorbs part of the gap after it, so settle
+  // the remainder over a few more layouts.
+  let fill = left / gaps;
+  for (let round = 0; round < 3; round += 1) {
+    page.style.setProperty("--reader-fill", `${Math.max(0, fill)}px`);
+    const rest = bottom - last.getBoundingClientRect().bottom;
+    if (Math.abs(rest) <= 0.25) return;
+    fill += rest / gaps;
+  }
+}
+
 /** Whether the character at `offset` in `text` continues a line started earlier. */
 export function continuesLine(text: string, offset: number, windowContinued: boolean): boolean {
   if (offset <= 0) return windowContinued;
