@@ -1142,6 +1142,9 @@ pub async fn update_online_toc(
     operations: State<'_, SourceOperations>,
 ) -> Result<(), AppError> {
     let storage = state.storage.clone();
+    // The device's proxy may have gone since it was last checked.
+    let root = state.data_root.clone();
+    on_engine_thread(move || crate::network::refresh(&root)).await?;
     let ids = if request.book_ids.is_empty() {
         with_storage(&state, |storage| storage.updatable_online_books()).await?
     } else {

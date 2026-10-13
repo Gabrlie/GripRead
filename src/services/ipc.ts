@@ -461,6 +461,15 @@ export const tauriServices: AppServices = {
     saveNetwork: (settings) =>
       invokeCommand<NetworkSettings>("save_network_settings", { request: settings }),
     networkState: () => invokeCommand<NetworkState>("network_state"),
+    onNetworkChange: async (listener) => {
+      // Only the Android plugin reports changes.
+      try {
+        const handle = await addPluginListener("gripread-network", "changed", listener);
+        return () => void handle.unregister();
+      } catch {
+        return () => undefined;
+      }
+    },
     checkNetwork: (settings, kind) =>
       invokeCommand<NetworkCheck>("check_network", {
         request: { settings, kind } satisfies NetworkCheckRequest,

@@ -176,6 +176,8 @@ export interface SettingsService {
   checkNetwork(settings: NetworkSettings, kind: "doh" | "proxy"): Promise<NetworkCheck>;
   /** The device's own proxy, checked again. */
   networkState(): Promise<NetworkState>;
+  /** The device's network or proxy changed (Android). */
+  onNetworkChange(listener: () => void): Promise<Unsubscribe>;
 }
 /** WebDAV backups and the cloud bookshelf (Sync specification). */
 export interface SyncService {

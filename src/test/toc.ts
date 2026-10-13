@@ -53,6 +53,7 @@ export function fontServiceMocks(): Pick<
   | "saveNetwork"
   | "checkNetwork"
   | "networkState"
+  | "onNetworkChange"
 > {
   return {
     pickAndImportFont: vi.fn(async () => null),
@@ -64,5 +65,6 @@ export function fontServiceMocks(): Pick<
     saveNetwork: vi.fn(async (settings) => settings),
     checkNetwork: vi.fn(async () => ({ millis: 10, detail: "ok" })),
     networkState: vi.fn(async () => ({})),
+    onNetworkChange: vi.fn(async () => () => undefined),
   };
 }

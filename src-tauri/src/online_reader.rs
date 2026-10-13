@@ -841,6 +841,55 @@ mod tests {
         assert!(!storage.lock().unwrap().online_cache_dir(&id).exists());
     }
 
+    #[test]
+    fn contents_update_from_the_source() {
+        let base = start(|request: &Request| match request.path.as_str() {
+            "/book/7/" => Response::html(
+                r#"<h1>剑来</h1><div class="toc"><a href="/c/1.html">第一章 惊蛰</a><a href="/c/2.html">第二章 开门</a><a href="/c/3.html">第三章 立春</a></div>"#,
+            ),
+            "/c/1.html" => Response::html(r#"<div id="content">第一段</div>"#),
+            _ => Response::not_found(),
+        });
+        let (_dir, storage, id) = library(&base);
+        storage
+            .lock()
+            .unwrap()
+            .save_book_source(
+                &serde_json::json!({
+                    "bookSourceUrl": base,
+                    "bookSourceName": "甲站",
+                    "ruleBookInfo": {"name": "tag.h1@text"},
+                    "ruleToc": {"chapterList": "class.toc@tag.a", "chapterName": "text", "chapterUrl": "href"},
+                    "ruleContent": {"content": "id.content@html"}
+                })
+                .to_string(),
+                None,
+            )
+            .unwrap();
+        let first = read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        storage
+            .lock()
+            .unwrap()
+            .save_position_record(&first.locator)
+            .unwrap();
+        // The volume line is gone, so every chapter moves up one place.
+        let added = refresh_toc(&storage, &id, Default::default()).unwrap();
+        assert_eq!(added, 0);
+        let guard = storage.lock().unwrap();
+        assert_eq!(guard.online_chapter_count(&id).unwrap(), 3);
+        assert_eq!(
+            guard
+                .online_position(&id)
+                .unwrap()
+                .map(|position| position.title),
+            Some("第一章 惊蛰".to_string())
+        );
+    }
+
     /// Reads two chapters of a live book from `GRIPREAD_SOURCES` /
     /// `GRIPREAD_SOURCE_NAME` through the shelf path, then updates its
     /// contents. A tool for checking the whole online path by hand.

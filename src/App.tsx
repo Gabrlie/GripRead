@@ -96,6 +96,28 @@ function MainContent() {
     setLogViewer(() => setShowLogs(true));
     return () => setLogViewer(null);
   }, []);
+  // A changed network or proxy (a proxy app turned off) is checked again,
+  // once the burst of change reports settles.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settings = runtime.services.settings;
+    void settings
+      .onNetworkChange(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => void settings.networkState().catch(() => undefined), 500);
+      })
+      .then((unsubscribe) => {
+        if (active) stop = unsubscribe;
+        else unsubscribe();
+      });
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      stop?.();
+    };
+  }, [runtime]);
   // The Android download notification's 停止 pauses the queue.
   useEffect(() => {
     let stop: (() => void) | undefined;
