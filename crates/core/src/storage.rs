@@ -40,6 +40,7 @@ mod usage;
 pub use usage::DEFAULT_CLEARED;
 mod portable;
 mod sources;
+mod sync;
 pub use online::{
     chapter_resource, chapter_version, forget_cached_chapters, map_chapter, mark_chapter_cached,
     online_key, resource_chapter, ChapterPosition, OnlineRecord,
@@ -50,8 +51,9 @@ pub use portable::{
     ProgressState, StoredWebDav,
 };
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
+pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 
-const CURRENT_SCHEMA_VERSION: i64 = 19;
+const CURRENT_SCHEMA_VERSION: i64 = 20;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1009,6 +1011,31 @@ impl Storage {
             tx.execute_batch("ALTER TABLE online_books ADD COLUMN last_grown_at INTEGER;")?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (19, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
+        if current < 20 {
+            // Native sync: the records this device last synced, and on the
+            // server the latest record per key in the order it took them.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS sync_records (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    hash TEXT NOT NULL,
+                    value TEXT
+                );
+                CREATE TABLE IF NOT EXISTS sync_log (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key TEXT NOT NULL UNIQUE,
+                    value TEXT,
+                    device TEXT NOT NULL,
+                    at INTEGER NOT NULL
+                );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (20, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -6652,7 +6679,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 19);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
     }
 
     #[test]
@@ -9243,5 +9270,198 @@ mod tests {
             Storage::open(&app_root).unwrap().get_settings().unwrap(),
             updated
         );
+    }
+
+    /// One device's sync round against a server library: pull what others
+    /// wrote, then push what changed here; the server logs its own edits
+    /// (and any difference applying made) after.
+    fn sync_round(server: &mut Storage, device: &mut Storage, name: &str, cursor: &mut i64) {
+        let (logged, head) = server.sync_log_since(*cursor, 10_000).unwrap();
+        let others: Vec<SyncChange> = logged
+            .into_iter()
+            .filter(|change| change.device != name)
+            .map(|change| SyncChange {
+                key: change.key,
+                value: change.value,
+            })
+            .collect();
+        device.sync_apply(&others).unwrap();
+        *cursor = head;
+        for change in device.sync_pending().unwrap() {
+            server.sync_apply(std::slice::from_ref(&change)).unwrap();
+            server.sync_log_append(&change, name).unwrap();
+            device.sync_mark(&change).unwrap();
+        }
+        for change in server.sync_pending().unwrap() {
+            server.sync_log_append(&change, "server").unwrap();
+            server.sync_mark(&change).unwrap();
+        }
+    }
+
+    fn offset_of(storage: &Storage, id: &str, needle: &str) -> ReaderLocator {
+        let context = storage.content_read_context(id).unwrap();
+        let verified = verify_content_context(&context).unwrap();
+        let text = read_verified_text(&context, &verified).unwrap();
+        let offset = text[..text.find(needle).unwrap()].encode_utf16().count() as u64;
+        resolve_offset_from_context(
+            &ResolveOffsetRequest {
+                book_id: id.into(),
+                content_version: context.record.asset.content_version.clone(),
+                resource_id: context.record.asset.id.clone(),
+                offset,
+            },
+            &context,
+            &verified,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn devices_sync_records_through_the_server_and_settle() {
+        let root = TestRoot::new();
+        let text = "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。";
+        let source = write_source(&root.0, "sync.txt", text.as_bytes());
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut desktop = Storage::open(&root.0.join("desktop")).unwrap();
+        let (mut phone_at, mut desktop_at) = (0, 0);
+        import(&mut server, &source, "server");
+        let on_phone = import(&mut phone, &source, "phone").book.id;
+        let on_desktop = import(&mut desktop, &source, "desktop").book.id;
+
+        // The phone renames the book, files it, reads on, and marks a passage.
+        phone
+            .update_book(&UpdateBookRequest {
+                book_id: on_phone.clone(),
+                title: "云海".into(),
+                author: Some("作者".into()),
+                intro: None,
+            })
+            .unwrap();
+        let group = phone.create_group("收藏").unwrap();
+        phone
+            .move_book(&on_phone, &ShelfPlacement::Group(group.id))
+            .unwrap();
+        phone
+            .save_position(&offset_of(&phone, &on_phone, "后来"))
+            .unwrap();
+        phone
+            .add_bookmark(&BookmarkRequest {
+                book_id: on_phone.clone(),
+                locator: offset_of(&phone, &on_phone, "头发"),
+                excerpt: "头发".into(),
+                note: None,
+            })
+            .unwrap();
+        let mut preferences = phone.get_settings().unwrap();
+        preferences.font_size += 2.0;
+        preferences.theme = crate::models::ThemeMode::Dark;
+        phone.save_settings(&preferences).unwrap();
+        // The desktop leaves its theme out of sync.
+        let mut settings = desktop.stored_webdav().unwrap();
+        settings.restore_ignore = vec![crate::models::RestoreCategory::Theme];
+        desktop.save_stored_webdav(&settings).unwrap();
+
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        let book = desktop.library_book(&on_desktop).unwrap();
+        assert_eq!(book.book.title, "云海");
+        assert_eq!(desktop.list_bookmarks(&on_desktop).unwrap().len(), 1);
+        assert!(desktop.saved_position(&on_desktop).unwrap().is_some());
+        assert!(desktop
+            .list_groups()
+            .unwrap()
+            .iter()
+            .any(|group| group.name == "收藏"));
+        let desktop_settings = desktop.get_settings().unwrap();
+        assert_eq!(desktop_settings.font_size, preferences.font_size);
+        assert_ne!(
+            desktop_settings.theme,
+            crate::models::ThemeMode::Dark,
+            "excluded"
+        );
+        // The server's own library, read by the web version, has it too.
+        let on_server = server.book_for_source(&book_sha(&server)).unwrap().unwrap();
+        assert_eq!(server.library_book(&on_server).unwrap().book.title, "云海");
+
+        // Offline at once: the desktop deletes the bookmark, the phone adds another.
+        let mark = desktop.list_bookmarks(&on_desktop).unwrap()[0].id.clone();
+        desktop.delete_bookmark(&mark).unwrap();
+        phone
+            .add_bookmark(&BookmarkRequest {
+                book_id: on_phone.clone(),
+                locator: offset_of(&phone, &on_phone, "门开"),
+                excerpt: "门开".into(),
+                note: None,
+            })
+            .unwrap();
+        for _ in 0..3 {
+            sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+            sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        }
+        for (storage, id) in [(&phone, &on_phone), (&desktop, &on_desktop)] {
+            let marks: Vec<String> = storage
+                .list_bookmarks(id)
+                .unwrap()
+                .into_iter()
+                .map(|mark| mark.excerpt)
+                .collect();
+            assert_eq!(
+                marks,
+                ["门开"],
+                "both keep the new one and lose the deleted one"
+            );
+        }
+        // Nothing is left to send anywhere: applying a record does not echo.
+        assert!(phone.sync_pending().unwrap().is_empty());
+        assert!(desktop.sync_pending().unwrap().is_empty());
+        assert!(server.sync_pending().unwrap().is_empty());
+
+        // A removal reaches the others' 回收站.
+        phone.remove_book(&on_phone).unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        assert!(desktop.list_library_books().unwrap().is_empty());
+        assert_eq!(desktop.list_removed_books().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn records_wait_for_a_book_that_arrives_later() {
+        let root = TestRoot::new();
+        let text = "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。";
+        let source = write_source(&root.0, "later.txt", text.as_bytes());
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut tablet = Storage::open(&root.0.join("tablet")).unwrap();
+        let (mut phone_at, mut tablet_at) = (0, 0);
+        let on_phone = import(&mut phone, &source, "phone").book.id;
+        phone
+            .update_book(&UpdateBookRequest {
+                book_id: on_phone.clone(),
+                title: "后来".into(),
+                author: None,
+                intro: None,
+            })
+            .unwrap();
+        phone
+            .save_position(&offset_of(&phone, &on_phone, "后来"))
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut tablet, "tablet", &mut tablet_at);
+        assert!(tablet.list_library_books().unwrap().is_empty());
+        assert_eq!(tablet.pending_restore_count().unwrap(), 1);
+        // The file arrives (downloaded from the server) and takes its records.
+        let on_tablet = import(&mut tablet, &source, "tablet").book.id;
+        // As the import command does after every import.
+        assert!(tablet.apply_pending_restore(&on_tablet).unwrap());
+        assert_eq!(tablet.library_book(&on_tablet).unwrap().book.title, "后来");
+        assert!(tablet.saved_position(&on_tablet).unwrap().is_some());
+        sync_round(&mut server, &mut tablet, "tablet", &mut tablet_at);
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        assert!(tablet.sync_pending().unwrap().is_empty());
+    }
+
+    fn book_sha(storage: &Storage) -> String {
+        storage.shelf_sources().unwrap()[0].1.clone()
     }
 }

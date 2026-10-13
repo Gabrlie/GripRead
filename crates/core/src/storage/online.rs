@@ -1133,6 +1133,54 @@ mod tests {
     }
 
     #[test]
+    fn online_books_sync_with_their_source_and_chapter_position() {
+        let (_dir, mut phone) = storage();
+        phone
+            .save_book_source(r#"{"bookSourceUrl":"a","bookSourceName":"甲"}"#, None)
+            .unwrap();
+        let toc = chapters(&["第1章 惊蛰", "第2章 开门"], "a");
+        let id = phone.add_online_book(&book("a"), &toc, true).unwrap();
+        phone
+            .save_position_record(&ReaderLocator {
+                book_id: id.clone(),
+                content_version: chapter_version(&id, &toc[1]),
+                resource_id: chapter_resource(1),
+                offset: 7,
+                context_before: String::new(),
+                context_after: String::new(),
+            })
+            .unwrap();
+        let (_other, mut tablet) = storage();
+        let send = |from: &mut Storage, to: &mut Storage| {
+            let changes = from.sync_pending().unwrap();
+            to.sync_apply(&changes).unwrap();
+            for change in &changes {
+                from.sync_mark(change).unwrap();
+            }
+            changes.len()
+        };
+        assert!(send(&mut phone, &mut tablet) > 0);
+        let shelf = tablet.list_library_books().unwrap();
+        assert_eq!(shelf.len(), 1);
+        let there = shelf[0].book.id.clone();
+        // The contents come later; the chapter position waits for them.
+        let waiting = tablet.pending_online_position(&there).unwrap().unwrap();
+        assert_eq!((waiting.index, waiting.offset), (1, 7));
+        assert_eq!(tablet.list_book_sources().unwrap().len(), 1);
+        // The tablet's own copy settles without sending anything back.
+        let echo = tablet.sync_pending().unwrap();
+        for change in &echo {
+            tablet.sync_mark(change).unwrap();
+        }
+        assert_eq!(send(&mut phone, &mut tablet), 0);
+
+        // Removing it from the phone's shelf removes it there too.
+        phone.delete_online_book(&id).unwrap();
+        send(&mut phone, &mut tablet);
+        assert!(tablet.list_library_books().unwrap().is_empty());
+    }
+
+    #[test]
     fn backups_carry_online_books_and_sources_by_chapter() {
         let (_dir, mut storage) = storage();
         storage

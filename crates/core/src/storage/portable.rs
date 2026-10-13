@@ -315,9 +315,40 @@ pub fn backup_digest(document: &BackupDocument) -> Result<String, AppError> {
 }
 
 /// Shelf books with their managed asset and original-file hash.
-struct ShelfBook {
-    book_id: String,
-    source_sha256: String,
+pub(super) struct ShelfBook {
+    pub(super) book_id: String,
+    pub(super) source_sha256: String,
+}
+
+/// Which parts of a book record to apply: a restore takes all that the
+/// 恢复忽略列表 allows, a sync record one part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Parts {
+    pub(super) info: bool,
+    pub(super) progress: bool,
+    pub(super) marks: bool,
+    pub(super) time: bool,
+}
+
+impl Parts {
+    pub(super) const NONE: Parts = Parts {
+        info: false,
+        progress: false,
+        marks: false,
+        time: false,
+    };
+
+    /// What the 恢复忽略列表 allows; a book this device kept for reimport
+    /// (`local`) comes back whole.
+    fn allowed(settings: &StoredWebDav, local: bool) -> Parts {
+        let wanted = |category| local || !settings.ignores(category);
+        Parts {
+            info: wanted(RestoreCategory::BookInfo),
+            progress: wanted(RestoreCategory::Progress),
+            marks: wanted(RestoreCategory::Bookmarks),
+            time: wanted(RestoreCategory::ReadingTime),
+        }
+    }
 }
 
 impl Storage {
@@ -350,7 +381,7 @@ impl Storage {
         Ok(())
     }
 
-    fn shelf_books_with_sources(&self) -> Result<Vec<ShelfBook>, AppError> {
+    pub(super) fn shelf_books_with_sources(&self) -> Result<Vec<ShelfBook>, AppError> {
         let mut statement = self.conn.prepare(
             "SELECT b.id, t.source_sha256 FROM books b
              JOIN book_assets a ON a.book_id = b.id
@@ -618,7 +649,7 @@ impl Storage {
         }
     }
 
-    fn portable_book(&self, shelf: &ShelfBook) -> Result<PortableBook, AppError> {
+    pub(super) fn portable_book(&self, shelf: &ShelfBook) -> Result<PortableBook, AppError> {
         let (title, author, intro, state, use_rules): (
             String,
             Option<String>,
@@ -741,7 +772,7 @@ impl Storage {
         })
     }
 
-    fn portable_online_books(&self) -> Result<Vec<PortableOnlineBook>, AppError> {
+    pub(super) fn portable_online_books(&self) -> Result<Vec<PortableOnlineBook>, AppError> {
         let ids: Vec<String> = {
             let mut statement = self.conn.prepare(
                 "SELECT o.book_id FROM online_books o JOIN books b ON b.id = o.book_id
@@ -832,12 +863,14 @@ impl Storage {
     /// Restores an online book: the one kept for the same source address or
     /// name and author takes the newer position and the union of bookmarks;
     /// otherwise the book is added and its contents fetched when first read.
-    fn restore_online_book(
+    /// Adds or finds the online book and applies `parts` of its record;
+    /// returns its id.
+    pub(super) fn restore_online_book(
         &mut self,
         portable: &PortableOnlineBook,
-        skip: &dyn Fn(RestoreCategory) -> bool,
+        parts: Parts,
         report: &mut RestoreReport,
-    ) -> Result<(), AppError> {
+    ) -> Result<String, AppError> {
         let existing: Option<String> = self
             .conn
             .query_row(
@@ -854,7 +887,7 @@ impl Storage {
             }
             None => self.add_online_book(&portable.book, &[], true)?,
         };
-        if !skip(RestoreCategory::BookInfo) {
+        if parts.info {
             self.conn.execute(
                 "UPDATE books SET title = ?2, author = ?3, shelf_state = ?4, use_replace_rules = ?5
                  WHERE id = ?1",
@@ -888,11 +921,7 @@ impl Storage {
                 }
             }
         }
-        if let Some(position) = portable
-            .position
-            .as_ref()
-            .filter(|_| !skip(RestoreCategory::Progress))
-        {
+        if let Some(position) = portable.position.as_ref().filter(|_| parts.progress) {
             let local_updated: i64 = self
                 .conn
                 .query_row(
@@ -910,7 +939,7 @@ impl Storage {
                 report.positions_restored += 1;
             }
         }
-        if !skip(RestoreCategory::Bookmarks) && !portable.bookmarks.is_empty() {
+        if parts.marks && !portable.bookmarks.is_empty() {
             let existing: Vec<(u32, u64)> = self
                 .list_bookmarks(&book_id)?
                 .iter()
@@ -931,7 +960,7 @@ impl Storage {
             self.add_pending_online_bookmarks(&book_id, &missing)?;
             self.settle_pending_online_position(&book_id)?;
         }
-        if !skip(RestoreCategory::ReadingTime) {
+        if parts.time {
             for (day, seconds) in &portable.reading_time {
                 self.conn.execute(
                     "INSERT INTO reading_time(book_id, day, seconds) VALUES (?1, ?2, ?3)
@@ -941,7 +970,7 @@ impl Storage {
             }
         }
         report.online_books_restored += 1;
-        Ok(())
+        Ok(book_id)
     }
 
     /// What restoring `document` would do to this library.
@@ -1162,14 +1191,21 @@ impl Storage {
             }
         }
         if !skip(RestoreCategory::OnlineBooks) {
+            let parts = Parts {
+                info: !skip(RestoreCategory::BookInfo),
+                progress: !skip(RestoreCategory::Progress),
+                marks: !skip(RestoreCategory::Bookmarks),
+                time: !skip(RestoreCategory::ReadingTime),
+            };
             for book in &document.online_books {
-                self.restore_online_book(book, &skip, &mut report)?;
+                self.restore_online_book(book, parts, &mut report)?;
             }
         }
         for book in &document.books {
             match self.book_for_source(&book.source_sha256)? {
                 Some(book_id) => {
-                    let applied = self.apply_portable_book(&book_id, book)?;
+                    let parts = Parts::allowed(&settings, book.local);
+                    let applied = self.apply_portable_book(&book_id, book, parts)?;
                     report.books_restored += 1;
                     report.positions_restored += u32::from(applied.0);
                     report.bookmarks_added += applied.1;
@@ -1301,7 +1337,8 @@ impl Storage {
             return Ok(applied);
         };
         let book: PortableBook = serde_json::from_str(&record)?;
-        self.apply_portable_book(book_id, &book)?;
+        let parts = Parts::allowed(&self.stored_webdav()?, book.local);
+        self.apply_portable_book(book_id, &book, parts)?;
         self.conn.execute(
             "DELETE FROM pending_book_restores WHERE source_sha256 = ?1",
             params![source],
@@ -1317,17 +1354,18 @@ impl Storage {
     }
 
     /// Returns whether the position was restored and how many bookmarks were added.
-    fn apply_portable_book(
+    pub(super) fn apply_portable_book(
         &mut self,
         book_id: &str,
         book: &PortableBook,
+        parts: Parts,
     ) -> Result<(bool, u32), AppError> {
-        let settings = self.stored_webdav()?;
-        let wanted = |category| book.local || !settings.ignores(category);
-        let info = wanted(RestoreCategory::BookInfo);
-        let progress = wanted(RestoreCategory::Progress);
-        let marks = wanted(RestoreCategory::Bookmarks);
-        let time = wanted(RestoreCategory::ReadingTime);
+        let Parts {
+            info,
+            progress,
+            marks,
+            time,
+        } = parts;
         let title = book.title.trim();
         {
             let tx = self.conn.transaction()?;
@@ -1557,7 +1595,7 @@ fn seconds_valid_day(day: &str) -> bool {
 /// The restored preferences: reading settings and the theme from the backup
 /// where wanted, this device's otherwise, with this device's fonts and
 /// background images.
-fn merge_preferences(
+pub(super) fn merge_preferences(
     current: &ReaderPreferences,
     backup: &ReaderPreferences,
     reading: bool,
@@ -1579,7 +1617,7 @@ fn merge_preferences(
 }
 
 /// Fonts and background images are files on one device; a backup names none.
-fn strip_device_assets(preferences: &mut ReaderPreferences) {
+pub(super) fn strip_device_assets(preferences: &mut ReaderPreferences) {
     preferences.style.font_asset_id = None;
     for preset in &mut preferences.style.presets {
         preset.background_image = None;

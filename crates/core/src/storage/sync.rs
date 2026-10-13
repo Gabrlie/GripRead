@@ -1,0 +1,714 @@
+//! Native sync records (the server stage, P2): the library as one record
+//! per piece of state, keyed like backups so devices agree on identity.
+//!
+//! - `book:<sha256>`, `online:<name key>`: a book's details and placement
+//! - `progress:`, `bookmarks:`, `time:` + `book:<sha256>` or `online:<key>`
+//! - `group:<name>`, `replace:<id>`, `toc:<id>`, `source:<url>`
+//! - `prefs:reading`, `prefs:theme`, `prefs:shelf`
+//!
+//! A device finds its changes by comparing the records it builds now with
+//! the last ones it synced (`sync_records`), and applies others' records
+//! through the restore paths. The 恢复忽略列表 doubles as the exclusion list:
+//! excluded records are neither sent nor applied. The server keeps the
+//! latest record per key in `sync_log`, numbered in the order it took them.
+
+use super::portable::{
+    merge_preferences, strip_device_assets, Parts, PortableBook, PortableBookmark,
+    PortableOnlineBook,
+};
+use super::*;
+use crate::models::{RestoreCategory, RestoreReport, ShelfPreferences, TxtTocRule};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+/// One record's new value, or `None` when it was removed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncChange {
+    pub key: String,
+    pub value: Option<Value>,
+}
+
+/// A record as the server keeps it: its place in the log and who wrote it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggedChange {
+    pub seq: i64,
+    pub key: String,
+    pub value: Option<Value>,
+    pub device: String,
+}
+
+/// The categories a record belongs to; excluding any of them leaves it out.
+pub fn record_categories(key: &str) -> Vec<RestoreCategory> {
+    let online = key.contains("online:");
+    let mut categories = match key.split(':').next().unwrap_or_default() {
+        "book" => vec![RestoreCategory::BookInfo],
+        "online" => vec![RestoreCategory::BookInfo],
+        "progress" => vec![RestoreCategory::Progress],
+        "bookmarks" => vec![RestoreCategory::Bookmarks],
+        "time" => vec![RestoreCategory::ReadingTime],
+        "group" => vec![RestoreCategory::Groups],
+        "replace" => vec![RestoreCategory::ReplaceRules],
+        "toc" => vec![RestoreCategory::TocRules],
+        "source" => vec![RestoreCategory::Sources],
+        "prefs" => match key {
+            "prefs:theme" => vec![RestoreCategory::Theme],
+            "prefs:shelf" => vec![RestoreCategory::ShelfLayout],
+            _ => vec![RestoreCategory::ReadingSettings],
+        },
+        _ => vec![],
+    };
+    if online {
+        categories.push(RestoreCategory::OnlineBooks);
+    }
+    categories
+}
+
+pub fn record_hash(value: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    hex_digest(&Sha256::digest(value.to_string().as_bytes()))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The local book a record belongs to, by its file's hash.
+fn book_of(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("book:").or_else(|| {
+        ["progress:book:", "bookmarks:book:", "time:book:"]
+            .iter()
+            .find_map(|prefix| key.strip_prefix(prefix))
+    })?;
+    Some(rest)
+}
+
+/// The order records apply in: what others refer to comes first.
+fn apply_order(key: &str) -> u8 {
+    match key.split(':').next().unwrap_or_default() {
+        "group" => 0,
+        "toc" | "replace" | "source" | "prefs" => 1,
+        "book" | "online" => 2,
+        _ => 3,
+    }
+}
+
+/// A bookmark's identity across devices: when it was made and what it marks.
+fn bookmark_identity(created_at: i64, excerpt: &str) -> (i64, String) {
+    (created_at, excerpt.to_string())
+}
+
+fn without_records(mut book: PortableBook) -> PortableBook {
+    book.position = None;
+    book.position_updated_at = 0;
+    book.bookmarks.clear();
+    book.reading_time.clear();
+    book.local = false;
+    book
+}
+
+fn bare_book(source_sha256: &str) -> PortableBook {
+    PortableBook {
+        source_sha256: source_sha256.to_string(),
+        title: String::new(),
+        author: None,
+        intro: None,
+        shelf_state: None,
+        group: None,
+        use_replace_rules: true,
+        toc: BookTocSettings::default(),
+        position: None,
+        position_updated_at: 0,
+        bookmarks: Vec::new(),
+        reading_time: Vec::new(),
+        cover: None,
+        local: false,
+    }
+}
+
+const THEME_FIELDS: [&str; 3] = ["theme", "paperTone", "oledBlack"];
+
+impl Storage {
+    fn sync_excluded(&self, key: &str) -> Result<bool, AppError> {
+        let settings = self.stored_webdav()?;
+        Ok(record_categories(key)
+            .into_iter()
+            .any(|category| settings.ignores(category)))
+    }
+
+    /// Every record this library has now, minus excluded ones.
+    pub fn sync_snapshot(&self) -> Result<BTreeMap<String, Value>, AppError> {
+        let mut records = BTreeMap::new();
+        for shelf in self.shelf_books_with_sources()? {
+            let book = self.portable_book(&shelf)?;
+            let key = format!("book:{}", shelf.source_sha256);
+            if let Some(position) = &book.position {
+                records.insert(
+                    format!("progress:{key}"),
+                    json!({ "position": position, "updatedAt": book.position_updated_at }),
+                );
+            }
+            records.insert(
+                format!("bookmarks:{key}"),
+                serde_json::to_value(&book.bookmarks)?,
+            );
+            records.insert(
+                format!("time:{key}"),
+                serde_json::to_value(&book.reading_time)?,
+            );
+            records.insert(key, serde_json::to_value(without_records(book))?);
+        }
+        for mut book in self.portable_online_books()? {
+            let key = format!(
+                "online:{}",
+                online_key(&book.title, book.author.as_deref().unwrap_or(""))
+            );
+            if let Some(position) = &book.position {
+                records.insert(
+                    format!("progress:{key}"),
+                    json!({ "position": position, "updatedAt": book.position_updated_at }),
+                );
+            }
+            records.insert(
+                format!("bookmarks:{key}"),
+                serde_json::to_value(&book.bookmarks)?,
+            );
+            records.insert(
+                format!("time:{key}"),
+                serde_json::to_value(&book.reading_time)?,
+            );
+            book.position = None;
+            book.position_updated_at = 0;
+            book.bookmarks.clear();
+            book.reading_time.clear();
+            records.insert(key, serde_json::to_value(book)?);
+        }
+        for group in self.list_groups()? {
+            records.insert(
+                format!("group:{}", group.name),
+                json!({ "name": group.name }),
+            );
+        }
+        for rule in self.list_replace_rules()? {
+            records.insert(format!("replace:{}", rule.id), serde_json::to_value(rule)?);
+        }
+        for rule in self.list_txt_toc_rules()? {
+            records.insert(format!("toc:{}", rule.id), serde_json::to_value(rule)?);
+        }
+        let sources: Vec<Value> = serde_json::from_str(&self.export_book_sources(&[])?)?;
+        for source in sources {
+            if let Some(url) = source.get("bookSourceUrl").and_then(Value::as_str) {
+                records.insert(format!("source:{url}"), source.clone());
+            }
+        }
+        let mut preferences = self.get_settings()?;
+        strip_device_assets(&mut preferences);
+        let mut reading = serde_json::to_value(&preferences)?;
+        let mut theme = serde_json::Map::new();
+        if let Value::Object(fields) = &mut reading {
+            for field in THEME_FIELDS {
+                if let Some(value) = fields.remove(field) {
+                    theme.insert(field.to_string(), value);
+                }
+            }
+        }
+        records.insert("prefs:reading".into(), reading);
+        records.insert("prefs:theme".into(), Value::Object(theme));
+        records.insert(
+            "prefs:shelf".into(),
+            serde_json::to_value(self.get_shelf_preferences()?)?,
+        );
+        let settings = self.stored_webdav()?;
+        records.retain(|key, _| {
+            !record_categories(key)
+                .into_iter()
+                .any(|category| settings.ignores(category))
+        });
+        Ok(records)
+    }
+
+    fn synced_records(&self) -> Result<HashMap<String, (String, Option<Value>)>, AppError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT key, hash, value FROM sync_records")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, hash, value)| {
+                let value = value.and_then(|text| serde_json::from_str(&text).ok());
+                (key, (hash, value))
+            })
+            .collect())
+    }
+
+    /// What changed here since the last sync: new or changed records, and
+    /// removed ones (`value: None`).
+    pub fn sync_pending(&self) -> Result<Vec<SyncChange>, AppError> {
+        let snapshot = self.sync_snapshot()?;
+        let synced = self.synced_records()?;
+        let mut changes: Vec<SyncChange> = snapshot
+            .iter()
+            .filter(|(key, value)| {
+                synced.get(*key).map(|(hash, _)| hash.as_str()) != Some(&record_hash(value))
+            })
+            .map(|(key, value)| SyncChange {
+                key: key.clone(),
+                value: Some(value.clone()),
+            })
+            .collect();
+        for key in synced.keys() {
+            // A book whose file never came here only waits for it; its
+            // records are not gone.
+            let waiting = match book_of(key) {
+                Some(sha256) => self.book_for_source(sha256)?.is_none(),
+                None => false,
+            };
+            if !waiting && !snapshot.contains_key(key) && !self.sync_excluded(key)? {
+                changes.push(SyncChange {
+                    key: key.clone(),
+                    value: None,
+                });
+            }
+        }
+        changes.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(changes)
+    }
+
+    /// Notes a record as synced: the value both sides now hold.
+    pub fn sync_mark(&self, change: &SyncChange) -> Result<(), AppError> {
+        match &change.value {
+            Some(value) => self.conn.execute(
+                "INSERT INTO sync_records(key, hash, value) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET hash = excluded.hash, value = excluded.value",
+                params![change.key, record_hash(value), value.to_string()],
+            )?,
+            None => self.conn.execute(
+                "DELETE FROM sync_records WHERE key = ?1",
+                params![change.key],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// Forgets what was synced, so the next sync sends every record.
+    pub fn sync_forget(&self) -> Result<(), AppError> {
+        self.conn.execute("DELETE FROM sync_records", [])?;
+        Ok(())
+    }
+
+    /// Applies records from elsewhere and notes them as synced. Excluded
+    /// records are skipped; returns how many were applied.
+    pub fn sync_apply(&mut self, changes: &[SyncChange]) -> Result<u32, AppError> {
+        let mut ordered: Vec<&SyncChange> = changes.iter().collect();
+        ordered.sort_by_key(|change| apply_order(&change.key));
+        let synced = self.synced_records()?;
+        let mut applied = 0;
+        for change in ordered {
+            if self.sync_excluded(&change.key)? {
+                continue;
+            }
+            let base = synced
+                .get(&change.key)
+                .and_then(|(_, value)| value.as_ref());
+            match self.apply_record(&change.key, change.value.as_ref(), base) {
+                Ok(()) => applied += 1,
+                Err(error) => crate::app_log::warn(
+                    "sync",
+                    format!("同步记录未能应用（{}）：{}", change.key, error.message),
+                ),
+            }
+            self.sync_mark(change)?;
+        }
+        Ok(applied)
+    }
+
+    fn apply_record(
+        &mut self,
+        key: &str,
+        value: Option<&Value>,
+        base: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let (kind, rest) = key.split_once(':').unwrap_or((key, ""));
+        match (kind, value) {
+            ("group", Some(_)) => {
+                if !self.list_groups()?.iter().any(|group| group.name == rest) {
+                    self.create_group(rest)?;
+                }
+            }
+            ("group", None) => {
+                if let Some(group) = self
+                    .list_groups()?
+                    .into_iter()
+                    .find(|group| group.name == rest)
+                {
+                    self.delete_group(&group.id)?;
+                }
+            }
+            ("replace", Some(value)) => {
+                let rule: crate::models::ReplaceRule = serde_json::from_value(value.clone())?;
+                self.save_replace_rule(&rule)?;
+            }
+            ("replace", None) => self.delete_replace_rules(&[rest.to_string()])?,
+            ("toc", Some(value)) => {
+                let rule: TxtTocRule = serde_json::from_value(value.clone())?;
+                self.upsert_toc_rule(&rule)?;
+            }
+            ("toc", None) => {
+                // Built-in rules cannot be deleted; others follow.
+                let _ = self.delete_txt_toc_rule(rest);
+            }
+            ("source", Some(value)) => {
+                self.import_sources(&crate::models::ImportSourcesRequest {
+                    json: Value::Array(vec![value.clone()]).to_string(),
+                    urls: vec![rest.to_string()],
+                    keep_name: false,
+                    keep_group: false,
+                    keep_enabled: false,
+                })?;
+            }
+            ("source", None) => self.delete_book_sources(&[rest.to_string()])?,
+            ("prefs", Some(value)) => self.apply_preferences(rest, value)?,
+            ("prefs", None) => {}
+            ("book", value) => self.apply_book_record(rest, value)?,
+            ("online", value) => self.apply_online_record(rest, value)?,
+            (part @ ("progress" | "bookmarks" | "time"), Some(value)) => {
+                let (scope, id) = rest.split_once(':').unwrap_or(("", ""));
+                match scope {
+                    "book" => self.apply_book_part(part, id, value, base)?,
+                    "online" => self.apply_online_part(part, id, value, base)?,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn upsert_toc_rule(&mut self, rule: &TxtTocRule) -> Result<(), AppError> {
+        if !rule.pattern.is_empty() {
+            crate::txt_toc::compile_rule(&rule.pattern)?;
+        }
+        self.conn.execute(
+            "INSERT INTO txt_toc_rules(id, name, pattern, example, serial, enabled, builtin, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, pattern = excluded.pattern,
+                example = excluded.example, serial = excluded.serial, enabled = excluded.enabled,
+                updated_at = excluded.updated_at",
+            params![
+                rule.id,
+                rule.name,
+                rule.pattern,
+                rule.example,
+                rule.serial,
+                rule.enabled,
+                now_millis()
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn apply_preferences(&mut self, which: &str, value: &Value) -> Result<(), AppError> {
+        match which {
+            "shelf" => {
+                let shelf: ShelfPreferences = serde_json::from_value(value.clone())?;
+                if self.save_shelf_preferences(&shelf).is_err() {
+                    let mut shelf = shelf;
+                    shelf.group_id = "all".into();
+                    self.save_shelf_preferences(&shelf)?;
+                }
+            }
+            "theme" | "reading" => {
+                let current = self.get_settings()?;
+                let mut incoming = serde_json::to_value(&current)?;
+                if let (Value::Object(target), Value::Object(fields)) = (&mut incoming, value) {
+                    for (field, value) in fields {
+                        target.insert(field.clone(), value.clone());
+                    }
+                }
+                let incoming: ReaderPreferences = serde_json::from_value(incoming)?;
+                let merged =
+                    merge_preferences(&current, &incoming, which == "reading", which == "theme");
+                if merged != current && merged.validate().is_ok() {
+                    self.save_settings(&merged)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Book details: applied to the book here, or kept for when its file arrives.
+    fn apply_book_record(&mut self, sha256: &str, value: Option<&Value>) -> Result<(), AppError> {
+        let Some(value) = value else {
+            if let Some(book_id) = self.book_for_source(sha256)? {
+                if self.library_book(&book_id).is_ok() {
+                    self.remove_book(&book_id)?;
+                }
+            }
+            self.conn.execute(
+                "DELETE FROM pending_book_restores WHERE source_sha256 = ?1",
+                params![sha256],
+            )?;
+            return Ok(());
+        };
+        let incoming: PortableBook = serde_json::from_value(value.clone())?;
+        match self.book_for_source(sha256)? {
+            Some(book_id) => {
+                let parts = Parts {
+                    info: true,
+                    ..Parts::NONE
+                };
+                self.apply_portable_book(&book_id, &incoming, parts)?;
+            }
+            None => self.merge_pending(sha256, |pending| {
+                let kept = (
+                    pending.position.take(),
+                    pending.position_updated_at,
+                    std::mem::take(&mut pending.bookmarks),
+                    std::mem::take(&mut pending.reading_time),
+                );
+                *pending = incoming.clone();
+                (
+                    pending.position,
+                    pending.position_updated_at,
+                    pending.bookmarks,
+                    pending.reading_time,
+                ) = kept;
+            })?,
+        }
+        Ok(())
+    }
+
+    /// Updates the record kept for a book whose file is not here yet.
+    fn merge_pending(
+        &mut self,
+        sha256: &str,
+        change: impl FnOnce(&mut PortableBook),
+    ) -> Result<(), AppError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT record_json FROM pending_book_restores WHERE source_sha256 = ?1",
+                params![sha256],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut pending = stored
+            .and_then(|text| serde_json::from_str::<PortableBook>(&text).ok())
+            .unwrap_or_else(|| bare_book(sha256));
+        change(&mut pending);
+        self.conn.execute(
+            "INSERT INTO pending_book_restores(source_sha256, record_json, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_sha256) DO UPDATE SET record_json = excluded.record_json",
+            params![sha256, serde_json::to_string(&pending)?, now_millis()],
+        )?;
+        Ok(())
+    }
+
+    fn apply_book_part(
+        &mut self,
+        part: &str,
+        sha256: &str,
+        value: &Value,
+        base: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let mut book = bare_book(sha256);
+        let mut parts = Parts::NONE;
+        match part {
+            "progress" => {
+                book.position = serde_json::from_value(value["position"].clone())?;
+                book.position_updated_at = value["updatedAt"].as_i64().unwrap_or(0);
+                parts.progress = true;
+            }
+            "bookmarks" => {
+                book.bookmarks = serde_json::from_value(value.clone())?;
+                parts.marks = true;
+            }
+            _ => {
+                book.reading_time = serde_json::from_value(value.clone())?;
+                parts.time = true;
+            }
+        }
+        let Some(book_id) = self.book_for_source(sha256)? else {
+            return self.merge_pending(sha256, |pending| match part {
+                "progress" => {
+                    if book.position_updated_at > pending.position_updated_at {
+                        pending.position = book.position.clone();
+                        pending.position_updated_at = book.position_updated_at;
+                    }
+                }
+                "bookmarks" => pending.bookmarks = book.bookmarks.clone(),
+                _ => pending.reading_time = book.reading_time.clone(),
+            });
+        };
+        if part == "bookmarks" {
+            // Three-way: what the other side added comes in, what it removed
+            // since the last sync goes, and bookmarks made here stay.
+            let identity =
+                |mark: &PortableBookmark| bookmark_identity(mark.created_at, &mark.excerpt);
+            let base: Vec<PortableBookmark> = base
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .unwrap_or_default();
+            let incoming: HashSet<_> = book.bookmarks.iter().map(identity).collect();
+            let removed: HashSet<_> = base
+                .iter()
+                .map(identity)
+                .filter(|mark| !incoming.contains(mark))
+                .collect();
+            for local in self.list_bookmarks(&book_id)? {
+                if removed.contains(&bookmark_identity(local.created_at, &local.excerpt)) {
+                    self.delete_bookmark(&local.id)?;
+                }
+            }
+        }
+        self.apply_portable_book(&book_id, &book, parts)?;
+        Ok(())
+    }
+
+    /// The online book on the shelf with this name key.
+    fn online_book_for_key(
+        &self,
+        key: &str,
+    ) -> Result<Option<(String, PortableOnlineBook)>, AppError> {
+        for book in self.portable_online_books()? {
+            if online_key(&book.title, book.author.as_deref().unwrap_or("")) == key {
+                let id =
+                    self.find_online_book(&book.title, book.author.as_deref().unwrap_or(""))?;
+                return Ok(id.map(|id| (id, book)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn apply_online_record(&mut self, key: &str, value: Option<&Value>) -> Result<(), AppError> {
+        match value {
+            Some(value) => {
+                let incoming: PortableOnlineBook = serde_json::from_value(value.clone())?;
+                let parts = Parts {
+                    info: true,
+                    ..Parts::NONE
+                };
+                self.restore_online_book(&incoming, parts, &mut RestoreReport::default())?;
+            }
+            None => {
+                if let Some((book_id, _)) = self.online_book_for_key(key)? {
+                    self.delete_online_book(&book_id)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_online_part(
+        &mut self,
+        part: &str,
+        key: &str,
+        value: &Value,
+        base: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let Some((book_id, mut book)) = self.online_book_for_key(key)? else {
+            return Ok(());
+        };
+        let mut parts = Parts::NONE;
+        match part {
+            "progress" => {
+                book.position = serde_json::from_value(value["position"].clone())?;
+                book.position_updated_at = value["updatedAt"].as_i64().unwrap_or(0);
+                parts.progress = true;
+            }
+            "bookmarks" => {
+                book.bookmarks = serde_json::from_value(value.clone())?;
+                parts.marks = true;
+                let identity =
+                    |created_at: i64, excerpt: &str| bookmark_identity(created_at, excerpt);
+                let base: Vec<super::online::PendingBookmark> = base
+                    .and_then(|value| serde_json::from_value(value.clone()).ok())
+                    .unwrap_or_default();
+                let incoming: HashSet<_> = book
+                    .bookmarks
+                    .iter()
+                    .map(|mark| identity(mark.created_at, &mark.excerpt))
+                    .collect();
+                let removed: HashSet<_> = base
+                    .iter()
+                    .map(|mark| identity(mark.created_at, &mark.excerpt))
+                    .filter(|mark| !incoming.contains(mark))
+                    .collect();
+                for local in self.list_bookmarks(&book_id)? {
+                    if removed.contains(&identity(local.created_at, &local.excerpt)) {
+                        self.delete_bookmark(&local.id)?;
+                    }
+                }
+            }
+            _ => {
+                book.reading_time = serde_json::from_value(value.clone())?;
+                parts.time = true;
+            }
+        }
+        self.restore_online_book(&book, parts, &mut RestoreReport::default())?;
+        Ok(())
+    }
+
+    /// The server's log: keeps `change` as the latest record for its key.
+    pub fn sync_log_append(&self, change: &SyncChange, device: &str) -> Result<i64, AppError> {
+        // A fresh row numbers it after everything logged so far.
+        self.conn
+            .execute("DELETE FROM sync_log WHERE key = ?1", params![change.key])?;
+        self.conn.execute(
+            "INSERT INTO sync_log(key, value, device, at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                change.key,
+                change.value.as_ref().map(Value::to_string),
+                device,
+                now_millis()
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Records after `since`, oldest first, and the newest number.
+    pub fn sync_log_since(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<(Vec<LoggedChange>, i64), AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT seq, key, value, device FROM sync_log WHERE seq > ?1 ORDER BY seq LIMIT ?2",
+        )?;
+        let rows = statement
+            .query_map(params![since, limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let head: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(MAX(seq), 0) FROM sync_log", [], |row| {
+                    row.get(0)
+                })?;
+        let changes = rows
+            .into_iter()
+            .map(|(seq, key, value, device)| LoggedChange {
+                seq,
+                key,
+                value: value.and_then(|text| serde_json::from_str(&text).ok()),
+                device,
+            })
+            .collect();
+        Ok((changes, head))
+    }
+}
