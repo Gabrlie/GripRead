@@ -5,6 +5,7 @@
 
 pub mod auth;
 mod paths;
+mod sync;
 
 use auth::{Auth, AuthError, Session};
 use axum::body::{Body, Bytes};
@@ -106,6 +107,8 @@ pub struct Server {
     events: broadcast::Sender<String>,
     uploads: PathBuf,
     exports: ExportSlot,
+    /// Woken by the web version's edits, which sync logs once they pause.
+    edits: Arc<tokio::sync::Notify>,
 }
 
 /// Opens the data folder and builds the routes.
@@ -126,13 +129,17 @@ pub fn app(config: Config) -> Result<Router, String> {
     .map_err(|error| error.message)?;
     let uploads = config.data.join("uploads");
     clear_old_uploads(&uploads);
+    let edits = Arc::new(tokio::sync::Notify::new());
     let server = Arc::new(Server {
         core,
         auth,
         events,
         uploads,
         exports,
+        edits: edits.clone(),
     });
+    sync::watch_edits(server.clone(), edits);
+    sync::daily_backups(server.clone());
     let api = Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/setup", post(setup))
@@ -145,6 +152,7 @@ pub fn app(config: Config) -> Result<Router, String> {
         .route("/api/upload", post(upload))
         .route("/api/export", get(export))
         .route("/api/events", get(events_socket))
+        .merge(sync::routes())
         .layer(axum::extract::DefaultBodyLimit::max(64 << 20))
         .with_state(server);
     Ok(match config.web {
@@ -400,7 +408,11 @@ async fn rpc(
     if let Err(error) = paths::admit(&mut args, &server.uploads) {
         return app_error(error);
     }
-    match api::dispatch(&server.core, &name, args).await {
+    let reply = api::dispatch(&server.core, &name, args).await;
+    if reply.is_ok() && api::mutates(&name) {
+        server.edits.notify_one();
+    }
+    match reply {
         Ok(Reply::Json(value)) => Json(value).into_response(),
         Ok(Reply::Bytes(bytes)) => {
             ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response()

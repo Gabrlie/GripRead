@@ -280,3 +280,139 @@ async fn the_page_is_served_for_its_routes() {
         .unwrap()
         .contains("javascript"));
 }
+
+#[tokio::test]
+async fn devices_push_records_and_files_and_pull_the_web_versions_edits() {
+    use gripread_core::storage::Storage;
+    use gripread_core::sync::{PullReply, PushReply};
+    let folder = Folder::new();
+    let app = server(&folder, Some("secret1"));
+    let (_, _, body) = send(
+        &app,
+        post(
+            "/api/auth/login",
+            None,
+            json!({ "password": "secret1", "device": "手机" }),
+        ),
+    )
+    .await;
+    let token = json_of(&body)["token"].as_str().unwrap().to_string();
+
+    // A device with a book it renamed.
+    let text = "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。";
+    let file = folder.0.join("book.txt");
+    std::fs::write(&file, text).unwrap();
+    let mut phone = Storage::open(&folder.0.join("phone")).unwrap();
+    let book = phone
+        .import_txt(
+            &file,
+            "phone-import",
+            &std::sync::atomic::AtomicBool::new(false),
+            |_, _, _| {},
+        )
+        .unwrap()
+        .book;
+    phone
+        .update_book(&gripread_core::models::UpdateBookRequest {
+            book_id: book.id.clone(),
+            title: "云海".into(),
+            author: None,
+            intro: None,
+        })
+        .unwrap();
+    let changes = phone.sync_pending().unwrap();
+    let sha = changes
+        .iter()
+        .find_map(|change| change.key.strip_prefix("book:"))
+        .unwrap()
+        .to_string();
+
+    let (status, _, body) = send(
+        &app,
+        post(
+            "/api/sync/push",
+            Some(&token),
+            json!({ "device": "phone-id", "changes": changes }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let reply: PushReply = serde_json::from_slice(&body).unwrap();
+    assert_eq!(reply.missing_books, std::slice::from_ref(&sha));
+
+    // A file that is not the book is refused; the book itself imports and takes its record.
+    let put = |bytes: Vec<u8>| {
+        Request::put(format!("/api/blobs/book/{sha}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(bytes))
+            .unwrap()
+    };
+    let (status, _, _) = send(&app, put(b"something else".to_vec())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, body) = send(&app, put(text.as_bytes().to_vec())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body)["imported"], true);
+    let (_, books) = rpc_call(&app, &token, "list_books", Value::Null).await;
+    assert_eq!(books[0]["book"]["title"], "云海");
+    let on_server = books[0]["book"]["id"].as_str().unwrap().to_string();
+
+    let pull = |since: i64| {
+        Request::get(format!("/api/sync/pull?since={since}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (_, _, body) = send(&app, pull(0)).await;
+    let pulled: PullReply = serde_json::from_slice(&body).unwrap();
+    assert!(pulled
+        .changes
+        .iter()
+        .any(|change| change.key == format!("book:{sha}") && change.device == "phone-id"));
+    let cursor = pulled.head;
+
+    // The web version renames it; once its edits pause, the log has it.
+    let (status, _) = rpc_call(
+        &app,
+        &token,
+        "update_book",
+        json!({ "request": { "bookId": on_server, "title": "云海新编", "author": null, "intro": null } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut renamed = false;
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let (_, _, body) = send(&app, pull(cursor)).await;
+        let pulled: PullReply = serde_json::from_slice(&body).unwrap();
+        renamed = pulled.changes.iter().any(|change| {
+            change.device == "server"
+                && change
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| value["title"] == "云海新编")
+        });
+        if renamed {
+            break;
+        }
+    }
+    assert!(renamed, "the web version's edit reached the log");
+
+    let (status, _, body) = send(
+        &app,
+        Request::get(format!("/api/blobs/book/{sha}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, text.as_bytes());
+    let (status, _, _) = send(
+        &app,
+        Request::get(format!("/api/blobs/book/{sha}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

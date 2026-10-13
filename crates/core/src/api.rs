@@ -50,6 +50,38 @@ fn bytes(result: Result<Vec<u8>, AppError>) -> Result<Reply, AppError> {
     result.map(Reply::Bytes)
 }
 
+/// Whether a command can change what sync carries. Reads, searches, source
+/// fetches, checks, exports, and the log cannot; anything else may.
+pub fn mutates(name: &str) -> bool {
+    const READS: &[&str] = &[
+        "get_",
+        "list_",
+        "read_",
+        "search_",
+        "preview_",
+        "explore_",
+        "fetch_",
+        "test_",
+        "check_",
+        "export_",
+        "resolve_",
+        "cancel_",
+        "debug_",
+        "find_",
+        "online_book_",
+        "online_chapter_",
+        "online_cover",
+        "data_usage",
+        "reading_stats",
+        "network_state",
+        "download_list",
+        "log_frontend",
+        "clear_logs",
+        "set_detailed_log",
+    ];
+    !READS.iter().any(|read| name.starts_with(read))
+}
+
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
     "acknowledge_book_progress",
@@ -541,6 +573,26 @@ pub async fn dispatch(state: &Arc<AppState>, name: &str, args: Value) -> Result<
 mod tests {
     use super::*;
     use crate::platform::Filesystem;
+
+    #[test]
+    fn reads_do_not_count_as_changes() {
+        for name in [
+            "list_books",
+            "read_content_window",
+            "search_online_books",
+            "get_settings",
+        ] {
+            assert!(!mutates(name), "{name}");
+        }
+        for name in [
+            "save_reader_locator",
+            "update_book",
+            "add_bookmark",
+            "save_settings",
+        ] {
+            assert!(mutates(name), "{name}");
+        }
+    }
 
     /// Every command the page calls is one the core answers.
     #[test]
