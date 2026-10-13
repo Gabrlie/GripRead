@@ -8,7 +8,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY index.html tsconfig.json tsconfig.native.json vite.config.ts tailwind.config.js postcss.config.js components.json ./
 COPY src src
-RUN pnpm build
+# CI passes the build's version (0.3.0-dev.17) for the page to show.
+ARG GRIPREAD_VERSION
+RUN if [ -n "$GRIPREAD_VERSION" ]; then npm pkg set version="$GRIPREAD_VERSION"; fi \
+    && pnpm build
 
 FROM rust:1-bookworm AS server
 WORKDIR /src

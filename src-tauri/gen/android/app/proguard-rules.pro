@@ -19,3 +19,14 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Tauri finds the app's plugins (DocumentPlugin, DownloadPlugin,
+# NetworkPlugin, WebViewPlugin) and their commands by name, and the page
+# reaches MainActivity's JavaScript interfaces by name; keep them whole.
+-keep class com.gripread.reader.** { *; }
+-keep @app.tauri.annotation.TauriPlugin class * { *; }
+-keep @app.tauri.annotation.InvokeArg class * { *; }
+-keepclassmembers class * {
+    @app.tauri.annotation.Command <methods>;
+    @android.webkit.JavascriptInterface <methods>;
+}

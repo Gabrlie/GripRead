@@ -2,6 +2,11 @@
 members = ["crates/core", "crates/server", "src-tauri"]
 resolver = "2"
 
+# The version is set with `pnpm version:set` (scripts/version.mjs) together
+# with package.json.
+[workspace.package]
+version = "0.2.0"
+
 # Debug builds are installed on devices for acceptance. Optimize dependencies
 # (decoding, encoding detection, hashing, regex, SQLite) so imports and reads
 # are representative; GripRead's own code stays quick to rebuild.

@@ -1,7 +1,7 @@
 {
   "name": "gripread",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packageManager": "pnpm@11.5.2",
   "engines": {
     "node": ">=22"
@@ -22,9 +22,11 @@
     "android:build": "node scripts/android.mjs tauri android build --debug --apk --target aarch64",
     "test:native": "node scripts/native-test.mjs",
     "check:docs": "node scripts/check-docs.mjs",
+    "check:version": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:generated-types": "cargo run -p gripread-core --bin generate-types -- --check",
-    "check": "pnpm format:check && pnpm check:docs && pnpm test:docs && pnpm check:generated-types && pnpm check:boundaries && pnpm test:boundaries && pnpm typecheck && pnpm typecheck:native && pnpm test && pnpm test:rust && pnpm check:rust && pnpm build",
+    "check": "pnpm format:check && pnpm check:version && pnpm check:docs && pnpm test:docs && pnpm check:generated-types && pnpm check:boundaries && pnpm test:boundaries && pnpm typecheck && pnpm typecheck:native && pnpm test && pnpm test:rust && pnpm check:rust && pnpm build",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/*.mjs\" \"tests/**/*.ts\" \"*.{json,ts,js,html}\"",
     "test:boundaries": "node --test scripts/check-boundaries.test.mjs",
     "typecheck:native": "tsc --noEmit -p tsconfig.native.json"

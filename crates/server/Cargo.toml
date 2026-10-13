@@ -1,6 +1,6 @@
 [package]
 name = "gripread-server"
-version = "0.1.0"
+version.workspace = true
 description = "GripRead's self-hosted server: the web version and the hub devices sync with"
 authors = ["GripRead contributors"]
 edition = "2021"

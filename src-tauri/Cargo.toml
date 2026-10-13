@@ -1,6 +1,6 @@
 [package]
 name = "gripread"
-version = "0.1.0"
+version.workspace = true
 description = "A local-first novel reader"
 authors = ["GripRead contributors"]
 edition = "2021"

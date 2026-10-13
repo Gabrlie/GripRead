@@ -24,7 +24,7 @@ The first visit sets the password (at least six characters) unless `GRIPREAD_PAS
 
 A command's file fields must be upload paths, which the server turns into the uploaded file's location; any other path is refused, so requests reach no other file on the host. Uploads older than a day are removed at start, since imports copy what they keep. Batch folder import uploads a folder's TXT files from the browser; local backup folders are device-only. Exports (a backup, book sources) are downloaded by the page right after the command saves them.
 
-The image is built from the repository's `Dockerfile` (the page, then a release build of the server, on Debian slim as a non-root user with the data folder as a volume). A tag starting with `v` publishes it for amd64 and arm64 to `ghcr.io/<owner>/gripread` through the `Server image` workflow.
+The image is built from the repository's `Dockerfile` (the page, then a release build of the server, on Debian slim as a non-root user with the data folder as a volume). The `Build` workflow publishes it to `ghcr.io/<owner>/gripread` from every push to `dev` (tag `dev`) and `main` (tag `latest`), as [versions and releases](../engineering/workflow.md#versions-and-releases) describes.
 
 ## Acceptance
 

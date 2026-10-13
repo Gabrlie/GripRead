@@ -1,6 +1,6 @@
 [package]
 name = "gripread-core"
-version = "0.1.0"
+version.workspace = true
 description = "GripRead's library, reader, sources, and sync, free of any platform shell"
 authors = ["GripRead contributors"]
 edition = "2021"

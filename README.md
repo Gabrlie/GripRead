@@ -12,7 +12,7 @@ The planned stack is Tauri 2, React, TypeScript, Vite, Tailwind CSS, shadcn/ui, 
 docker run -d -p 8080:8080 -v gripread-data:/data ghcr.io/gabrlie/gripread:latest
 ```
 
-Open `http://<host>:8080`, set a password on the first visit, and put a reverse proxy with HTTPS in front of it for use outside your network. [`docker-compose.example.yml`](docker-compose.example.yml) is a compose starting point. To build the image yourself: `docker build -t gripread .`.
+`dev` builds publish `ghcr.io/gabrlie/gripread:dev` and pre-release APKs; `main` builds publish `:latest` and releases (see [versions and releases](.ai/engineering/workflow.md#versions-and-releases)). Open `http://<host>:8080`, set a password on the first visit, and put a reverse proxy with HTTPS in front of it for use outside your network. [`docker-compose.example.yml`](docker-compose.example.yml) is a compose starting point. To build the image yourself: `docker build -t gripread .`.
 
 ## Development
 
