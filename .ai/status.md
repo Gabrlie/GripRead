@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [Legado book sources task](plans/2026-10-11-legado-sources.md) is completed on branch `codex/legado-sources`, awaiting merge. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
+The [Legado book sources task](plans/2026-10-11-legado-sources.md) is completed and merged into `main`; development continues on `dev`. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
 
 ## Blockers
 
