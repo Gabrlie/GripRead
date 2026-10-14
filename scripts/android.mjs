@@ -1,6 +1,8 @@
 // Runs a command with the environment the Android build needs beyond what
 // Tauri sets: QuickJS bindings are generated for Android with the NDK's own
-// libclang, sysroot, and compiler headers.
+// libclang, sysroot, and compiler headers. CLANG_PATH keeps bindgen from
+// probing include paths with a system clang (CI runners have one), whose
+// headers would shadow the NDK's.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -18,6 +20,7 @@ const headers = join(toolchain, "lib", "clang", clangVersions.sort().at(-1), "in
 const env = {
   ...process.env,
   LIBCLANG_PATH: join(toolchain, "lib"),
+  CLANG_PATH: join(toolchain, "bin", "clang"),
   BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: `--sysroot=${join(toolchain, "sysroot")} --target=aarch64-linux-android24 -isystem ${headers}`,
 };
 const child = spawn(command, args, { env, stdio: "inherit" });
