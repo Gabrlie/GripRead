@@ -49,6 +49,8 @@ export interface JobSettings {
   intervalHours: number;
   /** New chapters of each book fetched ahead. */
   prefetch: number;
+  /** Minutes between 订阅 refreshes; 0 turns them off. Older servers lack it. */
+  rssIntervalMinutes?: number;
 }
 
 export interface JobStatus {

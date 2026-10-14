@@ -71,6 +71,7 @@ describe("backup and the cloud bookshelf", () => {
       bookmarksAdded: 2,
       recoveryPoint: "recovery-1.json",
       webdavRestored: false,
+      feedsRestored: 0,
       sourcesRestored: 0,
       onlineBooksRestored: 0,
     });

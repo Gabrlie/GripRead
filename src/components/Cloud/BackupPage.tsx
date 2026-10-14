@@ -35,6 +35,7 @@ export const RESTORE_CATEGORIES: [RestoreCategory, string, string][] = [
   ["reading-time", "阅读时长", ""],
   ["sources", "书源", "书源的规则、开关、分组和顺序"],
   ["online-books", "网络书籍", "书架上的网络书籍和它们的进度、书签"],
+  ["rss", "RSS 订阅", "订阅列表、已读和星标文章"],
 ];
 
 type Draft = Omit<SaveWebDavRequest, "password"> & { password: string };
@@ -622,6 +623,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 {report.preferencesRestored ? "，阅读设置已恢复" : ""}
               </li>
               {report.webdavRestored && <li>WebDAV 账号已恢复</li>}
+              {report.feedsRestored > 0 && <li>RSS 订阅 {report.feedsRestored} 个</li>}
             </ul>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setReport(null)}>

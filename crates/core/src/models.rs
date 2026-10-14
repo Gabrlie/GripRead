@@ -1210,6 +1210,8 @@ pub enum RestoreCategory {
     Sources,
     /// Online books on the shelf with their source and progress.
     OnlineBooks,
+    /// 订阅: subscriptions, read articles, and starred articles.
+    Rss,
 }
 
 /// This device's WebDAV account (Legado WebDav 设置). The password is kept in
@@ -1354,6 +1356,9 @@ pub struct RestoreReport {
     /// The backup file's WebDAV account was taken (this device had none).
     #[serde(default)]
     pub webdav_restored: bool,
+    /// Subscriptions restored (added or brought up to date).
+    #[serde(default)]
+    pub feeds_restored: u32,
 }
 
 /// Where a backup comes from or goes to.

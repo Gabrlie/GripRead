@@ -18,7 +18,7 @@ The application icon is an open hardcover book with a visible page block and a b
 
 ## Navigation and screens
 
-Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. The current desktop RSS shell retains its channel and article columns; a reading pane is planned.
+Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. On the desktop, RSS shows subscriptions, articles, and the article in three columns that scroll on their own.
 
 | Screen | Phone | Desktop |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ Show a single continue-reading entry before the shelf. Support custom groups and
 
 Find Books retains successful results when one source fails. Book details show source, title, author, cover, introduction, latest chapter, and a contents entry. Offer add-to-shelf, read, update check, chapter cache, and source switching according to available capabilities. Unsupported operations explain their cause.
 
-Empty Library offers local file import; discovery, RSS feed URLs, and OPML controls remain disabled until their services are delivered. Do not require cloud setup before these actions.
+Empty Library offers local file import; an empty 订阅 offers 添加订阅 and OPML import. Do not require cloud setup before these actions.
 
 书源管理 follows Legado 3.26.7's source list with GripRead styling: a search field (name, address, group, comment), filter chips (全部, 已启用, 已禁用, 需登录, 未分组, 已启用发现, 已禁用发现, then each group), a sort menu with 反序, and rows showing the name, explore and login marks, groups, address, and the response time or the last check error. Each row has an enable switch and a menu (编辑, 置顶, 置底, 登录, 调试, 启用/禁用发现, 校验, 删除). The header adds 新建, sort, and More (网络导入 with remembered addresses, 本地导入, 粘贴导入, 多选, 校验显示的书源, 导出全部). Imports list each source as 新增, 更新, or 已有 with checkboxes and options to keep local names, groups, and switches. Multi-select shows a bottom bar of batch actions. A check runs in the background with a progress card and a stop button; its dialog's 禁用失效的书源 (on by default) switches off a source whose search, details, contents, or text fail, and only its explore when just 发现 fails. The editor has tabs 基本, 搜索, 发现, 详情, 目录, 正文, and JSON, a save button, and More (保存并调试, 登录, 复制源, 粘贴源, 设置源变量, 清除 Cookie), and asks before discarding changes. 调试 streams each step of search → details → contents → first chapter. 登录 shows the source's `loginUi` form; web-page logins report that WebView is not supported yet.
 
@@ -47,7 +47,7 @@ Phone novels default to one page. Desktop defaults to a centered single page and
 
 A contents selection navigates to that chapter. Reader layout changes follow the [locator contract](../subsystems/reader.md). Loading and sync indicators remain outside the text; remote progress produces a user-selectable action instead of an automatic jump.
 
-RSS articles scroll continuously and show title, source, date, original link, and content. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
+RSS articles scroll continuously and show title, source, date, author, and content, with a bar for the previous and next article, 全文, read, star, and 原文. On a phone, subscriptions (全部文章, folding groups, unread counts), a list's articles (全部, 未读, 星标, search, a long press for read and star), and the article open one over another. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
 
 ## States and accessibility
 

@@ -55,6 +55,7 @@ pub fn record_categories(key: &str) -> Vec<RestoreCategory> {
         "replace" => vec![RestoreCategory::ReplaceRules],
         "toc" => vec![RestoreCategory::TocRules],
         "source" => vec![RestoreCategory::Sources],
+        "feed" | "rss-read" | "rss-star" => vec![RestoreCategory::Rss],
         "prefs" => match key {
             "prefs:theme" => vec![RestoreCategory::Theme],
             "prefs:shelf" => vec![RestoreCategory::ShelfLayout],
@@ -91,7 +92,7 @@ fn book_of(key: &str) -> Option<&str> {
 fn apply_order(key: &str) -> u8 {
     match key.split(':').next().unwrap_or_default() {
         "group" => 0,
-        "toc" | "replace" | "source" | "prefs" => 1,
+        "toc" | "replace" | "source" | "prefs" | "feed" => 1,
         "book" | "online" => 2,
         _ => 3,
     }
@@ -255,6 +256,7 @@ impl Storage {
                 records.insert(format!("source:{url}"), source.clone());
             }
         }
+        records.extend(self.rss_records()?);
         records.extend(preference_records(
             self.get_settings()?,
             &self.get_shelf_preferences()?,
@@ -265,6 +267,21 @@ impl Storage {
                 .any(|category| settings.ignores(category))
         });
         Ok(records)
+    }
+
+    /// The value last synced for a record, if any.
+    pub(super) fn synced_value(&self, key: &str) -> Result<Option<Value>, AppError> {
+        let text: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT value FROM sync_records WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(text
+            .flatten()
+            .and_then(|text| serde_json::from_str(&text).ok()))
     }
 
     fn synced_records(&self) -> Result<HashMap<String, (String, Option<Value>)>, AppError> {
@@ -432,6 +449,9 @@ impl Storage {
             ("prefs", Some(value)) if base.is_none() && is_default_preference(key, value)? => {}
             ("prefs", Some(value)) => self.apply_preferences(rest, value)?,
             ("prefs", None) => {}
+            ("feed", value) => self.apply_feed_record(rest, value)?,
+            ("rss-read", value) => self.apply_read_record(rest, value, base)?,
+            ("rss-star", value) => self.apply_star_record(rest, value)?,
             ("book", value) => self.apply_book_record(rest, value)?,
             ("online", value) => self.apply_online_record(rest, value)?,
             ("chapters", Some(value)) => {

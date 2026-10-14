@@ -13,6 +13,12 @@ const INTERVALS: [number, string][] = [
   [12, "12 小时"],
 ];
 const PREFETCH = [0, 3, 5, 10];
+const RSS_INTERVALS: [number, string][] = [
+  [0, "关闭"],
+  [30, "30 分钟"],
+  [60, "1 小时"],
+  [180, "3 小时"],
+];
 
 function timeLabel(at: number | null): string {
   return at ? new Date(at).toLocaleString() : "—";
@@ -126,6 +132,10 @@ export function JobsSection() {
         <p className="text-[11px] text-secondary">
           连接服务器的设备会同步到新章节，也会经由服务器读取章节。
         </p>
+        {settings.rssIntervalMinutes !== undefined &&
+          choice("订阅刷新间隔", RSS_INTERVALS, settings.rssIntervalMinutes, (rssIntervalMinutes) =>
+            save({ rssIntervalMinutes }),
+          )}
       </div>
     </PageSection>
   );

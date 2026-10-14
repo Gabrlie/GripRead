@@ -53,6 +53,11 @@ pub struct BackupDocument {
     /// and the local backup folder); backups sent to WebDAV never carry it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav: Option<PortableWebDav>,
+    /// 订阅: the subscriptions and the starred articles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feeds: Vec<super::rss::PortableFeed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub starred_articles: Vec<super::rss::PortableStar>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -793,6 +798,8 @@ impl Storage {
             book_sources: serde_json::from_str(&self.export_book_sources(&[])?)?,
             online_books: self.portable_online_books()?,
             webdav: None,
+            feeds: self.portable_feeds()?,
+            starred_articles: self.portable_stars()?,
         })
     }
 
@@ -1195,6 +1202,15 @@ impl Storage {
             if self.save_replace_rule(rule).is_ok() {
                 report.rules_restored += 1;
             }
+        }
+        if !skip(RestoreCategory::Rss) {
+            for feed in &document.feeds {
+                self.restore_feed(feed)?;
+            }
+            for star in &document.starred_articles {
+                self.restore_star(star)?;
+            }
+            report.feeds_restored = document.feeds.len() as u32;
         }
         if let Some(preferences) = &document.preferences {
             let current = self.get_settings()?;

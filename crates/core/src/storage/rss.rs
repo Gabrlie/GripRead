@@ -9,6 +9,8 @@ use crate::models::{
     Article, ArticleCursor, ArticleFilter, ArticlePage, ArticleQuery, ArticleSummary, Feed,
     RssSettings,
 };
+use serde_json::Value;
+use std::collections::HashSet;
 
 pub const KEEP_ARTICLES: i64 = 500;
 pub const KEEP_DAYS: i64 = 90;
@@ -34,7 +36,8 @@ pub struct FetchedFeed {
     pub articles: Vec<FetchedArticle>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FetchedArticle {
     pub id: String,
     pub title: String,
@@ -86,7 +89,8 @@ impl Storage {
                 last_fetch INTEGER,
                 last_error TEXT,
                 etag TEXT,
-                last_modified TEXT
+                last_modified TEXT,
+                server_cursor INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS rss_articles (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -359,6 +363,7 @@ impl Storage {
         prune_feed(&tx, url, now)?;
         // Entries too old to keep come and go at once; they are not new.
         let mut added = 0;
+        let mut kept_ids = Vec::new();
         for id in inserted {
             let kept: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM rss_articles WHERE id = ?1)",
@@ -366,8 +371,12 @@ impl Storage {
                 |row| row.get(0),
             )?;
             added += u32::from(kept);
+            if kept {
+                kept_ids.push(id);
+            }
         }
         tx.commit()?;
+        self.apply_synced_reads(url, &kept_ids)?;
         Ok(added)
     }
 
@@ -528,6 +537,76 @@ impl Storage {
         Ok(changed as u32)
     }
 
+    /// Articles the server fetched after `since` (its own clock), for a
+    /// connected device; `None` when the feed is not subscribed here.
+    pub fn feed_articles_since(
+        &self,
+        url: &str,
+        since: i64,
+    ) -> Result<Option<Vec<FetchedArticle>>, AppError> {
+        if self.feed_fetch_state(url)?.is_none() {
+            return Ok(None);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT id, title, link, author, published_at, excerpt, image, content
+             FROM rss_articles WHERE feed_url = ?1 AND fetched_at > ?2
+             ORDER BY published_at DESC, id DESC LIMIT ?3",
+        )?;
+        let articles = statement
+            .query_map(params![url, since, KEEP_ARTICLES], |row| {
+                Ok(FetchedArticle {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    link: row.get(2)?,
+                    author: row.get(3)?,
+                    published_at: row.get(4)?,
+                    excerpt: row.get(5)?,
+                    image: row.get(6)?,
+                    content: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(articles))
+    }
+
+    /// Where the device last left off with the server's articles of a feed.
+    pub fn feed_server_cursor(&self, url: &str) -> Result<i64, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT server_cursor FROM rss_feeds WHERE url = ?1",
+                params![url],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    /// Stores articles the server sent and where to continue next time.
+    pub fn store_server_articles(
+        &mut self,
+        url: &str,
+        articles: Vec<FetchedArticle>,
+        cursor: i64,
+    ) -> Result<u32, AppError> {
+        let state = self.feed_fetch_state(url)?.unwrap_or_default();
+        let added = self.store_feed_fetch(
+            url,
+            &FetchedFeed {
+                title: state.title,
+                etag: state.etag,
+                last_modified: state.last_modified,
+                articles,
+                ..FetchedFeed::default()
+            },
+        )?;
+        self.conn.execute(
+            "UPDATE rss_feeds SET server_cursor = ?2 WHERE url = ?1",
+            params![url, cursor],
+        )?;
+        Ok(added)
+    }
+
     /// Where article images are kept.
     pub fn rss_image_cache(&self) -> PathBuf {
         self.root.join("rss-images")
@@ -544,4 +623,266 @@ fn prune_feed(tx: &rusqlite::Transaction<'_>, url: &str, now: i64) -> Result<(),
         params![url, since, KEEP_ARTICLES],
     )?;
     Ok(())
+}
+
+/// Read articles go into sync records by the start of their id, which is
+/// enough to tell a feed's articles apart.
+const READ_ID: usize = 16;
+
+fn read_key(id: &str) -> &str {
+    &id[..id.len().min(READ_ID)]
+}
+
+/// A subscription as a sync and backup record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableFeed {
+    pub url: String,
+    pub title: String,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub site_url: Option<String>,
+    #[serde(default)]
+    pub sort: i64,
+}
+
+/// A starred article with its text, so it shows where it was never fetched.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableStar {
+    pub id: String,
+    pub feed_url: String,
+    pub feed_title: String,
+    pub title: String,
+    #[serde(default)]
+    pub link: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    pub published_at: i64,
+    #[serde(default)]
+    pub excerpt: String,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub content: String,
+}
+
+impl Storage {
+    pub fn portable_feeds(&self) -> Result<Vec<PortableFeed>, AppError> {
+        Ok(self
+            .list_feeds()?
+            .into_iter()
+            .map(|feed| PortableFeed {
+                url: feed.url,
+                title: feed.title,
+                group: feed.group,
+                site_url: feed.site_url,
+                sort: feed.sort,
+            })
+            .collect())
+    }
+
+    pub fn portable_stars(&self) -> Result<Vec<PortableStar>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT a.id, a.feed_url, COALESCE(f.title, a.feed_title), a.title, a.link, a.author,
+                    a.published_at, a.excerpt, a.image, a.content
+             FROM rss_articles a LEFT JOIN rss_feeds f ON f.url = a.feed_url
+             WHERE a.starred = 1 ORDER BY a.id",
+        )?;
+        let stars = statement
+            .query_map([], |row| {
+                Ok(PortableStar {
+                    id: row.get(0)?,
+                    feed_url: row.get(1)?,
+                    feed_title: row.get(2)?,
+                    title: row.get(3)?,
+                    link: row.get(4)?,
+                    author: row.get(5)?,
+                    published_at: row.get(6)?,
+                    excerpt: row.get(7)?,
+                    image: row.get(8)?,
+                    content: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(stars)
+    }
+
+    /// Read article ids (shortened) of a feed, sorted. Ids synced as read
+    /// whose articles this device does not have stay in, so a device that
+    /// has not fetched them yet does not mark them unread everywhere.
+    fn read_ids(&self, url: &str) -> Result<Vec<String>, AppError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT id, read FROM rss_articles WHERE feed_url = ?1")?;
+        let rows = statement
+            .query_map(params![url], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let known: HashSet<&str> = rows.iter().map(|(id, _)| read_key(id)).collect();
+        let mut ids: std::collections::BTreeSet<String> = rows
+            .iter()
+            .filter(|(_, read)| *read)
+            .map(|(id, _)| read_key(id).to_string())
+            .collect();
+        if let Some(value) = self.synced_value(&format!("rss-read:{url}"))? {
+            let synced: Vec<String> = serde_json::from_value(value).unwrap_or_default();
+            // Articles gone everywhere would stay in the record for good; a
+            // feed keeps at most a few times what is kept of it.
+            let room = (KEEP_ARTICLES as usize * 3).saturating_sub(ids.len());
+            ids.extend(
+                synced
+                    .into_iter()
+                    .filter(|key| !known.contains(key.as_str()))
+                    .take(room),
+            );
+        }
+        Ok(ids.into_iter().collect())
+    }
+
+    /// `feed:<url>`, `rss-read:<url>`, and `rss-star:<id>` records.
+    pub(super) fn rss_records(&self) -> Result<Vec<(String, Value)>, AppError> {
+        let mut records = Vec::new();
+        for feed in self.portable_feeds()? {
+            records.push((
+                format!("rss-read:{}", feed.url),
+                serde_json::to_value(self.read_ids(&feed.url)?)?,
+            ));
+            records.push((format!("feed:{}", feed.url), serde_json::to_value(&feed)?));
+        }
+        for star in self.portable_stars()? {
+            records.push((
+                format!("rss-star:{}", star.id),
+                serde_json::to_value(&star)?,
+            ));
+        }
+        Ok(records)
+    }
+
+    /// A subscription added, changed, or removed elsewhere.
+    pub(super) fn apply_feed_record(
+        &mut self,
+        url: &str,
+        value: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let Some(value) = value else {
+            return self.remove_feeds(&[url.to_string()]);
+        };
+        let feed: PortableFeed = serde_json::from_value(value.clone())?;
+        self.restore_feed(&feed)
+    }
+
+    pub(super) fn restore_feed(&self, feed: &PortableFeed) -> Result<(), AppError> {
+        let now = now_millis();
+        self.conn.execute(
+            "INSERT INTO rss_feeds(url, title, site_url, group_name, sort, added_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+             ON CONFLICT(url) DO UPDATE SET title = excluded.title,
+                group_name = excluded.group_name, sort = excluded.sort,
+                site_url = COALESCE(excluded.site_url, site_url), updated_at = excluded.updated_at",
+            params![
+                feed.url,
+                feed.title,
+                feed.site_url,
+                feed.group,
+                feed.sort,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Another device's read articles of a feed: what it read since the
+    /// last sync is read here, what it marked unread is unread here, and
+    /// this device's own marks stay.
+    pub(super) fn apply_read_record(
+        &mut self,
+        url: &str,
+        value: Option<&Value>,
+        base: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let ids = |value: Option<&Value>| -> HashSet<String> {
+            value
+                .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        };
+        let incoming = ids(value);
+        let base = ids(base);
+        let read: Vec<&String> = incoming.difference(&base).collect();
+        let unread: Vec<&String> = base.difference(&incoming).collect();
+        self.mark_read_keys(url, &read, true)?;
+        self.mark_read_keys(url, &unread, false)
+    }
+
+    fn mark_read_keys(&self, url: &str, keys: &[&String], read: bool) -> Result<(), AppError> {
+        let now = now_millis();
+        for key in keys {
+            self.conn.execute(
+                "UPDATE rss_articles SET read = ?3, read_at = CASE WHEN ?3 THEN ?4 ELSE NULL END
+                 WHERE feed_url = ?1 AND substr(id, 1, ?5) = ?2 AND read != ?3",
+                params![url, key, read, now, READ_ID as i64],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Articles a fetch just added that another device has read already.
+    fn apply_synced_reads(&self, url: &str, added: &[&str]) -> Result<(), AppError> {
+        if added.is_empty() {
+            return Ok(());
+        }
+        let Some(value) = self.synced_value(&format!("rss-read:{url}"))? else {
+            return Ok(());
+        };
+        let read: HashSet<String> = serde_json::from_value(value).unwrap_or_default();
+        let keys: Vec<String> = added
+            .iter()
+            .map(|id| read_key(id).to_string())
+            .filter(|key| read.contains(key))
+            .collect();
+        let keys: Vec<&String> = keys.iter().collect();
+        self.mark_read_keys(url, &keys, true)
+    }
+
+    /// An article starred elsewhere (kept with its text), or unstarred.
+    pub(super) fn apply_star_record(
+        &mut self,
+        id: &str,
+        value: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let Some(value) = value else {
+            return self.set_article_state(&[id.to_string()], None, Some(false));
+        };
+        let star: PortableStar = serde_json::from_value(value.clone())?;
+        self.restore_star(&star)
+    }
+
+    pub(super) fn restore_star(&self, star: &PortableStar) -> Result<(), AppError> {
+        let now = now_millis();
+        self.conn.execute(
+            "INSERT INTO rss_articles(id, feed_url, feed_title, title, link, author, published_at,
+                fetched_at, excerpt, image, content, read, read_at, starred, starred_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?8, 1, ?8)
+             ON CONFLICT(id) DO UPDATE SET starred = 1,
+                starred_at = COALESCE(starred_at, excluded.starred_at)",
+            params![
+                star.id,
+                star.feed_url,
+                star.feed_title,
+                star.title,
+                star.link,
+                star.author,
+                star.published_at,
+                now,
+                star.excerpt,
+                star.image,
+                star.content
+            ],
+        )?;
+        Ok(())
+    }
 }

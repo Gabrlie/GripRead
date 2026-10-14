@@ -25,6 +25,8 @@ pub struct JobSettings {
     pub interval_hours: u32,
     /// New chapters of each book fetched ahead after an update.
     pub prefetch: u32,
+    /// Minutes between 订阅 refreshes; 0 turns them off.
+    pub rss_interval_minutes: u32,
 }
 
 impl Default for JobSettings {
@@ -32,8 +34,14 @@ impl Default for JobSettings {
         Self {
             interval_hours: 6,
             prefetch: 5,
+            rss_interval_minutes: 60,
         }
     }
+}
+
+/// Minutes between the server's 订阅 refreshes.
+pub(crate) fn rss_interval(server: &Server) -> u32 {
+    load_settings(server).rss_interval_minutes
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
@@ -290,6 +298,7 @@ async fn save_jobs(
     let settings = JobSettings {
         interval_hours: settings.interval_hours.min(24 * 7),
         prefetch: settings.prefetch.min(50),
+        rss_interval_minutes: settings.rss_interval_minutes.min(24 * 60),
     };
     let text = serde_json::to_string_pretty(&settings).unwrap_or_default();
     if let Err(error) = std::fs::write(settings_path(&server), text) {

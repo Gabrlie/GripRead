@@ -279,6 +279,31 @@ pub fn refresh_feed(storage: &Mutex<Storage>, url: &str) -> Result<u32, AppError
     result
 }
 
+/// Refreshes feeds with a few workers, calling `each` as each finishes;
+/// stops taking feeds once `cancel` is set.
+pub fn refresh_all(
+    storage: &Mutex<Storage>,
+    urls: Vec<String>,
+    cancel: &std::sync::atomic::AtomicBool,
+    each: &(dyn Fn(&str, Result<u32, AppError>) + Sync),
+) {
+    const WORKERS: usize = 4;
+    let queue = Mutex::new(urls);
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| loop {
+                if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+                let Some(url) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
+                    break;
+                };
+                each(&url, refresh_feed(storage, &url));
+            });
+        }
+    });
+}
+
 /// The feeds at an address: the address itself when it is a feed, the
 /// feeds a page links to, or the usual feed paths of its site.
 pub fn discover(address: &str) -> Result<Vec<FeedCandidate>, AppError> {

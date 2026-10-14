@@ -503,6 +503,7 @@ export function previewServices(): AppServices {
         bookmarksAdded: 4,
         recoveryPoint: "recovery-1.json",
         webdavRestored: false,
+        feedsRestored: 0,
         sourcesRestored: 0,
         onlineBooksRestored: 0,
       }),

@@ -15,9 +15,6 @@ use crate::models::{
 };
 use crate::source_commands::SourceOperations;
 
-/// Feeds refreshed at once.
-const WORKERS: usize = 4;
-
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, AppError> + Send + 'static,
 ) -> Result<T, AppError> {
@@ -74,7 +71,9 @@ pub async fn remove_feeds(state: &Arc<AppState>, request: FeedUrlsRequest) -> Re
 }
 
 /// Refreshes feeds a few at a time, sending `rss-refresh` for each and
-/// once when done; answers when all are done.
+/// once when done; answers when all are done. While connected, the server
+/// refreshes and this device takes its articles; feeds the server cannot
+/// give are fetched here.
 pub async fn refresh_feeds(
     state: &Arc<AppState>,
     request: RefreshFeedsRequest,
@@ -94,40 +93,35 @@ pub async fn refresh_feeds(
     let cancel = state.operations.register(&request.operation_id);
     let cancels = state.operations.cancels();
     let total = urls.len() as u32;
-    let queue = Arc::new(Mutex::new(urls));
     let refreshed = Arc::new(AtomicU32::new(0));
     let storage = state.storage.clone();
     let events = state.events.clone();
+    let sync = state.sync.clone();
     let operation_id = request.operation_id.clone();
     let counted = refreshed.clone();
     blocking(move || {
-        std::thread::scope(|scope| {
-            for _ in 0..WORKERS {
-                scope.spawn(|| loop {
-                    if cancel.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let Some(url) = queue.lock().ok().and_then(|mut queue| queue.pop()) else {
-                        break;
-                    };
-                    let result = crate::rss::refresh_feed(&storage, &url);
-                    let done = counted.fetch_add(1, Ordering::AcqRel) + 1;
-                    let event = RssRefreshEvent {
-                        operation_id: operation_id.clone(),
-                        url,
-                        refreshed: done,
-                        total,
-                        new_articles: *result.as_ref().unwrap_or(&0),
-                        error: result.err().map(|error| error.message),
-                        done: false,
-                    };
-                    events.emit(
-                        "rss-refresh",
-                        serde_json::to_value(event).unwrap_or_default(),
-                    );
-                });
-            }
-        });
+        let report = |url: &str, result: Result<u32, AppError>| {
+            let done = counted.fetch_add(1, Ordering::AcqRel) + 1;
+            let event = RssRefreshEvent {
+                operation_id: operation_id.clone(),
+                url: url.to_string(),
+                refreshed: done,
+                total,
+                new_articles: *result.as_ref().unwrap_or(&0),
+                error: result.err().map(|error| error.message),
+                done: false,
+            };
+            events.emit(
+                "rss-refresh",
+                serde_json::to_value(event).unwrap_or_default(),
+            );
+        };
+        let here = if sync.connected() {
+            through_server(&storage, &sync, urls, &report)
+        } else {
+            urls
+        };
+        crate::rss::refresh_all(&storage, here, &cancel, &report);
         Ok(())
     })
     .await?;
@@ -146,6 +140,64 @@ pub async fn refresh_feeds(
         .unwrap_or_default(),
     );
     Ok(())
+}
+
+/// The server refreshes the feeds and sends what it fetched; returns the
+/// feeds it could not give, to fetch here.
+fn through_server(
+    storage: &Mutex<crate::storage::Storage>,
+    sync: &crate::sync_client::SyncClient,
+    urls: Vec<String>,
+    report: &dyn Fn(&str, Result<u32, AppError>),
+) -> Vec<String> {
+    let reply = match sync.rss_refresh(urls.clone()) {
+        Ok(Some(reply)) => reply,
+        Ok(None) => {
+            crate::app_log::info("rss", "服务器版本较旧，不能代为刷新订阅，在本机刷新");
+            return urls;
+        }
+        Err(error) => {
+            crate::app_log::warn(
+                "rss",
+                format!("服务器刷新订阅失败，改为本机刷新：{}", error.message),
+            );
+            return urls;
+        }
+    };
+    let mut here = Vec::new();
+    for url in urls {
+        let failed = reply
+            .feeds
+            .iter()
+            .find(|feed| feed.url == url)
+            .is_none_or(|feed| feed.error.is_some());
+        if failed {
+            here.push(url);
+            continue;
+        }
+        let taken = (|| {
+            let since = lock(storage)?.feed_server_cursor(&url)?;
+            let Some(page) = sync.rss_articles(&url, since)? else {
+                return Ok(None);
+            };
+            lock(storage)?
+                .store_server_articles(&url, page.articles, page.cursor)
+                .map(Some)
+        })();
+        match taken {
+            Ok(Some(added)) => report(&url, Ok(added)),
+            _ => here.push(url),
+        }
+    }
+    here
+}
+
+fn lock(
+    storage: &Mutex<crate::storage::Storage>,
+) -> Result<std::sync::MutexGuard<'_, crate::storage::Storage>, AppError> {
+    storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
 }
 
 pub async fn list_articles(
