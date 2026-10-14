@@ -155,6 +155,11 @@ struct Http<'a> {
     agent: ureq::Agent,
 }
 
+/// An older server answered with its page: it lacks the route.
+fn too_old() -> AppError {
+    AppError::invalid_argument("服务器版本较旧，不支持这个功能，请更新服务器")
+}
+
 /// A request answered by the page rather than the API (a server too old to
 /// know the route) or refused for its method.
 fn unknown_route(status: u16) -> bool {
@@ -191,6 +196,9 @@ impl Http<'_> {
             .map_err(network_error)?;
         if !(200..300).contains(&status) {
             return Err(failure(status, &text));
+        }
+        if crate::online_reader::is_web_page(&text) {
+            return Err(too_old());
         }
         serde_json::from_str(&text).map_err(network_error)
     }
@@ -475,6 +483,9 @@ impl SyncClient {
             .limit(16 * 1024 * 1024)
             .read_to_string()
             .map_err(network_error)?;
+        if unknown_route(status) || crate::online_reader::is_web_page(&text) {
+            return Err(too_old());
+        }
         if !(200..300).contains(&status) {
             return Err(failure(status, &text));
         }
