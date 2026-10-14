@@ -645,3 +645,77 @@ async fn the_update_mirror_serves_cached_releases_and_their_files() {
     assert_eq!(check["update"]["version"], "0.2.1");
     assert_eq!(check["update"]["notes"], "## 更新内容\n\n- 新版本");
 }
+
+#[tokio::test]
+async fn shelf_jobs_are_set_run_and_answered() {
+    let folder = Folder::new();
+    let app = server(&folder, Some("secret1"));
+    let (_, _, body) = send(
+        &app,
+        post("/api/auth/login", None, json!({ "password": "secret1" })),
+    )
+    .await;
+    let token = json_of(&body)["token"].as_str().unwrap().to_string();
+    let authorized = |request: axum::http::request::Builder| {
+        request.header(header::AUTHORIZATION, format!("Bearer {token}"))
+    };
+
+    let (status, _, _) = send(&app, Request::get("/api/jobs").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, body) = send(
+        &app,
+        authorized(Request::get("/api/jobs"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let jobs = json_of(&body);
+    assert_eq!(
+        jobs["settings"],
+        json!({ "intervalHours": 6, "prefetch": 5 })
+    );
+    assert!(jobs["status"]["nextRun"].is_i64());
+
+    let (status, _, body) = send(
+        &app,
+        authorized(Request::put("/api/jobs"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({ "intervalHours": 0, "prefetch": 99 }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json_of(&body),
+        json!({ "intervalHours": 0, "prefetch": 50 })
+    );
+    assert!(folder.0.join("data/jobs.json").is_file());
+
+    // With no online books, an update answers at once.
+    let (status, _, body) = send(&app, post("/api/jobs/update", Some(&token), json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body), json!({ "books": [] }));
+    let (_, _, body) = send(
+        &app,
+        authorized(Request::get("/api/jobs"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let status = &json_of(&body)["status"];
+    assert!(status["lastRun"].is_i64());
+    assert_eq!(status["running"], false);
+
+    // A chapter of a book the server does not have.
+    let (status, _, _) = send(
+        &app,
+        authorized(Request::get("/api/sync/chapter?key=x&url=%2Fc%2F1.html"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

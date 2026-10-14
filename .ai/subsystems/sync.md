@@ -34,6 +34,8 @@ Each device writes its own state records. All entities, including separately sto
 
 A round pulls what other devices and the web version wrote and applies it, fetches the covers and (with 自动下载服务器上的书, on by default) the books it names, then pushes what changed here and uploads the book files and covers the server lacks. A round runs at connection (the server's records apply first, then this device's others go up), at start, on returning to the foreground, on a network change, when a book opens, 3 seconds after changes pause (at most 10 seconds during continuous changes), and as soon as a long poll on the server reports a new record; failures retry after 30 seconds, doubling to 5 minutes. Another device's position is never applied over this one: the reader offers it in the existing 跳转 prompt when the book opens or while it is open, and a device sends its position only when it is newer than the one synced. A book never read on this device takes the synced position directly.
 
+Online books also carry their chapter list as a `chapters:online:<key>` record (category 在线书籍), so a directory updated on the server or another device arrives without asking the source. While connected, 更新书架 runs on the server and its results come back as records; books the server lacks, or a failed request, update on the device. An uncached chapter is asked of the server first and of the source when the server cannot give it.
+
 ### Conflicts and failure
 
 Apply causally ordered updates. Preserve conflicting values when the same field was edited concurrently. For divergent reading progress, show device, chapter, and text context and let the user choose; neither the furthest percentage nor wall-clock time wins automatically. Resolution creates a new causally related update.

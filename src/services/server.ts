@@ -35,6 +35,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** 定时追更 (`crates/server/src/jobs.rs`). */
+export interface JobSettings {
+  /** Hours between updates; 0 turns them off. */
+  intervalHours: number;
+  /** New chapters of each book fetched ahead. */
+  prefetch: number;
+}
+
+export interface JobStatus {
+  running: boolean;
+  lastRun: number | null;
+  nextRun: number | null;
+  updated: number;
+  newChapters: number;
+  failed: number;
+}
+
 /** A short name for this browser, shown in 设备管理. */
 export function browserName(): string {
   const agent = navigator.userAgent;
@@ -81,4 +98,8 @@ export const serverAccount = {
       method: "POST",
       body: JSON.stringify({ current, next }),
     }),
+  jobs: () => request<{ settings: JobSettings; status: JobStatus }>("/api/jobs"),
+  saveJobs: (settings: JobSettings) =>
+    request<JobSettings>("/api/jobs", { method: "PUT", body: JSON.stringify(settings) }),
+  updateNow: () => request<unknown>("/api/jobs/update", { method: "POST", body: "{}" }),
 };

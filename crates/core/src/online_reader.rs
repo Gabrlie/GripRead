@@ -728,6 +728,34 @@ mod tests {
     }
 
     #[test]
+    fn a_connected_server_gives_chapters_before_the_source() {
+        // The site has no chapters: only the server can give them.
+        let base = start(|_: &Request| Response::not_found());
+        let (_dir, storage, id) = library(&base);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        storage
+            .lock()
+            .unwrap()
+            .set_chapter_relay(crate::storage::ChapterRelay(Arc::new(
+                move |key: &str, chapter: &OnlineChapter| {
+                    seen.lock()
+                        .unwrap()
+                        .push((key.to_string(), chapter.url.clone()));
+                    (chapter.url == "/c/1.html").then(|| "来自服务器".to_string())
+                },
+            )));
+        assert_eq!(raw_chapter(&storage, &id, 1).unwrap(), "来自服务器");
+        let key = storage.lock().unwrap().online_sync_key(&id).unwrap();
+        assert_eq!(asked.lock().unwrap()[0], (key, "/c/1.html".to_string()));
+        // Kept on the device: the server is not asked again.
+        assert_eq!(raw_chapter(&storage, &id, 1).unwrap(), "来自服务器");
+        assert_eq!(asked.lock().unwrap().len(), 1);
+        // When the server has nothing, the source is asked (and fails here).
+        assert!(raw_chapter(&storage, &id, 2).is_err());
+    }
+
+    #[test]
     fn chapters_read_as_resources_and_stay_on_the_device() {
         let base = site();
         let (_dir, storage, id) = library(&base);
