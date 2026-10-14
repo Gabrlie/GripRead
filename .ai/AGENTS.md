@@ -17,7 +17,7 @@ Each fact has one maintained home. Other documents link to that home instead of 
 
 ## Writing
 
-Use English for maintained prose, including instruction files. Product locale is independent of documentation language. Use one physical line per paragraph and editor soft-wrap. Prefer concrete behavior, ownership, failure, and compatibility statements over transcripts or descriptions of obvious code.
+Use English for maintained prose, including instruction files; the one exception is the Chinese `README.md`, kept in step with its English counterpart `README.en.md`. Product locale is independent of documentation language. Use one physical line per paragraph and editor soft-wrap. Prefer concrete behavior, ownership, failure, and compatibility statements over transcripts or descriptions of obvious code.
 
 Use inline, relative Markdown links for repository files, and direct upstream links for external evidence. Reference-style links and custom HTML anchors are outside the checker's supported format; use ordinary Markdown headings for anchors. Keep source type declarations in code; document their non-obvious semantics beside their owner. Do not maintain copied API catalogs or test inventories once executable definitions exist.
 

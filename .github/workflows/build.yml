@@ -4,8 +4,9 @@
 #   dev   image :dev and :<version>-dev.<run>, APK pre-release v<version>-dev.<run>
 #   main  image :latest, :<version>, :<major>.<minor>, APK release v<version>
 #
-# The version comes from package.json (scripts/version.mjs); a main build
-# needs a version whose v<version> tag does not exist yet.
+# The version comes from package.json (scripts/version.mjs). A main build
+# whose v<version> is already released only runs the checks, so changes
+# without a version raise (documentation, for example) publish nothing.
 name: Build
 
 on:
@@ -32,6 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
+      publish: ${{ steps.version.outputs.publish }}
       platforms: ${{ steps.version.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
@@ -43,14 +45,17 @@ jobs:
           base=$(node -p "require('./package.json').version")
           if [ "$GITHUB_REF_NAME" = main ]; then
             if git ls-remote --exit-code --tags origin "refs/tags/v$base" >/dev/null; then
-              echo "::error::v$base is already released; raise the version (pnpm version:set) before merging into main"
-              exit 1
+              echo "::notice::v$base is already released, so this build only runs the checks; raise the version (pnpm version:set) to publish"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "publish=true" >> "$GITHUB_OUTPUT"
             fi
             echo "version=$base" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
           else
             echo "version=$base-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "$ARM64" = true ]; then
             echo 'platforms=[{"platform":"linux/amd64","runner":"ubuntu-latest"},{"platform":"linux/arm64","runner":"ubuntu-24.04-arm"}]' >> "$GITHUB_OUTPUT"
@@ -82,6 +87,7 @@ jobs:
 
   image:
     needs: [version, check]
+    if: needs.version.outputs.publish == 'true'
     strategy:
       matrix:
         include: ${{ fromJSON(needs.version.outputs.platforms) }}
@@ -148,6 +154,7 @@ jobs:
 
   apk:
     needs: [version, check]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

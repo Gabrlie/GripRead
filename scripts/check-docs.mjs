@@ -8,7 +8,8 @@ const subsystem = planned(["Scope", "Interfaces", "Behavior", "Acceptance"]);
 // This manifest owns required sections, lifecycle values, and entry word ceilings.
 const requirements = {
   "AGENTS.md": { headings: ["Start here", "Working rules", "Git"] },
-  "README.md": { headings: ["Development"] },
+  "README.md": { headings: ["开发"] },
+  "README.en.md": { headings: ["Development"] },
   ".ai/AGENTS.md": { headings: ["Ownership", "Writing", "Decisions and tasks", "Validation"] },
   ".ai/README.md": { headings: ["Decision records"] },
   ".ai/status.md": { headings: ["Current stage", "Active task", "Blockers", "Next entry point"] },
@@ -195,7 +196,7 @@ export async function checkDocuments(root, options = {}) {
     }
   }
 
-  for (const path of ["AGENTS.md", "README.md"]) {
+  for (const path of ["AGENTS.md", "README.md", "README.en.md"]) {
     try {
       await stat(resolve(root, path));
       await readDocument(path);

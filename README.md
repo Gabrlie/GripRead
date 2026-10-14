@@ -2,11 +2,13 @@
 
 <img src="src-tauri/icons/icon.png" width="120" alt="GripRead" />
 
-# GripRead · 手不释卷
+**简体中文** · [English](README.en.md)
 
-**Read novels on your phone, your desktop, and in the browser — and pick up exactly where you left off.**
+# 手不释卷 · GripRead
 
-A lightweight, local-first reader built with Tauri 2, with an optional self-hosted server for real-time sync.
+**在手机、电脑和浏览器上读小说，随时从上次读到的地方接着读。**
+
+基于 Tauri 2 的轻量阅读器，本地优先，可选自建服务器实时同步。
 
 [![Build](https://github.com/Gabrlie/GripRead/actions/workflows/build.yml/badge.svg)](https://github.com/Gabrlie/GripRead/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Gabrlie/GripRead?include_prereleases&label=release&color=4c8bf5)](https://github.com/Gabrlie/GripRead/releases)
@@ -21,62 +23,62 @@ A lightweight, local-first reader built with Tauri 2, with an optional self-host
 ![Rust](https://img.shields.io/badge/Rust-b7410e?logo=rust&logoColor=white)
 ![React](https://img.shields.io/badge/React-087ea4?logo=react&logoColor=white)
 
-[Features](#features) · [Server](#server) · [Downloads](#downloads) · [Building from source](#building-from-source) · [Development](#development)
+[功能](#功能) · [服务器](#服务器) · [下载](#下载) · [从源码构建](#从源码构建) · [开发](#开发)
 
 </div>
 
 > [!NOTE]
-> GripRead is in early development (0.x). The interface is in Chinese, and data formats may still change between versions — make a backup (设置 › 备份与恢复) before upgrading.
+> 手不释卷目前处于早期开发阶段（0.x），版本之间的数据格式仍可能变化。升级前请先在 设置 › 备份与恢复 中做一次备份。
 
-## Features
+## 功能
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 📖 Reading
+### 📖 阅读
 
-- **Local books** — import TXT files or whole folders; encodings (UTF-8, GBK) are detected and chapters found with Legado-style rules
-- **Page turns** — curl, slide, cover, fade, or none; a scrolling mode; two-page spreads on wide screens
-- **Typography** — fonts, size, spacing, margins, themes, and background images
-- **Tools** — table of contents, full-text search, bookmarks, replacement rules, simplified/traditional conversion, auto-turn, and read-aloud
+- **本地书籍**：导入 TXT 文件或整个文件夹，自动识别编码（UTF-8、GBK），按阅读（Legado）风格的规则识别章节
+- **翻页动画**：仿真、滑动、覆盖、渐隐或无动画，另有滚动模式，宽屏下双页显示
+- **排版**：字体、字号、间距、边距、主题和背景图
+- **工具**：目录、全文搜索、书签、替换规则、简繁转换、自动翻页和朗读
 
 </td>
 <td width="50%" valign="top">
 
-### 🌐 Online books
+### 🌐 在线书籍
 
-- **Book sources** — Legado-compatible text sources for search, discovery, details, and chapters
-- **Bring your own** — GripRead ships no sources; import a source list from a URL, a file, or the clipboard
-- **Follow and cache** — add online books to the shelf, cache chapters for offline reading, and refresh the shelf with a pull or automatically
+- **书源**：兼容阅读（Legado）的文本书源，支持搜索、发现、详情和章节
+- **自备书源**：应用不内置任何书源，可从网址、文件或剪贴板导入
+- **追更与缓存**：在线书籍加入书架，缓存章节离线阅读，下拉或自动更新书架
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### 📚 Library
+### 📚 书库
 
-- **Shelf** — groups, reading states, sorting, and a recycle bin
-- **Reading records** — reading time per book and a daily activity calendar
-- **Backups** — portable backups that restore item by item, with categories you can skip
+- **书架**：分组、阅读状态、排序和回收站
+- **阅读记录**：每本书的阅读时长，以及按天的阅读日历
+- **备份**：可移植的备份文件，逐项恢复，可跳过不需要的类别
 
 </td>
 <td width="50%" valign="top">
 
-### 🔄 Sync
+### 🔄 同步
 
-- **WebDAV** — a cloud book folder, backups, and reading progress, with no account needed
-- **GripRead server** — the shelf, progress, bookmarks, rules, sources, and settings sync between devices within seconds
-- **Your choice** — excluded categories are never uploaded or overwritten
+- **WebDAV**：云端书籍文件夹、备份和阅读进度同步，无需注册账号
+- **自建服务器**：书架、进度、书签、规则、书源和设置在设备间秒级同步
+- **自主选择**：排除的类别既不上传，也不会被覆盖
 
 </td>
 </tr>
 </table>
 
-## Server
+## 服务器
 
-The server is a single container that serves the web version of your library and is the sync hub for your devices. It is built for one user.
+服务器是一个单独的容器：提供网页版书库，同时作为各设备的同步中心。为单用户设计。
 
 ```sh
 docker run -d --name gripread \
@@ -86,73 +88,73 @@ docker run -d --name gripread \
   ghcr.io/gabrlie/gripread:latest
 ```
 
-Open `http://<host>:8080` and set a password on the first visit. For use outside your network, put a reverse proxy with HTTPS (Caddy, nginx) in front of it. [`docker-compose.example.yml`](docker-compose.example.yml) is a Compose starting point.
+打开 `http://<主机>:8080`，第一次访问时设置密码。需要在外网使用时，请在前面加一层带 HTTPS 的反向代理（Caddy、nginx 等）。Compose 部署可以参考 [`docker-compose.example.yml`](docker-compose.example.yml)。
 
-| Variable            | Default | Meaning                                    |
-| ------------------- | ------- | ------------------------------------------ |
-| `GRIPREAD_DATA`     | `/data` | The data folder: library, account, backups |
-| `GRIPREAD_PORT`     | `8080`  | The port to listen on                      |
-| `GRIPREAD_PASSWORD` | unset   | Sets the password on the first start only  |
+| 环境变量            | 默认值  | 说明                             |
+| ------------------- | ------- | -------------------------------- |
+| `GRIPREAD_DATA`     | `/data` | 数据目录：书库、账号和备份       |
+| `GRIPREAD_PORT`     | `8080`  | 监听端口                         |
+| `GRIPREAD_PASSWORD` | 未设置  | 仅在第一次启动时用来设置访问密码 |
 
 <details>
-<summary><b>Connecting your devices</b></summary>
+<summary><b>连接你的设备</b></summary>
 
-1. In the app, open 设置 › 备份与云端 › 服务器同步.
-2. Enter the server address, the password, and a name for this device, then tap 连接.
-3. Local books upload to the server, and books the server has download to the device (you can turn that off).
+1. 在应用中打开 设置 › 备份与云端 › 服务器同步。
+2. 填写服务器地址、访问密码和设备名，点击 连接。
+3. 本地书籍会自动上传到服务器，服务器上有而本机没有的书会自动下载（可以关闭）。
 
-While connected, WebDAV backups and progress sync pause; they resume when you disconnect. Progress from another device never moves your page silently — the reader asks before jumping. The server keeps a daily backup of its own library.
+连接期间 WebDAV 备份和进度同步会暂停，断开后自动恢复。其他设备的阅读进度不会悄悄改变你的阅读位置，阅读器会先询问是否跳转。服务器每天会自动备份一次自己的书库。
 
 </details>
 
-## Downloads
+## 下载
 
-| Channel     | Branch | Image tags        | App                                                                   |
-| ----------- | ------ | ----------------- | --------------------------------------------------------------------- |
-| Stable      | `main` | `latest`, `X.Y.Z` | [Latest release](https://github.com/Gabrlie/GripRead/releases/latest) |
-| Development | `dev`  | `dev`             | [Pre-releases](https://github.com/Gabrlie/GripRead/releases)          |
+| 渠道   | 分支   | 镜像标签          | 应用                                                            |
+| ------ | ------ | ----------------- | --------------------------------------------------------------- |
+| 正式版 | `main` | `latest`、`X.Y.Z` | [最新版本](https://github.com/Gabrlie/GripRead/releases/latest) |
+| 开发版 | `dev`  | `dev`             | [预发布版本](https://github.com/Gabrlie/GripRead/releases)      |
 
-Android APKs are built for arm64 devices. Versions follow [SemVer](https://semver.org/); development builds are versioned `X.Y.Z-dev.N`.
+Android 安装包适用于 arm64 设备。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)，开发版的版本号形如 `X.Y.Z-dev.N`。
 
-## Building from source
+## 从源码构建
 
-**Requirements:** Node.js 22+, pnpm, and stable Rust. On Linux, Tauri also needs the [WebKitGTK development packages](https://v2.tauri.app/start/prerequisites/).
+**环境要求：** Node.js 22 及以上、pnpm 和 Rust stable。在 Linux 上，Tauri 还需要 [WebKitGTK 开发包](https://v2.tauri.app/start/prerequisites/)。
 
 ```sh
 pnpm install
-pnpm tauri dev               # run the desktop app
-pnpm tauri build --debug     # build the desktop app
-docker build -t gripread .   # build the server image
+pnpm tauri dev               # 运行桌面应用
+pnpm tauri build --debug     # 构建桌面应用
+docker build -t gripread .   # 构建服务器镜像
 ```
 
-**Android** needs JDK 17 and the Android SDK and NDK, located through `JAVA_HOME`, `ANDROID_HOME`, and `NDK_HOME`:
+**Android** 需要 JDK 17 以及 Android SDK 和 NDK，通过 `JAVA_HOME`、`ANDROID_HOME` 和 `NDK_HOME` 指定：
 
 ```sh
-pnpm android:build           # a debug APK for arm64
+pnpm android:build           # 构建 arm64 调试版 APK
 ```
 
-## Development
+## 开发
 
 ```sh
-pnpm check                   # formatting, docs, types, tests, lints, and the frontend build
+pnpm check                   # 格式、文档、类型、测试、静态检查和前端构建
 ```
 
-| Path             | Contents                                                              |
-| ---------------- | --------------------------------------------------------------------- |
-| `src/`           | The React interface, shared by the app and the web version            |
-| `crates/core/`   | The library, reader, sources, backups, and sync, independent of Tauri |
-| `crates/server/` | The server: web version, account, and sync endpoints                  |
-| `src-tauri/`     | The Tauri shell and Android plugins                                   |
-| `.ai/`           | Specifications, decisions, and plans                                  |
+| 路径             | 内容                                       |
+| ---------------- | ------------------------------------------ |
+| `src/`           | React 界面，应用和网页版共用               |
+| `crates/core/`   | 书库、阅读、书源、备份和同步，不依赖 Tauri |
+| `crates/server/` | 服务器：网页版、账号和同步接口             |
+| `src-tauri/`     | Tauri 外壳和 Android 插件                  |
+| `.ai/`           | 规格说明、设计决策和开发计划（英文）       |
 
-Start with [AGENTS.md](AGENTS.md) and the [documentation map](.ai/README.md). The [architecture](.ai/architecture.md) describes the modules and their dependencies, and the [workflow](.ai/engineering/workflow.md) covers branches, commits, versions, and releases. Changes go to `dev` and reach `main` once stable.
+从 [AGENTS.md](AGENTS.md) 和 [文档索引](.ai/README.md) 开始阅读。[架构](.ai/architecture.md) 说明了模块划分和依赖方向，[工作流程](.ai/engineering/workflow.md) 说明了分支、提交、版本和发布。开发在 `dev` 分支进行，稳定后合并到 `main`。
 
-## Acknowledgements
+## 致谢
 
-- [Legado (阅读)](https://github.com/gedoor/legado) — GripRead's reading behavior and book source format follow it.
-- [OpenCC](https://github.com/BYVoid/OpenCC) — the simplified/traditional conversion tables (Apache-2.0).
-- [Tauri](https://tauri.app/), [React](https://react.dev/), and [shadcn/ui](https://ui.shadcn.com/).
+- [阅读（Legado）](https://github.com/gedoor/legado)：手不释卷的阅读体验和书源格式参照了它。
+- [OpenCC](https://github.com/BYVoid/OpenCC)：简繁转换词表（Apache-2.0）。
+- [Tauri](https://tauri.app/)、[React](https://react.dev/) 和 [shadcn/ui](https://ui.shadcn.com/)。
 
-## License
+## 许可证
 
-GripRead is free software under the [GNU General Public License v3.0](LICENSE). You may use, study, modify, and share it; if you distribute it or a modified version, you must release the source under the same license.
+手不释卷是自由软件，以 [GNU 通用公共许可证 v3.0](LICENSE) 发布。你可以自由使用、研究、修改和分享；如果分发本软件或修改后的版本，必须以相同许可证公开源代码。
