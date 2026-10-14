@@ -14,6 +14,8 @@ Novel typography starts at 18 px with 1.8 line height. Measure each page inside 
 
 The glass header and desktop sidebar use background alpha 0.45 in light mode, 0.58 in dark mode, and 0.65 in OLED mode; the floating dock uses 0.52, 0.64, and 0.70 respectively. Keep blur at 20 px and saturation at 180%, preserve foreground opacity and existing borders/shadows, and share the header material across the shelf title and group strip. These values reveal in-app content without changing native window transparency. Dropdown material remains more opaque for readability.
 
+The application icon is an open hardcover book with a visible page block and a blue cover on a white ground. Its sources are in [`src-tauri/icons/source`](../../src-tauri/icons/source/icons.json): the desktop tile, and the Android adaptive foreground and background. `pnpm tauri icon src-tauri/icons/source/icons.json` regenerates the desktop and Android icons; the pre-Android 8 launcher icons and the web icons in `public/` are rendered from the same sources, since the generator crops them too tightly.
+
 ## Navigation and screens
 
 Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. The current desktop RSS shell retains its channel and article columns; a reading pane is planned.
