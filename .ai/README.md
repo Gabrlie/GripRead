@@ -1,6 +1,6 @@
 # Documentation map
 
-Start at [status](status.md) for the active scope, then read [workflow](engineering/workflow.md). This map assigns each maintained subject to one owner; planned specifications are not claims of shipped behavior.
+Start at [status](status.md) for the active scope, then read [workflow](engineering/workflow.md). Each subject has one owner; planned specifications are not shipped behavior.
 
 | Subject | Authoritative document |
 | --- | --- |
@@ -16,6 +16,7 @@ Start at [status](status.md) for the active scope, then read [workflow](engineer
 | WebDAV, conflicts, and backup | [Sync](subsystems/sync.md) |
 | Progress-bounded retrieval and generation | [AIGC](subsystems/aigc.md) |
 | Web version and deployment | [Server](subsystems/server.md) |
+| App updates | [Updates](subsystems/updates.md) |
 | Change ownership and commits | [Workflow](engineering/workflow.md) |
 | Checks and evidence | [Verification](engineering/testing.md) |
 | Stage dependencies | [Roadmap](plans/roadmap.md) |

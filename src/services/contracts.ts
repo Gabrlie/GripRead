@@ -1,4 +1,11 @@
 import type {
+  InstallOutcome,
+  SaveUpdateSettingsRequest,
+  UpdateCheck,
+  UpdateProgress,
+  UpdateSettings,
+} from "../types/generated";
+import type {
   Book,
   UpdateBookRequest,
   ShelfPreferences,
@@ -314,10 +321,22 @@ export interface SourceService {
   /** The Android notification's 停止. */
   onDownloadStop(listener: () => void): Promise<Unsubscribe>;
 }
+/** 检查更新: GitHub releases, through the connected server when there is one. */
+export interface UpdateService {
+  getSettings(): Promise<UpdateSettings>;
+  saveSettings(request: SaveUpdateSettingsRequest): Promise<UpdateSettings>;
+  /** The channel's newest release against the running version, and recent notes. */
+  check(current: string): Promise<UpdateCheck>;
+  /** Downloads and installs `version`; progress comes through `onProgress`. */
+  install(operationId: string, version: string): Promise<InstallOutcome>;
+  cancel(operationId: string): Promise<CancelResult>;
+  onProgress(listener: (progress: UpdateProgress) => void): Promise<Unsubscribe>;
+}
 export interface AppServices {
   library: LibraryService;
   reader: ReaderService;
   settings: SettingsService;
   sync: SyncService;
   sources: SourceService;
+  updates: UpdateService;
 }

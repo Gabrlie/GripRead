@@ -78,12 +78,19 @@ pub fn mutates(name: &str) -> bool {
         "log_frontend",
         "clear_logs",
         "set_detailed_log",
+        // Update settings and installs stay on the device.
+        "save_update_settings",
+        "install_update",
     ];
     !READS.iter().any(|read| name.starts_with(read))
 }
 
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
+    "check_update",
+    "get_update_settings",
+    "install_update",
+    "save_update_settings",
     "connect_sync_server",
     "disconnect_sync_server",
     "get_sync_server",
@@ -255,6 +262,12 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "add_reading_time" => reply(crate::commands::add_reading_time(state, request(args)?).await),
         "backup_to_webdav" => reply(crate::commands::backup_to_webdav(state).await),
+        "check_update" => reply(crate::update::check_update(state, request(args)?).await),
+        "get_update_settings" => reply(crate::update::get_update_settings(state).await),
+        "install_update" => reply(crate::update::install_update(state, request(args)?).await),
+        "save_update_settings" => {
+            reply(crate::update::save_update_settings(state, request(args)?).await)
+        }
         "cancel_import" => reply(crate::commands::cancel_import(state, request(args)?).await),
         "cancel_search" => reply(crate::commands::cancel_search(state, request(args)?).await),
         "cancel_source_operation" => {

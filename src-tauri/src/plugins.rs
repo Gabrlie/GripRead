@@ -1,6 +1,7 @@
 //! The app's side of the core's platform interfaces: Tauri events, and on
 //! Android the Kotlin plugins in `gen/android` (`DocumentPlugin`,
-//! `DownloadPlugin`, `NetworkPlugin`) behind [`Platform`].
+//! `DownloadPlugin`, `NetworkPlugin`, `UpdatePlugin`) behind [`Platform`];
+//! on macOS the Tauri updater.
 
 use gripread_core::api::Events;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -21,7 +22,64 @@ impl<R: Runtime> Events for TauriEvents<R> {
 pub struct AppPlatform<R: Runtime>(#[allow(dead_code)] pub AppHandle<R>);
 
 #[cfg(not(target_os = "android"))]
-impl<R: Runtime> gripread_core::platform::Platform for AppPlatform<R> {}
+impl<R: Runtime> gripread_core::platform::Platform for AppPlatform<R> {
+    /// Releases carry macOS builds only.
+    fn update_target(&self) -> gripread_core::platform::UpdateTarget {
+        use gripread_core::platform::UpdateTarget;
+        match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("macos", "aarch64") => UpdateTarget::Desktop {
+                platform: "darwin-aarch64".into(),
+            },
+            ("macos", "x86_64") => UpdateTarget::Desktop {
+                platform: "darwin-x86_64".into(),
+            },
+            _ => UpdateTarget::None,
+        }
+    }
+
+    fn install_desktop_update(
+        &self,
+        manifest: &str,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<(), gripread_core::error::AppError> {
+        use gripread_core::error::{AppError, ErrorCode};
+        use tauri_plugin_updater::UpdaterExt;
+        let failed = |error: tauri_plugin_updater::Error| {
+            AppError::new(ErrorCode::Io, format!("更新失败：{error}"))
+        };
+        let url = manifest
+            .parse()
+            .map_err(|error| AppError::new(ErrorCode::InvalidArgument, format!("{error}")))?;
+        let updater = self
+            .0
+            .updater_builder()
+            .endpoints(vec![url])
+            .map_err(failed)?
+            .build()
+            .map_err(failed)?;
+        tauri::async_runtime::block_on(async {
+            let update = updater
+                .check()
+                .await
+                .map_err(failed)?
+                .ok_or_else(|| AppError::new(ErrorCode::Io, "已经是最新版本"))?;
+            let mut received = 0u64;
+            update
+                .download_and_install(
+                    |chunk, total| {
+                        received += chunk as u64;
+                        progress(received, total);
+                    },
+                    || {},
+                )
+                .await
+                .map_err(failed)
+        })?;
+        // Through the exit handshake, so the page saves first.
+        self.0.request_restart();
+        Ok(())
+    }
+}
 
 #[cfg(target_os = "android")]
 pub use android::*;
@@ -30,8 +88,8 @@ pub use android::*;
 mod android {
     use super::AppPlatform;
     use gripread_core::error::{AppError, ErrorCode};
-    use gripread_core::models::{DownloadJob, PickedFile};
-    use gripread_core::platform::Platform;
+    use gripread_core::models::{DownloadJob, InstallOutcome, PickedFile};
+    use gripread_core::platform::{Platform, UpdateTarget};
     use std::fs::File;
     use std::io::Write;
     use std::os::fd::FromRawFd;
@@ -39,6 +97,7 @@ mod android {
 
     pub struct DocumentPlugin<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
     pub struct DownloadPlugin<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
+    pub struct UpdatePlugin<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
 
     impl<R: Runtime> AppPlatform<R> {
         fn documents<T: serde::de::DeserializeOwned>(
@@ -63,6 +122,51 @@ mod android {
     }
 
     impl<R: Runtime> Platform for AppPlatform<R> {
+        fn update_target(&self) -> UpdateTarget {
+            #[derive(serde::Deserialize)]
+            struct Info {
+                abis: Vec<String>,
+                folder: String,
+            }
+            let Some(plugin) = self.0.try_state::<UpdatePlugin<R>>() else {
+                return UpdateTarget::None;
+            };
+            match plugin
+                .0
+                .run_mobile_plugin::<Info>("info", serde_json::json!({}))
+            {
+                Ok(info) => UpdateTarget::Android {
+                    abis: info.abis,
+                    folder: info.folder.into(),
+                },
+                Err(_) => UpdateTarget::None,
+            }
+        }
+
+        fn install_apk(&self, file: &std::path::Path) -> Result<InstallOutcome, AppError> {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Response {
+                needs_permission: bool,
+            }
+            let plugin = self
+                .0
+                .try_state::<UpdatePlugin<R>>()
+                .ok_or_else(|| AppError::new(ErrorCode::Io, "安装程序不可用"))?;
+            let response: Response = plugin
+                .0
+                .run_mobile_plugin(
+                    "install",
+                    serde_json::json!({ "path": file.to_string_lossy() }),
+                )
+                .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?;
+            Ok(if response.needs_permission {
+                InstallOutcome::NeedsPermission
+            } else {
+                InstallOutcome::Started
+            })
+        }
+
         fn downloads_changed(&self, jobs: &[DownloadJob]) {
             if let Some(plugin) = self.0.try_state::<DownloadPlugin<R>>() {
                 let _ = plugin.0.run_mobile_plugin::<serde_json::Value>(
@@ -182,6 +286,21 @@ pub fn downloads<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let handle =
                     _api.register_android_plugin("com.gripread.reader", "DownloadPlugin")?;
                 _app.manage(DownloadPlugin(handle));
+            }
+            Ok(())
+        })
+        .build()
+}
+
+/// Registers the Android update helper (`UpdatePlugin.kt`).
+pub fn updates<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("gripread-updates")
+        .setup(|_app, _api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle = _api.register_android_plugin("com.gripread.reader", "UpdatePlugin")?;
+                _app.manage(UpdatePlugin(handle));
             }
             Ok(())
         })

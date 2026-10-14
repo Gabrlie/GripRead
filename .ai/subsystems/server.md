@@ -21,6 +21,8 @@ Configuration comes from the environment: `GRIPREAD_DATA` (the data folder, `/da
 
 The page talks to these through `src/services/transport.ts` and `src/services/files.ts`; the account screens use `src/services/server.ts`.
 
+Connected devices also check for and download app updates through the server's mirror under `/api/update/` ([Updates](updates.md)).
+
 ## Behavior
 
 The first visit sets the password (at least six characters) unless `GRIPREAD_PASSWORD` set it; the password is kept as an argon2 hash. Signing in creates a session named after the browser or device, kept only as the SHA-256 of a random token: the page holds it in an HttpOnly, SameSite=Strict cookie, marked Secure behind a proxy that reports HTTPS, and devices send it as a Bearer token. Five failed sign-ins within a minute refuse further attempts for the rest of that minute. 设置 › 服务器账号 lists sessions with their last use, signs one out, changes the password (signing the others out), and signs this page out. TLS belongs to a reverse proxy in front of the server.

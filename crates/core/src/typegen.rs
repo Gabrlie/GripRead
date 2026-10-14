@@ -170,6 +170,17 @@ const IPC_TYPES: &[&str] = &[
     "NetworkCheckRequest",
     "NetworkState",
     "SyncServerStatus",
+    "UpdateChannel",
+    "UpdateSettings",
+    "SaveUpdateSettingsRequest",
+    "UpdateKind",
+    "ReleaseNote",
+    "AvailableUpdate",
+    "UpdateCheck",
+    "CheckUpdateRequest",
+    "InstallUpdateRequest",
+    "UpdateProgress",
+    "InstallOutcome",
     "ConnectSyncServerRequest",
     "SwitchRequest",
     "NetworkSettings",
@@ -362,6 +373,17 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<NetworkCheckRequest>(&config)?;
     export_all::<NetworkState>(&config)?;
     export_all::<SyncServerStatus>(&config)?;
+    export_all::<UpdateChannel>(&config)?;
+    export_all::<UpdateSettings>(&config)?;
+    export_all::<SaveUpdateSettingsRequest>(&config)?;
+    export_all::<UpdateKind>(&config)?;
+    export_all::<ReleaseNote>(&config)?;
+    export_all::<AvailableUpdate>(&config)?;
+    export_all::<UpdateCheck>(&config)?;
+    export_all::<CheckUpdateRequest>(&config)?;
+    export_all::<InstallUpdateRequest>(&config)?;
+    export_all::<UpdateProgress>(&config)?;
+    export_all::<InstallOutcome>(&config)?;
     export_all::<ConnectSyncServerRequest>(&config)?;
     export_all::<SwitchRequest>(&config)?;
     export_all::<NetworkSettings>(&config)?;

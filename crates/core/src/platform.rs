@@ -4,7 +4,7 @@
 //! documents through its `DocumentPlugin`.
 
 use std::fs::{self, File};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, ErrorCode};
 use crate::models::PickedFile;
@@ -56,6 +56,34 @@ pub trait Platform: Send + Sync {
         ))
     }
 
+    /// How this copy updates itself; `None` where it does not (the server,
+    /// or a desktop platform without published builds).
+    fn update_target(&self) -> UpdateTarget {
+        UpdateTarget::None
+    }
+
+    /// Hands a downloaded APK to the Android installer. `NeedsPermission`
+    /// when 安装未知应用 must be allowed first (its settings screen opens).
+    fn install_apk(&self, _file: &Path) -> Result<crate::models::InstallOutcome, AppError> {
+        Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "APKs are only installed on Android",
+        ))
+    }
+
+    /// Updates the desktop app from a Tauri updater manifest (`latest.json`)
+    /// and relaunches it; `progress` gets the bytes received and the total.
+    fn install_desktop_update(
+        &self,
+        _manifest: &str,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<(), AppError> {
+        Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "this platform does not update itself",
+        ))
+    }
+
     /// Chooses a folder backups can be written to, as its address and a
     /// label; `path` comes from the folder dialog. `None`: cancelled.
     fn pick_writable_folder(
@@ -73,6 +101,23 @@ pub trait Platform: Send + Sync {
         }
         Ok(Some((path.to_string(), path.to_string())))
     }
+}
+
+/// How this copy of GripRead updates itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateTarget {
+    None,
+    /// Android: the ABIs the device runs, preferred first, and a folder the
+    /// installer can read the APK from.
+    Android {
+        abis: Vec<String>,
+        folder: PathBuf,
+    },
+    /// The desktop updater's platform key in `latest.json`
+    /// (`darwin-aarch64`, `darwin-x86_64`).
+    Desktop {
+        platform: String,
+    },
 }
 
 /// Plain filesystem paths.

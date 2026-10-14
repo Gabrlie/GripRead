@@ -6,6 +6,7 @@
 pub mod auth;
 mod paths;
 mod sync;
+mod update;
 
 use auth::{Auth, AuthError, Session};
 use axum::body::{Body, Bytes};
@@ -18,7 +19,7 @@ use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use gripread_core::api::{self, Events, Reply};
 use gripread_core::commands::AppState;
-use gripread_core::error::AppError;
+use gripread_core::error::{AppError, ErrorCode};
 use gripread_core::platform::Platform;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -153,6 +154,7 @@ pub fn app(config: Config) -> Result<Router, String> {
         .route("/api/export", get(export))
         .route("/api/events", get(events_socket))
         .merge(sync::routes())
+        .merge(update::routes())
         .layer(axum::extract::DefaultBodyLimit::max(64 << 20))
         .with_state(server);
     Ok(match config.web {

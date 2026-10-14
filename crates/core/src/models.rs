@@ -2114,3 +2114,130 @@ pub struct ConnectSyncServerRequest {
 pub struct SwitchRequest {
     pub on: bool,
 }
+
+/// Which releases the app offers: 正式版 (releases only) or 测试版 (beta
+/// pre-releases too).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+/// 检查更新 settings, kept on the device only.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateSettings {
+    pub channel: UpdateChannel,
+    /// Check once a day when the app starts.
+    pub auto_check: bool,
+    /// When the last check finished.
+    pub last_check: Option<i64>,
+    /// A version the reader chose to skip (跳过此版本 on the update prompt);
+    /// newer versions are offered again.
+    pub skipped: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: UpdateChannel::Stable,
+            auto_check: true,
+            last_check: None,
+            skipped: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveUpdateSettingsRequest {
+    pub channel: UpdateChannel,
+    pub auto_check: bool,
+    pub skipped: Option<String>,
+}
+
+/// How this copy of GripRead updates itself.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateKind {
+    /// Download the APK and hand it to the system installer.
+    Android,
+    /// The desktop updater replaces the app and relaunches it.
+    Desktop,
+    /// The web version: the server is updated by pulling its image.
+    Server,
+}
+
+/// One release's notes for 更新日志.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNote {
+    pub version: String,
+    pub prerelease: bool,
+    pub published_at: i64,
+    /// The changes, in Markdown, without the download and image sections.
+    pub notes: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableUpdate {
+    pub version: String,
+    pub prerelease: bool,
+    pub published_at: i64,
+    pub notes: String,
+    pub url: String,
+    /// The file to download for this device (the APK); none on desktop and
+    /// the web version.
+    pub asset: Option<String>,
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheck {
+    pub kind: UpdateKind,
+    pub current: String,
+    /// A newer version on the chosen channel, if any.
+    pub update: Option<AvailableUpdate>,
+    /// The channel's releases, newest first, for 更新日志.
+    pub releases: Vec<ReleaseNote>,
+    /// Checked through the connected GripRead server.
+    pub via_server: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckUpdateRequest {
+    /// The running version (package.json, stamped by release builds).
+    pub current: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallUpdateRequest {
+    pub operation_id: String,
+    pub version: String,
+}
+
+/// Download progress of an update, as the `update-progress` event.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    pub operation_id: String,
+    pub received: u64,
+    pub total: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum InstallOutcome {
+    /// The system installer is open (Android) or the app is relaunching.
+    Started,
+    /// Android needs 安装未知应用 allowed for GripRead first; its settings
+    /// screen is open.
+    NeedsPermission,
+}

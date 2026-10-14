@@ -52,7 +52,10 @@ pub fn run() {
         .plugin(plugins::documents())
         .plugin(plugins::downloads())
         .plugin(webview::plugin())
-        .plugin(plugins::network());
+        .plugin(plugins::network())
+        .plugin(plugins::updates());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(feature = "native-test")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())

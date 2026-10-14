@@ -235,6 +235,16 @@ pub fn refresh(root: &Path) {
     }
 }
 
+/// The proxy other requests of the app (updates) go through: the app's own,
+/// else the device's, as for book sources.
+pub fn proxy(root: &Path) -> Option<String> {
+    proxy_url(&load(root)).or_else(|| {
+        state()
+            .system_proxy
+            .map(|address| format!("http://{address}"))
+    })
+}
+
 pub fn save(root: &Path, settings: &NetworkSettings) -> Result<(), AppError> {
     apply(settings)?;
     std::fs::write(path(root), serde_json::to_string(settings)?)?;

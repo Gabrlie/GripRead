@@ -28,4 +28,5 @@ pub mod transform;
 pub mod txt;
 pub mod txt_toc;
 pub mod typegen;
+pub mod update;
 pub mod webdav;

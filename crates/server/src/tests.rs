@@ -568,3 +568,80 @@ impl ServerClient {
         .unwrap()
     }
 }
+
+#[tokio::test]
+async fn the_update_mirror_serves_cached_releases_and_their_files() {
+    let folder = Folder::new();
+    let app = server(&folder, Some("secret1"));
+    // A fresh cache, so nothing reaches GitHub.
+    let updates = folder.0.join("data/library/updates");
+    std::fs::create_dir_all(updates.join("assets/v0.2.1")).unwrap();
+    std::fs::write(
+        updates.join("releases.json"),
+        json!([{
+            "tag_name": "v0.2.1",
+            "body": "## 更新内容\n\n- 新版本\n\n## 下载\n\n| x |",
+            "prerelease": false,
+            "html_url": "https://github.com/x/releases/tag/v0.2.1",
+            "assets": [{ "name": "gripread-0.2.1-universal.apk", "size": 3,
+                         "browser_download_url": "https://invalid.example/apk" }]
+        }])
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        updates.join("assets/v0.2.1/gripread-0.2.1-universal.apk"),
+        "apk",
+    )
+    .unwrap();
+    let get = |uri: &str, token: Option<&str>| {
+        let mut request = Request::get(uri);
+        if let Some(token) = token {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    let (status, _, _) = send(&app, get("/api/update/releases", None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (_, _, body) = send(
+        &app,
+        post("/api/auth/login", None, json!({ "password": "secret1" })),
+    )
+    .await;
+    let token = json_of(&body)["token"].as_str().unwrap().to_string();
+    let (status, _, body) = send(&app, get("/api/update/releases", Some(&token))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body)[0]["tag_name"], "v0.2.1");
+
+    let (status, headers, body) = send(
+        &app,
+        get(
+            "/api/update/asset/v0.2.1/gripread-0.2.1-universal.apk",
+            Some(&token),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_LENGTH], "3");
+    assert_eq!(body, b"apk");
+    let (status, _, _) = send(
+        &app,
+        get("/api/update/asset/v0.2.1/..%2Fserver.json", Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The web version learns of the new server image.
+    let (status, check) = rpc_call(
+        &app,
+        &token,
+        "check_update",
+        json!({ "request": { "current": "0.2.0" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{check}");
+    assert_eq!(check["kind"], "server");
+    assert_eq!(check["update"]["version"], "0.2.1");
+    assert_eq!(check["update"]["notes"], "## 更新内容\n\n- 新版本");
+}

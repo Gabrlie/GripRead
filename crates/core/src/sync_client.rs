@@ -268,6 +268,12 @@ impl SyncClient {
         self.config().connected()
     }
 
+    /// The connected server's address and session token.
+    pub fn server(&self) -> Option<(String, String)> {
+        let config = self.config();
+        config.connected().then_some((config.address, config.token))
+    }
+
     pub fn status(&self) -> SyncServerStatus {
         let config = self.config();
         SyncServerStatus {

@@ -35,6 +35,7 @@ import { SubscriptionView } from "./components/Subscription/SubscriptionView";
 import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
+import { UpdatePrompt } from "./components/Updates/UpdatePrompt";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -327,6 +328,7 @@ function MainContent() {
       </div>
       <ImportModal />
       {showLogs && <LogPage layer="z-[70]" onClose={() => setShowLogs(false)} />}
+      <UpdatePrompt />
       <Toaster />
     </div>
   );

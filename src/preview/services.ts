@@ -21,7 +21,7 @@ import type {
 import { DEFAULT_READING_STYLE } from "../types/generated";
 import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "./sources";
 import { PREVIEW_NETWORK } from "./network";
-import type { CloudBook, RemoteBackup, WebDavSettings } from "../types/generated";
+import type { CloudBook, RemoteBackup, UpdateSettings, WebDavSettings } from "../types/generated";
 
 const BOOK_ID = "preview-book";
 const VERSION = "preview-v1";
@@ -252,6 +252,12 @@ export function previewServices(): AppServices {
     locator: contextFor(start),
   });
   const unsupported = () => Promise.reject(new Error("预览模式不支持此操作"));
+  let updates: UpdateSettings = {
+    channel: "stable",
+    autoCheck: false,
+    lastCheck: null,
+    skipped: null,
+  };
   return {
     library: {
       pickAndImportTxt: async () => null,
@@ -525,5 +531,32 @@ export function previewServices(): AppServices {
       onSyncProgress: async () => () => undefined,
     },
     sources: createMemorySourceService(PREVIEW_SOURCES, PREVIEW_BOOKS),
+    updates: {
+      getSettings: async () => updates,
+      saveSettings: async (request) => (updates = { ...updates, ...request }),
+      check: async (current) => {
+        updates = { ...updates, lastCheck: Date.now() };
+        return {
+          kind: "android",
+          current,
+          update: { ...PREVIEW_RELEASE, asset: "gripread-9.9.9-arm64-v8a.apk", size: 41_000_000 },
+          releases: [PREVIEW_RELEASE],
+          viaServer: false,
+        };
+      },
+      install: async () => "started",
+      cancel: async () => ({ requested: true }),
+      onProgress: async () => () => undefined,
+    },
   };
 }
+
+/** The release the preview offers as an update. */
+const PREVIEW_RELEASE = {
+  version: "9.9.9",
+  prerelease: false,
+  publishedAt: Date.UTC(2026, 9, 14),
+  notes:
+    "## 更新内容\n\n### 新增\n\n- 预览用的示例版本。\n\n## 提交记录\n\n### ✨ 新功能\n\n- **reader：** 示例 ([abc1234](https://github.com))",
+  url: "https://github.com/Gabrlie/GripRead/releases",
+};

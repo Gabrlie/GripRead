@@ -6,6 +6,15 @@ import { finishSave, pickFiles, pickSaveTarget, pickTxtFolderFiles } from "./fil
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
 
 import type {
+  CheckUpdateRequest,
+  InstallOutcome,
+  InstallUpdateRequest,
+  SaveUpdateSettingsRequest,
+  UpdateCheck,
+  UpdateProgress,
+  UpdateSettings,
+} from "../types/generated";
+import type {
   SearchOnlineRequest,
   OnlineSearchEvent,
   ExploreKind,
@@ -762,5 +771,25 @@ export const tauriServices: AppServices = {
         return () => undefined;
       }
     },
+  },
+  updates: {
+    getSettings: () => invokeCommand<UpdateSettings>("get_update_settings"),
+    saveSettings: (request) =>
+      invokeCommand<UpdateSettings>("save_update_settings", {
+        request: request satisfies SaveUpdateSettingsRequest,
+      }),
+    check: (current) =>
+      invokeCommand<UpdateCheck>("check_update", {
+        request: { current } satisfies CheckUpdateRequest,
+      }),
+    install: (operationId, version) =>
+      invokeCommand<InstallOutcome>("install_update", {
+        request: { operationId, version } satisfies InstallUpdateRequest,
+      }),
+    cancel: (operationId) =>
+      invokeCommand<CancelResult>("cancel_source_operation", {
+        request: { operationId } satisfies ImportOperationRequest,
+      }),
+    onProgress: (listener) => listen<UpdateProgress>("update-progress", listener),
   },
 };
