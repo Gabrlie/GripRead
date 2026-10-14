@@ -31,7 +31,7 @@ import { applyTheme } from "./application/theme";
 import { Navbar } from "./components/Layout/Navbar";
 import { BookshelfView } from "./components/Bookshelf/BookshelfView";
 import { DiscoverView } from "./components/Discover/DiscoverView";
-import { SubscriptionView } from "./components/Subscription/SubscriptionView";
+import { RssView } from "./components/Rss/RssView";
 import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
@@ -97,6 +97,8 @@ function MainContent() {
     setLogViewer(() => setShowLogs(true));
     return () => setLogViewer(null);
   }, []);
+  // 订阅 refreshes on its interval while the app is open.
+  useEffect(() => runtime.feeds.start(), [runtime]);
   // Records from the GripRead server changed the library or preferences.
   useEffect(() => {
     let stop: (() => void) | undefined;
@@ -319,7 +321,7 @@ function MainContent() {
             ) : activeTab === "discover" ? (
               <DiscoverView />
             ) : activeTab === "subscription" ? (
-              <SubscriptionView />
+              <RssView />
             ) : (
               <SettingsView />
             )}

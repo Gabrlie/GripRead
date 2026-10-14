@@ -10,6 +10,7 @@ import { AppRuntime } from "./runtime";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../test/toc";
 import { DEFAULT_READING_STYLE } from "../types/generated";
 import { syncServiceMocks } from "../test/sync";
+import { feedServiceMocks } from "../test/rss";
 import { updateServiceMocks } from "../test/updates";
 import { sourceServiceMocks } from "../test/sources";
 
@@ -115,6 +116,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     sync: syncServiceMocks(),
     sources: sourceServiceMocks(),
     updates: updateServiceMocks(),
+    feeds: feedServiceMocks(false),
   };
 }
 

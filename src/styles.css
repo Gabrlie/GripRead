@@ -721,3 +721,84 @@ button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 3px;
 }
+
+/* 订阅: an article's text, cleaned by the core. */
+.rss-article {
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.rss-article :where(p, ul, ol, blockquote, pre, figure, table, dl) {
+  margin: 0 0 1em;
+}
+.rss-article :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1.4em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.rss-article h1 {
+  font-size: 1.4em;
+}
+.rss-article h2 {
+  font-size: 1.25em;
+}
+.rss-article h3 {
+  font-size: 1.1em;
+}
+.rss-article :where(ul, ol) {
+  padding-left: 1.4em;
+}
+.rss-article ul {
+  list-style: disc;
+}
+.rss-article ol {
+  list-style: decimal;
+}
+.rss-article a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rss-article img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.8em auto;
+  border-radius: 0.5rem;
+  background: var(--color-surface-container);
+}
+.rss-article img:not([src]) {
+  min-height: 6rem;
+  width: 100%;
+}
+.rss-article img.rss-image-failed {
+  display: none;
+}
+.rss-article blockquote {
+  border-left: 3px solid var(--color-outline-variant);
+  padding-left: 0.9em;
+  color: var(--color-secondary);
+}
+.rss-article pre {
+  overflow-x: auto;
+  padding: 0.8em;
+  border-radius: 0.5rem;
+  background: var(--color-surface-container);
+  font-size: 0.85em;
+}
+.rss-article code {
+  font-size: 0.9em;
+}
+.rss-article table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.rss-article :where(td, th) {
+  border: 1px solid var(--color-outline-variant);
+  padding: 0.3em 0.6em;
+}
+.rss-article figcaption {
+  font-size: 0.85em;
+  color: var(--color-secondary);
+  text-align: center;
+}

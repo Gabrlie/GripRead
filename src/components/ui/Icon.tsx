@@ -2,6 +2,10 @@ import type { SVGProps } from "react";
 import {
   ArrowLeftRight,
   ExternalLink,
+  Star,
+  Mail,
+  MailOpen,
+  CheckCheck,
   UserRound,
   HardDrive,
   BookOpen,
@@ -183,6 +187,10 @@ const icons = {
   error: CircleAlert,
   check_circle: CircleCheck,
   open_in_new: ExternalLink,
+  star: Star,
+  mark_unread: Mail,
+  mark_read: MailOpen,
+  done_all: CheckCheck,
 };
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, "fill"> {
   name: string;

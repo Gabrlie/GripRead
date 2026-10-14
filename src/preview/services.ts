@@ -3,6 +3,7 @@
  * browser with a sample novel, so layouts can be inspected and captured
  * without Tauri. Production builds never import this module.
  */
+import { memoryFeeds } from "./feeds";
 import type { AppServices } from "../services/contracts";
 import type {
   SyncServerStatus,
@@ -537,6 +538,7 @@ export function previewServices(): AppServices {
       onSyncProgress: async () => () => undefined,
     },
     sources: createMemorySourceService(PREVIEW_SOURCES, PREVIEW_BOOKS),
+    feeds: memoryFeeds(),
     updates: {
       getSettings: async () => updates,
       saveSettings: async (request) => (updates = { ...updates, ...request }),

@@ -6,6 +6,27 @@ import { finishSave, pickFiles, pickSaveTarget, pickTxtFolderFiles } from "./fil
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
 
 import type {
+  AddFeedRequest,
+  Article,
+  ArticleIdRequest,
+  ArticlePage,
+  ArticleQuery,
+  ArticleStateRequest,
+  DiscoverFeedRequest,
+  Feed,
+  FeedCandidate,
+  FeedUrlsRequest,
+  MarkAllReadRequest,
+  OpmlImportReport,
+  OpmlImportRequest,
+  RefreshFeedsRequest,
+  RssImageRequest,
+  RssRefreshEvent,
+  RssSettings,
+  SaveRssSettingsRequest,
+  UpdateFeedRequest,
+} from "../types/generated";
+import type {
   BookImage,
   BookImageRequest,
   CheckUpdateRequest,
@@ -798,5 +819,84 @@ export const tauriServices: AppServices = {
         request: { operationId } satisfies ImportOperationRequest,
       }),
     onProgress: (listener) => listen<UpdateProgress>("update-progress", listener),
+  },
+  feeds: {
+    listFeeds: () => invokeCommand<Feed[]>("list_feeds"),
+    discover: (url) =>
+      invokeCommand<FeedCandidate[]>("discover_feed", {
+        request: { url } satisfies DiscoverFeedRequest,
+      }),
+    addFeed: (url, title, group) =>
+      invokeCommand<Feed>("add_feed", {
+        request: { url, title, group } satisfies AddFeedRequest,
+      }),
+    updateFeed: (url, title, group) =>
+      invokeCommand<void>("update_feed", {
+        request: { url, title, group } satisfies UpdateFeedRequest,
+      }),
+    removeFeeds: (urls) =>
+      invokeCommand<void>("remove_feeds", { request: { urls } satisfies FeedUrlsRequest }),
+    refresh: (operationId, urls) =>
+      invokeCommand<void>("refresh_feeds", {
+        request: { operationId, urls } satisfies RefreshFeedsRequest,
+      }),
+    onRefresh: (listener) => listen<RssRefreshEvent>("rss-refresh", listener),
+    listArticles: (query) =>
+      invokeCommand<ArticlePage>("list_articles", { request: query satisfies ArticleQuery }),
+    getArticle: (id) =>
+      invokeCommand<Article>("get_article", { request: { id } satisfies ArticleIdRequest }),
+    fetchFullText: (id) =>
+      invokeCommand<string>("fetch_full_text", { request: { id } satisfies ArticleIdRequest }),
+    setArticleState: (ids, state) =>
+      invokeCommand<void>("set_article_state", {
+        request: {
+          ids,
+          read: state.read ?? null,
+          starred: state.starred ?? null,
+        } satisfies ArticleStateRequest,
+      }),
+    markAllRead: (scope) =>
+      invokeCommand<number>("mark_all_read", {
+        request: {
+          feed: scope.feed ?? null,
+          group: scope.group ?? null,
+        } satisfies MarkAllReadRequest,
+      }),
+    image: (url, referer) =>
+      invokeCommand<ArrayBuffer>("rss_image", {
+        request: { url, referer } satisfies RssImageRequest,
+      }),
+    importOpml: async () => {
+      const selected = await pickFiles({
+        filters: [{ name: "OPML", extensions: ["opml", "xml", "txt"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return null;
+      const text = await invokeCommand<string>("read_source_file", {
+        request: { path: selected } satisfies PathRequest,
+      });
+      return invokeCommand<OpmlImportReport>("import_opml", {
+        request: { text } satisfies OpmlImportRequest,
+      });
+    },
+    exportOpml: async () => {
+      const android = androidApp();
+      const path = android
+        ? null
+        : await pickSaveTarget({
+            defaultPath: "GripRead-subscriptions.opml",
+            filters: [{ name: "OPML", extensions: ["opml"] }],
+          });
+      if (!android && path === null) return false;
+      return finishSave(
+        await invokeCommand<boolean>("export_opml_file", {
+          request: { path } satisfies OptionalPathRequest,
+        }),
+      );
+    },
+    getSettings: () => invokeCommand<RssSettings>("get_rss_settings"),
+    saveSettings: (settings) =>
+      invokeCommand<RssSettings>("save_rss_settings", {
+        request: { settings } satisfies SaveRssSettingsRequest,
+      }),
   },
 };
