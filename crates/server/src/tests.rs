@@ -140,6 +140,22 @@ async fn first_run_signs_in_and_commands_need_a_session() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // A route the server lacks is a JSON error, not the page; other paths
+    // still get the page.
+    let (status, headers, body) = send(
+        &app,
+        Request::get("/api/no/such/route")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+    assert_eq!(json_of(&body)["code"], "not_found");
+    let (status, _, body) = send(&app, Request::get("/shelf").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).starts_with("<!doctype html>"));
+
     let (_, _, body) = send(
         &app,
         Request::get("/api/auth/sessions")
@@ -479,6 +495,21 @@ async fn a_device_syncs_with_a_running_server_both_ways() {
     assert_eq!(books[0]["book"]["title"], "云海");
     let on_server = books[0]["book"]["id"].as_str().unwrap().to_string();
 
+    // 云书架 on the phone lists the server's copy, which downloads whole.
+    let sync = phone.sync.clone();
+    let target = folder.0.join("download.txt");
+    let (listed, downloaded) = tokio::task::spawn_blocking(move || {
+        let listed = sync.server_books().unwrap();
+        sync.download_server_book(&listed[0].sha256, &target)
+            .unwrap();
+        (listed, std::fs::read_to_string(&target).unwrap())
+    })
+    .await
+    .unwrap();
+    assert_eq!((listed.len(), listed[0].title.as_str()), (1, "云海"));
+    assert!(!listed[0].epub && listed[0].size > 0);
+    assert!(downloaded.starts_with("第一章 开始"));
+
     // The web version renames it; the phone hears of it without asking.
     app.rpc_with(
         &token,
@@ -502,6 +533,30 @@ async fn a_device_syncs_with_a_running_server_both_ways() {
         }
     }
     assert_eq!(title, "云海新编");
+
+    // Disconnecting keeps the sign-in; connecting again needs no password.
+    let sync = phone.sync.clone();
+    let again = tokio::task::spawn_blocking(move || {
+        sync.disconnect();
+        let kept = sync.status();
+        let reconnected = sync.connect(&gripread_core::models::ConnectSyncServerRequest {
+            address: kept.address.clone(),
+            password: String::new(),
+            device_name: kept.device_name.clone(),
+        });
+        (kept, reconnected)
+    })
+    .await
+    .unwrap();
+    assert!(again.0.remembered && !again.0.connected);
+    assert_eq!(
+        (again.0.address.as_str(), again.0.device_name.as_str()),
+        (address.as_str(), "手机")
+    );
+    assert!(again.1.unwrap().connected);
+    phone.sync.forget_login();
+    phone.sync.disconnect();
+    assert!(!phone.sync.status().remembered);
 }
 
 /// Plain HTTP to a running server, for tests of the device client.

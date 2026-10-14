@@ -70,6 +70,7 @@ describe("backup and the cloud bookshelf", () => {
       positionsRestored: 1,
       bookmarksAdded: 2,
       recoveryPoint: "recovery-1.json",
+      webdavRestored: false,
       sourcesRestored: 0,
       onlineBooksRestored: 0,
     });
@@ -91,6 +92,30 @@ describe("backup and the cloud bookshelf", () => {
       name: "auto-20261011-080000.json",
     });
     expect(await screen.findByText(/2 本书不在本机/)).toBeTruthy();
+  });
+
+  it("saves switches at once without lighting the account's 保存", async () => {
+    const app = runtime();
+    const sync = app.services.sync;
+    // Saving fills in the empty device name.
+    vi.mocked(sync.saveWebDav).mockImplementation(async (request) => ({
+      ...(await sync.getWebDav()),
+      ...request,
+      password: request.password ?? "",
+      deviceName: request.deviceName || "手机",
+    }));
+    render(
+      <RuntimeContext.Provider value={app}>
+        <BackupPage onClose={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    const save = await screen.findByRole("button", { name: "保存" });
+    expect(save).toHaveProperty("disabled", true);
+    await userEvent.click(screen.getByRole("switch", { name: /^每日自动备份/ }));
+    await waitFor(() => expect(sync.saveWebDav).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true),
+    );
   });
 
   it("downloads a cloud book into the ordinary import", async () => {
@@ -121,5 +146,36 @@ describe("backup and the cloud bookshelf", () => {
     await userEvent.click(await screen.findByRole("button", { name: "下载" }));
     await waitFor(() => expect(importBatch).toHaveBeenCalledWith(["/staging/山河.txt"]));
     expect(sync.downloadCloudBook).toHaveBeenCalledWith("山河.txt");
+  });
+
+  it("lists the server's books while connected, without deleting them", async () => {
+    const app = runtime();
+    const sync = app.services.sync;
+    vi.mocked(sync.getServer).mockResolvedValue({
+      ...(await sync.getServer()),
+      connected: true,
+      address: "https://reader.example.com",
+    });
+    vi.mocked(sync.listCloudBooks).mockResolvedValue([
+      {
+        name: "a".repeat(64),
+        title: "山河",
+        author: null,
+        size: 10,
+        sourceSha256: "a".repeat(64),
+        uploadedAt: 1,
+        localBookId: null,
+        localRemoved: false,
+      },
+    ]);
+    render(
+      <RuntimeContext.Provider value={app}>
+        <CloudShelfPage onClose={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    expect(await screen.findByText(/书籍保存在服务器 reader.example.com/)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "下载" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /从云书架删除/ })).toBeNull();
+    expect(sync.getWebDav).not.toHaveBeenCalled();
   });
 });

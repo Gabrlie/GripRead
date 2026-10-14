@@ -1,6 +1,7 @@
 import type { SVGProps } from "react";
 import {
   ArrowLeftRight,
+  ExternalLink,
   UserRound,
   HardDrive,
   BookOpen,
@@ -181,6 +182,7 @@ const icons = {
   folder: Folder,
   error: CircleAlert,
   check_circle: CircleCheck,
+  open_in_new: ExternalLink,
 };
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, "fill"> {
   name: string;

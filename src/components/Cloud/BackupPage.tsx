@@ -121,19 +121,21 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     password: from.password,
     deviceName: from.deviceName.trim() || deviceFallback,
   });
-  /** Switches save at once, without the typed but unsaved account fields. */
-  const saveSwitch = (patch: Partial<Draft>) =>
-    run("switch", async () => {
-      const saved = await sync.saveWebDav(request({ ...draftOf(settings), ...patch }));
-      setSettings(saved);
-      setDraft({ ...draft, ...patch });
-    });
   const accountChanged =
     draft.url.trim() !== settings.url ||
     draft.username.trim() !== settings.username ||
     draft.password !== settings.password ||
     draft.folder.trim() !== settings.folder ||
     draft.deviceName.trim() !== settings.deviceName;
+  /** Switches save at once, without the typed but unsaved account fields. */
+  const saveSwitch = (patch: Partial<Draft>) =>
+    run("switch", async () => {
+      const saved = await sync.saveWebDav(request({ ...draftOf(settings), ...patch }));
+      setSettings(saved);
+      // Untouched account fields follow what was saved (a filled-in device
+      // name), so a switch never leaves 保存 lit.
+      setDraft(accountChanged ? { ...draft, ...patch } : { ...draftOf(saved), ...patch });
+    });
   const configured = settings.configured;
   const preview = (source: BackupSource, label: string) =>
     run("preview", async () => {
@@ -193,7 +195,8 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
           {field("子文件夹", "folder", "GripRead")}
           {field("设备名称", "deviceName", deviceFallback)}
           <p className="text-[11px] text-secondary">
-            备份文件名带上设备名称，便于区分来源。密码只保存在本机，不会写入备份。
+            备份文件名带上设备名称，便于区分来源。账号和密码只写入保存在本机的备份文件（导出到文件、本机备份文件夹），不会上传到
+            WebDAV。
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -618,6 +621,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 新建分组 {report.groupsCreated} 个，规则 {report.rulesRestored} 条
                 {report.preferencesRestored ? "，阅读设置已恢复" : ""}
               </li>
+              {report.webdavRestored && <li>WebDAV 账号已恢复</li>}
             </ul>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setReport(null)}>

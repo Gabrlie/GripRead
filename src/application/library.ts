@@ -218,12 +218,18 @@ export class LibraryStore {
       clearTimeout(this.decodeTimer);
     };
   };
+  /** Whether a book list has arrived; later refreshes replace it in place. */
+  private listed = false;
   refresh = async () => {
     const version = ++this.refreshVersion;
-    this.update({ loading: true, error: null });
+    // Only the first read shows loading; later ones keep the shelf in view.
+    this.update({ loading: !this.listed, error: null });
     try {
       const books = await this.service.listBooks();
-      if (version === this.refreshVersion) this.update({ books, loading: false });
+      if (version === this.refreshVersion) {
+        this.listed = true;
+        this.update({ books, loading: false });
+      }
     } catch (error) {
       if (version === this.refreshVersion) this.update({ loading: false, error: String(error) });
     }

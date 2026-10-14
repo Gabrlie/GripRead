@@ -184,6 +184,7 @@ const IPC_TYPES: &[&str] = &[
     "UpdateProgress",
     "InstallOutcome",
     "ConnectSyncServerRequest",
+    "ServerApiRequest",
     "SwitchRequest",
     "NetworkSettings",
     "ProxyKind",
@@ -389,6 +390,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<UpdateProgress>(&config)?;
     export_all::<InstallOutcome>(&config)?;
     export_all::<ConnectSyncServerRequest>(&config)?;
+    export_all::<ServerApiRequest>(&config)?;
     export_all::<SwitchRequest>(&config)?;
     export_all::<NetworkSettings>(&config)?;
     export_all::<ProxyKind>(&config)?;

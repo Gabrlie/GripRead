@@ -132,6 +132,37 @@ fn bare_book(source_sha256: &str) -> PortableBook {
 
 const THEME_FIELDS: [&str; 3] = ["theme", "paperTone", "oledBlack"];
 
+/// The `prefs:reading`, `prefs:theme`, and `prefs:shelf` records.
+fn preference_records(
+    mut preferences: ReaderPreferences,
+    shelf: &ShelfPreferences,
+) -> Result<Vec<(String, Value)>, AppError> {
+    strip_device_assets(&mut preferences);
+    let mut reading = serde_json::to_value(&preferences)?;
+    let mut theme = serde_json::Map::new();
+    if let Value::Object(fields) = &mut reading {
+        for field in THEME_FIELDS {
+            if let Some(value) = fields.remove(field) {
+                theme.insert(field.to_string(), value);
+            }
+        }
+    }
+    Ok(vec![
+        ("prefs:reading".into(), reading),
+        ("prefs:theme".into(), Value::Object(theme)),
+        ("prefs:shelf".into(), serde_json::to_value(shelf)?),
+    ])
+}
+
+/// Whether a preferences record holds the defaults a new library starts with.
+fn is_default_preference(key: &str, value: &Value) -> Result<bool, AppError> {
+    Ok(
+        preference_records(ReaderPreferences::default(), &ShelfPreferences::default())?
+            .iter()
+            .any(|(name, default)| name == key && default == value),
+    )
+}
+
 impl Storage {
     fn sync_excluded(&self, key: &str) -> Result<bool, AppError> {
         let settings = self.stored_webdav()?;
@@ -224,23 +255,10 @@ impl Storage {
                 records.insert(format!("source:{url}"), source.clone());
             }
         }
-        let mut preferences = self.get_settings()?;
-        strip_device_assets(&mut preferences);
-        let mut reading = serde_json::to_value(&preferences)?;
-        let mut theme = serde_json::Map::new();
-        if let Value::Object(fields) = &mut reading {
-            for field in THEME_FIELDS {
-                if let Some(value) = fields.remove(field) {
-                    theme.insert(field.to_string(), value);
-                }
-            }
-        }
-        records.insert("prefs:reading".into(), reading);
-        records.insert("prefs:theme".into(), Value::Object(theme));
-        records.insert(
-            "prefs:shelf".into(),
-            serde_json::to_value(self.get_shelf_preferences()?)?,
-        );
+        records.extend(preference_records(
+            self.get_settings()?,
+            &self.get_shelf_preferences()?,
+        )?);
         records.retain(|key, _| {
             !record_categories(key)
                 .into_iter()
@@ -409,6 +427,9 @@ impl Storage {
                 })?;
             }
             ("source", None) => self.delete_book_sources(&[rest.to_string()])?,
+            // A server that was never set up has default preferences; on
+            // first contact they do not replace this device's own.
+            ("prefs", Some(value)) if base.is_none() && is_default_preference(key, value)? => {}
             ("prefs", Some(value)) => self.apply_preferences(rest, value)?,
             ("prefs", None) => {}
             ("book", value) => self.apply_book_record(rest, value)?,

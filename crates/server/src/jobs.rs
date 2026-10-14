@@ -131,6 +131,7 @@ async fn run_update(server: &Arc<Server>, keys: Vec<String>) -> ShelfUpdateReply
         status.running = true;
     }
     let prefetch = load_settings(server).prefetch;
+    let keys_given = !keys.is_empty();
     let storage = server.core.storage.clone();
     let reply = tokio::task::spawn_blocking(move || update_books(&storage, &keys, prefetch))
         .await
@@ -153,6 +154,16 @@ async fn run_update(server: &Arc<Server>, keys: Vec<String>) -> ShelfUpdateReply
                 .count() as u32,
         };
     }
+    let added: u32 = reply.books.iter().map(|book| book.added).sum();
+    log(format!(
+        "{}：{} 本书，新章节 {added} 章",
+        if keys_given {
+            "更新书架"
+        } else {
+            "定时追更"
+        },
+        reply.books.len()
+    ));
     // The new directories and details go out as sync records.
     server.edits.notify_one();
     server.jobs.changed.notify_one();
@@ -234,6 +245,14 @@ fn update_book(
         Err(error) => {
             if let Ok(guard) = storage.lock() {
                 let _ = guard.record_online_update_error(id, &error.message);
+                let title = guard
+                    .online_record(id)
+                    .map(|record| record.title)
+                    .unwrap_or_default();
+                gripread_core::app_log::warn(
+                    "server",
+                    format!("《{title}》更新失败：{}", error.message),
+                );
             }
             return Err(error);
         }

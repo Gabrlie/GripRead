@@ -229,6 +229,8 @@ export interface SyncService {
   /** Signs in with the server's password; the first sync starts at once. */
   connectServer(request: ConnectSyncServerRequest): Promise<SyncServerStatus>;
   disconnectServer(): Promise<SyncServerStatus>;
+  /** Drops the sign-in kept after disconnecting. */
+  forgetServerLogin(): Promise<SyncServerStatus>;
   syncServerNow(): Promise<void>;
   setServerAutoDownload(on: boolean): Promise<SyncServerStatus>;
   /** The book open in the reader, which is told of other devices' positions. */

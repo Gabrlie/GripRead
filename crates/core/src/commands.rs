@@ -2204,7 +2204,7 @@ pub async fn export_backup_file(
     let app = state.clone();
     with_cloud(state, move |storage, _| {
         let guard = lock_storage(storage)?;
-        let document = guard.export_backup(&guard.stored_webdav()?.device(device_name()))?;
+        let document = guard.export_local_backup(&guard.stored_webdav()?.device(device_name()))?;
         drop(guard);
         let bytes = serde_json::to_vec(&document)?;
         let name = format!(
@@ -2222,10 +2222,17 @@ pub async fn export_backup_file(
     .await
 }
 
+/// 云书架: the WebDAV book folder, or the server's books while connected.
 pub async fn list_cloud_books(
     state: &Arc<AppState>,
 ) -> Result<Vec<crate::models::CloudBook>, AppError> {
-    webdav_paused(state)?;
+    if state.sync.connected() {
+        let sync = state.sync.clone();
+        return with_cloud(state, move |storage, _| {
+            crate::cloud::server::list(&sync, storage)
+        })
+        .await;
+    }
     with_cloud(state, |storage, _| crate::cloud::list_cloud_books(storage)).await
 }
 
@@ -2233,7 +2240,13 @@ pub async fn upload_cloud_books(
     state: &Arc<AppState>,
     request: crate::models::BookIdListRequest,
 ) -> Result<crate::models::CloudUploadReport, AppError> {
-    webdav_paused(state)?;
+    if state.sync.connected() {
+        let sync = state.sync.clone();
+        return with_cloud(state, move |storage, _| {
+            crate::cloud::server::upload(&sync, storage, &request.book_ids)
+        })
+        .await;
+    }
     with_cloud(state, move |storage, _| {
         crate::cloud::upload_books(storage, &request.book_ids, device_name())
     })
@@ -2245,7 +2258,13 @@ pub async fn download_cloud_book(
     state: &Arc<AppState>,
     request: crate::models::NameRequest,
 ) -> Result<crate::models::PickedFile, AppError> {
-    webdav_paused(state)?;
+    if state.sync.connected() {
+        let sync = state.sync.clone();
+        return with_cloud(state, move |_, root| {
+            crate::cloud::server::download(&sync, root, &request.name)
+        })
+        .await;
+    }
     with_cloud(state, move |storage, root| {
         crate::cloud::download_cloud_book(storage, root, &request.name)
     })
@@ -2256,7 +2275,11 @@ pub async fn delete_cloud_book(
     state: &Arc<AppState>,
     request: crate::models::NameRequest,
 ) -> Result<(), AppError> {
-    webdav_paused(state)?;
+    if state.sync.connected() {
+        return Err(AppError::invalid_argument(
+            "服务器上的书随书架同步，在网页版的书架上删除",
+        ));
+    }
     with_cloud(state, move |storage, _| {
         crate::cloud::delete_cloud_book(storage, &request.name)
     })

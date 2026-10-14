@@ -1,4 +1,4 @@
-import type { TransportError } from "./transport";
+import { call, native, type TransportError } from "./transport";
 
 /** Whether the server has its password, and whether this page is signed in. */
 export interface ServerStatus {
@@ -17,6 +17,14 @@ export interface ServerSession {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // The app reaches its connected server through the core, with its session.
+  if (native) {
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : null;
+    const reply = await call<T | null>("server_api", {
+      request: { method: init?.method ?? "GET", path, body },
+    });
+    return reply as T;
+  }
   const response = await fetch(path, {
     credentials: "same-origin",
     ...init,

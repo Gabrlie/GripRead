@@ -35,7 +35,8 @@ import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 
 /** 自动更新 waits this long after the last one before entering the shelf runs it again. */
-const AUTO_UPDATE_GAP = 10 * 60_000;
+/** 自动更新 runs again on returning to the app after this long. */
+const AUTO_UPDATE_GAP = 30 * 60_000;
 let lastAutoUpdate = 0;
 
 type ShelfBook = {
@@ -161,16 +162,28 @@ export function BookshelfView() {
         setUpdating(null);
       });
   };
-  // 自动更新: entering the shelf updates its online books' contents.
+  // 自动更新: the first visit to the shelf after the app starts updates its
+  // online books' contents, and so does returning to the app a while later.
   const { state: settings } = useSettings();
   const autoUpdate = settings.value ? settings.value.autoUpdateShelf !== false : null;
   const hasOnline = !state.loading && state.books.some((book) => book.online);
-  useEffect(() => {
-    if (!autoUpdate || !hasOnline || Date.now() - lastAutoUpdate < AUTO_UPDATE_GAP) return;
+  const autoUpdateRef = useRef<() => void>(() => undefined);
+  autoUpdateRef.current = () => {
+    if (!autoUpdate || !hasOnline) return;
     lastAutoUpdate = Date.now();
     handleUpdateOnline(true);
-    // Once per entry, when the setting and the shelf are known.
+  };
+  useEffect(() => {
+    if (lastAutoUpdate === 0) autoUpdateRef.current();
   }, [autoUpdate, hasOnline]);
+  useEffect(() => {
+    const returned = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastAutoUpdate >= AUTO_UPDATE_GAP)
+        autoUpdateRef.current();
+    };
+    document.addEventListener("visibilitychange", returned);
+    return () => document.removeEventListener("visibilitychange", returned);
+  }, []);
   const content = useRef<HTMLDivElement>(null);
   const pull = usePullRefresh(content, () => handleUpdateOnline());
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });

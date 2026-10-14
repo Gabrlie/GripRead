@@ -297,7 +297,7 @@ export function SettingsView() {
               <span>
                 自动更新
                 <span className="block text-[11px] text-secondary">
-                  进入书架时更新网络书籍的目录
+                  打开应用后首次进入书架，或离开半小时后回来时，更新网络书籍的目录
                 </span>
               </span>
               <Switch
@@ -330,8 +330,9 @@ export function SettingsView() {
           />
         </PageSection>
 
-        <PageSection title="备份与云端">
-          {native && (
+        {/* The web version is the server: it neither backs up nor syncs. */}
+        {native && (
+          <PageSection title="备份与云端">
             <PageLink
               icon="sync"
               label="服务器同步"
@@ -344,30 +345,30 @@ export function SettingsView() {
               }
               onClick={() => setPage("server")}
             />
-          )}
-          <PageLink
-            icon="cloud"
-            label="备份与恢复"
-            detail={
-              !webdav
-                ? undefined
-                : !webdav.configured
-                  ? "WebDAV 未设置，可备份到文件"
-                  : webdav.lastError
-                    ? `自动备份失败：${webdav.lastError}`
-                    : webdav.lastBackupAt
-                      ? `上次备份 ${formatTime(webdav.lastBackupAt)}`
-                      : "尚未备份"
-            }
-            onClick={() => setPage("backup")}
-          />
-          <PageLink
-            icon="folder_open"
-            label="云书架"
-            detail="在 WebDAV 上存放书籍文件，一键上传、完整下载"
-            onClick={() => setPage("cloud")}
-          />
-        </PageSection>
+            <PageLink
+              icon="cloud"
+              label="备份与恢复"
+              detail={
+                !webdav
+                  ? undefined
+                  : !webdav.configured
+                    ? "WebDAV 未设置，可备份到文件"
+                    : webdav.lastError
+                      ? `自动备份失败：${webdav.lastError}`
+                      : webdav.lastBackupAt
+                        ? `上次备份 ${formatTime(webdav.lastBackupAt)}`
+                        : "尚未备份"
+              }
+              onClick={() => setPage("backup")}
+            />
+            <PageLink
+              icon="folder_open"
+              label="云书架"
+              detail="在 WebDAV 上存放书籍文件，一键上传、完整下载"
+              onClick={() => setPage("cloud")}
+            />
+          </PageSection>
+        )}
 
         <PageSection title="更多">
           {!native && (

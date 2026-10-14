@@ -20,6 +20,7 @@ pub fn routes() -> Router<Arc<Server>> {
         .route("/api/sync/pull", get(pull))
         .route("/api/sync/wait", get(wait))
         .route("/api/blobs/book/{sha256}", put(put_book).get(get_book))
+        .route("/api/cloud/books", get(cloud_books))
         .route("/api/blobs/cover/{name}", put(put_cover).get(get_cover))
 }
 
@@ -103,14 +104,20 @@ async fn push(
     headers: HeaderMap,
     Json(request): Json<PushRequest>,
 ) -> Response {
-    if server.signed_in(&headers, None).is_none() {
+    let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
-    }
+    };
+    let count = request.changes.len();
     let core = server.core.clone();
     match tokio::task::spawn_blocking(move || protocol::accept_push(&core.storage, &request)).await
     {
         Ok(Ok(reply)) => {
             server.announce(reply.head);
+            if count > 0 {
+                server.log_activity(&format!("push:{}", session.id), || {
+                    format!("「{}」同步上来 {count} 条记录", session.device)
+                });
+            }
             Json(reply).into_response()
         }
         Ok(Err(error)) => app_error(error),
@@ -130,9 +137,9 @@ async fn pull(
     headers: HeaderMap,
     Query(query): Query<PullQuery>,
 ) -> Response {
-    if server.signed_in(&headers, None).is_none() {
+    let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
-    }
+    };
     let core = server.core.clone();
     let limit = query.limit.unwrap_or(protocol::PULL_LIMIT);
     let result: Result<PullReply, AppError> =
@@ -145,7 +152,14 @@ async fn pull(
                 ))
             });
     match result {
-        Ok(reply) => Json(reply).into_response(),
+        Ok(reply) => {
+            if !reply.changes.is_empty() {
+                server.log_activity(&format!("pull:{}", session.id), || {
+                    format!("「{}」取走 {} 条记录", session.device, reply.changes.len())
+                });
+            }
+            Json(reply).into_response()
+        }
         Err(error) => app_error(error),
     }
 }
@@ -214,9 +228,9 @@ async fn put_book(
     Path(sha256): Path<String>,
     body: Body,
 ) -> Response {
-    if server.signed_in(&headers, None).is_none() {
+    let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
-    }
+    };
     if !protocol::valid_sha256(&sha256) {
         return failure(StatusCode::BAD_REQUEST, "invalid_argument", "校验值无效");
     }
@@ -236,6 +250,7 @@ async fn put_book(
     match stored {
         Ok(Ok(imported)) => {
             if imported {
+                log(format!("收到「{}」上传的书籍文件", session.device));
                 let core = server.core.clone();
                 let head = tokio::task::spawn_blocking(move || {
                     core.storage
@@ -285,14 +300,35 @@ async fn receive(
     file.flush().await.map_err(|error| error.to_string())
 }
 
+/// The books whose files the server keeps: 云书架 on connected devices.
+async fn cloud_books(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
+    if server.signed_in(&headers, None).is_none() {
+        return unauthorized();
+    }
+    let core = server.core.clone();
+    let books = tokio::task::spawn_blocking(move || {
+        let guard = core
+            .storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        protocol::server_books(&guard)
+    })
+    .await;
+    match books {
+        Ok(Ok(books)) => Json(books).into_response(),
+        Ok(Err(error)) => failure(StatusCode::INTERNAL_SERVER_ERROR, "io", &error.message),
+        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, "io", &error.to_string()),
+    }
+}
+
 async fn get_book(
     State(server): State<Arc<Server>>,
     headers: HeaderMap,
     Path(sha256): Path<String>,
 ) -> Response {
-    if server.signed_in(&headers, None).is_none() {
+    let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
-    }
+    };
     let core = server.core.clone();
     let found = tokio::task::spawn_blocking(move || {
         let guard = core.storage.lock().ok()?;
@@ -301,6 +337,9 @@ async fn get_book(
     .await
     .ok()
     .flatten();
+    if found.is_some() {
+        log(format!("「{}」下载了书籍文件", session.device));
+    }
     send_file(found, "text/plain; charset=utf-8").await
 }
 

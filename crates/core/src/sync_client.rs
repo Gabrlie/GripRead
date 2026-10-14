@@ -22,10 +22,14 @@ use crate::error::{AppError, ErrorCode};
 use crate::models::{ConnectSyncServerRequest, OnlineChapter, SyncServerStatus};
 use crate::storage::{Storage, SyncChange};
 use crate::sync::{
-    self as protocol, PullReply, PushReply, PushRequest, ShelfUpdateReply, ShelfUpdateRequest,
+    self as protocol, PullReply, PushReply, PushRequest, ServerBook, ShelfUpdateReply,
+    ShelfUpdateRequest,
 };
 
 const FILE: &str = "sync-server.json";
+/// The last sign-in (address, device name, password), kept after
+/// disconnecting so connecting again needs no typing; never in backups.
+const LOGIN_FILE: &str = "sync-server-login.json";
 const QUIET: Duration = Duration::from_secs(3);
 const LONGEST: Duration = Duration::from_secs(10);
 /// A long poll waits this long on the server for another device's change.
@@ -58,6 +62,14 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+struct Login {
+    address: String,
+    device_name: String,
+    password: String,
+}
+
 #[derive(Default)]
 struct Wake {
     /// When the first and the latest change since the last round came.
@@ -78,6 +90,14 @@ struct Inner {
     syncing: AtomicBool,
     /// The book open in the reader, which gets a prompt for others' progress.
     open_book: Mutex<Option<String>>,
+    /// Rounds and the long poll keep their connections between requests.
+    agent: ureq::Agent,
+    waiter: ureq::Agent,
+    /// Covers known to be on the server this session, so a book record
+    /// changed by reading does not send its cover again.
+    covers: Mutex<std::collections::HashSet<String>>,
+    /// The app is in the background, where the system may cut connections.
+    background: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -133,6 +153,12 @@ struct Http<'a> {
     address: &'a str,
     token: &'a str,
     agent: ureq::Agent,
+}
+
+/// A request answered by the page rather than the API (a server too old to
+/// know the route) or refused for its method.
+fn unknown_route(status: u16) -> bool {
+    status == 404 || status == 405
 }
 
 impl Http<'_> {
@@ -230,6 +256,10 @@ impl SyncClient {
                 signal: Condvar::new(),
                 syncing: AtomicBool::new(false),
                 open_book: Mutex::new(None),
+                agent: agent(Duration::from_secs(120)),
+                waiter: agent(WAIT + Duration::from_secs(15)),
+                covers: Mutex::default(),
+                background: AtomicBool::new(false),
             }),
         };
         let worker = client.clone();
@@ -282,15 +312,45 @@ impl SyncClient {
 
     pub fn status(&self) -> SyncServerStatus {
         let config = self.config();
+        let login = (!config.connected()).then(|| self.login()).flatten();
         SyncServerStatus {
             connected: config.connected(),
-            address: config.address,
-            device_name: config.device_name,
+            remembered: login.is_some(),
+            address: login
+                .as_ref()
+                .map_or(config.address, |login| login.address.clone()),
+            device_name: login.map_or(config.device_name, |login| login.device_name),
             syncing: self.inner.syncing.load(Ordering::Acquire),
             last_sync: config.last_sync,
             last_error: config.last_error,
             auto_download: config.auto_download,
         }
+    }
+
+    fn login(&self) -> Option<Login> {
+        fs::read_to_string(self.inner.root.join(LOGIN_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Login>(&text).ok())
+            .filter(|login| !login.address.is_empty())
+    }
+
+    /// 忘记登录信息.
+    pub fn forget_login(&self) {
+        let _ = fs::remove_file(self.inner.root.join(LOGIN_FILE));
+        self.announce();
+    }
+
+    /// The app went to the background or came back. In the background the
+    /// system may cut connections, so failures there are retried quietly.
+    pub fn set_background(&self, background: bool) {
+        self.inner.background.store(background, Ordering::Release);
+        if !background {
+            self.now();
+        }
+    }
+
+    fn background(&self) -> bool {
+        self.inner.background.load(Ordering::Acquire)
     }
 
     fn announce(&self) {
@@ -322,22 +382,117 @@ impl SyncClient {
         if !config.connected() {
             return None;
         }
-        let mut response = agent(CHAPTER_TIMEOUT)
+        let mut response = self
+            .inner
+            .agent
             .get(format!("{}/api/sync/chapter", config.address))
+            .config()
+            .timeout_recv_response(Some(CHAPTER_TIMEOUT))
+            .build()
             .query("key", key)
             .query("url", &chapter.url)
             .query("title", &chapter.title)
             .header("Authorization", format!("Bearer {}", config.token))
             .call()
             .ok()?;
-        if response.status().as_u16() != 200 {
+        // An older server answers routes it lacks with its page.
+        let text_reply = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/plain"));
+        if response.status().as_u16() != 200 || !text_reply {
             return None;
         }
         response.body_mut().read_to_string().ok()
     }
 
-    /// 更新书架 on the server, which then syncs the new chapters here.
-    pub fn update_shelf(&self, keys: Vec<String>) -> Result<ShelfUpdateReply, AppError> {
+    /// 更新书架 on the server, which then syncs the new chapters here;
+    /// `None` when the server is too old to do it.
+    pub fn update_shelf(&self, keys: Vec<String>) -> Result<Option<ShelfUpdateReply>, AppError> {
+        let config = self.config();
+        if !config.connected() {
+            return Err(AppError::invalid_argument("未连接服务器"));
+        }
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("{}/api/jobs/update", config.address))
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&ShelfUpdateRequest { keys })?)
+            .map_err(network_error)?;
+        let mut response = agent(SHELF_UPDATE_TIMEOUT)
+            .run(request)
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if unknown_route(status) {
+            return Ok(None);
+        }
+        let text = response
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024 * 1024)
+            .read_to_string()
+            .map_err(network_error)?;
+        if !(200..300).contains(&status) {
+            return Err(failure(status, &text));
+        }
+        serde_json::from_str(&text).map(Some).map_err(network_error)
+    }
+
+    /// 服务器管理 from the app: the connected server's management routes,
+    /// sent with this device's session. Other paths are refused.
+    pub fn api(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, AppError> {
+        let config = self.config();
+        if !config.connected() {
+            return Err(AppError::invalid_argument("未连接服务器"));
+        }
+        let method = Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+            .map_err(|_| AppError::invalid_argument("unknown method"))?;
+        if !management_route(&method, path) {
+            return Err(AppError::invalid_argument("不支持的服务器接口"));
+        }
+        let timeout = if path == "/api/jobs/update" {
+            SHELF_UPDATE_TIMEOUT
+        } else {
+            Duration::from_secs(30)
+        };
+        let next_password = (path == "/api/auth/password")
+            .then(|| body.as_ref()?.get("next")?.as_str().map(str::to_string))
+            .flatten();
+        let request = Request::builder()
+            .method(method)
+            .uri(format!("{}{path}", config.address))
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Content-Type", "application/json")
+            .body(body.map(|body| body.to_string()).unwrap_or_default())
+            .map_err(network_error)?;
+        let mut response = agent(timeout).run(request).map_err(network_error)?;
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .with_config()
+            .limit(16 * 1024 * 1024)
+            .read_to_string()
+            .map_err(network_error)?;
+        if !(200..300).contains(&status) {
+            return Err(failure(status, &text));
+        }
+        // The kept sign-in follows a password changed from here.
+        if let (Some(next), Some(mut login)) = (next_password, self.login()) {
+            login.password = next;
+            if let Ok(text) = serde_json::to_string_pretty(&login) {
+                let _ = fs::write(self.inner.root.join(LOGIN_FILE), text);
+            }
+        }
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text).map_err(network_error)
+    }
+
+    /// 云书架 while connected: the books whose files the server keeps.
+    pub fn server_books(&self) -> Result<Vec<ServerBook>, AppError> {
         let config = self.config();
         if !config.connected() {
             return Err(AppError::invalid_argument("未连接服务器"));
@@ -345,13 +500,42 @@ impl SyncClient {
         let http = Http {
             address: &config.address,
             token: &config.token,
-            agent: agent(SHELF_UPDATE_TIMEOUT),
+            agent: self.inner.agent.clone(),
         };
-        http.json(
-            Method::POST,
-            "/api/jobs/update",
-            Some(serde_json::to_value(ShelfUpdateRequest { keys })?),
-        )
+        http.json(Method::GET, "/api/cloud/books", None)
+    }
+
+    /// Downloads a book the server keeps to `target`.
+    pub fn download_server_book(&self, sha256: &str, target: &Path) -> Result<(), AppError> {
+        let config = self.config();
+        if !config.connected() {
+            return Err(AppError::invalid_argument("未连接服务器"));
+        }
+        if !protocol::valid_sha256(sha256) {
+            return Err(AppError::invalid_argument("unknown server book"));
+        }
+        let http = Http {
+            address: &config.address,
+            token: &config.token,
+            agent: self.inner.agent.clone(),
+        };
+        if http.download(&format!("/api/blobs/book/{sha256}"), target)? {
+            Ok(())
+        } else {
+            Err(AppError::new(ErrorCode::NotFound, "服务器上没有这本书"))
+        }
+    }
+
+    /// Sends these books' files (by SHA-256) in the next round.
+    pub fn queue_uploads(&self, books: &[String]) {
+        self.update(|config| {
+            for sha in books {
+                if !config.uploads.contains(sha) {
+                    config.uploads.push(sha.clone());
+                }
+            }
+        });
+        self.now();
     }
 
     /// A round as soon as the worker is free (立即同步, start, foreground).
@@ -408,6 +592,13 @@ impl SyncClient {
     ) -> Result<SyncServerStatus, AppError> {
         let address = normalize_address(&request.address);
         let device_name = request.device_name.trim().to_string();
+        // An empty password reuses the kept one for the same server.
+        let password = match self.login() {
+            Some(login) if request.password.is_empty() && login.address == address => {
+                login.password
+            }
+            _ => request.password.clone(),
+        };
         let http = Http {
             address: &address,
             token: "",
@@ -416,7 +607,7 @@ impl SyncClient {
         let reply: Value = http.json(
             Method::POST,
             "/api/auth/login",
-            Some(json!({ "password": request.password, "device": device_name })),
+            Some(json!({ "password": password, "device": device_name })),
         )?;
         let token = reply["token"]
             .as_str()
@@ -427,6 +618,22 @@ impl SyncClient {
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
             .sync_forget()?;
+        let login = Login {
+            address: address.clone(),
+            device_name: device_name.clone(),
+            password,
+        };
+        if fs::write(
+            self.inner.root.join(LOGIN_FILE),
+            serde_json::to_string_pretty(&login)?,
+        )
+        .is_err()
+        {
+            crate::app_log::warn("sync", "服务器登录信息保存失败");
+        }
+        if let Ok(mut covers) = self.inner.covers.lock() {
+            covers.clear();
+        }
         self.update(|config| {
             *config = Config {
                 address,
@@ -505,6 +712,13 @@ impl SyncClient {
                             config.last_error = None;
                         });
                     }
+                    Err(error) if self.background() => {
+                        // The system cut the connection; coming back retries.
+                        crate::app_log::info(
+                            "sync",
+                            format!("后台同步中断，回到前台后重试：{}", error.message),
+                        );
+                    }
                     Err(error) => {
                         failures += 1;
                         crate::app_log::warn("sync", format!("同步失败：{}", error.message));
@@ -531,14 +745,14 @@ impl SyncClient {
         let mut failures = 0u32;
         loop {
             let config = self.config();
-            if !config.connected() {
+            if !config.connected() || self.background() {
                 std::thread::sleep(Duration::from_secs(5));
                 continue;
             }
             let http = Http {
                 address: &config.address,
                 token: &config.token,
-                agent: agent(WAIT + Duration::from_secs(15)),
+                agent: self.inner.waiter.clone(),
             };
             let path = format!("/api/sync/wait?since={}", config.cursor);
             match http.json::<Value>(Method::GET, &path, None) {
@@ -574,7 +788,7 @@ impl SyncClient {
         let http = Http {
             address: &config.address,
             token: &config.token,
-            agent: agent(Duration::from_secs(120)),
+            agent: self.inner.agent.clone(),
         };
         let mut applied = false;
         let mut books = Vec::new();
@@ -671,6 +885,16 @@ impl SyncClient {
                     http.upload(&format!("/api/blobs/cover/{name}"), &file)?;
                 }
             }
+            // The covers the server did not ask for are there.
+            if let Ok(mut known) = self.inner.covers.lock() {
+                known.extend(
+                    changes
+                        .iter()
+                        .filter_map(cover_name)
+                        .filter(|name| !reply.missing_covers.contains(name)),
+                );
+                known.extend(reply.missing_covers.iter().cloned());
+            }
         }
         for sha in self.config().uploads {
             let file = protocol::book_file(&*self.lock()?, &sha)?;
@@ -699,6 +923,7 @@ impl SyncClient {
             let bytes = fs::read(&partial)?;
             let _ = fs::remove_file(&partial);
             protocol::store_cover(&self.inner.storage, &name, &bytes)?;
+            self.knows_cover(&name);
         }
         Ok(())
     }
@@ -708,11 +933,26 @@ impl SyncClient {
         let Some(name) = cover_name(change) else {
             return Ok(());
         };
+        let known = self
+            .inner
+            .covers
+            .lock()
+            .is_ok_and(|known| known.contains(&name));
+        if known {
+            return Ok(());
+        }
         let file = protocol::cover_file(&*self.lock()?, &name)?;
         if let Some(file) = file {
             http.upload(&format!("/api/blobs/cover/{name}"), &file)?;
+            self.knows_cover(&name);
         }
         Ok(())
+    }
+
+    fn knows_cover(&self, name: &str) {
+        if let Ok(mut known) = self.inner.covers.lock() {
+            known.insert(name.to_string());
+        }
     }
 
     /// Downloads and imports a book the server has and this device lacks.
@@ -734,6 +974,18 @@ impl SyncClient {
     }
 }
 
+/// The routes 服务器管理 may use from the app.
+fn management_route(method: &Method, path: &str) -> bool {
+    match (method.as_str(), path) {
+        ("GET" | "PUT", "/api/jobs") | ("POST", "/api/jobs/update") => true,
+        ("GET", "/api/auth/sessions") | ("POST", "/api/auth/password") => true,
+        ("DELETE", path) => path.strip_prefix("/api/auth/sessions/").is_some_and(|id| {
+            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        }),
+        _ => false,
+    }
+}
+
 fn cover_name(change: &SyncChange) -> Option<String> {
     change.key.strip_prefix("book:")?;
     let cover = change.value.as_ref()?.get("cover")?;
@@ -748,6 +1000,24 @@ fn cover_name(change: &SyncChange) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_management_routes_go_through_the_app() {
+        assert!(management_route(&Method::GET, "/api/jobs"));
+        assert!(management_route(&Method::PUT, "/api/jobs"));
+        assert!(management_route(&Method::POST, "/api/jobs/update"));
+        assert!(management_route(
+            &Method::DELETE,
+            "/api/auth/sessions/0f3a-9b"
+        ));
+        assert!(!management_route(
+            &Method::DELETE,
+            "/api/auth/sessions/../rpc"
+        ));
+        assert!(!management_route(&Method::POST, "/api/rpc/delete_book"));
+        assert!(!management_route(&Method::GET, "/api/sync/pull"));
+        assert!(!management_route(&Method::POST, "/api/auth/logout"));
+    }
 
     #[test]
     fn addresses_get_a_scheme_and_lose_trailing_slashes() {

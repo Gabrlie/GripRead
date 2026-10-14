@@ -16,7 +16,7 @@ The platform answers how it updates (`Platform::update_target`): Android reports
 
 A check takes the channel's releases, ignores drafts and unparsable tags, orders them by SemVer (pre-releases before their release, so a local `X.Y.Z-alpha` build is offered the beta and release of its version), and offers the newest when it is newer than the running version. Android picks the APK of its first supported ABI and falls back to the universal APK; the download is verified against the release's `SHA256SUMS`, older downloads are removed, and a failed download through the server retries GitHub directly. Android 8 and later first need 安装未知应用 allowed for GripRead; the install then reports `needsPermission` and opens that setting. GitHub requests verify certificates, follow redirects, and use the app's or the device's proxy.
 
-关于 checks when it opens and lists the channel's recent releases as 更新日志, showing each release page's changes without its download, image, and checksum sections. With 自动检查更新 on, the app checks at most once a day at start and offers a newer, not skipped version with 立即更新, 跳过此版本, and 稍后. The web version never prompts; 关于 shows the `docker pull` line for the new image.
+关于 links the GitHub repository, its release page, and its issues (opened in the system browser through the opener plugin, or a new tab on the web). It checks when it opens and lists the channel's recent releases as 更新日志, showing each release page's changes without its download, image, and checksum sections. With 自动检查更新 on, the app checks at most once a day at start and offers a newer, not skipped version with 立即更新, 跳过此版本, and 稍后. The web version never prompts; 关于 shows the `docker pull` line for the new image.
 
 ## Acceptance
 

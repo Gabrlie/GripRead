@@ -687,11 +687,13 @@ impl Storage {
         store_book_json(&tx, book_id, book)?;
         store_chapters(&tx, book_id, chapters)?;
         let added = (chapters.len() as u32).saturating_sub(before);
+        // Growth is new chapters after the first contents: a book just added
+        // is not "still being written" because its contents arrived.
         tx.execute(
             "UPDATE online_books SET new_chapters = CASE WHEN ?2 > 0 THEN ?2 ELSE new_chapters END,
-                last_grown_at = CASE WHEN ?2 > 0 THEN ?3 ELSE last_grown_at END,
+                last_grown_at = CASE WHEN ?2 > 0 AND ?4 > 0 THEN ?3 ELSE last_grown_at END,
                 last_check_time = ?3, update_error = NULL WHERE book_id = ?1",
-            params![book_id, added, now_millis()],
+            params![book_id, added, now_millis(), before],
         )?;
         tx.commit()?;
         self.settle_pending_online_position(book_id)?;
@@ -915,11 +917,6 @@ impl Storage {
             Some(index) => self.online_chapter(book_id, index)?,
             None => None,
         };
-        let read_chapter_length = read.as_ref().and_then(|chapter| {
-            fs::read_to_string(self.online_chapter_path(book_id, chapter))
-                .ok()
-                .map(|text| text.encode_utf16().count() as u32)
-        });
         let read_chapter_title = read.map(|chapter| chapter.title).unwrap_or_default();
         Ok(Some(OnlineShelfInfo {
             book: serde_json::from_str(&json)?,
@@ -932,7 +929,6 @@ impl Storage {
             read_chapter,
             read_chapter_title,
             cached_chapters: self.cached_online_chapters(book_id)?.len() as u32,
-            read_chapter_length,
             serial: serial.then_some(true),
         }))
     }
@@ -1354,11 +1350,14 @@ mod tests {
     }
 
     #[test]
-    fn grown_contents_mark_a_serial_and_the_read_chapter_has_a_length() {
+    fn grown_contents_mark_a_serial() {
         let (_dir, mut storage) = storage();
-        let toc = chapters(&["第1章", "第2章"], "a");
-        let id = storage.add_online_book(&book("a"), &toc, true).unwrap();
+        // The first contents of a book just added are not growth.
+        let id = storage.add_online_book(&book("a"), &[], true).unwrap();
         let info = |storage: &Storage| storage.library_book(&id).unwrap().online.unwrap();
+        storage
+            .replace_online_toc(&id, &book("a"), &chapters(&["第1章", "第2章"], "a"))
+            .unwrap();
         assert_eq!(info(&storage).serial, None);
         storage
             .replace_online_toc(
@@ -1372,22 +1371,6 @@ mod tests {
         settings.serial_days = Some(0);
         storage.save_settings(&settings).unwrap();
         assert_eq!(info(&storage).serial, None);
-
-        let chapter = storage.online_chapter(&id, 1).unwrap().unwrap();
-        let path = storage.online_chapter_path(&id, &chapter);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "第2章\n正文").unwrap();
-        storage
-            .save_position_record(&ReaderLocator {
-                book_id: id.clone(),
-                content_version: chapter_version(&id, &chapter),
-                resource_id: chapter_resource(1),
-                offset: 2,
-                context_before: String::new(),
-                context_after: String::new(),
-            })
-            .unwrap();
-        assert_eq!(info(&storage).read_chapter_length, Some(6));
     }
 
     #[test]

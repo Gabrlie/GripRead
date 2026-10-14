@@ -114,6 +114,31 @@ pub struct Server {
     /// The data folder (`jobs.json` keeps 定时追更's settings).
     data: PathBuf,
     jobs: jobs::Jobs,
+    /// When each device's sync activity was last logged.
+    activity: Mutex<std::collections::HashMap<String, std::time::Instant>>,
+}
+
+/// An entry in the server's log (the web version's 日志).
+fn log(message: impl AsRef<str>) {
+    gripread_core::app_log::info("server", message);
+}
+
+impl Server {
+    /// Logs a device's sync activity, at most once a minute per device and kind.
+    fn log_activity(&self, key: &str, message: impl FnOnce() -> String) {
+        let now = std::time::Instant::now();
+        let Ok(mut seen) = self.activity.lock() else {
+            return;
+        };
+        if seen
+            .get(key)
+            .is_some_and(|at| now.duration_since(*at) < std::time::Duration::from_secs(60))
+        {
+            return;
+        }
+        seen.insert(key.to_string(), now);
+        log(message());
+    }
 }
 
 /// Opens the data folder and builds the routes.
@@ -144,7 +169,9 @@ pub fn app(config: Config) -> Result<Router, String> {
         edits: edits.clone(),
         data: config.data.clone(),
         jobs: jobs::Jobs::default(),
+        activity: Mutex::default(),
     });
+    log(format!("服务器已启动（{}）", env!("CARGO_PKG_VERSION")));
     sync::watch_edits(server.clone(), edits);
     sync::daily_backups(server.clone());
     jobs::schedule(server.clone());
@@ -163,6 +190,8 @@ pub fn app(config: Config) -> Result<Router, String> {
         .merge(sync::routes())
         .merge(update::routes())
         .merge(jobs::routes())
+        // An API route this server lacks is an error, not the page.
+        .route("/api/{*rest}", axum::routing::any(unknown_api))
         .layer(axum::extract::DefaultBodyLimit::max(64 << 20))
         .with_state(server);
     Ok(match config.web {
@@ -175,6 +204,10 @@ pub fn app(config: Config) -> Result<Router, String> {
         }
         None => api,
     })
+}
+
+async fn unknown_api() -> Response {
+    failure(StatusCode::NOT_FOUND, "not_found", "服务器没有这个接口")
 }
 
 fn clear_old_uploads(uploads: &std::path::Path) {
@@ -300,7 +333,10 @@ async fn setup(
         .auth
         .setup(&credentials.password, &credentials.device)
     {
-        Ok(token) => signed_in_reply(&headers, token),
+        Ok(token) => {
+            log(format!("设置了访问密码，「{}」已登录", credentials.device));
+            signed_in_reply(&headers, token)
+        }
         Err(error) => auth_error(error),
     }
 }
@@ -311,6 +347,7 @@ async fn login(
     Json(credentials): Json<Credentials>,
 ) -> Response {
     let auth_server = server.clone();
+    let device = credentials.device.clone();
     let result = tokio::task::spawn_blocking(move || {
         auth_server
             .auth
@@ -318,8 +355,16 @@ async fn login(
     })
     .await;
     match result {
-        Ok(Ok(token)) => signed_in_reply(&headers, token),
-        Ok(Err(error)) => auth_error(error),
+        Ok(Ok(token)) => {
+            log(format!("「{device}」已登录"));
+            signed_in_reply(&headers, token)
+        }
+        Ok(Err(error)) => {
+            if matches!(error, AuthError::BadPassword | AuthError::TooMany) {
+                gripread_core::app_log::warn("server", format!("「{device}」登录失败：密码不对"));
+            }
+            auth_error(error)
+        }
         Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, "io", &error.to_string()),
     }
 }
@@ -327,6 +372,7 @@ async fn login(
 async fn logout(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
     if let Some(session) = server.signed_in(&headers, None) {
         let _ = server.auth.revoke(&session.id);
+        log(format!("「{}」已退出登录", session.device));
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
@@ -354,7 +400,13 @@ async fn change_password(
         .auth
         .change_password(&change.current, &change.next, &session.id)
     {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            log(format!(
+                "「{}」修改了访问密码，其他设备需要重新登录",
+                session.device
+            ));
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(error) => auth_error(error),
     }
 }
@@ -385,8 +437,17 @@ async fn revoke(
     if server.signed_in(&headers, None).is_none() {
         return unauthorized();
     }
+    let device = server
+        .auth
+        .sessions()
+        .into_iter()
+        .find(|session| session.id == id)
+        .map(|session| session.device);
     match server.auth.revoke(&id) {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            log(format!("移除了设备「{}」", device.unwrap_or_default()));
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => failure(StatusCode::NOT_FOUND, "not_found", "没有这台设备"),
         Err(error) => auth_error(error),
     }

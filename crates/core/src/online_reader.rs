@@ -89,9 +89,14 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
         let path = guard.online_chapter_path(book_id, &chapter);
         (chapter, path)
     };
-    // A kept chapter needs no more than its file.
+    // A kept chapter needs no more than its file. A web page kept in its
+    // place (an older server answered the relay with its page) is dropped.
     if let Ok(text) = fs::read_to_string(&path) {
-        return Ok(text);
+        if !is_web_page(&text) {
+            return Ok(text);
+        }
+        let _ = fs::remove_file(&path);
+        crate::storage::forget_cached_chapters(book_id);
     }
     if chapter.is_volume && chapter.url.trim().is_empty() {
         return Ok(String::new());
@@ -111,7 +116,7 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     // A connected server may have it already, or reach the source when
     // this device cannot.
     if let Some((relay, key)) = relay {
-        if let Some(text) = (relay.0)(&key, &chapter) {
+        if let Some(text) = (relay.0)(&key, &chapter).filter(|text| !is_web_page(text)) {
             write_cache(&path, &text)?;
             crate::storage::mark_chapter_cached(book_id, &chapter);
             return Ok(text);
@@ -145,6 +150,13 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     write_cache(&path, &content.text)?;
     crate::storage::mark_chapter_cached(book_id, &chapter);
     Ok(content.text)
+}
+
+/// Text that is an HTML page rather than a chapter.
+pub(crate) fn is_web_page(text: &str) -> bool {
+    let start: String = text.trim_start().chars().take(15).collect();
+    let start = start.to_ascii_lowercase();
+    start.starts_with("<!doctype html") || start.starts_with("<html")
 }
 
 fn write_cache(path: &Path, text: &str) -> Result<(), AppError> {
@@ -753,6 +765,41 @@ mod tests {
         assert_eq!(asked.lock().unwrap().len(), 1);
         // When the server has nothing, the source is asked (and fails here).
         assert!(raw_chapter(&storage, &id, 2).is_err());
+    }
+
+    #[test]
+    fn a_web_page_is_never_kept_as_a_chapter() {
+        let base = start(|_: &Request| Response::not_found());
+        let (_dir, storage, id) = library(&base);
+        let page = "<!doctype html>\n<html lang=\"zh-Hans\"><head></head></html>";
+        // A page kept by an older build is dropped and the chapter fetched again.
+        let path = {
+            let guard = storage.lock().unwrap();
+            let chapter = guard.online_chapter(&id, 1).unwrap().unwrap();
+            guard.online_chapter_path(&id, &chapter)
+        };
+        write_cache(&path, page).unwrap();
+        storage
+            .lock()
+            .unwrap()
+            .set_chapter_relay(crate::storage::ChapterRelay(Arc::new(
+                move |_: &str, chapter: &OnlineChapter| {
+                    Some(if chapter.url == "/c/1.html" {
+                        "正文".to_string()
+                    } else {
+                        page.to_string()
+                    })
+                },
+            )));
+        assert_eq!(raw_chapter(&storage, &id, 1).unwrap(), "正文");
+        // A relay answering with a page is not believed.
+        assert!(raw_chapter(&storage, &id, 2).is_err());
+        let path = {
+            let guard = storage.lock().unwrap();
+            let chapter = guard.online_chapter(&id, 2).unwrap().unwrap();
+            guard.online_chapter_path(&id, &chapter)
+        };
+        assert!(!path.exists());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { JobsSection } from "./ServerJobsSection";
 import { serverAccount, type ServerSession } from "../../services/server";
+import { native } from "../../services/transport";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
@@ -16,8 +17,9 @@ function seen(at: number): string {
 }
 
 /**
- * 服务器账号 in the web version: 定时追更, the devices signed in (设备管理),
- * 修改密码, and 退出登录.
+ * 服务器账号 in the web version, and 服务器管理 in the app while connected:
+ * 定时追更, the devices signed in (设备管理), 修改密码, and (on the web)
+ * 退出登录.
  */
 export function ServerAccountPage({ onClose }: { onClose: () => void }) {
   const [sessions, setSessions] = useState<ServerSession[] | null>(null);
@@ -63,7 +65,7 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
     );
 
   return (
-    <FullPage label="服务器账号" onClose={onClose}>
+    <FullPage label={native ? "服务器管理" : "服务器账号"} onClose={onClose}>
       <JobsSection />
       <PageSection title="已登录的设备">
         {sessions === null && <p className="p-4 text-sm text-secondary">正在读取…</p>}
@@ -114,15 +116,18 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
         </div>
       </PageSection>
 
-      <PageSection>
-        <button
-          type="button"
-          onClick={logout}
-          className="w-full px-4 py-3 text-left text-sm text-error"
-        >
-          退出登录
-        </button>
-      </PageSection>
+      {/* The app leaves the server with 断开 on 服务器同步. */}
+      {!native && (
+        <PageSection>
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full px-4 py-3 text-left text-sm text-error"
+          >
+            退出登录
+          </button>
+        </PageSection>
+      )}
     </FullPage>
   );
 }

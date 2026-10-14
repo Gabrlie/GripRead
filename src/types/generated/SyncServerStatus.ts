@@ -8,4 +8,9 @@ export type SyncServerStatus = { connected: boolean, address: string, deviceName
 /**
  * 自动下载服务器上的书.
  */
-autoDownload: boolean, };
+autoDownload: boolean, 
+/**
+ * Not connected, but the last sign-in is kept: `address` and
+ * `device_name` are its, and connecting may leave the password empty.
+ */
+remembered: boolean, };

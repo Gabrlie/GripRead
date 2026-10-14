@@ -235,18 +235,22 @@ describe("shelf group request ordering", () => {
 });
 
 describe("shelf chapter snapshots", () => {
-  it("reports a per-book failure, retains known chapters, and clears the error on retry", async () => {
+  it("keeps unchanged contents between loads, and reports a failed read until a retry", async () => {
     const { reader, store } = setup();
     await store.load([entry]);
     const advanced = { ...entry, locator: chapters[1].locator };
-    vi.mocked(reader.listToc).mockRejectedValueOnce(new Error("content changed"));
     await store.load([advanced]);
+    // The same text needs no new listing; the labels follow the position.
+    expect(reader.listToc).toHaveBeenCalledOnce();
     expect(store.getSnapshot()).toMatchObject({
       groups: [original],
       error: null,
       loading: false,
       chapters: { book: { current: "第二章", latest: "第二章" } },
     });
+    store.invalidateChapterCache(entry.book.id);
+    vi.mocked(reader.listToc).mockRejectedValueOnce(new Error("content changed"));
+    await store.load([advanced]);
     expect(store.getSnapshot().chapterErrors.book).toContain("content changed");
     await store.load([advanced]);
     expect(store.getSnapshot().chapterErrors).toEqual({});
@@ -279,6 +283,8 @@ describe("shelf chapter snapshots", () => {
     vi.mocked(reader.listToc).mockReturnValueOnce(
       old.promise.then((entries) => tocListing(entries)),
     );
+    // A rule change makes the next load read the contents again.
+    store.invalidateChapterCache(entry.book.id);
     const staleLoad = store.load([entry]);
     store.invalidateChapterCache(entry.book.id);
     vi.mocked(reader.listToc).mockRejectedValueOnce(new Error("new directory unavailable"));
@@ -358,14 +364,15 @@ describe("读完", () => {
     locator: { ...entry.locator!, offset },
   });
 
-  it("waits for the end of a local book's last chapter", () => {
+  it("finishes a local book in its last chapter", () => {
     expect(automaticState(local(6000), toc)).toBe("reading");
-    // The last chapter's start leaves it to be read.
-    expect(automaticState({ ...local(9000), totalLength: 20_000 }, toc)).toBe("reading");
-    expect(automaticState(local(9850), toc)).toBe("finished");
+    expect(automaticState({ ...local(9000), totalLength: 20_000 }, toc)).toBe("finished");
+    // Without chapters, only the end counts.
+    expect(automaticState(local(6000), [toc[0]])).toBe("reading");
+    expect(automaticState(local(9850), [])).toBe("finished");
   });
 
-  it("finishes an online book through its last chapter unless it is still being written", () => {
+  it("finishes an online book in its last chapter unless it is still being written", () => {
     const online = (offset: number, serial?: boolean) =>
       ({
         ...entry,
@@ -373,12 +380,16 @@ describe("读完", () => {
         online: {
           totalChapters: 10,
           readChapter: 9,
-          readChapterLength: 3000,
           ...(serial ? { serial } : {}),
         },
       }) as unknown as LibraryBook;
-    expect(automaticState(online(100), null)).toBe("reading");
-    expect(automaticState(online(2900), null)).toBe("finished");
+    expect(automaticState(online(100), null)).toBe("finished");
+    expect(
+      automaticState(
+        { ...online(100), online: { totalChapters: 10, readChapter: 8 } } as never,
+        null,
+      ),
+    ).toBe("reading");
     expect(automaticState(online(2900, true), null)).toBe("reading");
   });
 });

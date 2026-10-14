@@ -34,10 +34,6 @@ readChapter: number | null, readChapterTitle: string,
  */
 cachedChapters: number, 
 /**
- * The kept text length of the chapter being read, for 读完.
- */
-readChapterLength?: number, 
-/**
  * The contents grew within the 连载判定 range: still being written.
  */
 serial?: boolean, };

@@ -903,14 +903,21 @@ fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<St
         let keys = keyed.iter().map(|(key, _)| key.clone()).collect();
         let reply = tokio::task::spawn_blocking(move || {
             let reply = sync.update_shelf(keys)?;
-            sync.sync_and_wait(Duration::from_secs(60));
+            if reply.is_some() {
+                sync.sync_and_wait(Duration::from_secs(60));
+            }
             Ok::<_, AppError>(reply)
         })
         .await
         .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))
         .and_then(|reply| reply);
         let reply = match reply {
-            Ok(reply) => reply,
+            Ok(Some(reply)) => reply,
+            Ok(None) => {
+                crate::app_log::info("sync", "服务器版本较旧，不能代为更新书架，在本机更新");
+                let _ = update_here(&state, operation_id, ids).await;
+                return;
+            }
             Err(error) => {
                 crate::app_log::warn(
                     "sync",

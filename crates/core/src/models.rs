@@ -520,10 +520,6 @@ pub struct OnlineShelfInfo {
     pub read_chapter_title: String,
     /// Chapters whose text is kept on the device.
     pub cached_chapters: u32,
-    /// The kept text length of the chapter being read, for 读完.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub read_chapter_length: Option<u32>,
     /// The contents grew within the 连载判定 range: still being written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1355,6 +1351,9 @@ pub struct RestoreReport {
     pub online_books_restored: u32,
     /// The local recovery point written before restoring.
     pub recovery_point: String,
+    /// The backup file's WebDAV account was taken (this device had none).
+    #[serde(default)]
+    pub webdav_restored: bool,
 }
 
 /// Where a backup comes from or goes to.
@@ -2101,6 +2100,21 @@ pub struct SyncServerStatus {
     pub last_error: Option<String>,
     /// 自动下载服务器上的书.
     pub auto_download: bool,
+    /// Not connected, but the last sign-in is kept: `address` and
+    /// `device_name` are its, and connecting may leave the password empty.
+    pub remembered: bool,
+}
+
+/// A request to the connected server's management API (服务器管理 in the
+/// app): 定时追更, signed-in devices, and the password.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerApiRequest {
+    pub method: String,
+    pub path: String,
+    #[serde(default)]
+    #[ts(type = "unknown")]
+    pub body: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

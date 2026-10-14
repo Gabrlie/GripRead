@@ -329,11 +329,10 @@ pub fn automatic_backup(
     };
     let result = (|| {
         if let Some(folder) = &settings.local_folder {
-            write_local(
-                folder,
-                LOCAL_AUTOMATIC_NAME,
-                &serde_json::to_vec(&document)?,
-            )?;
+            // The copy kept on the device carries the WebDAV account.
+            let mut local = document.clone();
+            local.webdav = lock(storage)?.portable_webdav()?;
+            write_local(folder, LOCAL_AUTOMATIC_NAME, &serde_json::to_vec(&local)?)?;
         }
         if settings.configured() {
             let dav = client(&settings)?;
@@ -1356,5 +1355,92 @@ mod tests {
             ("20261011-080000".into(), Some("书房 平板".into()))
         );
         assert_eq!(backup_parts("auto-20261011-080000.json").1, None);
+    }
+}
+
+/// 云书架 while connected to the GripRead server: the books whose files the
+/// server keeps stand in for the WebDAV book folder, named by SHA-256.
+pub mod server {
+    use super::*;
+    use crate::sync_client::SyncClient;
+
+    pub fn list(sync: &SyncClient, storage: &Mutex<Storage>) -> Result<Vec<CloudBook>, AppError> {
+        let books = sync.server_books()?;
+        let guard = lock(storage)?;
+        books
+            .into_iter()
+            .map(|book| {
+                let local = guard.local_book_for_source(&book.sha256)?;
+                Ok(CloudBook {
+                    name: book.sha256.clone(),
+                    title: book.title,
+                    author: book.author,
+                    size: book.size,
+                    source_sha256: Some(book.sha256),
+                    uploaded_at: Some(book.added_at),
+                    local_book_id: local.as_ref().map(|(id, _)| id.clone()),
+                    local_removed: local.is_some_and(|(_, removed)| removed),
+                })
+            })
+            .collect()
+    }
+
+    /// Sends the books (all local shelf books when empty) the server lacks
+    /// in the next sync round.
+    pub fn upload(
+        sync: &SyncClient,
+        storage: &Mutex<Storage>,
+        book_ids: &[String],
+    ) -> Result<CloudUploadReport, AppError> {
+        let on_server: HashSet<String> = sync
+            .server_books()?
+            .into_iter()
+            .map(|book| book.sha256)
+            .collect();
+        let wanted: Vec<String> = lock(storage)?
+            .shelf_book_sources()?
+            .into_iter()
+            .filter(|(id, _)| book_ids.is_empty() || book_ids.contains(id))
+            .map(|(_, sha)| sha)
+            .collect();
+        let (present, missing): (Vec<String>, Vec<String>) =
+            wanted.into_iter().partition(|sha| on_server.contains(sha));
+        sync.queue_uploads(&missing);
+        Ok(CloudUploadReport {
+            uploaded: missing.len() as u32,
+            skipped: present.len() as u32,
+            ..CloudUploadReport::default()
+        })
+    }
+
+    /// Downloads a server book for the ordinary import.
+    pub fn download(
+        sync: &SyncClient,
+        data_root: &Path,
+        sha256: &str,
+    ) -> Result<PickedFile, AppError> {
+        let book = sync
+            .server_books()?
+            .into_iter()
+            .find(|book| book.sha256 == sha256)
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "服务器上没有这本书"))?;
+        let directory = data_root
+            .join("document-staging")
+            .join(format!("server-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory)?;
+        let file = format!(
+            "{}.{}",
+            file_name(&book.title),
+            if book.epub { "epub" } else { "txt" }
+        );
+        let path = directory.join(&file);
+        if let Err(error) = sync.download_server_book(sha256, &path) {
+            let _ = fs::remove_dir_all(&directory);
+            return Err(error);
+        }
+        Ok(PickedFile {
+            path: path.to_string_lossy().into_owned(),
+            name: file,
+        })
     }
 }

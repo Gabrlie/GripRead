@@ -33,6 +33,42 @@ pub struct PushReply {
     pub missing_covers: Vec<String>,
 }
 
+/// A book file the server keeps, as 云书架 lists it while connected
+/// (`GET /api/cloud/books`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerBook {
+    pub sha256: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub size: u64,
+    pub added_at: i64,
+    pub epub: bool,
+}
+
+/// The shelf's local books whose files the library keeps.
+pub fn server_books(storage: &Storage) -> Result<Vec<ServerBook>, AppError> {
+    let mut books = Vec::new();
+    for (book_id, sha256) in storage.shelf_book_sources()? {
+        let Ok((path, _, _)) = storage.book_source_file(&book_id) else {
+            continue;
+        };
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue;
+        };
+        let book = storage.get_book(&book_id)?;
+        books.push(ServerBook {
+            sha256,
+            title: book.title,
+            author: book.author,
+            size: metadata.len(),
+            added_at: book.created_at,
+            epub: crate::epub::is_epub_file(&path),
+        });
+    }
+    Ok(books)
+}
+
 /// 更新书架 through the server (`POST /api/jobs/update`): the books by
 /// their sync keys, all of the server's updatable books when empty.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

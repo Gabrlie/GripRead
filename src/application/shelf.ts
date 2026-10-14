@@ -115,10 +115,10 @@ const LAST_PAGE_UNITS = 2_000;
 
 /**
  * The reading state derived from progress: unread without a position,
- * finished once the end is reached, reading otherwise. The end is the last
- * chapter read through (98% of a local book, or within its last page; 90%
- * of an online book's last chapter). An online book still being written
- * (its contents grew within the 连载判定 range) stays in 在读.
+ * finished once the last chapter is reached, reading otherwise. A book
+ * without chapters ends at 98% or within its last page. An online book
+ * still being written (its contents grew within the 连载判定 range) stays
+ * in 在读.
  */
 export function automaticState(book: LibraryBook, entries: TocEntry[] | null): ShelfState {
   const saved = book.locator;
@@ -127,9 +127,7 @@ export function automaticState(book: LibraryBook, entries: TocEntry[] | null): S
     const online = book.online;
     const last = online.totalChapters - 1;
     const inLast = last >= 0 && (online.readChapter ?? -1) >= last;
-    const length = online.readChapterLength ?? 0;
-    const through = length > 0 && saved.offset >= length * 0.9;
-    return inLast && through && !online.serial ? "finished" : "reading";
+    return inLast && !online.serial ? "finished" : "reading";
   }
   if (!saved || saved.contentVersion !== book.book.contentVersion)
     return saved ? "reading" : "unread";
@@ -137,11 +135,12 @@ export function automaticState(book: LibraryBook, entries: TocEntry[] | null): S
     (entry) => entry.locator.contentVersion === book.book.contentVersion,
   );
   const last = current.at(-1);
-  const inLast = current.length <= 1 || (last !== undefined && saved.offset >= last.locator.offset);
+  if (current.length > 1 && last !== undefined)
+    return saved.offset >= last.locator.offset ? "finished" : "reading";
   const total = book.totalLength ?? 0;
   const atEnd =
     total > 0 && (saved.offset / total >= 0.98 || total - saved.offset <= LAST_PAGE_UNITS);
-  return inLast && atEnd ? "finished" : "reading";
+  return atEnd ? "finished" : "reading";
 }
 
 /**
@@ -205,7 +204,8 @@ export class ShelfStore {
   }
   load = async (books: LibraryBook[]) => {
     const revision = ++this.chapterRevision;
-    this.update({ loading: true });
+    // Labels already shown stay while they are worked out again.
+    if (Object.keys(this.snapshot.chapters).length === 0) this.update({ loading: true });
     const groups = this.enqueueGroups(() => this.refreshGroups()).catch(() => {
       // refreshGroups exposes failures; loading the shelf preserves its data.
     });
@@ -319,6 +319,10 @@ export class ShelfStore {
           // An online book's labels need no contents listing.
           if (book.online) return { book, entries: [] as TocEntry[], error: null };
           if (book.asset?.availability === "missing") throw new Error("文件缺失，无法读取目录");
+          // Unchanged text keeps its contents from the last load.
+          const kept = this.chapterCache.get(book.book.id);
+          if (kept?.contentVersion === book.book.contentVersion)
+            return { book, entries: kept.entries, error: null };
           const { entries } = await this.reader.listToc(book.book.id);
           return { book, entries, error: null };
         } catch (error) {

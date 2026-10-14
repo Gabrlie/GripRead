@@ -5,7 +5,9 @@ import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
+import { ServerAccountPage } from "./ServerAccountPage";
 import { toast } from "../ui/toast";
 
 function when(at: number | null | undefined): string {
@@ -28,11 +30,20 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [device, setDevice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [managing, setManaging] = useState(false);
 
   useEffect(() => {
     let active = true;
     let stop: (() => void) | undefined;
-    void service.getServer().then((value) => active && setStatus(value));
+    void service.getServer().then((value) => {
+      if (!active) return;
+      setStatus(value);
+      // The last sign-in is kept on this device.
+      if (value.remembered) {
+        setAddress(value.address);
+        if (value.deviceName) setDevice(value.deviceName);
+      }
+    });
     void service.getWebDav().then(
       (webdav) => active && setDevice((current) => current || webdav.deviceName),
       () => undefined,
@@ -69,6 +80,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
       </FullPage>
     );
 
+  const saved = status.remembered && address.trim() === status.address;
   if (!status.connected)
     return (
       <FullPage label="服务器同步" onClose={onClose}>
@@ -99,7 +111,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
             <Input
               aria-label="密码"
               type="password"
-              placeholder="服务器的访问密码"
+              placeholder={saved ? "使用保存的密码" : "服务器的访问密码"}
               value={password}
               onChange={(change) => setPassword(change.target.value)}
             />
@@ -109,11 +121,36 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
               value={device}
               onChange={(change) => setDevice(change.target.value)}
             />
-            <Button type="submit" size="sm" disabled={busy || !address.trim() || !password}>
-              {busy ? "连接中…" : "连接"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="submit"
+                size="sm"
+                disabled={busy || !address.trim() || (!password && !saved)}
+              >
+                {busy ? "连接中…" : "连接"}
+              </Button>
+              {status.remembered && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const value = await service.forgetServerLogin();
+                      setAddress("");
+                      setPassword("");
+                      return value;
+                    }, "已忘记登录信息")
+                  }
+                >
+                  忘记登录信息
+                </Button>
+              )}
+            </div>
             <p className="text-[11px] text-secondary">
-              连接后书架、进度、书签、规则、书源和设置都通过服务器同步，WebDAV 暂停，断开后恢复。
+              连接后书架、进度、书签、规则、书源和设置都通过服务器同步，WebDAV
+              暂停，断开后恢复。地址、设备名和密码保存在本机，不会进入备份。
             </p>
           </form>
         </PageSection>
@@ -146,7 +183,21 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
             onCheckedChange={(on) => run(() => service.setServerAutoDownload(on))}
           />
         </label>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm"
+          onClick={() => setManaging(true)}
+        >
+          <span>
+            服务器管理
+            <span className="block text-[11px] text-secondary">
+              定时追更、已登录的设备、修改密码
+            </span>
+          </span>
+          <Icon name="chevron_right" size={18} className="text-secondary" />
+        </button>
       </PageSection>
+      {managing && <ServerAccountPage onClose={() => setManaging(false)} />}
       <PageSection>
         <div className="flex gap-2 p-4">
           <Button

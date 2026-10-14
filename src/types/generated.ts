@@ -182,6 +182,7 @@ export type { InstallUpdateRequest } from "./generated/InstallUpdateRequest";
 export type { UpdateProgress } from "./generated/UpdateProgress";
 export type { InstallOutcome } from "./generated/InstallOutcome";
 export type { ConnectSyncServerRequest } from "./generated/ConnectSyncServerRequest";
+export type { ServerApiRequest } from "./generated/ServerApiRequest";
 export type { SwitchRequest } from "./generated/SwitchRequest";
 export type { NetworkSettings } from "./generated/NetworkSettings";
 export type { ProxyKind } from "./generated/ProxyKind";

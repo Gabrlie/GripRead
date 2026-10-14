@@ -49,6 +49,7 @@ fn request_exit(app: tauri::AppHandle) {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(plugins::documents())
         .plugin(plugins::downloads())
         .plugin(webview::plugin())
@@ -115,6 +116,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building GripRead")
         .run(|app, event| {
+            // Android may cut connections while the app is away.
+            #[cfg(mobile)]
+            if let tauri::RunEvent::WindowEvent { event, .. } = &event {
+                match event {
+                    tauri::WindowEvent::Suspended => {
+                        app.state::<Arc<AppState>>().sync.set_background(true);
+                    }
+                    tauri::WindowEvent::Resumed => {
+                        app.state::<Arc<AppState>>().sync.set_background(false);
+                    }
+                    _ => {}
+                }
+            }
             if let tauri::RunEvent::Resumed = event {
                 let state = app.state::<Arc<AppState>>();
                 let root = state.data_root.clone();

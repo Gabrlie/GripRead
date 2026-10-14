@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { version } from "../../../package.json";
 import { useRuntime } from "../../application/runtime";
+import { openExternal } from "../../services/external";
 import type { UpdateChannel, UpdateCheck, UpdateSettings } from "../../types/generated";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
@@ -10,6 +11,14 @@ import { Switch } from "../ui/switch";
 import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
 import { useUpdateInstall } from "../Updates/use-update-install";
+
+const REPOSITORY = "https://github.com/Gabrlie/GripRead";
+
+const LINKS: [string, string, string][] = [
+  ["code", "GitHub", REPOSITORY],
+  ["download", "发布页", `${REPOSITORY}/releases`],
+  ["bug_report", "反馈问题", `${REPOSITORY}/issues`],
+];
 
 /** The version shown in settings and here. */
 export const APP_VERSION = version;
@@ -92,6 +101,25 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
             ))}
           </ul>
         </div>
+      </PageSection>
+      <PageSection title="项目">
+        {LINKS.map(([icon, label, url]) => (
+          <button
+            key={label}
+            type="button"
+            className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm"
+            onClick={() => void openExternal(url).catch(() => undefined)}
+          >
+            <Icon name={icon} size={18} className="text-secondary shrink-0" />
+            <span className="flex-1">
+              {label}
+              <span className="block text-[11px] text-secondary break-all">
+                {url.replace("https://", "")}
+              </span>
+            </span>
+            <Icon name="open_in_new" size={16} className="text-secondary shrink-0" />
+          </button>
+        ))}
       </PageSection>
       <PageSection title="更新">
         <div className="px-4 py-3 space-y-3">

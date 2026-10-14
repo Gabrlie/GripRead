@@ -53,7 +53,7 @@ pub use portable::{
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 
-const CURRENT_SCHEMA_VERSION: i64 = 21;
+const CURRENT_SCHEMA_VERSION: i64 = 22;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1093,6 +1093,20 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (21, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 22 {
+            // Contents loaded right after adding a book were counted as
+            // growth, which kept new books 连载 for the whole range.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "UPDATE online_books SET last_grown_at = NULL
+                 WHERE last_grown_at IS NOT NULL AND last_grown_at - created_at < 600000;",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (22, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -6919,7 +6933,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 21);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
     }
 
     #[test]
@@ -8045,6 +8059,57 @@ mod tests {
             storage.read_reader_font(&asset.id).unwrap_err().code,
             ErrorCode::NotFound
         );
+    }
+
+    #[test]
+    fn local_backups_carry_reading_settings_and_the_webdav_account() {
+        let root = TestRoot::new();
+        let first = Storage::open(&root.0.join("first")).unwrap();
+        let mut preferences = first.get_settings().unwrap();
+        preferences.font_size = 23.0;
+        preferences.line_height = 2.1;
+        preferences.page_turn_effect = crate::models::PageTurnEffect::Cover;
+        preferences.style.indent = 4;
+        preferences.style.letter_spacing = 0.12;
+        preferences.style.selected = 1;
+        preferences.style.presets[1].text = "#123456".into();
+        preferences.style.font_asset_id = Some("font-here".into());
+        first.save_settings(&preferences).unwrap();
+        let mut account = first.stored_webdav().unwrap();
+        account.url = "https://dav.example.com/dav/".into();
+        account.username = "reader".into();
+        account.password = "secret".into();
+        first.save_stored_webdav(&account).unwrap();
+
+        // Backups sent to WebDAV never carry the account; kept files do.
+        assert!(first.export_backup("Linux").unwrap().webdav.is_none());
+        let document = first.export_local_backup("Linux").unwrap();
+        let document = parse_backup(&serde_json::to_vec(&document).unwrap()).unwrap();
+
+        let mut second = Storage::open(&root.0.join("second")).unwrap();
+        let report = second.restore_backup(&document).unwrap();
+        assert!(report.preferences_restored && report.webdav_restored);
+        let restored = second.get_settings().unwrap();
+        let mut expected = preferences.clone();
+        // Fonts are files on the first device.
+        expected.style.font_asset_id = None;
+        assert_eq!(restored, expected);
+        let taken = second.stored_webdav().unwrap();
+        assert_eq!(
+            (
+                taken.url.as_str(),
+                taken.username.as_str(),
+                taken.password.as_str()
+            ),
+            ("https://dav.example.com/dav/", "reader", "secret")
+        );
+        // A device with its own account keeps it.
+        let mut other = Storage::open(&root.0.join("third")).unwrap();
+        let mut own = other.stored_webdav().unwrap();
+        own.username = "mine".into();
+        other.save_stored_webdav(&own).unwrap();
+        assert!(!other.restore_backup(&document).unwrap().webdav_restored);
+        assert_eq!(other.stored_webdav().unwrap().username, "mine");
     }
 
     #[test]
@@ -9620,6 +9685,39 @@ mod tests {
             &verified,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_new_servers_default_settings_do_not_replace_a_devices_own() {
+        let root = TestRoot::new();
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        // The server logs its own (default) records when it starts.
+        for change in server.sync_pending().unwrap() {
+            server.sync_log_append(&change, "server").unwrap();
+            server.sync_mark(&change).unwrap();
+        }
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut preferences = phone.get_settings().unwrap();
+        preferences.font_size = 24.0;
+        preferences.style.indent = 3;
+        phone.save_settings(&preferences).unwrap();
+        let mut shelf = phone.get_shelf_preferences().unwrap();
+        shelf.layout = if shelf.layout == crate::models::ShelfLayout::List {
+            crate::models::ShelfLayout::Grid
+        } else {
+            crate::models::ShelfLayout::List
+        };
+        phone.save_shelf_preferences(&shelf).unwrap();
+        let mut at = 0;
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        assert_eq!(phone.get_settings().unwrap(), preferences);
+        assert_eq!(phone.get_shelf_preferences().unwrap(), shelf);
+        // The server, and the next device, take the phone's.
+        assert_eq!(server.get_settings().unwrap().font_size, 24.0);
+        let mut tablet = Storage::open(&root.0.join("tablet")).unwrap();
+        let mut tablet_at = 0;
+        sync_round(&mut server, &mut tablet, "tablet", &mut tablet_at);
+        assert_eq!(tablet.get_settings().unwrap().style.indent, 3);
     }
 
     #[test]

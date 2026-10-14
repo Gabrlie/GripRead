@@ -124,6 +124,7 @@ export function previewServices(): AppServices {
     lastSync: null,
     lastError: null,
     autoDownload: true,
+    remembered: false,
   };
   let preferences = { ...PREFERENCES };
   let webdav: WebDavSettings = {
@@ -500,6 +501,7 @@ export function previewServices(): AppServices {
         positionsRestored: 1,
         bookmarksAdded: 4,
         recoveryPoint: "recovery-1.json",
+        webdavRestored: false,
         sourcesRestored: 0,
         onlineBooksRestored: 0,
       }),
@@ -522,7 +524,9 @@ export function previewServices(): AppServices {
           deviceName: request.deviceName,
           lastSync: Date.now(),
         }),
-      disconnectServer: async () => (server = { ...server, connected: false, address: "" }),
+      disconnectServer: async () => (server = { ...server, connected: false, remembered: true }),
+      forgetServerLogin: async () =>
+        (server = { ...server, remembered: false, address: "", deviceName: "" }),
       syncServerNow: async () => {
         server = { ...server, lastSync: Date.now() };
       },

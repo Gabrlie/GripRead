@@ -81,6 +81,8 @@ pub fn mutates(name: &str) -> bool {
         // Update settings and installs stay on the device.
         "save_update_settings",
         "install_update",
+        "forget_sync_server_login",
+        "server_api",
     ];
     !READS.iter().any(|read| name.starts_with(read))
 }
@@ -95,6 +97,8 @@ pub const COMMANDS: &[&str] = &[
     "save_update_settings",
     "connect_sync_server",
     "disconnect_sync_server",
+    "forget_sync_server_login",
+    "server_api",
     "get_sync_server",
     "set_sync_auto_download",
     "set_sync_open_book",
@@ -599,6 +603,22 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
             reply(crate::commands::connect_sync_server(state, request(args)?).await)
         }
         "disconnect_sync_server" => reply(crate::commands::disconnect_sync_server(state).await),
+        "server_api" => {
+            let request: crate::models::ServerApiRequest = request(args)?;
+            let sync = state.sync.clone();
+            reply(
+                tokio::task::spawn_blocking(move || {
+                    sync.api(&request.method, &request.path, request.body)
+                })
+                .await
+                .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))
+                .and_then(|reply| reply),
+            )
+        }
+        "forget_sync_server_login" => {
+            state.sync.forget_login();
+            reply(Ok(state.sync.status()))
+        }
         "sync_now" => {
             crate::commands::sync_now(state);
             reply(Ok(()))

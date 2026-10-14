@@ -502,5 +502,11 @@ describe("更新目录 on the shelf", () => {
     view(app);
     await screen.findAllByText("剑来");
     expect(app.services.sources.updateToc).toHaveBeenCalledTimes(1);
+    // Returning to the app half an hour later updates again.
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 31 * 60_000);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(app.services.sources.updateToc).toHaveBeenCalledTimes(2));
+    clock.mockRestore();
   });
 });

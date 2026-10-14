@@ -49,6 +49,20 @@ pub struct BackupDocument {
     pub book_sources: Vec<serde_json::Value>,
     #[serde(default)]
     pub online_books: Vec<PortableOnlineBook>,
+    /// The WebDAV account, only in backup files kept by the reader (导出到文件
+    /// and the local backup folder); backups sent to WebDAV never carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav: Option<PortableWebDav>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableWebDav {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub folder: String,
 }
 
 /// An online book on the shelf: its source and details, and the records
@@ -399,6 +413,15 @@ impl Storage {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Shelf books with their original file's SHA-256, oldest first.
+    pub fn shelf_book_sources(&self) -> Result<Vec<(String, String)>, AppError> {
+        Ok(self
+            .shelf_books_with_sources()?
+            .into_iter()
+            .map(|book| (book.book_id, book.source_sha256))
+            .collect())
     }
 
     /// The local book with this original file and whether it is in the 回收站.
@@ -769,7 +792,27 @@ impl Storage {
             shelf_preferences: Some(self.get_shelf_preferences()?),
             book_sources: serde_json::from_str(&self.export_book_sources(&[])?)?,
             online_books: self.portable_online_books()?,
+            webdav: None,
         })
+    }
+
+    /// The records for a backup file the reader keeps: with the WebDAV
+    /// account, so restoring it on a new device needs no typing.
+    pub fn export_local_backup(&self, device: &str) -> Result<BackupDocument, AppError> {
+        let mut document = self.export_backup(device)?;
+        document.webdav = self.portable_webdav()?;
+        Ok(document)
+    }
+
+    /// This device's WebDAV account, when it has one.
+    pub fn portable_webdav(&self) -> Result<Option<PortableWebDav>, AppError> {
+        let settings = self.stored_webdav()?;
+        Ok(settings.configured().then_some(PortableWebDav {
+            url: settings.url,
+            username: settings.username,
+            password: settings.password,
+            folder: settings.folder,
+        }))
     }
 
     pub(super) fn portable_online_books(&self) -> Result<Vec<PortableOnlineBook>, AppError> {
@@ -1060,7 +1103,16 @@ impl Storage {
     /// that are not here are kept until a matching book is imported.
     pub fn restore_backup(&mut self, document: &BackupDocument) -> Result<RestoreReport, AppError> {
         let mut report = RestoreReport::default();
-        let settings = self.stored_webdav()?;
+        let mut settings = self.stored_webdav()?;
+        // A device without a WebDAV account takes the backup's.
+        if let Some(account) = document.webdav.as_ref().filter(|_| !settings.configured()) {
+            settings.url = account.url.clone();
+            settings.username = account.username.clone();
+            settings.password = account.password.clone();
+            settings.folder = account.folder.clone();
+            self.save_stored_webdav(&settings)?;
+            report.webdav_restored = true;
+        }
         let skip = |category| settings.ignores(category);
         let groups: &[String] = if skip(RestoreCategory::Groups) {
             &[]

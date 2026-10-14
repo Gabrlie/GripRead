@@ -16,4 +16,8 @@ onlineBooksRestored: number,
 /**
  * The local recovery point written before restoring.
  */
-recoveryPoint: string, };
+recoveryPoint: string, 
+/**
+ * The backup file's WebDAV account was taken (this device had none).
+ */
+webdavRestored: boolean, };

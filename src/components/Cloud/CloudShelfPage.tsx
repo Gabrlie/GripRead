@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLibrary, useRuntime } from "../../application/runtime";
 import type { CloudBook } from "../../types/generated";
-import { ServerPausedNote } from "./ServerPausedNote";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -31,10 +30,23 @@ export function CloudShelfPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [removing, setRemoving] = useState<CloudBook | null>(null);
 
+  // The local books the cloud list was read against: a book that joined the
+  // shelf since (a download being imported) is not counted as 未上传.
+  const shelfIds = useRef<string[]>([]);
+  shelfIds.current = library.books.map((book) => book.book.id);
+  const [listedIds, setListedIds] = useState<Set<string>>(new Set());
+  // While the GripRead server is connected, 云书架 lists its books instead.
+  const [server, setServer] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const settings = await sync.getWebDav();
+    const status = await sync.getServer().catch(() => null);
+    const connected = Boolean(status?.connected);
+    setServer(connected ? status!.address.replace(/^https?:\/\//, "") : null);
+    const settings = connected ? { configured: true } : await sync.getWebDav();
     setConfigured(settings.configured);
-    if (settings.configured) setBooks(await sync.listCloudBooks());
+    if (!settings.configured) return;
+    const known = new Set(shelfIds.current);
+    setBooks(await sync.listCloudBooks());
+    setListedIds(known);
   }, [sync]);
   useEffect(() => {
     setBusy("load");
@@ -63,7 +75,9 @@ export function CloudShelfPage({
   const localBooks = library.books.filter((book) => !book.online);
   const localCount = localBooks.length;
   const uploadedLocal = new Set(books?.map((book) => book.localBookId).filter(Boolean));
-  const notUploaded = localBooks.filter((book) => !uploadedLocal.has(book.book.id)).length;
+  const notUploaded = localBooks.filter(
+    (book) => listedIds.has(book.book.id) && !uploadedLocal.has(book.book.id),
+  ).length;
 
   return (
     <FullPage
@@ -95,7 +109,6 @@ export function CloudShelfPage({
         )
       }
     >
-      <ServerPausedNote />
       {configured === false && (
         <div className="rounded-xl bg-surface-container-low p-4 space-y-3 text-sm">
           <p>云书架使用 WebDAV 保存书籍文件。请先设置 WebDAV 账号。</p>
@@ -108,7 +121,14 @@ export function CloudShelfPage({
       )}
       {configured && (
         <p className="px-1 text-[11px] text-secondary">
-          书籍保存在 WebDAV 的 GripRead/Books 文件夹。
+          {server ? (
+            <>
+              <span className="mr-1 rounded bg-primary/10 px-1.5 py-0.5 text-primary">服务器</span>
+              书籍保存在服务器 {server}，随书架同步。
+            </>
+          ) : (
+            "书籍保存在 WebDAV 的 GripRead/Books 文件夹。"
+          )}
           {books && notUploaded > 0 && ` 本机还有 ${notUploaded} 本未上传。`}
         </p>
       )}
@@ -156,16 +176,19 @@ export function CloudShelfPage({
                   {busy === `pull:${book.name}` ? "下载中…" : "下载"}
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`从云书架删除 ${book.title}`}
-                className="h-8 w-8 text-secondary shrink-0"
-                disabled={busy !== null}
-                onClick={() => setRemoving(book)}
-              >
-                <Icon name="delete" size={15} />
-              </Button>
+              {/* A server's books leave it with the shelf (the web version). */}
+              {!server && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`从云书架删除 ${book.title}`}
+                  className="h-8 w-8 text-secondary shrink-0"
+                  disabled={busy !== null}
+                  onClick={() => setRemoving(book)}
+                >
+                  <Icon name="delete" size={15} />
+                </Button>
+              )}
             </li>
           ))}
         </ul>

@@ -566,6 +566,7 @@ export const tauriServices: AppServices = {
         request: request satisfies ConnectSyncServerRequest,
       }),
     disconnectServer: () => invokeCommand<SyncServerStatus>("disconnect_sync_server"),
+    forgetServerLogin: () => invokeCommand<SyncServerStatus>("forget_sync_server_login"),
     syncServerNow: () => invokeCommand<void>("sync_now"),
     setServerAutoDownload: (on) =>
       invokeCommand<SyncServerStatus>("set_sync_auto_download", {

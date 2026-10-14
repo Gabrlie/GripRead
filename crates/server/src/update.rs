@@ -33,9 +33,10 @@ async fn asset(
     headers: HeaderMap,
     Path((tag, name)): Path<(String, String)>,
 ) -> Response {
-    if server.signed_in(&headers, None).is_none() {
+    let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
-    }
+    };
+    log(format!("「{}」经服务器下载更新 {name}", session.device));
     let root = server.core.data_root.clone();
     let path =
         match tokio::task::spawn_blocking(move || update::cached_asset(&root, &tag, &name)).await {
