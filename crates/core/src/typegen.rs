@@ -169,6 +169,8 @@ const IPC_TYPES: &[&str] = &[
     "NetworkCheck",
     "NetworkCheckRequest",
     "NetworkState",
+    "BookImage",
+    "BookImageRequest",
     "SyncServerStatus",
     "UpdateChannel",
     "UpdateSettings",
@@ -372,6 +374,8 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<NetworkCheck>(&config)?;
     export_all::<NetworkCheckRequest>(&config)?;
     export_all::<NetworkState>(&config)?;
+    export_all::<BookImage>(&config)?;
+    export_all::<BookImageRequest>(&config)?;
     export_all::<SyncServerStatus>(&config)?;
     export_all::<UpdateChannel>(&config)?;
     export_all::<UpdateSettings>(&config)?;

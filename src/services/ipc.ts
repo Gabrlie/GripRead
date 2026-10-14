@@ -6,6 +6,8 @@ import { finishSave, pickFiles, pickSaveTarget, pickTxtFolderFiles } from "./fil
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
 
 import type {
+  BookImage,
+  BookImageRequest,
   CheckUpdateRequest,
   InstallOutcome,
   InstallUpdateRequest,
@@ -216,14 +218,15 @@ function invokeCommand<T>(command: string, args?: Record<string, unknown>): Prom
   });
 }
 
+/** The books the library imports. */
+const BOOK_FILES = [{ name: "TXT / EPUB", extensions: ["txt", "epub"] }];
+
 export const tauriServices: AppServices = {
   library: {
     pickAndImportTxt: async (encoding) => {
-      const selected = await pickFiles({
-        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
-      });
+      const selected = await pickFiles({ filters: BOOK_FILES });
       if (selected === null) return null;
-      if (typeof selected !== "string") throw new Error("Expected one TXT file");
+      if (typeof selected !== "string") throw new Error("Expected one book file");
       return tauriServices.library.startImport(selected, encoding);
     },
     startImport: (path, encoding) =>
@@ -271,10 +274,7 @@ export const tauriServices: AppServices = {
         request: { bookId, placement } satisfies MoveBookRequest,
       }),
     pickTxtFiles: async () => {
-      const selected = await pickFiles({
-        multiple: true,
-        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
-      });
+      const selected = await pickFiles({ multiple: true, filters: BOOK_FILES });
       return selected;
     },
     pickTxtFolder: async () => {
@@ -346,6 +346,12 @@ export const tauriServices: AppServices = {
         request: { operationId } satisfies ImportOperationRequest,
       }),
     onTxtDecodeProgress: (listener) => listen<TxtDecodeStatus>("txt-decode-progress", listener),
+    listBookImages: (bookId) =>
+      invokeCommand<BookImage[]>("list_book_images", { request: { bookId } }),
+    readBookImage: (bookId, index) =>
+      invokeCommand<ArrayBuffer>("read_book_image", {
+        request: { bookId, index } satisfies BookImageRequest,
+      }),
     getBookInfo: (bookId) =>
       invokeCommand<BookInfo>("get_book_info", { request: { bookId } satisfies BookRequest }),
   },

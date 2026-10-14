@@ -167,6 +167,8 @@ function runtime() {
       getTxtDecodeStatus: vi.fn(),
       cancelTxtDecode: vi.fn(async () => ({ requested: true })),
       onTxtDecodeProgress: vi.fn(async () => () => {}),
+      listBookImages: vi.fn(async () => []),
+      readBookImage: vi.fn(),
       getBookInfo: vi.fn(),
       getTxtEncoding: vi.fn(async () => ({
         detected: "utf8" as const,

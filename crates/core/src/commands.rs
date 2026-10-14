@@ -351,6 +351,12 @@ pub async fn start_import(
                             if let Err(error) = guard.apply_pending_restore(&imported.book.id) {
                                 eprintln!("Unable to apply restored records: {}", error.message);
                             }
+                            if let Err(error) = guard.apply_epub_cover(&imported.book.id) {
+                                crate::app_log::warn(
+                                    "import",
+                                    format!("EPUB 封面设置失败：{}", error.message),
+                                );
+                            }
                             return Ok(imported);
                         }
                         result => return result,
@@ -1707,6 +1713,28 @@ pub async fn set_book_cover(
         storage.set_book_cover(&request.book_id, &path, &name)
     })
     .await
+}
+
+/// The sizes of an EPUB's images, by the index its text marks carry.
+pub async fn list_book_images(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<Vec<crate::models::BookImage>, AppError> {
+    with_storage(state, move |storage| storage.book_images(&request.book_id)).await
+}
+
+/// One EPUB image's bytes.
+pub async fn read_book_image(
+    state: &Arc<AppState>,
+    request: crate::models::BookImageRequest,
+) -> Result<Vec<u8>, AppError> {
+    let (source, inner) = with_storage(state, move |storage| {
+        storage.book_image_location(&request.book_id, request.index)
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || crate::epub::read_file_at(&source, &inner))
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
 
 pub async fn clear_book_cover(state: &Arc<AppState>, request: BookRequest) -> Result<(), AppError> {

@@ -26,6 +26,8 @@ function deferred<T>() {
 function services(overrides: Partial<LibraryService> = {}): AppServices {
   const library: LibraryService = {
     pickAndImportTxt: vi.fn(async () => null),
+    listBookImages: vi.fn(async () => []),
+    readBookImage: vi.fn(),
     startImport: vi.fn(),
     getImportStatus: vi.fn(),
     cancelImport: vi.fn(),

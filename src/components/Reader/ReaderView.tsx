@@ -15,7 +15,10 @@ import {
   DomReaderMeasurer,
   HeadingIndex,
   PageTurnAdapter,
+  bookImages,
   emptyReaderSnapshot,
+  setReaderImages,
+  withoutMarks,
 } from "../../reader";
 import type { ReaderSnapshot } from "../../reader";
 import type {
@@ -104,7 +107,9 @@ function bookProgressOf(
 }
 const noopSubscribe = () => () => {};
 
-function safeExcerpt(text: string, maxUnits = 160): string {
+function safeExcerpt(source: string, maxUnits = 160): string {
+  // EPUB image and directory marks are not part of what was read.
+  const text = withoutMarks(source);
   let end = Math.min(text.length, Math.max(0, maxUnits));
   if (
     end > 0 &&
@@ -887,6 +892,29 @@ export function ReaderView() {
     [bookId, run, runtime],
   );
 
+  // An EPUB's image sizes are needed before its pages are measured.
+  const imagesReady = useRef<Promise<void>>(Promise.resolve());
+  useLayoutEffect(() => {
+    if (!bookId) return;
+    let images: ReturnType<typeof bookImages> | null = null;
+    let active = true;
+    imagesReady.current = runtime.services.library.listBookImages(bookId).then(
+      (sizes) => {
+        if (!active || !sizes.length) return;
+        images = bookImages(sizes, (index) =>
+          runtime.services.library.readBookImage(bookId, index),
+        );
+        setReaderImages(images);
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+      images?.dispose();
+      setReaderImages(null);
+    };
+  }, [bookId, runtime]);
+
   useLayoutEffect(() => {
     if (!bookId || !preferences || !measureBox.current || !pageBox.current || !animationBox.current)
       return;
@@ -929,7 +957,10 @@ export function ReaderView() {
         __gripreadSeekProgress: (progress: number) => reader.seekProgress(progress),
         __gripreadFlush: () => reader.flush(),
       });
-    run(() => reader.open(bookId));
+    run(async () => {
+      await imagesReady.current;
+      await reader.open(bookId);
+    });
     return () => {
       reader.dispose();
       adapter.current = null;
@@ -1196,7 +1227,7 @@ export function ReaderView() {
             toast("正在更新目录…");
             reloadTools();
           }}
-          txtTools={!activeBook.online}
+          txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           onCache={activeBook.online ? () => setCachingRange(true) : undefined}
           replaceEnabled={useReplaceRules}
@@ -1290,7 +1321,7 @@ export function ReaderView() {
           </p>
         )}
         {!state.loading && state.contentWindow?.totalLength === 0 && (
-          <p className="text-sm text-secondary">这本 TXT 暂无正文。</p>
+          <p className="text-sm text-secondary">这本书暂无正文。</p>
         )}
       </ReaderSurface>
       <div
@@ -1440,7 +1471,7 @@ export function ReaderView() {
             })
           }
           resourceId={activeBook.online ? state.contentWindow?.resourceId : undefined}
-          txtTools={!activeBook.online}
+          txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
           onOpenRules={() => panels.push("rules")}
           onToggleSplit={() =>
             void tools.saveTocSettings({

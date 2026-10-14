@@ -82,7 +82,7 @@ fn verified_decoder(
     cancel: &AtomicBool,
 ) -> Result<Option<DecodePlan>, AppError> {
     check_cancelled(cancel)?;
-    let decoded = txt::detect_and_decode(input, requested.clone());
+    let decoded = txt::decode_source(input, requested.clone());
     check_cancelled(cancel)?;
     let decoded = match decoded {
         Ok(decoded) => decoded,

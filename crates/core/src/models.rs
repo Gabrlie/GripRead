@@ -19,6 +19,8 @@ pub struct Book {
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
     Txt,
+    /// An EPUB converted to text at import (`crate::epub`).
+    Epub,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -2240,4 +2242,19 @@ pub enum InstallOutcome {
     /// Android needs 安装未知应用 allowed for GripRead first; its settings
     /// screen is open.
     NeedsPermission,
+}
+
+/// An EPUB illustration's size, so pages are laid out before it loads.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookImage {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookImageRequest {
+    pub book_id: String,
+    pub index: u32,
 }

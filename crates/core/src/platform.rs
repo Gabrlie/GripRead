@@ -21,7 +21,7 @@ pub trait Platform: Send + Sync {
         ))
     }
 
-    /// Lists `.txt` files in a folder and its subfolders (three levels),
+    /// Lists `.txt` and `.epub` files in a folder and its subfolders (three levels),
     /// sorted by name. Android shows the system folder picker instead; an
     /// empty list means it was closed.
     fn list_txt_folder(&self, path: &str) -> Result<Vec<PickedFile>, AppError> {
@@ -125,6 +125,11 @@ pub struct Filesystem;
 
 impl Platform for Filesystem {}
 
+fn is_book_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".txt") || lower.ends_with(".epub")
+}
+
 fn list_txt_files(root: &Path) -> Result<Vec<PickedFile>, AppError> {
     fn walk(dir: &Path, depth: usize, found: &mut Vec<PickedFile>) -> Result<(), AppError> {
         for entry in fs::read_dir(dir)? {
@@ -136,7 +141,7 @@ fn list_txt_files(root: &Path) -> Result<Vec<PickedFile>, AppError> {
             }
             if kind.is_dir() && depth < 3 {
                 walk(&entry.path(), depth + 1, found)?;
-            } else if kind.is_file() && name.to_ascii_lowercase().ends_with(".txt") {
+            } else if kind.is_file() && is_book_file(&name) {
                 found.push(PickedFile {
                     path: entry.path().to_string_lossy().to_string(),
                     name,

@@ -87,6 +87,8 @@ pub fn mutates(name: &str) -> bool {
 
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
+    "list_book_images",
+    "read_book_image",
     "check_update",
     "get_update_settings",
     "install_update",
@@ -262,6 +264,8 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "add_reading_time" => reply(crate::commands::add_reading_time(state, request(args)?).await),
         "backup_to_webdav" => reply(crate::commands::backup_to_webdav(state).await),
+        "list_book_images" => reply(crate::commands::list_book_images(state, request(args)?).await),
+        "read_book_image" => bytes(crate::commands::read_book_image(state, request(args)?).await),
         "check_update" => reply(crate::update::check_update(state, request(args)?).await),
         "get_update_settings" => reply(crate::update::get_update_settings(state).await),
         "install_update" => reply(crate::update::install_update(state, request(args)?).await),

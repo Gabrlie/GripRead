@@ -704,6 +704,19 @@ html.shelf-hide-scrollbar body::-webkit-scrollbar,
 .reader-prose > .reader-paragraph[data-continued] {
   text-indent: 0;
 }
+/* EPUB images: the box comes from the image's own size, capped by the page
+   height (--reader-image-max, use-reader-layout.ts), before it loads. */
+.reader-prose > .reader-paragraph[data-image] {
+  text-indent: 0;
+}
+.reader-prose img.reader-image {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+  max-height: var(--reader-image-max, 70vh);
+  object-fit: contain;
+}
 button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 3px;

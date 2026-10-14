@@ -1,4 +1,5 @@
 import type {
+  BookImage,
   InstallOutcome,
   SaveUpdateSettingsRequest,
   UpdateCheck,
@@ -124,6 +125,9 @@ export interface LibraryService {
   cancelTxtDecode(operationId: string): Promise<CancelResult>;
   onTxtDecodeProgress(listener: (status: TxtDecodeStatus) => void): Promise<Unsubscribe>;
   getBookInfo(bookId: string): Promise<BookInfo>;
+  /** An EPUB's image sizes by index (empty for other books). */
+  listBookImages(bookId: string): Promise<BookImage[]>;
+  readBookImage(bookId: string, index: number): Promise<ArrayBuffer>;
   /**
    * Re-derives the book's text when its replace rules or Chinese conversion
    * changed; `null` when the text is already current.

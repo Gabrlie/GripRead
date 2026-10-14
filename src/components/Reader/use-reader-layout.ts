@@ -17,6 +17,8 @@ export function syncMeasureBox(page: HTMLElement, measure: HTMLElement, columns 
     width: `${(rect.width - gutter) / columns}px`,
     height: `${rect.height}px`,
   });
+  // EPUB images fit within a page (render.ts); every renderer reads this.
+  document.documentElement.style.setProperty("--reader-image-max", `${rect.height}px`);
 }
 
 /**

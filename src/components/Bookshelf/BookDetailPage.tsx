@@ -181,9 +181,16 @@ export function BookDetailPage({
       ]
     : [
         ["作者", book.book.author || "作者未知"],
-        ["来源", "本地 TXT"],
+        ["来源", book.asset?.kind === "epub" ? "本地 EPUB" : "本地 TXT"],
         ["文件大小", info ? formatSize(info.sourceByteLength) : "—"],
-        ["文本编码", book.txtEncoding ? ENCODING_NAMES[book.txtEncoding.detected] : "—"],
+        [
+          "文本编码",
+          book.asset?.kind === "epub"
+            ? "—"
+            : book.txtEncoding
+              ? ENCODING_NAMES[book.txtEncoding.detected]
+              : "—",
+        ],
         ["章节", info?.chapterCount != null ? `${info.chapterCount} 章` : "—"],
         ["总字数", info?.wordCount != null ? formatWords(info.wordCount) : "—"],
         ["读至", labels?.current ?? (book.locator ? "全文" : "尚未阅读")],

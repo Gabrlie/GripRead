@@ -164,7 +164,8 @@ fn sanitize_component(name: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Keeps the display name as one path component with a `.txt` extension.
+/// Keeps the display name as one path component with a `.txt` extension,
+/// or `.epub` for an EPUB.
 fn staged_file_name(display_name: Option<&str>) -> String {
     let name: String = display_name
         .unwrap_or_default()
@@ -176,22 +177,27 @@ fn staged_file_name(display_name: Option<&str>) -> String {
         })
         .collect();
     let name = name.trim();
-    let stem = match name
-        .len()
-        .checked_sub(4)
-        .and_then(|start| name.get(start..))
-    {
-        Some(extension) if extension.eq_ignore_ascii_case(".txt") => &name[..name.len() - 4],
-        _ => name,
+    let ends_with = |suffix: &str| {
+        name.len()
+            .checked_sub(suffix.len())
+            .and_then(|start| name.get(start..))
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(suffix))
+    };
+    let (stem, extension) = if ends_with(".epub") {
+        (&name[..name.len() - 5], "epub")
+    } else if ends_with(".txt") {
+        (&name[..name.len() - 4], "txt")
+    } else {
+        (name, "txt")
     };
     // A leading dot would hide the file and is not part of a readable title.
     let stem = stem.trim().trim_start_matches('.').trim();
     // Keep the name within common filesystem limits without splitting a character.
     let stem: String = stem.chars().take(120).collect();
     if stem.is_empty() {
-        "Untitled.txt".to_string()
+        format!("Untitled.{extension}")
     } else {
-        format!("{stem}.txt")
+        format!("{stem}.{extension}")
     }
 }
 
@@ -325,6 +331,7 @@ mod tests {
         assert_eq!(staged_file_name(None), "Untitled.txt");
         assert_eq!(staged_file_name(Some("书书")), "书书.txt");
         assert_eq!(staged_file_name(Some("雪中.Txt")), "雪中.txt");
+        assert_eq!(staged_file_name(Some("三体.EPUB")), "三体.epub");
         assert!(stage_document(
             Path::new("/"),
             "../x",

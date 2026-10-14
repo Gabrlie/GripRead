@@ -77,15 +77,13 @@ export async function pickFiles(options: PickOptions): Promise<string | string[]
   return options.multiple ? paths : (paths[0] ?? null);
 }
 
-/** A folder for the app's batch import; the web version uploads its `.txt` files. */
+/** A folder for the app's batch import; the web version uploads its `.txt` and `.epub` files. */
 export async function pickTxtFolderFiles(): Promise<PickedFile[] | string | null> {
   if (native) {
     const folder = await open({ multiple: false, directory: true });
     return typeof folder === "string" ? folder : null;
   }
-  const files = (await choose({ folder: true })).filter((file) =>
-    file.name.toLowerCase().endsWith(".txt"),
-  );
+  const files = (await choose({ folder: true })).filter((file) => /\.(txt|epub)$/i.test(file.name));
   files.sort((left, right) => left.name.localeCompare(right.name));
   return Promise.all(
     files.slice(0, 1000).map(async (file) => ({ path: await upload(file), name: file.name })),

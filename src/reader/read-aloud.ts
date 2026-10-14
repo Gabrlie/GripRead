@@ -1,5 +1,7 @@
 import type { SpeechEngine, SpeechItem, SpeechOptions } from "../services/speech";
 
+import { LEADING, imageOfLine, withoutMarks } from "./images";
+
 /** One spoken paragraph with its absolute UTF-16 range. */
 export interface ReadAloudParagraph {
   start: number;
@@ -269,13 +271,15 @@ export function windowParagraphs(
     const newline = text.indexOf("\n", index);
     const end = newline < 0 ? text.length : newline;
     const line = text.slice(index, end);
-    const spoken = line.trim();
+    // EPUB directory marks and image lines are not spoken.
+    const leading = LEADING.exec(line)?.[0].length ?? 0;
+    const spoken = imageOfLine(line) === null ? withoutMarks(line).trim() : "";
     if (spoken)
       result.push({
         start: windowStart + index,
         end: windowStart + end,
         text: spoken,
-        textStart: windowStart + index + (line.length - line.trimStart().length),
+        textStart: windowStart + index + leading,
       });
     index = end + 1;
   }

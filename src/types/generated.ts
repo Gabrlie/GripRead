@@ -167,6 +167,8 @@ export type { ConcurrencyPreset } from "./generated/ConcurrencyPreset";
 export type { NetworkCheck } from "./generated/NetworkCheck";
 export type { NetworkCheckRequest } from "./generated/NetworkCheckRequest";
 export type { NetworkState } from "./generated/NetworkState";
+export type { BookImage } from "./generated/BookImage";
+export type { BookImageRequest } from "./generated/BookImageRequest";
 export type { SyncServerStatus } from "./generated/SyncServerStatus";
 export type { UpdateChannel } from "./generated/UpdateChannel";
 export type { UpdateSettings } from "./generated/UpdateSettings";

@@ -131,7 +131,7 @@ export function ImportModal() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-2xl border border-surface-variant/40 bg-surface p-5 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-title-editorial">导入本地 TXT</DialogTitle>
+            <DialogTitle className="font-title-editorial">导入本地书籍</DialogTitle>
             <DialogDescription>导入在后台运行；关闭此面板不会中断任务。</DialogDescription>
           </DialogHeader>
 

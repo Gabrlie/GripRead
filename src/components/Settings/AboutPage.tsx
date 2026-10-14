@@ -15,7 +15,7 @@ import { useUpdateInstall } from "../Updates/use-update-install";
 export const APP_VERSION = version;
 
 const FEATURES = [
-  "本地 TXT 导入，自动识别编码和章节",
+  "本地 TXT、EPUB 导入，自动识别编码和章节",
   "仿真、覆盖、平移等翻页，单页、双页和滚动阅读",
   "兼容阅读（Legado）书源，追更与离线缓存",
   "替换净化、简繁转换、朗读与自动翻页",

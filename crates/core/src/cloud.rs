@@ -470,14 +470,22 @@ fn book_file_stem(title: &str, author: Option<&str>) -> String {
     }
 }
 
+/// Book files the cloud folder holds.
+fn is_book_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".txt") || lower.ends_with(".epub")
+}
+
 fn title_of(name: &str) -> String {
-    name.strip_suffix(".txt")
-        .or_else(|| name.strip_suffix(".TXT"))
-        .unwrap_or(name)
+    let lower = name.to_ascii_lowercase();
+    [".txt", ".epub"]
+        .iter()
+        .find(|extension| lower.ends_with(*extension))
+        .map_or(name, |extension| &name[..name.len() - extension.len()])
         .to_string()
 }
 
-/// TXT files in the cloud book folder, with what the index knows of them
+/// Book files (TXT and EPUB) in the cloud book folder, with what the index knows of them
 /// and the local book that has the same file. Also records which books are
 /// in the cloud for the shelf's marks.
 pub fn list_cloud_books(storage: &Mutex<Storage>) -> Result<Vec<CloudBook>, AppError> {
@@ -488,7 +496,7 @@ pub fn list_cloud_books(storage: &Mutex<Storage>) -> Result<Vec<CloudBook>, AppE
     let mut books = Vec::new();
     let mut present = Vec::new();
     for entry in entries {
-        if entry.directory || !entry.name.to_ascii_lowercase().ends_with(".txt") {
+        if entry.directory || !is_book_name(&entry.name) {
             continue;
         }
         let indexed = index.books.iter().find(|book| book.name == entry.name);
@@ -628,10 +636,15 @@ pub fn upload_books(
             let taken = |name: &str| {
                 names.contains(name) || index.books.iter().any(|book| book.name == name)
             };
-            let name = if taken(&format!("{stem}.txt")) {
-                format!("{stem}-{}.txt", &hash[..8.min(hash.len())])
+            let extension = if crate::epub::is_epub_file(&path) {
+                "epub"
             } else {
-                format!("{stem}.txt")
+                "txt"
+            };
+            let name = if taken(&format!("{stem}.{extension}")) {
+                format!("{stem}-{}.{extension}", &hash[..8.min(hash.len())])
+            } else {
+                format!("{stem}.{extension}")
             };
             let size = fs::metadata(&path)
                 .map(|metadata| metadata.len())
@@ -676,7 +689,7 @@ pub fn download_cloud_book(
     data_root: &Path,
     name: &str,
 ) -> Result<PickedFile, AppError> {
-    if name.contains(['/', '\\']) || !name.to_ascii_lowercase().ends_with(".txt") {
+    if name.contains(['/', '\\']) || !is_book_name(name) {
         return Err(AppError::invalid_argument("unknown cloud book"));
     }
     let (dav, folders) = connect(storage)?;
@@ -689,7 +702,12 @@ pub fn download_cloud_book(
         .join("document-staging")
         .join(format!("cloud-{}", Uuid::new_v4()));
     fs::create_dir_all(&directory)?;
-    let file = format!("{}.txt", file_name(&title));
+    let extension = if name.to_ascii_lowercase().ends_with(".epub") {
+        "epub"
+    } else {
+        "txt"
+    };
+    let file = format!("{}.{extension}", file_name(&title));
     let path = directory.join(&file);
     let partial = directory.join(format!("{file}.part"));
     let result = (|| {

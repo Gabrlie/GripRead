@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { bookImages, setReaderImages, withoutMarks } from "./images";
+import { windowParagraphs } from "./read-aloud";
 import { continuesLine, renderReaderText, spreadFill } from "./render";
 
 function render(text: string, continued = false, highlight?: { start: number; end: number }) {
@@ -9,6 +11,50 @@ function render(text: string, continued = false, highlight?: { start: number; en
   renderReaderText(container, text, { continued, highlight });
   return container;
 }
+
+afterEach(() => setReaderImages(null));
+
+describe("EPUB marks", () => {
+  const mark = String.fromCodePoint(0xf0000);
+  const text = `${mark}第一章\n\u3000\u3000正文\n\ue000\n${mark}尾`;
+
+  it("hides directory marks with the indent and draws images in their place", () => {
+    const read = vi.fn(async () => new ArrayBuffer(1));
+    const images = bookImages([{ width: 400, height: 300 }], read);
+    setReaderImages(images);
+    const container = document.createElement("div");
+    renderReaderText(container, text, { continued: false, headings: new Set([0]) });
+    // Offsets hold: every mark is still in the text.
+    expect(container.textContent).toBe(text);
+    const [heading, body, picture] = Array.from(container.querySelectorAll("p"));
+    expect(heading.dataset.heading).toBe("true");
+    expect(heading.querySelector("span[hidden]")?.textContent).toBe(mark);
+    expect(body.querySelector("span[hidden]")?.textContent).toBe("\u3000\u3000");
+    expect(picture.dataset.image).toBe("true");
+    const image = picture.querySelector("img")!;
+    expect([image.width, image.height]).toEqual([400, 300]);
+    expect(image.dataset.readerImage).toBe("0");
+    expect(read).toHaveBeenCalledWith(0);
+    images.dispose();
+  });
+
+  it("keeps an image line as hidden text when the book has no images", () => {
+    const container = document.createElement("div");
+    renderReaderText(container, "\ue000", { continued: false });
+    expect(container.textContent).toBe("\ue000");
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("is neither spoken nor shown in excerpts", () => {
+    expect(windowParagraphs(text, 10, 10, 10).map((paragraph) => paragraph.text)).toEqual([
+      "第一章",
+      "正文",
+      "尾",
+    ]);
+    expect(windowParagraphs(text, 0, 0, 1)[0].textStart).toBe(2);
+    expect(withoutMarks(text)).toBe("第一章\n\u3000\u3000正文\n\n尾");
+  });
+});
 
 describe("renderReaderText", () => {
   it("keeps textContent equal to the page slice across blank lines and emoji", () => {

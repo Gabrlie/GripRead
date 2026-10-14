@@ -10,6 +10,7 @@ pub mod cloud;
 pub mod commands;
 pub mod documents;
 pub mod downloads;
+pub mod epub;
 pub mod error;
 pub mod m1_txt;
 pub mod models;

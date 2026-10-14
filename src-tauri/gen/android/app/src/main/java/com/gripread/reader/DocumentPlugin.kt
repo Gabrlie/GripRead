@@ -173,7 +173,7 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
-  /** Lists `.txt` documents in the picked tree, three folder levels deep. */
+  /** Lists `.txt` and `.epub` documents in the picked tree, three folder levels deep. */
   @ActivityCallback
   fun folderPicked(invoke: Invoke, result: ActivityResult) {
     val files = JSArray()
@@ -207,7 +207,7 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
         if (name.startsWith(".")) continue
         if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
           if (depth < 3) listTxt(tree, id, depth + 1, found)
-        } else if (name.endsWith(".txt", ignoreCase = true)) {
+        } else if (name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)) {
           found.add(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString() to name)
         }
       }

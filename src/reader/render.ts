@@ -7,6 +7,8 @@
  * feeds remain in the DOM as hidden text so `textContent` still equals the
  * page's UTF-16 slice while layout is controlled by paragraph boxes.
  */
+import { LEADING, MARKS, imageOfLine, readerImages } from "./images";
+
 export interface RenderTextOptions {
   /** The first character continues a line that began on an earlier page. */
   continued: boolean;
@@ -32,7 +34,10 @@ export function renderReaderText(
     const first = lineStart === 0;
     const last = newline < 0;
     const continued = first && options.continued;
-    if (lineEnd > lineStart) {
+    const image = continued ? null : imageOfLine(text.slice(lineStart, lineEnd));
+    if (image !== null) {
+      fragment.append(imageParagraph(document, text.slice(lineStart, lineEnd), lineStart, image));
+    } else if (lineEnd > lineStart) {
       const paragraph = document.createElement("p");
       paragraph.className = READER_PARAGRAPH_CLASS;
       paragraph.dataset.textStart = String(lineStart);
@@ -42,7 +47,8 @@ export function renderReaderText(
       // configured indent. They stay in the DOM, hidden, so offsets hold.
       let bodyStart = lineStart;
       if (!continued) {
-        const leading = /^[\s\u3000]+/u.exec(text.slice(lineStart, lineEnd))?.[0].length ?? 0;
+        // EPUB directory marks lead a line too, and are hidden with the spaces.
+        const leading = LEADING.exec(text.slice(lineStart, lineEnd))?.[0].length ?? 0;
         if (leading > 0 && lineStart + leading < lineEnd) {
           const spaces = document.createElement("span");
           spaces.hidden = true;
@@ -72,6 +78,60 @@ export function renderReaderText(
   container.replaceChildren(fragment);
 }
 
+/**
+ * An EPUB image line: the mark stays as hidden text so offsets hold, and the
+ * image box takes its size from the image before it loads, capped by the
+ * page height (`--reader-image-max`), so pages measure the same either way.
+ */
+function imageParagraph(
+  document: Document,
+  mark: string,
+  lineStart: number,
+  index: number,
+): HTMLElement {
+  const paragraph = document.createElement("p");
+  paragraph.className = READER_PARAGRAPH_CLASS;
+  paragraph.dataset.textStart = String(lineStart);
+  paragraph.dataset.image = "true";
+  const hidden = document.createElement("span");
+  hidden.hidden = true;
+  hidden.textContent = mark;
+  paragraph.append(hidden);
+  const images = readerImages();
+  const size = images?.size(index);
+  if (!images || !size) {
+    paragraph.append(document.createElement("br"));
+    return paragraph;
+  }
+  const image = document.createElement("img");
+  image.className = "reader-image";
+  image.alt = "";
+  image.draggable = false;
+  image.width = size.width;
+  image.height = size.height;
+  image.dataset.readerImage = String(index);
+  const url = images.url(index);
+  if (url) image.src = url;
+  else images.load(index);
+  paragraph.append(image);
+  return paragraph;
+}
+
+/** Text with EPUB directory marks hidden, keeping them in `textContent`. */
+function appendText(parent: HTMLElement, text: string): void {
+  const document = parent.ownerDocument;
+  let last = 0;
+  for (const match of text.matchAll(MARKS)) {
+    if (match.index > last) parent.append(text.slice(last, match.index));
+    const hidden = document.createElement("span");
+    hidden.hidden = true;
+    hidden.textContent = match[0];
+    parent.append(hidden);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parent.append(last === 0 ? text : text.slice(last));
+}
+
 function appendHighlighted(
   paragraph: HTMLElement,
   text: string,
@@ -81,18 +141,18 @@ function appendHighlighted(
 ): void {
   const document = paragraph.ownerDocument;
   if (!highlight || highlight.end <= start || highlight.start >= end) {
-    paragraph.append(text.slice(start, end));
+    appendText(paragraph, text.slice(start, end));
     return;
   }
   const markStart = Math.max(start, highlight.start);
   const markEnd = Math.min(end, highlight.end);
-  if (markStart > start) paragraph.append(text.slice(start, markStart));
+  if (markStart > start) appendText(paragraph, text.slice(start, markStart));
   const mark = document.createElement("mark");
   mark.dataset.testid = "reader-highlight";
   mark.className = "rounded bg-primary/25 text-inherit";
-  mark.textContent = text.slice(markStart, markEnd);
+  appendText(mark, text.slice(markStart, markEnd));
   paragraph.append(mark);
-  if (markEnd < end) paragraph.append(text.slice(markEnd, end));
+  if (markEnd < end) appendText(paragraph, text.slice(markEnd, end));
 }
 
 /**

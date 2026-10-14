@@ -100,6 +100,8 @@ function setup() {
     getTxtDecodeStatus: vi.fn(),
     cancelTxtDecode: vi.fn(),
     onTxtDecodeProgress: vi.fn(async () => () => {}),
+    listBookImages: vi.fn(async () => []),
+    readBookImage: vi.fn(),
     getBookInfo: vi.fn(),
   };
   const reader: ReaderService = {

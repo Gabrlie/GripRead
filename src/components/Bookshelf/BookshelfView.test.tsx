@@ -84,6 +84,8 @@ function runtime(books: LibraryBook[] = []) {
       getTxtDecodeStatus: vi.fn(),
       cancelTxtDecode: vi.fn(async () => ({ requested: true })),
       onTxtDecodeProgress: vi.fn(async () => () => {}),
+      listBookImages: vi.fn(async () => []),
+      readBookImage: vi.fn(),
       getBookInfo: vi.fn(async (bookId: string) => ({
         bookId,
         intro: null,

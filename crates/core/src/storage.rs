@@ -28,7 +28,7 @@ use crate::models::{
     ShelfState, UpdateBookRequest,
 };
 use crate::transform::{self, TextTransform, TransformRule};
-use crate::txt::detect_and_decode;
+use crate::txt::decode_source as detect_and_decode;
 use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
@@ -53,7 +53,7 @@ pub use portable::{
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 
-const CURRENT_SCHEMA_VERSION: i64 = 20;
+const CURRENT_SCHEMA_VERSION: i64 = 21;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -90,6 +90,18 @@ pub(crate) struct PreparedImport {
     detected_encoding: TxtEncoding,
     selected_encoding: TxtEncoding,
     decode_state: TxtDecodeState,
+    /// What an EPUB carries besides its text.
+    epub: Option<EpubParts>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EpubParts {
+    title: Option<String>,
+    author: Option<String>,
+    description: Option<String>,
+    toc: Vec<crate::epub::EpubTocEntry>,
+    images: Vec<crate::epub::EpubImage>,
+    cover: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +284,8 @@ pub(crate) struct ContentReadContext {
     record: AssetRecord,
     persisted: Option<PersistedIndex>,
     verified: Option<VerifiedContentIndex>,
+    /// An EPUB's directory entries, which its marks place in the text.
+    epub_toc: Option<Vec<crate::epub::EpubTocEntry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1041,6 +1055,24 @@ impl Storage {
             tx.commit()?;
         }
 
+        if current < 21 {
+            // EPUB books: their directory entries and images, by asset.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS epub_assets (
+                    asset_id TEXT PRIMARY KEY NOT NULL,
+                    toc_json TEXT NOT NULL,
+                    images_json TEXT NOT NULL,
+                    cover TEXT
+                );",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (21, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -1116,7 +1148,29 @@ impl Storage {
         }
 
         report(ImportPhase::Normalizing, bytes_read, total_bytes);
-        let decoded = detect_and_decode(&input, requested_encoding)?;
+        let (decoded, epub) = if crate::epub::is_epub(&input) {
+            let book = crate::epub::convert(&input)?;
+            let decoded = crate::txt::DecodedTxt {
+                text: book.text,
+                detected: TxtEncoding::Utf8,
+                selected: requested_encoding,
+                state: TxtDecodeState::Clean,
+            };
+            let parts = EpubParts {
+                title: book.title,
+                author: book.author,
+                description: book.description,
+                toc: book.toc,
+                images: book.images,
+                cover: book.cover,
+            };
+            (decoded, Some(parts))
+        } else {
+            (
+                crate::txt::detect_and_decode(&input, requested_encoding)?,
+                None,
+            )
+        };
         let normalized = decoded.text;
         if cancel.load(Ordering::Acquire) {
             return Err(import_cancelled());
@@ -1168,6 +1222,7 @@ impl Storage {
                 detected_encoding: decoded.detected,
                 selected_encoding: decoded.selected,
                 decode_state: decoded.state,
+                epub,
             })
         })();
         if result.is_err() {
@@ -1330,14 +1385,21 @@ impl Storage {
             let tx = self.conn.transaction()?;
             // The journal keeps the file name; the shelf shows its parsed parts.
             let parsed_name = parse_name_author(&journal.title);
+            // An EPUB names itself; the file name is the fallback.
+            let epub = prepared.epub.as_ref();
+            let (name, author) = match epub.and_then(|parts| parts.title.clone()) {
+                Some(title) => (title, epub.and_then(|parts| parts.author.clone())),
+                None => (parsed_name.name, parsed_name.author),
+            };
+            let kind = if epub.is_some() { "epub" } else { "txt" };
             if !duplicate {
                 tx.execute(
                     "INSERT INTO books(id, title, author, content_version, created_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         journal.book_id,
-                        parsed_name.name,
-                        parsed_name.author,
+                        name,
+                        author,
                         journal.content_version,
                         journal.created_at,
                         journal.created_at
@@ -1347,7 +1409,7 @@ impl Storage {
                     "INSERT INTO book_assets(
                         id, book_id, kind, sha256, dedup_hash, byte_length,
                         content_version, relative_path, created_at
-                     ) VALUES (?1, ?2, 'txt', ?3, ?3, ?4, ?5, ?6, ?7)",
+                     ) VALUES (?1, ?2, ?8, ?3, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         journal.asset_id,
                         journal.book_id,
@@ -1355,9 +1417,30 @@ impl Storage {
                         journal.byte_length as i64,
                         journal.content_version,
                         journal.relative_path,
-                        journal.created_at
+                        journal.created_at,
+                        kind
                     ],
                 )?;
+            }
+            if let Some(parts) = epub {
+                tx.execute(
+                    "INSERT INTO epub_assets(asset_id, toc_json, images_json, cover)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(asset_id) DO UPDATE SET toc_json = excluded.toc_json,
+                        images_json = excluded.images_json, cover = excluded.cover",
+                    params![
+                        journal.asset_id,
+                        serde_json::to_string(&parts.toc)?,
+                        serde_json::to_string(&parts.images)?,
+                        parts.cover
+                    ],
+                )?;
+                if let Some(description) = &parts.description {
+                    tx.execute(
+                        "UPDATE books SET intro = ?2 WHERE id = ?1 AND intro IS NULL",
+                        params![journal.book_id, description],
+                    )?;
+                }
             }
             let fingerprint = file_fingerprint(&final_path)?.1;
             insert_content_index(
@@ -1412,7 +1495,11 @@ impl Storage {
             let asset = BookAsset {
                 id: asset_id,
                 book_id: book_id.clone(),
-                kind: AssetKind::Txt,
+                kind: if prepared.epub.is_some() {
+                    AssetKind::Epub
+                } else {
+                    AssetKind::Txt
+                },
                 sha256: prepared.sha256,
                 byte_length: prepared.byte_length,
                 content_version,
@@ -2247,19 +2334,21 @@ impl Storage {
     }
 
     pub fn txt_encoding_for_book(&self, book_id: &str) -> Result<TxtEncodingInfo, AppError> {
-        let asset_id: String = self.conn.query_row(
-            "SELECT id FROM book_assets WHERE book_id = ?1 ORDER BY created_at ASC LIMIT 1",
+        let (asset_id, kind): (String, String) = self.conn.query_row(
+            "SELECT id, kind FROM book_assets WHERE book_id = ?1 ORDER BY created_at ASC LIMIT 1",
             params![book_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        Ok(self
+        // An EPUB declares its own encoding.
+        let info = self
             .txt_encoding_for_asset(&asset_id)?
-            .unwrap_or(TxtEncodingInfo {
-                detected: TxtEncoding::Utf8,
-                selected: TxtEncoding::Utf8,
-                state: TxtDecodeState::Clean,
-                can_change: false,
-            }))
+            .filter(|_| kind != "epub");
+        Ok(info.unwrap_or(TxtEncodingInfo {
+            detected: TxtEncoding::Utf8,
+            selected: TxtEncoding::Utf8,
+            state: TxtDecodeState::Clean,
+            can_change: false,
+        }))
     }
 
     fn txt_encoding_for_asset(&self, asset_id: &str) -> Result<Option<TxtEncodingInfo>, AppError> {
@@ -4374,12 +4463,132 @@ impl Storage {
             })?
             .get(&record.asset.id)
             .cloned();
+        let epub_toc = match record.asset.kind {
+            AssetKind::Epub => self.epub_parts(&record.asset.id)?.map(|(toc, _, _)| toc),
+            AssetKind::Txt => None,
+        };
         Ok(ContentReadContext {
             root: self.root.clone(),
             record,
             persisted,
             verified,
+            epub_toc,
         })
+    }
+
+    /// An EPUB asset's directory entries, images, and cover path.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn epub_parts(
+        &self,
+        asset_id: &str,
+    ) -> Result<
+        Option<(
+            Vec<crate::epub::EpubTocEntry>,
+            Vec<crate::epub::EpubImage>,
+            Option<String>,
+        )>,
+        AppError,
+    > {
+        let row: Option<(String, String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT toc_json, images_json, cover FROM epub_assets WHERE asset_id = ?1",
+                params![asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        row.map(|(toc, images, cover)| {
+            Ok((
+                serde_json::from_str(&toc)?,
+                serde_json::from_str(&images)?,
+                cover,
+            ))
+        })
+        .transpose()
+    }
+
+    /// A book's retained EPUB, its images, and its cover's path inside it.
+    #[allow(clippy::type_complexity)]
+    fn epub_source(
+        &self,
+        book_id: &str,
+    ) -> Result<(PathBuf, Vec<crate::epub::EpubImage>, Option<String>), AppError> {
+        let record = self.asset_for_book(book_id)?;
+        let not_epub = || AppError::new(ErrorCode::NotFound, "这本书不是 EPUB");
+        if record.asset.kind != AssetKind::Epub {
+            return Err(not_epub());
+        }
+        let (_, images, cover) = self.epub_parts(&record.asset.id)?.ok_or_else(not_epub)?;
+        let source: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT source_relative_path FROM txt_assets WHERE asset_id = ?1",
+                params![record.asset.id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let source = source
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| AppError::new(ErrorCode::AssetMissing, "EPUB 原文件不在了"))?;
+        Ok((managed_path(&self.root, &source, "sources")?, images, cover))
+    }
+
+    /// The sizes of an EPUB's images, by the index its text marks carry;
+    /// empty for a TXT.
+    pub fn book_images(&self, book_id: &str) -> Result<Vec<crate::models::BookImage>, AppError> {
+        if self.asset_for_book(book_id)?.asset.kind != AssetKind::Epub {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .epub_source(book_id)?
+            .1
+            .into_iter()
+            .map(|image| crate::models::BookImage {
+                width: image.width,
+                height: image.height,
+            })
+            .collect())
+    }
+
+    /// Where an EPUB image is: the book file and the path inside it.
+    pub fn book_image_location(
+        &self,
+        book_id: &str,
+        index: u32,
+    ) -> Result<(PathBuf, String), AppError> {
+        let (source, images, _) = self.epub_source(book_id)?;
+        let image = images
+            .into_iter()
+            .nth(index as usize)
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这张图片"))?;
+        Ok((source, image.path))
+    }
+
+    /// Gives an imported EPUB its own cover when the book has none yet.
+    pub fn apply_epub_cover(&mut self, book_id: &str) -> Result<(), AppError> {
+        if self.book_cover(book_id)?.is_some()
+            || self.asset_for_book(book_id)?.asset.kind != AssetKind::Epub
+        {
+            return Ok(());
+        }
+        let (source, _, Some(cover)) = self.epub_source(book_id)? else {
+            return Ok(());
+        };
+        let bytes = crate::epub::read_file_at(&source, &cover)?;
+        let staged = managed_path(
+            &self.root,
+            &format!("staging/cover-{}", Uuid::new_v4()),
+            "staging",
+        )?;
+        if let Some(parent) = staged.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&staged, bytes)?;
+        let name = cover.rsplit('/').next().unwrap_or("cover").to_string();
+        let result = self.set_book_cover(book_id, &staged, &name).map(|_| ());
+        let _ = fs::remove_file(&staged);
+        result
     }
 
     fn persisted_index(&self, asset_id: &str) -> Result<Option<PersistedIndex>, AppError> {
@@ -5163,7 +5372,11 @@ pub(crate) fn build_toc_from_context(
     rule: &TocBuildRule,
 ) -> Result<TocBuild, AppError> {
     let text = read_verified_text(context, verified)?;
-    let mut build = build_toc(&text, book_id, &context.record.asset.content_version, rule)?;
+    let version = &context.record.asset.content_version;
+    let mut build = match &context.epub_toc {
+        Some(toc) => crate::epub::build_toc(&text, book_id, version, toc),
+        None => build_toc(&text, book_id, version, rule)?,
+    };
     build.entries.iter_mut().for_each(|entry| {
         entry.locator.resource_id = context.record.asset.id.clone();
     });
@@ -5259,7 +5472,8 @@ fn search_text_stream(
         Ok(SearchMatch {
             ordinal,
             locator,
-            excerpt,
+            // EPUB marks are not part of what is shown.
+            excerpt: crate::epub::strip_marks(&excerpt),
             match_start,
             match_end,
         })
@@ -6115,6 +6329,7 @@ fn asset_from_columns(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Resul
     let kind: String = row.get(offset + 2)?;
     let kind = match kind.as_str() {
         "txt" => AssetKind::Txt,
+        "epub" => AssetKind::Epub,
         _ => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 offset + 2,
@@ -6679,7 +6894,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 21);
     }
 
     #[test]
@@ -7455,6 +7670,72 @@ mod tests {
             fs::read(app_root.join(&operation_source)).unwrap(),
             "中文".as_bytes()
         );
+    }
+
+    #[test]
+    fn an_epub_imports_with_its_title_directory_images_and_cover() {
+        let root = TestRoot::new();
+        let bytes = crate::epub::tests::epub3();
+        let source = write_source(&root.0, "whatever.epub", &bytes);
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let imported = storage
+            .import_txt(&source, "epub", &no_cancel(), |_, _, _| {})
+            .unwrap();
+        let book_id = imported.book.id.clone();
+        assert_eq!(imported.asset.kind, AssetKind::Epub);
+        assert_eq!(imported.book.title, "测试之书");
+        assert_eq!(imported.book.author.as_deref(), Some("作者甲"));
+        assert!(!storage.txt_encoding_for_book(&book_id).unwrap().can_change);
+
+        let toc = storage.list_toc(&book_id).unwrap();
+        assert_eq!(toc.rule_name, "EPUB 目录");
+        assert_eq!(
+            toc.entries
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["第一章 开始", "第一节", "第二章 结束"]
+        );
+        let window = storage
+            .read_content_window(&book_id, Some(&toc.entries[2].locator), 100)
+            .unwrap();
+        assert!(window.text.contains("第二章 结束"));
+
+        let found = storage
+            .search_book(&SearchRequest {
+                book_id: book_id.clone(),
+                query: "第二段".into(),
+                case_sensitive: false,
+                regex: false,
+                cursor: None,
+                limit: 10,
+                operation_id: None,
+            })
+            .unwrap();
+        assert_eq!(found.matches.len(), 1);
+        assert!(!found.matches[0].excerpt.chars().any(crate::epub::is_mark));
+
+        assert_eq!(
+            storage.book_images(&book_id).unwrap(),
+            vec![crate::models::BookImage {
+                width: 2,
+                height: 1
+            }]
+        );
+        let (file, inner) = storage.book_image_location(&book_id, 0).unwrap();
+        assert_eq!(
+            crate::epub::read_file_at(&file, &inner).unwrap(),
+            crate::epub::tests::PNG
+        );
+        assert!(storage.book_image_location(&book_id, 1).is_err());
+        storage.apply_epub_cover(&book_id).unwrap();
+        assert!(storage.book_cover(&book_id).unwrap().is_some());
+
+        // The same file again is the same book.
+        let again = storage
+            .import_txt(&source, "epub-again", &no_cancel(), |_, _, _| {})
+            .unwrap();
+        assert_eq!(again.book.id, book_id);
     }
 
     #[test]

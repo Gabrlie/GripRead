@@ -9,6 +9,21 @@ pub struct DecodedTxt {
     pub state: TxtDecodeState,
 }
 
+/// Decodes a book's retained source: an EPUB converts to its text
+/// (`crate::epub`, the encoding does not apply), anything else decodes as a
+/// TXT. Every path that rebuilds a book's text from its source uses this.
+pub fn decode_source(input: &[u8], requested: TxtEncoding) -> Result<DecodedTxt, AppError> {
+    if crate::epub::is_epub(input) {
+        return Ok(DecodedTxt {
+            text: crate::epub::convert(input)?.text,
+            detected: TxtEncoding::Utf8,
+            selected: requested,
+            state: TxtDecodeState::Clean,
+        });
+    }
+    detect_and_decode(input, requested)
+}
+
 /// Detect and decode a TXT without silently accepting invalid UTF-8. The
 /// caller may persist `selected` and repeat this operation when the reader
 /// changes the encoding.
