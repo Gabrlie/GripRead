@@ -10,6 +10,7 @@ A lightweight, local-first reader built with Tauri 2, with an optional self-host
 
 [![Build](https://github.com/Gabrlie/GripRead/actions/workflows/build.yml/badge.svg)](https://github.com/Gabrlie/GripRead/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Gabrlie/GripRead?include_prereleases&label=release&color=4c8bf5)](https://github.com/Gabrlie/GripRead/releases)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Image](https://img.shields.io/badge/image-ghcr.io%2Fgabrlie%2Fgripread-2496ed?logo=docker&logoColor=white)](https://github.com/Gabrlie/GripRead/pkgs/container/gripread)
 <br />
 ![Android](https://img.shields.io/badge/Android-3ddc84?logo=android&logoColor=white)
@@ -151,3 +152,7 @@ Start with [AGENTS.md](AGENTS.md) and the [documentation map](.ai/README.md). Th
 - [Legado (阅读)](https://github.com/gedoor/legado) — GripRead's reading behavior and book source format follow it.
 - [OpenCC](https://github.com/BYVoid/OpenCC) — the simplified/traditional conversion tables (Apache-2.0).
 - [Tauri](https://tauri.app/), [React](https://react.dev/), and [shadcn/ui](https://ui.shadcn.com/).
+
+## License
+
+GripRead is free software under the [GNU General Public License v3.0](LICENSE). You may use, study, modify, and share it; if you distribute it or a modified version, you must release the source under the same license.

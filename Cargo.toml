@@ -6,6 +6,7 @@ resolver = "2"
 # with package.json.
 [workspace.package]
 version = "0.2.0"
+license = "GPL-3.0-only"
 
 # Debug builds are installed on devices for acceptance. Optimize dependencies
 # (decoding, encoding detection, hashing, regex, SQLite) so imports and reads
