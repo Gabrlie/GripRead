@@ -1163,9 +1163,8 @@ mod tests {
         let shelf = tablet.list_library_books().unwrap();
         assert_eq!(shelf.len(), 1);
         let there = shelf[0].book.id.clone();
-        // The contents come later; the chapter position waits for them.
-        let waiting = tablet.pending_online_position(&there).unwrap().unwrap();
-        assert_eq!((waiting.index, waiting.offset), (1, 7));
+        // The chapter list comes with the book, so no position waits for it.
+        assert!(tablet.online_chapter_count(&there).unwrap() > 0);
         assert_eq!(tablet.list_book_sources().unwrap().len(), 1);
         // The tablet's own copy settles without sending anything back.
         let echo = tablet.sync_pending().unwrap();

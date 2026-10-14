@@ -866,17 +866,119 @@ pub async fn update_online_toc(
     state: &Arc<AppState>,
     request: UpdateOnlineTocRequest,
 ) -> Result<(), AppError> {
+    let ids = if request.book_ids.is_empty() {
+        with_storage(state, |storage| storage.updatable_online_books()).await?
+    } else {
+        request.book_ids.clone()
+    };
+    if state.sync.connected() {
+        update_through_server(state.clone(), request.operation_id, ids);
+        return Ok(());
+    }
+    update_here(state, request.operation_id, ids).await
+}
+
+/// 更新书架 while connected: the server updates its books, its new
+/// chapter lists arrive by sync, and the same events report each book.
+/// Books the server does not have, or a failed request, update here.
+fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<String>) {
+    tokio::spawn(async move {
+        let keyed = {
+            let ids = ids.clone();
+            with_storage(&state, move |storage| {
+                ids.iter()
+                    .map(|id| Ok((storage.online_sync_key(id)?, id.clone())))
+                    .collect::<Result<Vec<(String, String)>, AppError>>()
+            })
+            .await
+        };
+        let keyed = match keyed {
+            Ok(keyed) => keyed,
+            Err(_) => {
+                let _ = update_here(&state, operation_id, ids).await;
+                return;
+            }
+        };
+        let sync = state.sync.clone();
+        let keys = keyed.iter().map(|(key, _)| key.clone()).collect();
+        let reply = tokio::task::spawn_blocking(move || {
+            let reply = sync.update_shelf(keys)?;
+            sync.sync_and_wait(Duration::from_secs(60));
+            Ok::<_, AppError>(reply)
+        })
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))
+        .and_then(|reply| reply);
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) => {
+                crate::app_log::warn(
+                    "sync",
+                    format!("服务器更新书架失败，改为本机更新：{}", error.message),
+                );
+                let _ = update_here(&state, operation_id, ids).await;
+                return;
+            }
+        };
+        let total = keyed.len() as u32;
+        let mut updated = 0;
+        let mut missing = Vec::new();
+        for (key, book_id) in keyed {
+            let Some(book) = reply.books.iter().find(|book| book.key == key) else {
+                missing.push(book_id);
+                continue;
+            };
+            updated += 1;
+            state.events.emit(
+                "online-toc",
+                serde_json::to_value(OnlineTocEvent {
+                    operation_id: operation_id.clone(),
+                    book_id,
+                    updated,
+                    total,
+                    new_chapters: book.added,
+                    error: book.error.clone(),
+                    done: false,
+                })
+                .unwrap_or_default(),
+            );
+        }
+        if missing.is_empty() {
+            state.events.emit(
+                "online-toc",
+                serde_json::to_value(OnlineTocEvent {
+                    operation_id,
+                    book_id: String::new(),
+                    updated,
+                    total,
+                    new_chapters: 0,
+                    error: None,
+                    done: true,
+                })
+                .unwrap_or_default(),
+            );
+        } else {
+            let _ = update_here(&state, operation_id, missing).await;
+        }
+    });
+}
+
+/// 更新书架 on this device, from each book's source.
+async fn update_here(
+    state: &Arc<AppState>,
+    operation_id: String,
+    ids: Vec<String>,
+) -> Result<(), AppError> {
+    let request = UpdateOnlineTocRequest {
+        book_ids: ids.clone(),
+        operation_id,
+    };
     let app = state.clone();
     let operations = &state.operations;
     let storage = state.storage.clone();
     // The device's proxy may have gone since it was last checked.
     let root = state.data_root.clone();
     on_engine_thread(move || crate::network::refresh(&root)).await?;
-    let ids = if request.book_ids.is_empty() {
-        with_storage(state, |storage| storage.updatable_online_books()).await?
-    } else {
-        request.book_ids.clone()
-    };
     let cancel = operations.register(&request.operation_id);
     let cancels = operations.cancels();
     let total = ids.len() as u32;

@@ -19,9 +19,11 @@ use ureq::http::{Method, Request};
 
 use crate::api::Events;
 use crate::error::{AppError, ErrorCode};
-use crate::models::{ConnectSyncServerRequest, SyncServerStatus};
+use crate::models::{ConnectSyncServerRequest, OnlineChapter, SyncServerStatus};
 use crate::storage::{Storage, SyncChange};
-use crate::sync::{self as protocol, PullReply, PushReply, PushRequest};
+use crate::sync::{
+    self as protocol, PullReply, PushReply, PushRequest, ShelfUpdateReply, ShelfUpdateRequest,
+};
 
 const FILE: &str = "sync-server.json";
 const QUIET: Duration = Duration::from_secs(3);
@@ -30,6 +32,10 @@ const LONGEST: Duration = Duration::from_secs(10);
 const WAIT: Duration = Duration::from_secs(25);
 const RETRY_FIRST: Duration = Duration::from_secs(30);
 const RETRY_LONGEST: Duration = Duration::from_secs(300);
+/// A chapter the server may first have to fetch from its source.
+const CHAPTER_TIMEOUT: Duration = Duration::from_secs(60);
+/// A whole shelf update on the server.
+const SHELF_UPDATE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
@@ -306,6 +312,46 @@ impl SyncClient {
             });
         }
         self.inner.signal.notify_all();
+    }
+
+    /// A chapter from the server, which keeps chapters it fetched and can
+    /// reach sources this device cannot; `None` when not connected or the
+    /// server could not give it.
+    pub fn fetch_chapter(&self, key: &str, chapter: &OnlineChapter) -> Option<String> {
+        let config = self.config();
+        if !config.connected() {
+            return None;
+        }
+        let mut response = agent(CHAPTER_TIMEOUT)
+            .get(format!("{}/api/sync/chapter", config.address))
+            .query("key", key)
+            .query("url", &chapter.url)
+            .query("title", &chapter.title)
+            .header("Authorization", format!("Bearer {}", config.token))
+            .call()
+            .ok()?;
+        if response.status().as_u16() != 200 {
+            return None;
+        }
+        response.body_mut().read_to_string().ok()
+    }
+
+    /// 更新书架 on the server, which then syncs the new chapters here.
+    pub fn update_shelf(&self, keys: Vec<String>) -> Result<ShelfUpdateReply, AppError> {
+        let config = self.config();
+        if !config.connected() {
+            return Err(AppError::invalid_argument("未连接服务器"));
+        }
+        let http = Http {
+            address: &config.address,
+            token: &config.token,
+            agent: agent(SHELF_UPDATE_TIMEOUT),
+        };
+        http.json(
+            Method::POST,
+            "/api/jobs/update",
+            Some(serde_json::to_value(ShelfUpdateRequest { keys })?),
+        )
     }
 
     /// A round as soon as the worker is free (立即同步, start, foreground).

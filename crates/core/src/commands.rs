@@ -205,6 +205,15 @@ impl AppState {
         };
         let sync =
             crate::sync_client::SyncClient::start(&data_root, storage.clone(), events.clone());
+        // Online chapters come through the server while connected.
+        if let Ok(mut guard) = storage.lock() {
+            let client = sync.clone();
+            guard.set_chapter_relay(crate::storage::ChapterRelay(Arc::new(
+                move |key: &str, chapter: &crate::models::OnlineChapter| {
+                    client.fetch_chapter(key, chapter)
+                },
+            )));
+        }
         Ok(Arc::new(Self {
             sync,
             storage,

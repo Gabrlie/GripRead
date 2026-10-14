@@ -96,13 +96,27 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     if chapter.is_volume && chapter.url.trim().is_empty() {
         return Ok(String::new());
     }
-    let (record, chapters) = {
+    let (record, chapters, relay) = {
         let guard = lock(storage)?;
+        let relay = match guard.chapter_relay() {
+            Some(relay) => Some((relay, guard.online_sync_key(book_id)?)),
+            None => None,
+        };
         (
             guard.online_record(book_id)?,
             guard.online_chapters(book_id)?,
+            relay,
         )
     };
+    // A connected server may have it already, or reach the source when
+    // this device cannot.
+    if let Some((relay, key)) = relay {
+        if let Some(text) = (relay.0)(&key, &chapter) {
+            write_cache(&path, &text)?;
+            crate::storage::mark_chapter_cached(book_id, &chapter);
+            return Ok(text);
+        }
+    }
     let source = load_source(storage, &record.book.source_url)?;
     let control = Control::new(Default::default(), Some(Instant::now() + FETCH_TIMEOUT));
     let session = session_for(storage, source, control).map_err(engine_error)?;

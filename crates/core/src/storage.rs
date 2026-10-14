@@ -74,6 +74,21 @@ pub struct Storage {
     /// complete asset bytes. A persisted index is never trusted until this
     /// cache has been populated for the current file fingerprint.
     verified_indexes: Mutex<HashMap<String, VerifiedContentIndex>>,
+    /// Fetches an online chapter through the connected GripRead server.
+    chapter_relay: Option<ChapterRelay>,
+}
+
+/// Asks the connected server for a chapter: the book's online key and the
+/// chapter; `None` when not connected or the server could not give it.
+#[derive(Clone)]
+pub struct ChapterRelay(pub std::sync::Arc<RelayFn>);
+
+type RelayFn = dyn Fn(&str, &crate::models::OnlineChapter) -> Option<String> + Send + Sync;
+
+impl std::fmt::Debug for ChapterRelay {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ChapterRelay")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +334,15 @@ struct SearchParameters<'a> {
 }
 
 impl Storage {
+    /// Lets online chapters come through the connected server first.
+    pub fn set_chapter_relay(&mut self, relay: ChapterRelay) {
+        self.chapter_relay = Some(relay);
+    }
+
+    pub fn chapter_relay(&self) -> Option<ChapterRelay> {
+        self.chapter_relay.clone()
+    }
+
     pub fn open(root: &Path) -> Result<Self, AppError> {
         fs::create_dir_all(root)?;
         fs::create_dir_all(root.join("books"))?;
@@ -355,6 +379,7 @@ impl Storage {
             conn,
             data_lock,
             verified_indexes: Mutex::new(HashMap::new()),
+            chapter_relay: None,
         };
         storage.apply_migrations()?;
         storage.recover_pending_imports()?;

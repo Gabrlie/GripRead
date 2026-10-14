@@ -2,6 +2,9 @@
 //! per piece of state, keyed like backups so devices agree on identity.
 //!
 //! - `book:<sha256>`, `online:<name key>`: a book's details and placement
+//! - `chapters:online:<name key>`: an online book's chapter list, so a
+//!   directory updated on the server or another device arrives without
+//!   asking the source
 //! - `progress:`, `bookmarks:`, `time:` + `book:<sha256>` or `online:<key>`
 //! - `group:<name>`, `replace:<id>`, `toc:<id>`, `source:<url>`
 //! - `prefs:reading`, `prefs:theme`, `prefs:shelf`
@@ -193,6 +196,15 @@ impl Storage {
             book.bookmarks.clear();
             book.reading_time.clear();
             records.insert(key, serde_json::to_value(book)?);
+        }
+        for (key, book_id) in self.online_ids_by_key()? {
+            let chapters = self.online_chapters(&book_id)?;
+            if !chapters.is_empty() {
+                records.insert(
+                    format!("chapters:online:{key}"),
+                    serde_json::to_value(chapters)?,
+                );
+            }
         }
         for group in self.list_groups()? {
             records.insert(
@@ -401,6 +413,15 @@ impl Storage {
             ("prefs", None) => {}
             ("book", value) => self.apply_book_record(rest, value)?,
             ("online", value) => self.apply_online_record(rest, value)?,
+            ("chapters", Some(value)) => {
+                let key = rest.strip_prefix("online:").unwrap_or(rest);
+                if let Some(book_id) = self.online_book_id_for_key(key)? {
+                    let chapters: Vec<crate::models::OnlineChapter> =
+                        serde_json::from_value(value.clone())?;
+                    let book = self.online_record(&book_id)?.book;
+                    self.replace_online_toc(&book_id, &book, &chapters)?;
+                }
+            }
             (part @ ("progress" | "bookmarks" | "time"), Some(value)) => {
                 let (scope, id) = rest.split_once(':').unwrap_or(("", ""));
                 match scope {
@@ -602,6 +623,48 @@ impl Storage {
     }
 
     /// The online book on the shelf with this name key.
+    /// Shelf online books by their sync key.
+    fn online_ids_by_key(&self) -> Result<Vec<(String, String)>, AppError> {
+        let mut statement = self.conn.prepare(
+            "SELECT o.book_id, b.title, b.author FROM online_books o JOIN books b ON b.id = o.book_id
+             WHERE o.on_shelf = 1
+               AND NOT EXISTS(SELECT 1 FROM shelf_removals r WHERE r.book_id = o.book_id)",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, title, author)| (online_key(&title, author.as_deref().unwrap_or("")), id))
+            .collect())
+    }
+
+    /// The shelf online book a sync key names.
+    pub fn online_book_id_for_key(&self, key: &str) -> Result<Option<String>, AppError> {
+        Ok(self
+            .online_ids_by_key()?
+            .into_iter()
+            .find(|(found, _)| found == key)
+            .map(|(_, id)| id))
+    }
+
+    /// An online book's sync key (`online:<key>` records), from its title
+    /// and author as the shelf has them.
+    pub fn online_sync_key(&self, book_id: &str) -> Result<String, AppError> {
+        let (title, author): (String, Option<String>) = self.conn.query_row(
+            "SELECT title, author FROM books WHERE id = ?1",
+            params![book_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(online_key(&title, author.as_deref().unwrap_or("")))
+    }
+
     fn online_book_for_key(
         &self,
         key: &str,

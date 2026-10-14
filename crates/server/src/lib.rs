@@ -4,6 +4,7 @@
 //! guards everything but sign-in and the page itself.
 
 pub mod auth;
+mod jobs;
 mod paths;
 mod sync;
 mod update;
@@ -110,6 +111,9 @@ pub struct Server {
     exports: ExportSlot,
     /// Woken by the web version's edits, which sync logs once they pause.
     edits: Arc<tokio::sync::Notify>,
+    /// The data folder (`jobs.json` keeps 定时追更's settings).
+    data: PathBuf,
+    jobs: jobs::Jobs,
 }
 
 /// Opens the data folder and builds the routes.
@@ -138,9 +142,12 @@ pub fn app(config: Config) -> Result<Router, String> {
         uploads,
         exports,
         edits: edits.clone(),
+        data: config.data.clone(),
+        jobs: jobs::Jobs::default(),
     });
     sync::watch_edits(server.clone(), edits);
     sync::daily_backups(server.clone());
+    jobs::schedule(server.clone());
     let api = Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/setup", post(setup))
@@ -155,6 +162,7 @@ pub fn app(config: Config) -> Result<Router, String> {
         .route("/api/events", get(events_socket))
         .merge(sync::routes())
         .merge(update::routes())
+        .merge(jobs::routes())
         .layer(axum::extract::DefaultBodyLimit::max(64 << 20))
         .with_state(server);
     Ok(match config.web {

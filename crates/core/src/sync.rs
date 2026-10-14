@@ -33,6 +33,30 @@ pub struct PushReply {
     pub missing_covers: Vec<String>,
 }
 
+/// 更新书架 through the server (`POST /api/jobs/update`): the books by
+/// their sync keys, all of the server's updatable books when empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfUpdateRequest {
+    #[serde(default)]
+    pub keys: Vec<String>,
+}
+
+/// One book's outcome of a server-side 更新书架.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookUpdate {
+    pub key: String,
+    pub added: u32,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfUpdateReply {
+    pub books: Vec<BookUpdate>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PullReply {
