@@ -185,6 +185,28 @@ const IPC_TYPES: &[&str] = &[
     "InstallOutcome",
     "ConnectSyncServerRequest",
     "ServerApiRequest",
+    "Feed",
+    "FeedCandidate",
+    "AddFeedRequest",
+    "UpdateFeedRequest",
+    "FeedUrlsRequest",
+    "RefreshFeedsRequest",
+    "RssRefreshEvent",
+    "ArticleFilter",
+    "ArticleCursor",
+    "ArticleQuery",
+    "ArticleSummary",
+    "ArticlePage",
+    "Article",
+    "ArticleIdRequest",
+    "ArticleStateRequest",
+    "MarkAllReadRequest",
+    "RssImageRequest",
+    "OpmlImportReport",
+    "RssSettings",
+    "OpmlImportRequest",
+    "DiscoverFeedRequest",
+    "SaveRssSettingsRequest",
     "SwitchRequest",
     "NetworkSettings",
     "ProxyKind",
@@ -391,6 +413,28 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<InstallOutcome>(&config)?;
     export_all::<ConnectSyncServerRequest>(&config)?;
     export_all::<ServerApiRequest>(&config)?;
+    export_all::<Feed>(&config)?;
+    export_all::<FeedCandidate>(&config)?;
+    export_all::<AddFeedRequest>(&config)?;
+    export_all::<UpdateFeedRequest>(&config)?;
+    export_all::<FeedUrlsRequest>(&config)?;
+    export_all::<RefreshFeedsRequest>(&config)?;
+    export_all::<RssRefreshEvent>(&config)?;
+    export_all::<ArticleFilter>(&config)?;
+    export_all::<ArticleCursor>(&config)?;
+    export_all::<ArticleQuery>(&config)?;
+    export_all::<ArticleSummary>(&config)?;
+    export_all::<ArticlePage>(&config)?;
+    export_all::<Article>(&config)?;
+    export_all::<ArticleIdRequest>(&config)?;
+    export_all::<ArticleStateRequest>(&config)?;
+    export_all::<MarkAllReadRequest>(&config)?;
+    export_all::<RssImageRequest>(&config)?;
+    export_all::<OpmlImportReport>(&config)?;
+    export_all::<RssSettings>(&config)?;
+    export_all::<OpmlImportRequest>(&config)?;
+    export_all::<DiscoverFeedRequest>(&config)?;
+    export_all::<SaveRssSettingsRequest>(&config)?;
     export_all::<SwitchRequest>(&config)?;
     export_all::<NetworkSettings>(&config)?;
     export_all::<ProxyKind>(&config)?;

@@ -20,6 +20,8 @@ pub mod online_reader;
 pub mod platform;
 pub mod progress_sync;
 pub mod relocation;
+pub mod rss;
+pub mod rss_commands;
 pub mod source_commands;
 pub mod sources;
 pub mod storage;

@@ -39,6 +39,7 @@ mod online_convert;
 mod usage;
 pub use usage::DEFAULT_CLEARED;
 mod portable;
+mod rss;
 mod sources;
 mod sync;
 pub use online::{
@@ -50,10 +51,11 @@ pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
     ProgressState, StoredWebDav,
 };
+pub use rss::{article_id, FeedFetchState, FetchedArticle, FetchedFeed};
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 
-const CURRENT_SCHEMA_VERSION: i64 = 22;
+const CURRENT_SCHEMA_VERSION: i64 = 23;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1107,6 +1109,16 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (22, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 23 {
+            // 订阅: feeds and their articles.
+            let tx = self.conn.transaction()?;
+            Self::create_rss_tables(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (23, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -6933,7 +6945,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
     }
 
     #[test]

@@ -2272,3 +2272,231 @@ pub struct BookImageRequest {
     pub book_id: String,
     pub index: u32,
 }
+
+/// An RSS/Atom subscription with its article counts (订阅).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Feed {
+    pub url: String,
+    pub title: String,
+    pub site_url: Option<String>,
+    pub icon_url: Option<String>,
+    /// The group it is filed under; none for ungrouped.
+    pub group: Option<String>,
+    pub sort: i64,
+    pub added_at: i64,
+    pub last_fetch: Option<i64>,
+    pub last_error: Option<String>,
+    pub unread: u32,
+    pub total: u32,
+}
+
+/// A feed found at an address (the address itself, or one a page links to).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedCandidate {
+    pub url: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddFeedRequest {
+    pub url: String,
+    /// The reader's own title; the feed's when empty.
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFeedRequest {
+    pub url: String,
+    pub title: String,
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedUrlsRequest {
+    pub urls: Vec<String>,
+}
+
+/// Refreshes the feeds named (every feed when empty).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshFeedsRequest {
+    pub operation_id: String,
+    #[serde(default)]
+    pub urls: Vec<String>,
+}
+
+/// `rss-refresh`: one feed refreshed, or the whole refresh done.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RssRefreshEvent {
+    pub operation_id: String,
+    pub url: String,
+    pub refreshed: u32,
+    pub total: u32,
+    pub new_articles: u32,
+    pub error: Option<String>,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ArticleFilter {
+    #[default]
+    All,
+    Unread,
+    Starred,
+}
+
+/// Where the next page of articles starts: older than this one.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleCursor {
+    pub published_at: i64,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleQuery {
+    /// One feed, or every feed of a group, or (neither) all feeds.
+    #[serde(default)]
+    pub feed: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub filter: ArticleFilter,
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default)]
+    pub after: Option<ArticleCursor>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleSummary {
+    pub id: String,
+    pub feed_url: String,
+    pub feed_title: String,
+    pub title: String,
+    pub link: Option<String>,
+    pub author: Option<String>,
+    pub published_at: i64,
+    /// The start of the text, without markup.
+    pub excerpt: String,
+    /// The first picture, for a thumbnail.
+    pub image: Option<String>,
+    pub read: bool,
+    pub starred: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticlePage {
+    pub articles: Vec<ArticleSummary>,
+    pub next: Option<ArticleCursor>,
+}
+
+/// An article to read: the feed's content (sanitized HTML), and the page's
+/// full text once fetched (全文).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Article {
+    pub summary: ArticleSummary,
+    pub content: String,
+    pub full_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleIdRequest {
+    pub id: String,
+}
+
+/// Marks articles read or unread, starred or not; absent leaves it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleStateRequest {
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub read: Option<bool>,
+    #[serde(default)]
+    pub starred: Option<bool>,
+}
+
+/// 全部标为已读 for one feed, one group, or (neither) everything.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkAllReadRequest {
+    #[serde(default)]
+    pub feed: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RssImageRequest {
+    pub url: String,
+    /// The article's page, sent as the referrer some sites require.
+    #[serde(default)]
+    pub referer: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpmlImportReport {
+    pub added: u32,
+    /// Feeds already subscribed.
+    pub existing: u32,
+}
+
+/// RSS settings on this device.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RssSettings {
+    /// Minutes between refreshes while the app is open; 0 turns them off.
+    pub refresh_minutes: u32,
+    /// Opening an article marks it read.
+    pub mark_read_on_open: bool,
+    /// The article text size in CSS pixels.
+    pub font_size: u8,
+}
+
+impl Default for RssSettings {
+    fn default() -> Self {
+        Self {
+            refresh_minutes: 60,
+            mark_read_on_open: true,
+            font_size: 17,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpmlImportRequest {
+    /// The OPML file's text (read with `read_source_file`).
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverFeedRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveRssSettingsRequest {
+    pub settings: RssSettings,
+}
