@@ -34,6 +34,7 @@ const kept = ["package.json", "src-tauri/tauri.conf.json"].map((path) => [
   join(root, path),
   readFileSync(join(root, path)),
 ]);
+let status = 0;
 try {
   stamp(root, version, now);
   const build = spawnSync(
@@ -51,10 +52,12 @@ try {
     ],
     { cwd: root, stdio: "inherit" },
   );
-  if (build.status !== 0) process.exit(build.status ?? 1);
+  status = build.status ?? 1;
 } finally {
+  // Restored before exiting: process.exit inside try would skip this.
   for (const [path, contents] of kept) writeFileSync(path, contents);
 }
+if (status !== 0) process.exit(status);
 
 const out = join(root, "target/apk");
 mkdirSync(out, { recursive: true });

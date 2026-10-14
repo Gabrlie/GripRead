@@ -27,8 +27,8 @@ importers:
         specifier: ^2.7.3
         version: 2.7.3
       '@tauri-apps/plugin-opener':
-        specifier: ^2.7.1
-        version: 2.7.1
+        specifier: ~2.5.5
+        version: 2.5.5
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -89,7 +89,7 @@ importers:
         version: 9.30.1
       '@wdio/tauri-plugin':
         specifier: ^1.4.0
-        version: 1.4.0(tsx@4.23.13)
+        version: 1.4.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/tauri-service':
         specifier: ^1.4.0
         version: 1.4.0(expect-webdriverio@5.6.5)(supports-color@8.1.1)(tsx@4.23.13)(webdriverio@9.30.1)
@@ -931,8 +931,8 @@ packages:
   '@tauri-apps/plugin-log@2.9.1':
     resolution: {integrity: sha512-8dYNEQOgZcIEqeFtHAsOIGLoptm+j94270Jf2MrGS/zbsYNd4C8DKyOdeYggAyE3ugwr12mTefIfC8lVVEhdlg==}
 
-  '@tauri-apps/plugin-opener@2.7.1':
-    resolution: {integrity: sha512-XkXdt30rontti9TII/gBBxFRXWfj8DiprFW7RgBFRBj1OhdfjBNVcFqSEWkkZ4hXafHnuEnB7F1sFsmu6uyywQ==}
+  '@tauri-apps/plugin-opener@2.5.5':
+    resolution: {integrity: sha512-xvzGai5aQds8j8R8RsUK/lW6pGG50YgOYIPLzvkqmkwAj7dfySOD7sGtejRzvVdMmv1EQfKVEFh1MvmDp8QR0g==}
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -3920,9 +3920,9 @@ snapshots:
 
   '@tauri-apps/plugin-log@2.9.1':
     dependencies:
-      '@tauri-apps/api': 2.11.1
+      '@tauri-apps/api': 2.12.3
 
-  '@tauri-apps/plugin-opener@2.7.1':
+  '@tauri-apps/plugin-opener@2.5.5':
     dependencies:
       '@tauri-apps/api': 2.12.3
 
@@ -4228,7 +4228,7 @@ snapshots:
     dependencies:
       '@wdio/logger': 9.29.1
       '@wdio/native-types': 2.5.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
       debug: 4.4.3(supports-color@8.1.1)
       get-port: 7.2.0
       tslib: 2.8.1
@@ -4240,7 +4240,7 @@ snapshots:
 
   '@wdio/native-types@2.5.0': {}
 
-  '@wdio/native-utils@2.7.0(tsx@4.23.13)':
+  '@wdio/native-utils@2.7.0(supports-color@8.1.1)(tsx@4.23.13)':
     dependencies:
       '@wdio/logger': 9.29.1
       debug: 4.4.3(supports-color@8.1.1)
@@ -4297,12 +4297,12 @@ snapshots:
       easy-table: 1.2.0
       pretty-ms: 9.3.1
 
-  '@wdio/tauri-plugin@1.4.0(tsx@4.23.13)':
+  '@wdio/tauri-plugin@1.4.0(supports-color@8.1.1)(tsx@4.23.13)':
     dependencies:
       '@tauri-apps/api': 2.11.1
       '@tauri-apps/plugin-log': 2.9.1
       '@wdio/native-spy': 1.3.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
     transitivePeerDependencies:
       - supports-color
       - tsx
@@ -4314,7 +4314,7 @@ snapshots:
       '@wdio/native-core': 1.2.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/native-spy': 1.3.0
       '@wdio/native-types': 2.5.0
-      '@wdio/native-utils': 2.7.0(tsx@4.23.13)
+      '@wdio/native-utils': 2.7.0(supports-color@8.1.1)(tsx@4.23.13)
       '@wdio/spec-reporter': 9.30.1
       '@wdio/types': 9.30.1
       debug: 4.4.3(supports-color@8.1.1)
