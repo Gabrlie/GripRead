@@ -3,9 +3,10 @@
 //
 //   node scripts/version.mjs check            both agree
 //   node scripts/version.mjs set 0.3.0        writes both, then Cargo.lock
-//   node scripts/version.mjs stamp <version> <build>
-//       CI only: the build's own version (`0.3.0-dev.17`) in package.json and
-//       the Android versionCode in tauri.conf.json, never committed
+//   node scripts/version.mjs stamp <version>
+//       Release builds only: the build's own version (`0.3.0-beta.2`) in
+//       package.json and the Android build number in tauri.conf.json, never
+//       committed
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -43,16 +44,25 @@ function set(root, version) {
   execFileSync("cargo", ["update", "--workspace", "--offline"], { cwd: root, stdio: "inherit" });
 }
 
-function stamp(root, version, build) {
+const EPOCH = Date.UTC(2026, 0, 1);
+
+/**
+ * The Android build number: minutes since 2026-01-01 UTC. Builds made later,
+ * on CI or on a developer's machine, always install over earlier ones; each
+ * APK's versionCode is this number times ten plus an ABI digit
+ * (build.gradle.kts), which stays below Android's limit for centuries.
+ */
+export function buildNumber(date = new Date()) {
+  return Math.floor((date.getTime() - EPOCH) / 60_000);
+}
+
+export function stamp(root, version, date = new Date()) {
   if (!SEMVER.test(version)) throw new Error(`not SemVer: ${version}`);
-  const code = Number(build);
-  if (!Number.isInteger(code) || code < 1)
-    throw new Error(`build number must be positive: ${build}`);
   writePackageVersion(root, version);
   const path = resolve(root, "src-tauri/tauri.conf.json");
   const config = JSON.parse(readFileSync(path, "utf8"));
   config.bundle = config.bundle ?? {};
-  config.bundle.android = { ...config.bundle.android, versionCode: code };
+  config.bundle.android = { ...config.bundle.android, versionCode: buildNumber(date) };
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
@@ -66,9 +76,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       process.exitCode = 1;
     } else console.log(`Version ${versions(root).pkg}.`);
   } else if (command === "set") set(root, args[0] ?? "");
-  else if (command === "stamp") stamp(root, args[0] ?? "", args[1] ?? "");
+  else if (command === "stamp") stamp(root, args[0] ?? "");
   else {
-    console.error("usage: version.mjs check | set <version> | stamp <version> <build>");
+    console.error("usage: version.mjs check | set <version> | stamp <version>");
     process.exitCode = 2;
   }
 }

@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "gripread"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gripread-core",
  "serde",
@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "gripread-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes",
  "aho-corasick",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "gripread-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "axum",

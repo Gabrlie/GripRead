@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-The [self-hosted server task](plans/2026-10-13-server.md) is in progress on `dev`: the shared core, the web version, and native sync are implemented. The [Legado book sources task](plans/2026-10-11-legado-sources.md) is completed and merged into `main`. The [local reading stage 4 task](plans/2026-10-11-local-reading-stage4.md) is accepted on device apart from small items batched for later.
+[Stage 7](plans/2026-10-14-stage7.md) is in progress on `dev` toward 0.2.1: more build targets and release pages, in-app updates, EPUB, and server-side follow-up. The [self-hosted server task](plans/2026-10-13-server.md) delivered the server, web version, and native sync, released as 0.2.0.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Device acceptance of native sync, then P3 (server jobs and RSS), planned in its own round. The macOS native suite needs a run on macOS.
+The next unfinished batch of [stage 7](plans/2026-10-14-stage7.md). Device acceptance of native sync happens during the user's period of use after 0.2.1; RSS is the next stage after that.

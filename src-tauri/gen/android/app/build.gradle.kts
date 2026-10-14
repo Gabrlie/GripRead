@@ -68,6 +68,19 @@ android {
     }
 }
 
+// Each ABI's APK (see buildSrc RustPlugin flavors) needs its own versionCode:
+// the build number times ten plus a digit, with 64-bit ABIs above their 32-bit
+// ones and the universal APK above all, so any newer build installs over an
+// older one whichever APK either came from.
+val abiVersionDigit = mapOf("arm" to 1, "arm64" to 2, "x86" to 3, "x86_64" to 4, "universal" to 9)
+val buildNumber = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+androidComponents {
+    onVariants { variant ->
+        val digit = abiVersionDigit[variant.flavorName] ?: 0
+        variant.outputs.forEach { it.versionCode.set(buildNumber * 10 + digit) }
+    }
+}
+
 rust {
     rootDirRel = "../../../"
 }

@@ -16,7 +16,6 @@ A lightweight, local-first reader built with Tauri 2, with an optional self-host
 [![Image](https://img.shields.io/badge/image-ghcr.io%2Fgabrlie%2Fgripread-2496ed?logo=docker&logoColor=white)](https://github.com/Gabrlie/GripRead/pkgs/container/gripread)
 <br />
 ![Android](https://img.shields.io/badge/Android-3ddc84?logo=android&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-0078d4?logo=windows&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
 ![Web](https://img.shields.io/badge/Web-ff7139?logo=firefoxbrowser&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri_2-24c8db?logo=tauri&logoColor=white)
@@ -112,9 +111,14 @@ While connected, WebDAV backups and progress sync pause; they resume when you di
 | Channel     | Branch | Image tags        | App                                                                   |
 | ----------- | ------ | ----------------- | --------------------------------------------------------------------- |
 | Stable      | `main` | `latest`, `X.Y.Z` | [Latest release](https://github.com/Gabrlie/GripRead/releases/latest) |
-| Development | `dev`  | `dev`             | [Pre-releases](https://github.com/Gabrlie/GripRead/releases)          |
+| Pre-release | `dev`  | `dev`             | [Pre-releases](https://github.com/Gabrlie/GripRead/releases)          |
 
-Android APKs are built for arm64 devices. Versions follow [SemVer](https://semver.org/); development builds are versioned `X.Y.Z-dev.N`.
+Every release provides:
+
+- **Android:** arm64-v8a (most phones), armeabi-v7a (older 32-bit phones), x86_64 / x86 (emulators and some tablets), and a universal APK with every ABI.
+- **macOS:** one `.dmg` each for Apple Silicon and Intel. The app is unsigned: on first launch, right-click it and choose Open, or click Open Anyway in System Settings › Privacy & Security.
+
+Each release page lists the changes, the commits, and a `SHA256SUMS` file; see the [changelog](CHANGELOG.md) for the history. Versions follow [SemVer](https://semver.org/); pre-releases for testing are versioned `X.Y.Z-beta.N`.
 
 ## Building from source
 

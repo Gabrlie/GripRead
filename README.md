@@ -16,7 +16,6 @@
 [![Image](https://img.shields.io/badge/image-ghcr.io%2Fgabrlie%2Fgripread-2496ed?logo=docker&logoColor=white)](https://github.com/Gabrlie/GripRead/pkgs/container/gripread)
 <br />
 ![Android](https://img.shields.io/badge/Android-3ddc84?logo=android&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-0078d4?logo=windows&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
 ![Web](https://img.shields.io/badge/Web-ff7139?logo=firefoxbrowser&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri_2-24c8db?logo=tauri&logoColor=white)
@@ -109,12 +108,17 @@ docker run -d --name gripread \
 
 ## 下载
 
-| 渠道   | 分支   | 镜像标签          | 应用                                                            |
-| ------ | ------ | ----------------- | --------------------------------------------------------------- |
-| 正式版 | `main` | `latest`、`X.Y.Z` | [最新版本](https://github.com/Gabrlie/GripRead/releases/latest) |
-| 开发版 | `dev`  | `dev`             | [预发布版本](https://github.com/Gabrlie/GripRead/releases)      |
+| 渠道     | 分支   | 镜像标签          | 应用                                                            |
+| -------- | ------ | ----------------- | --------------------------------------------------------------- |
+| 正式版   | `main` | `latest`、`X.Y.Z` | [最新版本](https://github.com/Gabrlie/GripRead/releases/latest) |
+| 预发布版 | `dev`  | `dev`             | [预发布版本](https://github.com/Gabrlie/GripRead/releases)      |
 
-Android 安装包适用于 arm64 设备。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)，开发版的版本号形如 `X.Y.Z-dev.N`。
+每个版本都提供：
+
+- **Android**：arm64-v8a（大多数手机）、armeabi-v7a（较旧的 32 位手机）、x86_64 / x86（模拟器和部分平板），以及包含全部架构的通用包。
+- **macOS**：Apple Silicon 和 Intel 各一个 `.dmg`。应用没有签名，第一次打开时请在应用上右键选择「打开」，或在 系统设置 › 隐私与安全性 中点击「仍要打开」。
+
+每个发布页都附有更新内容、提交记录和 `SHA256SUMS` 校验文件，历次变化见 [更新日志](CHANGELOG.md)。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)，预发布版本形如 `X.Y.Z-beta.N`，用于正式发布前的测试。
 
 ## 从源码构建
 

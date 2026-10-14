@@ -17,11 +17,21 @@ const clangVersions = readdirSync(join(toolchain, "lib", "clang"));
 if (clangVersions.length === 0) throw new Error("the NDK has no clang resource directory");
 const headers = join(toolchain, "lib", "clang", clangVersions.sort().at(-1), "include");
 
+// Rust target triple → the clang target for Android 7 (API 24), the minimum SDK.
+const TARGETS = {
+  aarch64_linux_android: "aarch64-linux-android24",
+  armv7_linux_androideabi: "armv7a-linux-androideabi24",
+  i686_linux_android: "i686-linux-android24",
+  x86_64_linux_android: "x86_64-linux-android24",
+};
+
 const env = {
   ...process.env,
   LIBCLANG_PATH: join(toolchain, "lib"),
   CLANG_PATH: join(toolchain, "bin", "clang"),
-  BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: `--sysroot=${join(toolchain, "sysroot")} --target=aarch64-linux-android24 -isystem ${headers}`,
 };
+for (const [triple, clangTarget] of Object.entries(TARGETS))
+  env[`BINDGEN_EXTRA_CLANG_ARGS_${triple}`] =
+    `--sysroot=${join(toolchain, "sysroot")} --target=${clangTarget} -isystem ${headers}`;
 const child = spawn(command, args, { env, stdio: "inherit" });
 child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 1)));

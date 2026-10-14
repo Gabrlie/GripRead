@@ -1,22 +1,25 @@
-# Checks every push to dev and main, then publishes the server image to
-# GHCR and a signed APK as a GitHub release:
+# Every push to dev and main runs the checks. Pushing a version tag publishes:
+# the server image for GHCR, and signed Android APKs (one per ABI and a
+# universal one) and macOS apps (Apple Silicon and Intel) for a GitHub release.
 #
-#   dev   image :dev and :<version>-dev.<run>, APK pre-release v<version>-dev.<run>
-#   main  image :latest, :<version>, :<major>.<minor>, APK release v<version>
+#   v0.2.1-beta.1   pre-release; image :dev and :0.2.1-beta.1
+#   v0.2.1          release, from a commit on main; image :latest, :0.2.1, :0.2
 #
-# The version comes from package.json (scripts/version.mjs). A main build
-# whose v<version> is already released only runs the checks, so changes
-# without a version raise (documentation, for example) publish nothing.
+# The tag's version must match package.json apart from the pre-release part.
+# The release page comes from scripts/release.mjs: the CHANGELOG.md entry,
+# the commits since the previous release of the same kind, downloads, and the
+# image.
 name: Build
 
 on:
   push:
     branches: [dev, main]
-  workflow_dispatch:
+    tags: ["v*"]
 
+# A newer push cancels the checks of an older one; tags each run to the end.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 permissions:
   contents: write
@@ -36,25 +39,36 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
       platforms: ${{ steps.version.outputs.platforms }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - id: version
         env:
           # Set the repository variable ARM64_IMAGE=true once arm runners are free (a public repository).
           ARM64: ${{ vars.ARM64_IMAGE }}
         run: |
           base=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_REF_NAME" = main ]; then
-            if git ls-remote --exit-code --tags origin "refs/tags/v$base" >/dev/null; then
-              echo "::notice::v$base is already released, so this build only runs the checks; raise the version (pnpm version:set) to publish"
-              echo "publish=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "publish=true" >> "$GITHUB_OUTPUT"
-            fi
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
             echo "version=$base" >> "$GITHUB_OUTPUT"
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=$base-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            version=${GITHUB_REF_NAME#v}
+            if [ "${version%%-*}" != "$base" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match package.json version $base"
+              exit 1
+            fi
+            if [ "$version" = "$base" ]; then
+              git fetch --quiet origin main
+              if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                echo "::error::release tag $GITHUB_REF_NAME must point at a commit on main"
+                exit 1
+              fi
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "release=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "$ARM64" = true ]; then
@@ -66,9 +80,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -93,7 +107,7 @@ jobs:
         include: ${{ fromJSON(needs.version.outputs.platforms) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Image names must be lowercase; the owner name may not be.
       - name: Lowercase the image name
         run: echo "IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
@@ -157,19 +171,19 @@ jobs:
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -190,33 +204,112 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - name: Version
-        run: node scripts/version.mjs stamp "${{ needs.version.outputs.version }}" "$GITHUB_RUN_NUMBER"
+        run: node scripts/version.mjs stamp "${{ needs.version.outputs.version }}"
+      # One Rust build for all four ABIs, packaged twice: the universal APK,
+      # then one APK per ABI (each with its own versionCode, see build.gradle.kts).
       - name: Build
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: node scripts/android.mjs pnpm tauri android build --apk --target aarch64
-      - name: Name the APK
         run: |
-          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name "*release*.apk" | head -1)
-          test -n "$apk"
+          node scripts/android.mjs pnpm tauri android build --apk --target aarch64 armv7 i686 x86_64
+          node scripts/android.mjs pnpm tauri android build --apk --split-per-abi --target aarch64 armv7 i686 x86_64
+      - name: Name the APKs
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
           mkdir -p out
-          cp "$apk" "out/gripread-${{ needs.version.outputs.version }}.apk"
+          apks=src-tauri/gen/android/app/build/outputs/apk
+          for pair in universal:universal arm64:arm64-v8a arm:armeabi-v7a x86:x86 x86_64:x86_64; do
+            flavor=${pair%%:*}
+            cp "$apks/$flavor/release/app-$flavor-release.apk" "out/gripread-$VERSION-${pair#*:}.apk"
+          done
       - uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: out/*.apk
+          name: app-android
+          path: out/*
+          retention-days: 7
+
+  desktop:
+    needs: [version, check]
+    if: needs.version.outputs.publish == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
+    # Both architectures build on Apple Silicon runners; Intel is cross-compiled.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - name: Version
+        run: node scripts/version.mjs stamp "${{ needs.version.outputs.version }}"
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets"
+            exit 1
+          fi
+          pnpm tauri build --target ${{ matrix.target }}
+      - name: Name the files
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          bundle=target/${{ matrix.target }}/release/bundle
+          name=gripread-$VERSION-macos-${{ matrix.arch }}
+          mkdir -p out
+          cp "$bundle"/dmg/*.dmg "out/$name.dmg"
+          cp "$bundle"/macos/*.app.tar.gz "out/$name.app.tar.gz"
+          cp "$bundle"/macos/*.app.tar.gz.sig "out/$name.app.tar.gz.sig"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-macos-${{ matrix.arch }}
+          path: out/*
           retention-days: 7
 
   release:
-    needs: [version, apk, manifest]
+    needs: [version, apk, desktop, manifest]
     runs-on: ubuntu-latest
     steps:
+      # The full history and tags, for the commits since the previous release.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: apk
+          pattern: app-*
+          merge-multiple: true
           path: out
+      - name: Updater manifest and checksums
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node scripts/release.mjs updater "$VERSION" out
+          (cd out && sha256sum * > SHA256SUMS)
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/release.mjs notes "$VERSION" out > "$RUNNER_TEMP/notes.md"
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -224,12 +317,11 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           RELEASE: ${{ needs.version.outputs.release }}
         run: |
-          image=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
-          notes="服务器镜像：\`docker pull $image:$VERSION\`"
-          if [ "$RELEASE" = true ]; then
-            gh release create "v$VERSION" out/*.apk --target "$GITHUB_SHA" --title "手不释卷 $VERSION" --notes "$notes"
-          else
-            gh release create "v$VERSION" out/*.apk --target "$GITHUB_SHA" --title "手不释卷 $VERSION" --notes "$notes" --prerelease
+          flags=()
+          [ "$RELEASE" = true ] || flags=(--prerelease)
+          gh release create "v$VERSION" out/* --verify-tag --title "手不释卷 v$VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+          if [ "$RELEASE" != true ]; then
             # Keep the five newest pre-releases.
             gh release list --limit 100 --json tagName,isPrerelease,createdAt \
               --jq '[.[] | select(.isPrerelease)] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
