@@ -871,7 +871,7 @@ pub async fn update_online_toc(
     } else {
         request.book_ids.clone()
     };
-    if state.sync.connected() {
+    if state.sync.updates_through_server() {
         update_through_server(state.clone(), request.operation_id, ids);
         return Ok(());
     }

@@ -335,7 +335,7 @@ export function SettingsView() {
           <PageSection title="备份与云端">
             <PageLink
               icon="sync"
-              label="服务器同步"
+              label="服务器"
               detail={
                 server?.connected
                   ? server.lastError

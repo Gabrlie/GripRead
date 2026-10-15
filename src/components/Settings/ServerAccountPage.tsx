@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { JobsSection } from "./ServerJobsSection";
 import { serverAccount, type ServerSession } from "../../services/server";
-import { native } from "../../services/transport";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
@@ -17,20 +16,25 @@ function seen(at: number): string {
 }
 
 /**
- * 服务器账号 in the web version, and 服务器管理 in the app while connected:
- * 定时追更, the devices signed in (设备管理), 修改密码, and (on the web)
- * 退出登录.
+ * The server's own settings, in 服务器账号 on the web and on the app's
+ * 服务器 page while connected: 定时追更, the devices signed in (设备管理),
+ * and 修改密码.
  */
-export function ServerAccountPage({ onClose }: { onClose: () => void }) {
+export function ServerAccountSections() {
   const [sessions, setSessions] = useState<ServerSession[] | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = () =>
-    void serverAccount
-      .sessions()
-      .then(setSessions, (error: unknown) => toast({ text: describeError(error), error: true }));
+    void serverAccount.sessions().then(
+      (value) => {
+        setSessions(value);
+        setFailure(null);
+      },
+      (error: unknown) => setFailure(describeError(error)),
+    );
   useEffect(load, []);
 
   const revoke = (session: ServerSession) =>
@@ -58,17 +62,16 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
       .finally(() => setBusy(false));
   };
 
-  const logout = () =>
-    void serverAccount.logout().then(
-      () => location.reload(),
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
-
   return (
-    <FullPage label={native ? "服务器管理" : "服务器账号"} onClose={onClose}>
+    <>
       <JobsSection />
       <PageSection title="已登录的设备">
-        {sessions === null && <p className="p-4 text-sm text-secondary">正在读取…</p>}
+        {failure && (
+          <p role="alert" className="p-4 text-xs text-error">
+            {failure}
+          </p>
+        )}
+        {sessions === null && !failure && <p className="p-4 text-sm text-secondary">正在读取…</p>}
         {sessions?.map((session) => (
           <div key={session.id} className="flex items-center gap-3 px-4 py-3 text-sm">
             <span className="flex-1 min-w-0">
@@ -115,19 +118,30 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
       </PageSection>
+    </>
+  );
+}
 
-      {/* The app leaves the server with 断开 on 服务器同步. */}
-      {!native && (
-        <PageSection>
-          <button
-            type="button"
-            onClick={logout}
-            className="w-full px-4 py-3 text-left text-sm text-error"
-          >
-            退出登录
-          </button>
-        </PageSection>
-      )}
+/** 服务器账号 in the web version: the server's settings and 退出登录. */
+export function ServerAccountPage({ onClose }: { onClose: () => void }) {
+  const logout = () =>
+    void serverAccount.logout().then(
+      () => location.reload(),
+      (error: unknown) => toast({ text: describeError(error), error: true }),
+    );
+
+  return (
+    <FullPage label="服务器账号" onClose={onClose}>
+      <ServerAccountSections />
+      <PageSection>
+        <button
+          type="button"
+          onClick={logout}
+          className="w-full px-4 py-3 text-left text-sm text-error"
+        >
+          退出登录
+        </button>
+      </PageSection>
     </FullPage>
   );
 }

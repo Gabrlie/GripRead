@@ -930,6 +930,7 @@ impl Storage {
             read_chapter_title,
             cached_chapters: self.cached_online_chapters(book_id)?.len() as u32,
             serial: serial.then_some(true),
+            grown_at: last_grown_at,
         }))
     }
 }

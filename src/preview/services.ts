@@ -124,6 +124,7 @@ export function previewServices(): AppServices {
     lastSync: null,
     lastError: null,
     autoDownload: true,
+    updateViaServer: true,
     remembered: false,
   };
   let preferences = { ...PREFERENCES };
@@ -531,6 +532,7 @@ export function previewServices(): AppServices {
         server = { ...server, lastSync: Date.now() };
       },
       setServerAutoDownload: async (on) => (server = { ...server, autoDownload: on }),
+      setServerUpdateViaServer: async (on) => (server = { ...server, updateViaServer: on }),
       setSyncOpenBook: async () => undefined,
       onServerStatus: async () => () => undefined,
       onSyncApplied: async () => () => undefined,

@@ -101,6 +101,7 @@ pub const COMMANDS: &[&str] = &[
     "server_api",
     "get_sync_server",
     "set_sync_auto_download",
+    "set_sync_update_via_server",
     "set_sync_open_book",
     "sync_now",
     "acknowledge_book_progress",
@@ -623,6 +624,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
             crate::commands::sync_now(state);
             reply(Ok(()))
         }
+        "set_sync_update_via_server" => reply(Ok::<_, AppError>(
+            crate::commands::set_sync_update_via_server(state, request(args)?),
+        )),
         "set_sync_auto_download" => reply(Ok::<_, AppError>(
             crate::commands::set_sync_auto_download(state, request(args)?),
         )),

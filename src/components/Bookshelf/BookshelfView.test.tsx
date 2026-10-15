@@ -483,8 +483,8 @@ describe("更新目录 on the shelf", () => {
     const app = await shelf(false);
     expect(app.services.sources.updateToc).not.toHaveBeenCalled();
     const book = screen.getAllByText("剑来")[0];
-    fireEvent.touchStart(book, { touches: [{ clientY: 100 }] });
-    fireEvent.touchMove(book, { touches: [{ clientY: 300 }] });
+    fireEvent.touchStart(book, { touches: [{ clientX: 50, clientY: 100 }] });
+    fireEvent.touchMove(book, { touches: [{ clientX: 52, clientY: 300 }] });
     expect(await screen.findByText("松开更新目录")).toBeTruthy();
     fireEvent.touchEnd(book);
     await waitFor(() =>
@@ -492,6 +492,25 @@ describe("更新目录 on the shelf", () => {
         expect.objectContaining({ bookIds: [] }),
       ),
     );
+  });
+
+  it("moves between groups by swiping sideways", async () => {
+    await shelf(false);
+    const tab = (name: string) => screen.getByRole("tab", { name });
+    expect(tab("全部").getAttribute("aria-selected")).toBe("true");
+    const swipe = (from: number, to: number) => {
+      const list = screen.getByLabelText("书架书籍列表");
+      fireEvent.touchStart(list, { touches: [{ clientX: from, clientY: 200 }] });
+      fireEvent.touchMove(list, { touches: [{ clientX: to, clientY: 204 }] });
+      fireEvent.touchEnd(list);
+    };
+    swipe(300, 150);
+    await waitFor(() => expect(tab("在读").getAttribute("aria-selected")).toBe("true"));
+    // Swiping right goes back; at the first group it stays.
+    swipe(100, 260);
+    await waitFor(() => expect(tab("全部").getAttribute("aria-selected")).toBe("true"));
+    swipe(100, 260);
+    expect(tab("全部").getAttribute("aria-selected")).toBe("true");
   });
 
   it("updates on entering the shelf", async () => {

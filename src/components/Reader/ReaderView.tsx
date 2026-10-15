@@ -1555,7 +1555,12 @@ export function ReaderView() {
         />
       )}
       {cloudProgress && (
-        <CloudProgressDialog prompt={cloudProgress} onAnswer={answerCloudProgress} />
+        <CloudProgressDialog
+          prompt={cloudProgress}
+          toc={tools.toc}
+          here={page?.locator ?? null}
+          onAnswer={answerCloudProgress}
+        />
       )}
       {cachingRange && activeBook.online && (
         <CacheRangeDialog

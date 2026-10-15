@@ -88,6 +88,11 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
   private outgoingChrome: HTMLElement[] | null = null;
   private cancelled = false;
   private skipNext = false;
+  /**
+   * Curl's three full-screen canvases (outgoing, incoming, shown), kept
+   * between turns so each turn does not allocate and later collect them.
+   */
+  private readonly canvases: HTMLCanvasElement[] = [];
 
   public constructor(host: HTMLElement, options: PageTurnAdapterOptions = {}) {
     if (!host) throw new TypeError("PageTurnAdapter requires an overlay host");
@@ -297,6 +302,9 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     this.previousPage = null;
     this.currentPage = null;
     this.mount.replaceChildren();
+    // Zero-sized canvases give their memory back at once.
+    for (const canvas of this.canvases) canvas.width = canvas.height = 0;
+    this.canvases.length = 0;
     if (this.ownsMount && this.mount.parentNode) this.mount.remove();
   }
 
@@ -342,9 +350,21 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       return;
     }
     const ratio = this.host.ownerDocument.defaultView?.devicePixelRatio || 1;
-    const outgoing = this.rasterize(this.previousSpread, this.takeOutgoingChrome(), rect, ratio);
-    const incoming = this.rasterize(this.currentSpread, this.captureChrome(), rect, ratio);
-    const canvas = this.host.ownerDocument.createElement("canvas");
+    const outgoing = this.rasterize(
+      this.previousSpread,
+      this.takeOutgoingChrome(),
+      rect,
+      ratio,
+      this.canvas(0),
+    );
+    const incoming = this.rasterize(
+      this.currentSpread,
+      this.captureChrome(),
+      rect,
+      ratio,
+      this.canvas(1),
+    );
+    const canvas = this.canvas(2);
     canvas.width = Math.max(1, Math.round(width * ratio));
     canvas.height = Math.max(1, Math.round(height * ratio));
     Object.assign(canvas.style, {
@@ -574,11 +594,21 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     }
   }
 
+  private canvas(slot: number): HTMLCanvasElement {
+    let canvas = this.canvases[slot];
+    if (!canvas) {
+      canvas = this.host.ownerDocument.createElement("canvas");
+      this.canvases[slot] = canvas;
+    }
+    return canvas;
+  }
+
   private rasterize(
     pages: readonly ReaderDisplayedPage[],
     chrome: HTMLElement[],
     rect: DOMRect,
     ratio: number,
+    into: HTMLCanvasElement,
   ): { canvas: HTMLCanvasElement; background: string } {
     const element = this.screenElement(pages, chrome);
     element.style.visibility = "hidden";
@@ -588,7 +618,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
       const background =
         element.ownerDocument.defaultView?.getComputedStyle(element).backgroundColor || "#ffffff";
       return {
-        canvas: rasterizePage(element, rect, ratio, this.options.backgroundImage?.()),
+        canvas: rasterizePage(element, rect, ratio, this.options.backgroundImage?.(), into),
         background,
       };
     } finally {

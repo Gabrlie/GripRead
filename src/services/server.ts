@@ -1,4 +1,6 @@
-import { call, native, type TransportError } from "./transport";
+import { invokeCommand } from "./ipc";
+import { appLog } from "./log";
+import { native, type TransportError } from "./transport";
 
 /** Whether the server has its password, and whether this page is signed in. */
 export interface ServerStatus {
@@ -20,7 +22,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // The app reaches its connected server through the core, with its session.
   if (native) {
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : null;
-    const reply = await call<T | null>("server_api", {
+    // Failures arrive as errors with a message and are logged there.
+    const reply = await invokeCommand<T | null>("server_api", {
       request: { method: init?.method ?? "GET", path, body },
     });
     return reply as T;
@@ -37,7 +40,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep the status as the message.
     }
-    throw error;
+    appLog.write("warn", "server", `${path}：${error.message}`);
+    throw new Error(error.message);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

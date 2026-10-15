@@ -224,7 +224,7 @@ export interface SyncService {
   /** Another device's position for the book that has not been answered yet. */
   fetchProgress(bookId: string): Promise<ProgressPrompt | null>;
   acknowledgeProgress(bookId: string, deviceId: string, revision: number): Promise<void>;
-  /** 设置 › 服务器同步: this device's connection to the GripRead server. */
+  /** 设置 › 服务器: this device's connection to the GripRead server. */
   getServer(): Promise<SyncServerStatus>;
   /** Signs in with the server's password; the first sync starts at once. */
   connectServer(request: ConnectSyncServerRequest): Promise<SyncServerStatus>;
@@ -233,6 +233,8 @@ export interface SyncService {
   forgetServerLogin(): Promise<SyncServerStatus>;
   syncServerNow(): Promise<void>;
   setServerAutoDownload(on: boolean): Promise<SyncServerStatus>;
+  /** 通过服务器更新书籍: off makes 更新目录 fetch contents on this device. */
+  setServerUpdateViaServer(on: boolean): Promise<SyncServerStatus>;
   /** The book open in the reader, which is told of other devices' positions. */
   setSyncOpenBook(bookId: string | null): Promise<void>;
   onServerStatus(listener: (status: SyncServerStatus) => void): Promise<Unsubscribe>;

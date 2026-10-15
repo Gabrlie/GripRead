@@ -613,6 +613,11 @@ export class LibraryStore {
   }
 }
 
+/** 最近阅读或更新: the later of the last read and the last update that found new chapters. */
+function recentAt(entry: LibraryBook): number {
+  return Math.max(entry.lastReadAt ?? -1, entry.online?.grownAt ?? -1);
+}
+
 const titleOrder = new Intl.Collator("zh-Hans", { numeric: true, sensitivity: "base" });
 export function orderBooks(books: readonly LibraryBook[], sort: ShelfSort): LibraryBook[] {
   return [...books].sort((a, b) => {
@@ -620,7 +625,7 @@ export function orderBooks(books: readonly LibraryBook[], sort: ShelfSort): Libr
       sort === "title"
         ? titleOrder.compare(a.book.title, b.book.title)
         : sort === "recent_read"
-          ? (b.lastReadAt ?? -1) - (a.lastReadAt ?? -1)
+          ? recentAt(b) - recentAt(a)
           : b.book.createdAt - a.book.createdAt;
     return primary || b.book.createdAt - a.book.createdAt || a.book.id.localeCompare(b.book.id);
   });

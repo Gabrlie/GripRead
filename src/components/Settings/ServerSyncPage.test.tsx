@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
-import { disconnectedServer, syncServiceMocks } from "../../test/sync";
+import { disconnectedServer, syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
 import { ServerSyncPage } from "./ServerSyncPage";
 
 afterEach(cleanup);
@@ -27,7 +27,7 @@ function page(change?: (sync: ReturnType<typeof syncServiceMocks>) => void) {
   return sync;
 }
 
-describe("服务器同步", () => {
+describe("服务器", () => {
   it("connects with the server's password, then offers sync and disconnecting", async () => {
     const sync = page();
     await userEvent.type(await screen.findByLabelText("服务器地址"), "reader.example.com");
@@ -44,6 +44,20 @@ describe("服务器同步", () => {
     expect(sync.syncServerNow).toHaveBeenCalled();
     await userEvent.click(screen.getByRole("switch", { name: /自动下载/ }));
     expect(sync.setServerAutoDownload).toHaveBeenCalledWith(false);
+    await userEvent.click(screen.getByRole("switch", { name: /通过服务器更新书籍/ }));
+    expect(sync.setServerUpdateViaServer).toHaveBeenCalledWith(false);
+    // 同步内容 is 同步排除 the other way round.
+    sync.saveWebDav = vi.fn(async (request) => ({
+      ...unconfiguredWebDav(),
+      restoreIgnore: request.restoreIgnore,
+    }));
+    const sources = await screen.findByRole("switch", { name: /^书源/ });
+    expect(sources.getAttribute("aria-checked")).toBe("true");
+    await userEvent.click(sources);
+    expect(sync.saveWebDav).toHaveBeenCalledWith(
+      expect.objectContaining({ restoreIgnore: ["sources"] }),
+    );
+    await waitFor(() => expect(sources.getAttribute("aria-checked")).toBe("false"));
     await userEvent.click(screen.getByRole("button", { name: "断开" }));
     expect(sync.disconnectServer).toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "连接" })).toBeTruthy();

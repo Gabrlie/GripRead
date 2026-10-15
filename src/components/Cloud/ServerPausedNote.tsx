@@ -18,7 +18,7 @@ export function ServerPausedNote() {
   if (!connected) return null;
   return (
     <p role="note" className="rounded-xl bg-surface-container p-3 text-xs text-secondary">
-      已连接 GripRead 服务器，WebDAV 暂停；在 设置 › 服务器同步 断开后恢复。
+      已连接 GripRead 服务器，WebDAV 暂停；在 设置 › 服务器 断开后恢复。
     </p>
   );
 }

@@ -33,8 +33,8 @@ import { DownloadManagerPage } from "./DownloadManagerPage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
+import { useSwipePages } from "../ui/use-swipe-pages";
 
-/** 自动更新 waits this long after the last one before entering the shelf runs it again. */
 /** 自动更新 runs again on returning to the app after this long. */
 const AUTO_UPDATE_GAP = 30 * 60_000;
 let lastAutoUpdate = 0;
@@ -186,6 +186,26 @@ export function BookshelfView() {
   }, []);
   const content = useRef<HTMLDivElement>(null);
   const pull = usePullRefresh(content, () => handleUpdateOnline());
+  // Swiping sideways moves between groups in the tab order.
+  const groupIndex = Math.max(
+    0,
+    groups.findIndex((group) => group.id === selectedGroupId),
+  );
+  const [arrival, setArrival] = useState<1 | -1 | null>(null);
+  const swipe = useSwipePages(
+    content,
+    (step) => {
+      const next = groups[groupIndex + step];
+      if (!next) return;
+      setArrival(step);
+      setShelf({ groupId: next.id });
+    },
+    (step) => Boolean(groups[groupIndex + step]),
+  );
+  useEffect(() => {
+    const tab = tabsListRef.current?.querySelector<HTMLElement>("[data-active]");
+    tab?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [selectedGroupId]);
   const handleToggleLayout = () => setShelf({ layout: layoutMode === "list" ? "grid" : "list" });
   useEffect(() => {
     if (!state.loading && !state.error) void groupStore.load(state.books);
@@ -353,7 +373,10 @@ export function BookshelfView() {
             <Tabs
               value={selectedGroupId}
               onValueChange={(id) => {
-                if (!hasDraggedRef.current) setShelf({ groupId: String(id) });
+                if (hasDraggedRef.current) return;
+                const index = groups.findIndex((group) => group.id === id);
+                setArrival(index > groupIndex ? 1 : index < groupIndex ? -1 : null);
+                setShelf({ groupId: String(id) });
               }}
               className="w-full min-w-0"
             >
@@ -405,28 +428,41 @@ export function BookshelfView() {
       </div>
 
       {/* 下拉刷新, and the progress of an update however it started. */}
-      {(pull > 0 || updating) && (
-        <div
-          role="status"
-          className="fixed left-0 right-0 md:left-64 z-20 flex justify-center pointer-events-none top-[calc(116px+var(--safe-top))]"
-          style={{ transform: `translateY(${pull}px)` }}
-        >
-          <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 text-xs text-secondary shadow-sm">
-            <Icon
-              name="refresh"
-              size={14}
-              className={updating ? "animate-spin" : ""}
-              style={updating ? undefined : { transform: `rotate(${pull * 4}deg)` }}
-            />
-            {updating ?? (pull >= PULL_TRIGGER ? "松开更新目录" : "下拉更新目录")}
-          </span>
-        </div>
-      )}
+      <div
+        role="status"
+        aria-hidden={!pull.distance && !updating}
+        className="fixed left-0 right-0 md:left-64 z-20 flex justify-center pointer-events-none top-[calc(112px+var(--safe-top))]"
+        style={{
+          opacity: updating ? 1 : Math.min(1, pull.distance / PULL_TRIGGER),
+          transform: `translateY(${updating ? 6 : Math.max(0, pull.distance / 2 - 14)}px)`,
+          transition: pull.dragging ? "none" : "opacity 200ms ease-out, transform 300ms ease-out",
+        }}
+      >
+        <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 text-xs text-secondary shadow-sm">
+          <Icon
+            name="refresh"
+            size={14}
+            className={updating ? "animate-spin" : ""}
+            style={updating ? undefined : { transform: `rotate(${pull.distance * 4}deg)` }}
+          />
+          {updating ?? (pull.distance >= PULL_TRIGGER ? "松开更新目录" : "下拉更新目录")}
+        </span>
+      </div>
 
       {/* Main Content Area: 留出状态栏、连续顶栏与分组栏总高度空间 */}
       <div
         ref={content}
         className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8"
+        style={{
+          transform:
+            pull.distance || swipe.offset
+              ? `translate3d(${swipe.offset}px, ${pull.distance}px, 0)`
+              : undefined,
+          transition:
+            pull.dragging || swipe.dragging
+              ? "none"
+              : "transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        }}
       >
         {/* Search Bar (Expandable) */}
         {isSearching && (
@@ -494,7 +530,17 @@ export function BookshelfView() {
           </p>
         )}
         {/* Book List / Grid */}
-        <section aria-label="书架书籍列表" className="mt-1 pb-6">
+        <section
+          key={selectedGroupId}
+          aria-label="书架书籍列表"
+          className={`mt-1 pb-6 ${
+            arrival === 1
+              ? "animate-in fade-in slide-in-from-right-8 duration-200"
+              : arrival === -1
+                ? "animate-in fade-in slide-in-from-left-8 duration-200"
+                : ""
+          }`}
+        >
           {state.loading ? (
             <p role="status" className="text-xs text-secondary py-10 text-center">
               正在读取书架…

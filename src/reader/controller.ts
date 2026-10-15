@@ -1098,7 +1098,6 @@ export class ReaderController {
     // Saving starts before presentation so a slow page-curl animation cannot
     // delay persistence or make the animation the owner of reading position.
     if (displayed && !this.suppressPositionSave) this.positions.queue(displayed.locator);
-    this.prepareNeighbours(epoch);
 
     const context: ReaderPresentationContext = {
       index: this.currentPageIndex < 0 ? 0 : this.currentPageIndex,
@@ -1113,6 +1112,9 @@ export class ReaderController {
       await this.adapter?.present?.(displayed, direction, context);
     }
     this.assertCurrent(epoch);
+    // The next chapter is read and laid out after the turn: measuring it
+    // while the curl runs takes the frames at its end.
+    this.prepareNeighbours(epoch);
   }
 
   private currentPage(): ReaderDisplayedPage | null {

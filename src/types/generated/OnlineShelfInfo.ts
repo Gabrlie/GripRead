@@ -36,4 +36,8 @@ cachedChapters: number,
 /**
  * The contents grew within the 连载判定 range: still being written.
  */
-serial?: boolean, };
+serial?: boolean, 
+/**
+ * When an update last found new chapters; the shelf sorts by it too.
+ */
+grownAt?: number, };

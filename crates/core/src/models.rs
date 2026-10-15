@@ -524,6 +524,10 @@ pub struct OnlineShelfInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub serial: Option<bool>,
+    /// When an update last found new chapters; the shelf sorts by it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub grown_at: Option<i64>,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -2100,6 +2104,8 @@ pub struct SyncServerStatus {
     pub last_error: Option<String>,
     /// 自动下载服务器上的书.
     pub auto_download: bool,
+    /// 通过服务器更新书籍: 更新目录 asks the server while connected.
+    pub update_via_server: bool,
     /// Not connected, but the last sign-in is kept: `address` and
     /// `device_name` are its, and connecting may leave the password empty.
     pub remembered: bool,

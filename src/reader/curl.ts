@@ -364,9 +364,12 @@ export function rasterizePage(
   pixelRatio: number,
   /** A loaded reading background image, drawn to cover the page like CSS `cover`. */
   backgroundImage?: HTMLImageElement | null,
+  /** A canvas to draw into instead of a new one. */
+  into?: HTMLCanvasElement,
 ): HTMLCanvasElement {
   const document = element.ownerDocument;
-  const canvas = document.createElement("canvas");
+  const canvas = into ?? document.createElement("canvas");
+  // Setting the size also clears the canvas and resets its state.
   canvas.width = Math.max(1, Math.round(origin.width * pixelRatio));
   canvas.height = Math.max(1, Math.round(origin.height * pixelRatio));
   const context = canvas.getContext("2d");

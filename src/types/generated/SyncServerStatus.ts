@@ -10,6 +10,10 @@ export type SyncServerStatus = { connected: boolean, address: string, deviceName
  */
 autoDownload: boolean, 
 /**
+ * 通过服务器更新书籍: 更新目录 asks the server while connected.
+ */
+updateViaServer: boolean, 
+/**
  * Not connected, but the last sign-in is kept: `address` and
  * `device_name` are its, and connecting may leave the password empty.
  */

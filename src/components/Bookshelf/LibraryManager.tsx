@@ -66,7 +66,7 @@ export function LibraryManager({
           <div className="space-y-2">
             {(
               [
-                ["recent_read", "最近阅读"],
+                ["recent_read", "最近阅读或更新"],
                 ["imported", "导入时间"],
                 ["title", "书名"],
               ] as const

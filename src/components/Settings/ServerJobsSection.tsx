@@ -26,14 +26,16 @@ export function JobsSection() {
   const [settings, setSettings] = useState<JobSettings | null>(null);
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const load = () =>
     void serverAccount.jobs().then(
       (jobs) => {
         setSettings(jobs.settings);
         setStatus(jobs.status);
+        setFailure(null);
       },
-      (error: unknown) => toast({ text: describeError(error), error: true }),
+      (error: unknown) => setFailure(describeError(error)),
     );
   useEffect(load, []);
 
@@ -61,7 +63,14 @@ export function JobsSection() {
       });
   };
 
-  if (!settings) return null;
+  if (!settings)
+    return failure ? (
+      <PageSection title="定时追更">
+        <p role="alert" className="p-4 text-xs text-error">
+          {failure}
+        </p>
+      </PageSection>
+    ) : null;
   const choice = (
     label: string,
     options: [number, string][],

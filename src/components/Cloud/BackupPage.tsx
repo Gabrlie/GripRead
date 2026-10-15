@@ -55,6 +55,23 @@ function draftOf(settings: WebDavSettings): Draft {
 }
 
 /**
+ * Saves switches (同步排除 among them) with the account as saved, never
+ * the typed but unsaved fields.
+ */
+export function switchRequest(
+  settings: WebDavSettings,
+  patch: Partial<SaveWebDavRequest>,
+): SaveWebDavRequest {
+  const from = { ...draftOf(settings), ...patch };
+  return {
+    ...from,
+    url: from.url.trim(),
+    username: from.username.trim(),
+    deviceName: from.deviceName.trim() || defaultDeviceName(),
+  };
+}
+
+/**
  * Legado's 备份与恢复 with WebDAV: the account (an empty address uses 坚果云),
  * 子文件夹 and 设备名称, progress sync, the local backup folder, backing up
  * to WebDAV or a file, and restoring from either or from a recovery point,
@@ -130,7 +147,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   /** Switches save at once, without the typed but unsaved account fields. */
   const saveSwitch = (patch: Partial<Draft>) =>
     run("switch", async () => {
-      const saved = await sync.saveWebDav(request({ ...draftOf(settings), ...patch }));
+      const saved = await sync.saveWebDav(switchRequest(settings, patch));
       setSettings(saved);
       // Untouched account fields follow what was saved (a filled-in device
       // name), so a switch never leaves 保存 lit.

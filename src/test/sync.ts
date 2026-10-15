@@ -29,6 +29,7 @@ export function disconnectedServer(): SyncServerStatus {
     lastSync: null,
     lastError: null,
     autoDownload: true,
+    updateViaServer: true,
     remembered: false,
   };
 }
@@ -72,6 +73,7 @@ export function syncServiceMocks(): SyncService {
     forgetServerLogin: vi.fn(async () => (server = disconnectedServer())),
     syncServerNow: vi.fn(async () => undefined),
     setServerAutoDownload: vi.fn(async (on) => (server = { ...server, autoDownload: on })),
+    setServerUpdateViaServer: vi.fn(async (on) => (server = { ...server, updateViaServer: on })),
     setSyncOpenBook: vi.fn(async () => undefined),
     onServerStatus: vi.fn(async () => () => undefined),
     onSyncApplied: vi.fn(async () => () => undefined),

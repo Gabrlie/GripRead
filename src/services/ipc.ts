@@ -209,7 +209,7 @@ const QUIET_CODES = new Set([
   "content_version_mismatch",
 ]);
 
-function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+export function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return call<T>(command, args).catch((error: unknown) => {
     const normalized = normalizeError(error);
     if (!QUIET_CODES.has(normalized.code))
@@ -570,6 +570,10 @@ export const tauriServices: AppServices = {
     syncServerNow: () => invokeCommand<void>("sync_now"),
     setServerAutoDownload: (on) =>
       invokeCommand<SyncServerStatus>("set_sync_auto_download", {
+        request: { on } satisfies SwitchRequest,
+      }),
+    setServerUpdateViaServer: (on) =>
+      invokeCommand<SyncServerStatus>("set_sync_update_via_server", {
         request: { on } satisfies SwitchRequest,
       }),
     setSyncOpenBook: (bookId) =>

@@ -1971,6 +1971,14 @@ pub fn sync_now(state: &Arc<AppState>) {
     state.sync.now();
 }
 
+pub fn set_sync_update_via_server(
+    state: &Arc<AppState>,
+    request: crate::models::SwitchRequest,
+) -> crate::models::SyncServerStatus {
+    state.sync.set_update_via_server(request.on);
+    state.sync.status()
+}
+
 pub fn set_sync_auto_download(
     state: &Arc<AppState>,
     request: crate::models::SwitchRequest,

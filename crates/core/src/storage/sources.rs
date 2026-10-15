@@ -363,10 +363,12 @@ impl Storage {
     ) -> Result<(), AppError> {
         let urls = vec![url.to_string()];
         self.update_sources(&urls, |raw, source| {
+            // A source whose search chain passes is enabled again; a failed
+            // 发现 only turns 发现 off.
             if disable_failed {
-                if failures.iter().any(|group| !group.starts_with("发现")) {
-                    raw.insert("enabled".into(), Json::Bool(false));
-                } else if !failures.is_empty() {
+                let search_failed = failures.iter().any(|group| !group.starts_with("发现"));
+                raw.insert("enabled".into(), Json::Bool(!search_failed));
+                if !search_failed && !failures.is_empty() {
                     raw.insert("enabledExplore".into(), Json::Bool(false));
                 }
             }
@@ -710,7 +712,6 @@ mod tests {
             .unwrap();
         let a = storage.book_source("https://a.com").unwrap().unwrap();
         assert!(a.group().contains("网站失效"));
-        let enabled = a.enabled();
         assert!(a.comment().unwrap().starts_with("// Error: 连接失败"));
         storage
             .record_source_check("https://a.com", &[], None, 300, true)
@@ -719,9 +720,17 @@ mod tests {
         assert!(!a.group().contains("网站失效"));
         assert_eq!(a.comment().unwrap_or_default(), "");
         assert_eq!(a.respond_time(), 300);
-        assert_eq!(a.enabled(), enabled, "a passing check changes no switch");
+        assert!(a.enabled(), "a passing check enables the source again");
         storage
-            .set_sources_switch(&["https://a.com".into()], SourceSwitch::Enabled, true)
+            .set_sources_switch(&["https://a.com".into()], SourceSwitch::Enabled, false)
+            .unwrap();
+        storage
+            .record_source_check("https://a.com", &[], None, 300, false)
+            .unwrap();
+        let a = storage.book_source("https://a.com").unwrap().unwrap();
+        assert!(!a.enabled(), "without the option a check changes no switch");
+        storage
+            .record_source_check("https://a.com", &[], None, 300, true)
             .unwrap();
         storage
             .record_source_check("https://a.com", &["发现失效".into()], Some("空"), 300, true)

@@ -19,7 +19,12 @@ export function formatTime(millis: number | null | undefined): string {
 
 /** Service errors arrive as `code: message`; show the message in Chinese where known. */
 export function describeError(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
+  const text =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : String(error);
   const message = text.replace(/^[a-z_]+:\s*/, "");
   if (/WebDAV is not set up/.test(message)) return "还没有设置 WebDAV 账号。";
   if (/\((401|403)\)/.test(message)) return "WebDAV 账号或密码不正确。";

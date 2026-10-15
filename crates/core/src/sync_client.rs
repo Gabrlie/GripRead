@@ -52,6 +52,8 @@ struct Config {
     last_sync: Option<i64>,
     last_error: Option<String>,
     auto_download: bool,
+    /// 通过服务器更新书籍 is off: 更新目录 fetches the contents here.
+    update_here: bool,
     /// Books the server asked for that are not sent yet.
     uploads: Vec<String>,
 }
@@ -332,6 +334,7 @@ impl SyncClient {
             last_sync: config.last_sync,
             last_error: config.last_error,
             auto_download: config.auto_download,
+            update_via_server: !config.update_here,
         }
     }
 
@@ -585,6 +588,17 @@ impl SyncClient {
         if let Ok(mut open) = self.inner.open_book.lock() {
             *open = book_id;
         }
+    }
+
+    /// Whether 更新目录 asks the server while connected.
+    pub fn updates_through_server(&self) -> bool {
+        let config = self.config();
+        config.connected() && !config.update_here
+    }
+
+    pub fn set_update_via_server(&self, on: bool) {
+        self.update(|config| config.update_here = !on);
+        self.announce();
     }
 
     pub fn set_auto_download(&self, on: bool) {

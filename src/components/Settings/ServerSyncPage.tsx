@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useRuntime } from "../../application/runtime";
-import type { SyncServerStatus } from "../../types/generated";
+import type { SyncServerStatus, WebDavSettings } from "../../types/generated";
+import { RESTORE_CATEGORIES, switchRequest } from "../Cloud/BackupPage";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
-import { ServerAccountPage } from "./ServerAccountPage";
+import { ServerAccountSections } from "./ServerAccountPage";
 import { toast } from "../ui/toast";
 
 function when(at: number | null | undefined): string {
@@ -19,9 +19,66 @@ function when(at: number | null | undefined): string {
 }
 
 /**
- * 服务器同步: connects this device to the GripRead server, which then
- * carries the shelf, progress, bookmarks, rules, sources, and settings
- * between devices instead of WebDAV.
+ * 同步内容: what syncs with the server, one switch per category. It is the
+ * 同步排除 list of 备份与恢复 seen the other way round (on = synced), so
+ * either page changes both.
+ */
+function SyncContentSection() {
+  const sync = useRuntime().services.sync;
+  const [settings, setSettings] = useState<WebDavSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void sync.getWebDav().then(
+      (value) => active && setSettings(value),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [sync]);
+  if (!settings) return null;
+  const toggle = (category: (typeof RESTORE_CATEGORIES)[number][0], synced: boolean) => {
+    const restoreIgnore = synced
+      ? settings.restoreIgnore.filter((item) => item !== category)
+      : [...settings.restoreIgnore, category];
+    setBusy(true);
+    void sync
+      .saveWebDav(switchRequest(settings, { restoreIgnore }))
+      .then(setSettings, (error: unknown) => toast({ text: describeError(error), error: true }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <PageSection title="同步内容">
+      {RESTORE_CATEGORIES.map(([category, label, note]) => (
+        <label
+          key={category}
+          className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
+        >
+          <span>
+            {label}
+            {note && <span className="block text-[11px] text-secondary">{note}</span>}
+          </span>
+          <Switch
+            aria-label={`同步${label}`}
+            checked={!settings.restoreIgnore.includes(category)}
+            disabled={busy}
+            onCheckedChange={(on) => toggle(category, on)}
+          />
+        </label>
+      ))}
+      <p className="px-4 pb-3 text-[11px] text-secondary">
+        关闭的内容保留本机的：既不上传，也不被服务器覆盖。与 备份与恢复 › 同步排除 是同一份设置。
+      </p>
+    </PageSection>
+  );
+}
+
+/**
+ * 服务器: connects this device to the GripRead server, which then carries
+ * the shelf, progress, bookmarks, rules, sources, and settings between
+ * devices instead of WebDAV. While connected it also holds what syncs, how
+ * books update, and the server's own settings (服务器管理).
  */
 export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const service = useRuntime().services.sync;
@@ -30,7 +87,6 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [device, setDevice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [managing, setManaging] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,7 +131,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
 
   if (!status)
     return (
-      <FullPage label="服务器同步" onClose={onClose}>
+      <FullPage label="服务器" onClose={onClose}>
         {null}
       </FullPage>
     );
@@ -83,7 +139,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const saved = status.remembered && address.trim() === status.address;
   if (!status.connected)
     return (
-      <FullPage label="服务器同步" onClose={onClose}>
+      <FullPage label="服务器" onClose={onClose}>
         <PageSection title="连接服务器">
           <form
             className="p-4 space-y-2"
@@ -158,7 +214,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
     );
 
   return (
-    <FullPage label="服务器同步" onClose={onClose}>
+    <FullPage label="服务器" onClose={onClose}>
       <PageSection title="已连接">
         <div className="p-4 space-y-1 text-sm">
           <p className="truncate">{status.address}</p>
@@ -172,34 +228,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
             </p>
           )}
         </div>
-        <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-          <span>
-            自动下载服务器上的书
-            <span className="block text-[11px] text-secondary">本机没有的书自动下载导入</span>
-          </span>
-          <Switch
-            aria-label="自动下载服务器上的书"
-            checked={status.autoDownload}
-            onCheckedChange={(on) => run(() => service.setServerAutoDownload(on))}
-          />
-        </label>
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm"
-          onClick={() => setManaging(true)}
-        >
-          <span>
-            服务器管理
-            <span className="block text-[11px] text-secondary">
-              定时追更、已登录的设备、修改密码
-            </span>
-          </span>
-          <Icon name="chevron_right" size={18} className="text-secondary" />
-        </button>
-      </PageSection>
-      {managing && <ServerAccountPage onClose={() => setManaging(false)} />}
-      <PageSection>
-        <div className="flex gap-2 p-4">
+        <div className="flex gap-2 px-4 pb-4">
           <Button
             size="sm"
             variant="outline"
@@ -219,9 +248,34 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
       </PageSection>
-      <p className="px-1 text-[11px] text-secondary">
-        不想同步的内容在 备份与恢复 › 同步排除 中选择，选中的既不上传，也不会被服务器覆盖。
-      </p>
+      <PageSection title="书籍">
+        <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+          <span>
+            自动下载服务器上的书
+            <span className="block text-[11px] text-secondary">本机没有的书自动下载导入</span>
+          </span>
+          <Switch
+            aria-label="自动下载服务器上的书"
+            checked={status.autoDownload}
+            onCheckedChange={(on) => run(() => service.setServerAutoDownload(on))}
+          />
+        </label>
+        <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+          <span>
+            通过服务器更新书籍
+            <span className="block text-[11px] text-secondary">
+              开启时更新目录由服务器完成、新章节随同步到达；关闭后由本机访问书源更新
+            </span>
+          </span>
+          <Switch
+            aria-label="通过服务器更新书籍"
+            checked={status.updateViaServer}
+            onCheckedChange={(on) => run(() => service.setServerUpdateViaServer(on))}
+          />
+        </label>
+      </PageSection>
+      <SyncContentSection />
+      <ServerAccountSections />
     </FullPage>
   );
 }

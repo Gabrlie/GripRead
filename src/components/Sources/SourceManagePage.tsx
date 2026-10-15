@@ -710,9 +710,14 @@ function CheckDialog({
           onChange={(event) => setKeyword(event.target.value)}
         />
         <label className="flex items-center justify-between gap-3 text-sm">
-          <span>禁用失效的书源</span>
+          <span>
+            按结果启用或禁用
+            <span className="block text-[11px] text-secondary">
+              失效的书源禁用，校验通过的重新启用
+            </span>
+          </span>
           <Switch
-            aria-label="禁用失效的书源"
+            aria-label="按结果启用或禁用"
             checked={disableFailed}
             onCheckedChange={setDisableFailed}
           />
