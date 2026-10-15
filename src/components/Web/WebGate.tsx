@@ -3,6 +3,7 @@ import { serverAccount } from "../../services/server";
 import { onSignedOut, type TransportError } from "../../services/transport";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { t, useT } from "../../i18n";
 
 type Gate = "loading" | "setup" | "login" | "ready" | "offline";
 
@@ -19,6 +20,7 @@ function messageOf(error: unknown): string {
  * page out.
  */
 export function WebGate({ children }: { children: ReactNode }) {
+  useT();
   const [gate, setGate] = useState<Gate>("loading");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -43,8 +45,8 @@ export function WebGate({ children }: { children: ReactNode }) {
     event.preventDefault();
     setError(null);
     if (gate === "setup") {
-      if (password.length < MIN_PASSWORD) return setError(`密码至少 ${MIN_PASSWORD} 位`);
-      if (password !== confirm) return setError("两次输入的密码不一样");
+      if (password.length < MIN_PASSWORD) return setError(t("gate.short", { count: MIN_PASSWORD }));
+      if (password !== confirm) return setError(t("gate.mismatch"));
     }
     setBusy(true);
     void (gate === "setup" ? serverAccount.setup(password) : serverAccount.login(password))
@@ -63,27 +65,27 @@ export function WebGate({ children }: { children: ReactNode }) {
     <main className="min-h-dvh flex items-center justify-center bg-surface text-on-surface px-4">
       <div className="w-full max-w-sm space-y-6">
         <header className="text-center space-y-1">
-          <h1 className="text-xl font-semibold">手不释卷</h1>
-          <p className="text-xs text-secondary">GripRead 服务器</p>
+          <h1 className="text-xl font-semibold">{t("app.name")}</h1>
+          <p className="text-xs text-secondary">{t("gate.server")}</p>
         </header>
-        {gate === "loading" && <p className="text-center text-sm text-secondary">正在连接…</p>}
+        {gate === "loading" && (
+          <p className="text-center text-sm text-secondary">{t("server.connecting")}</p>
+        )}
         {gate === "offline" && (
           <div className="text-center space-y-3">
-            <p className="text-sm text-secondary">连不上服务器</p>
+            <p className="text-sm text-secondary">{t("gate.offline")}</p>
             <Button variant="outline" onClick={check}>
-              重试
+              {t("common.retry")}
             </Button>
           </div>
         )}
         {(gate === "setup" || gate === "login") && (
           <form onSubmit={submit} className="space-y-3">
-            {gate === "setup" && (
-              <p className="text-xs text-secondary">第一次使用，请设置访问密码。</p>
-            )}
+            {gate === "setup" && <p className="text-xs text-secondary">{t("gate.setup")}</p>}
             <Input
               type="password"
-              aria-label="密码"
-              placeholder="密码"
+              aria-label={t("network.proxy.password")}
+              placeholder={t("network.proxy.password")}
               autoComplete={gate === "setup" ? "new-password" : "current-password"}
               autoFocus
               value={password}
@@ -93,8 +95,8 @@ export function WebGate({ children }: { children: ReactNode }) {
             {gate === "setup" && (
               <Input
                 type="password"
-                aria-label="确认密码"
-                placeholder="再输入一次"
+                aria-label={t("gate.confirm")}
+                placeholder={t("gate.again")}
                 autoComplete="new-password"
                 value={confirm}
                 onChange={(change) => setConfirm(change.target.value)}
@@ -107,7 +109,7 @@ export function WebGate({ children }: { children: ReactNode }) {
               </p>
             )}
             <Button type="submit" className="w-full h-10" disabled={busy || !password}>
-              {gate === "setup" ? "设置密码" : "登录"}
+              {gate === "setup" ? t("gate.setPassword") : t("src.login")}
             </Button>
           </form>
         )}

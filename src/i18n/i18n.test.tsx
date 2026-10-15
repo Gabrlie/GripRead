@@ -55,15 +55,10 @@ describe("interface languages", () => {
 
   it("has every key in English, with the same placeholders", () => {
     const names = (text: string) =>
-      [...text.matchAll(/\{(\w+)/g)]
-        .map((match) => match[1])
-        .sort()
-        .join(",");
+      [...new Set([...text.matchAll(/\{(\w+)/g)].map((match) => match[1]))].sort().join(",");
     for (const key of Object.keys(zhCN) as (keyof typeof zhCN)[]) {
       expect(en[key], key).toBeTruthy();
-      expect(names(en[key]).replace(/(\w+)(,\1)+/g, "$1"), key).toBe(
-        names(zhCN[key]).replace(/(\w+)(,\1)+/g, "$1"),
-      );
+      expect(names(en[key]), key).toBe(names(zhCN[key]));
     }
   });
 });

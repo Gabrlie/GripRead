@@ -36,7 +36,7 @@ import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
 import { UpdatePrompt } from "./components/Updates/UpdatePrompt";
-import { useLocale } from "./i18n";
+import { t, useLocale } from "./i18n";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -68,16 +68,16 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
           <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl font-bold">
             !
           </div>
-          <h2 className="text-lg font-semibold">页面加载遇到问题</h2>
+          <h2 className="text-lg font-semibold">{t("app.crash")}</h2>
           <p className="text-xs text-secondary max-w-sm">
-            {this.state.error?.message || "组件渲染异常，请点击重试"}
+            {this.state.error?.message || t("app.crash.note")}
           </p>
           <button
             type="button"
             onClick={() => this.setState({ hasError: false })}
             className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-medium cursor-pointer"
           >
-            重试
+            {t("common.retry")}
           </button>
         </div>
       );
@@ -277,15 +277,15 @@ function MainContent() {
           data-testid="reader-background-error"
           className="fixed bottom-[calc(6rem+var(--safe-bottom))] left-4 right-4 z-[60] rounded-xl bg-error-container text-error px-4 py-2 text-sm"
         >
-          阅读进度尚未保存：{positionError || readerWriteError}
+          {t("app.progressUnsaved", { error: positionError || readerWriteError || "" })}
           <button className="ml-3 underline" onClick={runtime.retryReaderWrites}>
-            重试
+            {t("common.retry")}
           </button>
         </div>
       )}
       {closeError && (
         <div role="alert" className="fixed top-0 z-[100] bg-error-container text-error p-3 w-full">
-          退出前保存失败：{closeError}
+          {t("app.closeFailed", { error: closeError })}
           <button
             className="ml-3 underline"
             onClick={() => {
@@ -293,7 +293,7 @@ function MainContent() {
               else setCloseError(null);
             }}
           >
-            {closeRetry.current ? "重试退出" : "返回"}
+            {closeRetry.current ? t("app.retryClose") : t("common.back")}
           </button>
           {(runtime.library.hasUnresolvedWrites() || runtime.shelf.hasUnresolvedWrites()) && (
             <button
@@ -305,7 +305,7 @@ function MainContent() {
                 setCloseError(null);
               }}
             >
-              放弃未保存的书架操作，返回应用
+              {t("app.discardWrites")}
             </button>
           )}
         </div>

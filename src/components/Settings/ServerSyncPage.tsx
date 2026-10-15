@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useRuntime } from "../../application/runtime";
-import type { SyncServerStatus, WebDavSettings } from "../../types/generated";
-import { RESTORE_CATEGORIES, switchRequest } from "../Cloud/BackupPage";
+import type { RestoreCategory, SyncServerStatus, WebDavSettings } from "../../types/generated";
+import { restoreCategories, switchRequest } from "../Cloud/BackupPage";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
@@ -9,13 +9,14 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ServerAccountSections } from "./ServerAccountPage";
 import { toast } from "../ui/toast";
+import { formatDateTime, t } from "../../i18n";
 
 function when(at: number | null | undefined): string {
-  if (!at) return "尚未同步";
+  if (!at) return t("server.notSynced");
   const minutes = Math.round((Date.now() - at) / 60_000);
-  if (minutes < 1) return "刚刚同步";
-  if (minutes < 60) return `${minutes} 分钟前同步`;
-  return `上次同步 ${new Date(at).toLocaleString()}`;
+  if (minutes < 1) return t("server.justSynced");
+  if (minutes < 60) return t("server.syncedMinutes", { minutes });
+  return t("server.syncedAt", { time: formatDateTime(at) });
 }
 
 /**
@@ -38,7 +39,7 @@ function SyncContentSection() {
     };
   }, [sync]);
   if (!settings) return null;
-  const toggle = (category: (typeof RESTORE_CATEGORIES)[number][0], synced: boolean) => {
+  const toggle = (category: RestoreCategory, synced: boolean) => {
     const restoreIgnore = synced
       ? settings.restoreIgnore.filter((item) => item !== category)
       : [...settings.restoreIgnore, category];
@@ -49,8 +50,8 @@ function SyncContentSection() {
       .finally(() => setBusy(false));
   };
   return (
-    <PageSection title="同步内容">
-      {RESTORE_CATEGORIES.map(([category, label, note]) => (
+    <PageSection title={t("server.content")}>
+      {restoreCategories().map(([category, label, note]) => (
         <label
           key={category}
           className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
@@ -60,16 +61,14 @@ function SyncContentSection() {
             {note && <span className="block text-[11px] text-secondary">{note}</span>}
           </span>
           <Switch
-            aria-label={`同步${label}`}
+            aria-label={t("server.syncOne", { label })}
             checked={!settings.restoreIgnore.includes(category)}
             disabled={busy}
             onCheckedChange={(on) => toggle(category, on)}
           />
         </label>
       ))}
-      <p className="px-4 pb-3 text-[11px] text-secondary">
-        关闭的内容保留本机的：既不上传，也不被服务器覆盖。与 备份与恢复 › 同步排除 是同一份设置。
-      </p>
+      <p className="px-4 pb-3 text-[11px] text-secondary">{t("server.content.note")}</p>
     </PageSection>
   );
 }
@@ -131,7 +130,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
 
   if (!status)
     return (
-      <FullPage label="服务器" onClose={onClose}>
+      <FullPage label={t("settings.server")} onClose={onClose}>
         {null}
       </FullPage>
     );
@@ -139,8 +138,8 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const saved = status.remembered && address.trim() === status.address;
   if (!status.connected)
     return (
-      <FullPage label="服务器" onClose={onClose}>
-        <PageSection title="连接服务器">
+      <FullPage label={t("settings.server")} onClose={onClose}>
+        <PageSection title={t("server.connectTitle")}>
           <form
             className="p-4 space-y-2"
             onSubmit={(event) => {
@@ -153,11 +152,11 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
                 });
                 setPassword("");
                 return connected;
-              }, "已连接，正在同步");
+              }, t("server.connected"));
             }}
           >
             <Input
-              aria-label="服务器地址"
+              aria-label={t("backup.url")}
               placeholder="https://reader.example.com"
               inputMode="url"
               autoCapitalize="none"
@@ -165,15 +164,15 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
               onChange={(change) => setAddress(change.target.value)}
             />
             <Input
-              aria-label="密码"
+              aria-label={t("network.proxy.password")}
               type="password"
-              placeholder={saved ? "使用保存的密码" : "服务器的访问密码"}
+              placeholder={saved ? t("server.savedPassword") : t("server.password")}
               value={password}
               onChange={(change) => setPassword(change.target.value)}
             />
             <Input
-              aria-label="设备名"
-              placeholder="设备名（在服务器的设备列表中显示）"
+              aria-label={t("server.device")}
+              placeholder={t("server.device.placeholder")}
               value={device}
               onChange={(change) => setDevice(change.target.value)}
             />
@@ -183,7 +182,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
                 size="sm"
                 disabled={busy || !address.trim() || (!password && !saved)}
               >
-                {busy ? "连接中…" : "连接"}
+                {busy ? t("server.connecting") : t("server.connect")}
               </Button>
               {status.remembered && (
                 <Button
@@ -197,34 +196,31 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
                       setAddress("");
                       setPassword("");
                       return value;
-                    }, "已忘记登录信息")
+                    }, t("server.forgotten"))
                   }
                 >
-                  忘记登录信息
+                  {t("server.forget")}
                 </Button>
               )}
             </div>
-            <p className="text-[11px] text-secondary">
-              连接后书架、进度、书签、规则、书源和设置都通过服务器同步，WebDAV
-              暂停，断开后恢复。地址、设备名和密码保存在本机，不会进入备份。
-            </p>
+            <p className="text-[11px] text-secondary">{t("server.connectNote")}</p>
           </form>
         </PageSection>
       </FullPage>
     );
 
   return (
-    <FullPage label="服务器" onClose={onClose}>
-      <PageSection title="已连接">
+    <FullPage label={t("settings.server")} onClose={onClose}>
+      <PageSection title={t("server.connectedTitle")}>
         <div className="p-4 space-y-1 text-sm">
           <p className="truncate">{status.address}</p>
           <p className="text-[11px] text-secondary">
             {status.deviceName ? `${status.deviceName} · ` : ""}
-            {status.syncing ? "同步中…" : when(status.lastSync)}
+            {status.syncing ? t("server.syncing") : when(status.lastSync)}
           </p>
           {status.lastError && (
             <p role="alert" className="text-[11px] text-error">
-              同步失败：{status.lastError}
+              {t("settings.server.failed", { error: status.lastError })}
             </p>
           )}
         </div>
@@ -233,42 +229,42 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={() => run(() => service.syncServerNow(), "开始同步")}
+            onClick={() => run(() => service.syncServerNow(), t("server.syncStarted"))}
           >
-            立即同步
+            {t("server.syncNow")}
           </Button>
           <Button
             size="sm"
             variant="ghost"
             className="text-error"
             disabled={busy}
-            onClick={() => run(() => service.disconnectServer(), "已断开，WebDAV 恢复")}
+            onClick={() => run(() => service.disconnectServer(), t("server.disconnected"))}
           >
-            断开
+            {t("server.disconnect")}
           </Button>
         </div>
       </PageSection>
-      <PageSection title="书籍">
+      <PageSection title={t("records.books")}>
         <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
           <span>
-            自动下载服务器上的书
-            <span className="block text-[11px] text-secondary">本机没有的书自动下载导入</span>
+            {t("server.autoDownload")}
+            <span className="block text-[11px] text-secondary">
+              {t("server.autoDownload.note")}
+            </span>
           </span>
           <Switch
-            aria-label="自动下载服务器上的书"
+            aria-label={t("server.autoDownload")}
             checked={status.autoDownload}
             onCheckedChange={(on) => run(() => service.setServerAutoDownload(on))}
           />
         </label>
         <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
           <span>
-            通过服务器更新书籍
-            <span className="block text-[11px] text-secondary">
-              开启时更新目录由服务器完成、新章节随同步到达；关闭后由本机访问书源更新
-            </span>
+            {t("server.updateVia")}
+            <span className="block text-[11px] text-secondary">{t("server.updateVia.note")}</span>
           </span>
           <Switch
-            aria-label="通过服务器更新书籍"
+            aria-label={t("server.updateVia")}
             checked={status.updateViaServer}
             onCheckedChange={(on) => run(() => service.setServerUpdateViaServer(on))}
           />

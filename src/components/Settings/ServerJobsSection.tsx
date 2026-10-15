@@ -4,18 +4,19 @@ import { describeError } from "../Cloud/format";
 import { PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { toast } from "../ui/toast";
+import { formatDateTime, t } from "../../i18n";
 
-const INTERVALS: [number, string][] = [
-  [0, "关闭"],
-  [1, "1 小时"],
-  [3, "3 小时"],
-  [6, "6 小时"],
-  [12, "12 小时"],
+const intervals = (): [number, string][] => [
+  [0, t("common.off")],
+  [1, t("aloud.60")],
+  [3, t("jobs.3h")],
+  [6, t("jobs.6h")],
+  [12, t("jobs.12h")],
 ];
 const PREFETCH = [0, 3, 5, 10];
 
 function timeLabel(at: number | null): string {
-  return at ? new Date(at).toLocaleString() : "—";
+  return at ? formatDateTime(at) : "—";
 }
 
 /**
@@ -54,7 +55,7 @@ export function JobsSection() {
     void serverAccount
       .updateNow()
       .then(
-        () => toast("书架已更新"),
+        () => toast(t("jobs.updated")),
         (error: unknown) => toast({ text: describeError(error), error: true }),
       )
       .finally(() => {
@@ -65,7 +66,7 @@ export function JobsSection() {
 
   if (!settings)
     return failure ? (
-      <PageSection title="定时追更">
+      <PageSection title={t("jobs.title")}>
         <p role="alert" className="p-4 text-xs text-error">
           {failure}
         </p>
@@ -101,26 +102,29 @@ export function JobsSection() {
     </div>
   );
   return (
-    <PageSection title="定时追更">
+    <PageSection title={t("jobs.title")}>
       <div className="p-4 space-y-4">
-        {choice("更新间隔", INTERVALS, settings.intervalHours, (intervalHours) =>
+        {choice(t("jobs.interval"), intervals(), settings.intervalHours, (intervalHours) =>
           save({ intervalHours }),
         )}
         {choice(
-          "预先缓存新章节",
-          PREFETCH.map((count) => [count, count ? `${count} 章` : "不缓存"]),
+          t("jobs.prefetch"),
+          PREFETCH.map((count) => [
+            count,
+            count ? t("detail.chapters", { count }) : t("jobs.noPrefetch"),
+          ]),
           settings.prefetch,
           (prefetch) => save({ prefetch }),
         )}
         <div className="flex items-center justify-between gap-3">
           <p className="text-[11px] text-secondary">
             {status?.running
-              ? "正在更新…"
+              ? t("jobs.running")
               : status?.lastRun
-                ? `上次 ${timeLabel(status.lastRun)}：${status.updated} 本更新，${status.newChapters} 个新章节${status.failed ? `，${status.failed} 本失败` : ""}`
-                : "尚未更新"}
+                ? `${t("jobs.last", { time: timeLabel(status.lastRun), updated: status.updated, chapters: status.newChapters })}${status.failed ? t("shelf.updatedFailed", { failed: status.failed }) : ""}`
+                : t("jobs.never")}
             {status?.nextRun ? (
-              <span className="block">下次 {timeLabel(status.nextRun)}</span>
+              <span className="block">{t("jobs.next", { time: timeLabel(status.nextRun) })}</span>
             ) : null}
           </p>
           <Button
@@ -129,18 +133,18 @@ export function JobsSection() {
             disabled={busy || status?.running}
             onClick={updateNow}
           >
-            {busy ? "更新中…" : "立即更新"}
+            {busy ? t("detail.updating") : t("update.install")}
           </Button>
         </div>
         {status?.failures?.length ? (
           <details className="rounded-lg bg-surface-container-low px-3 py-2 text-xs">
             <summary className="cursor-pointer text-error">
-              {status.failures.length} 本更新失败
+              {t("jobs.failures", { count: status.failures.length })}
             </summary>
             <ul className="mt-2 space-y-1.5">
               {status.failures.map((failure, index) => (
                 <li key={`${failure.title}-${index}`}>
-                  <span className="block">{failure.title || "未知书籍"}</span>
+                  <span className="block">{failure.title || t("jobs.unknownBook")}</span>
                   <span className="block text-[11px] text-secondary break-words">
                     {failure.error}
                   </span>
@@ -149,9 +153,7 @@ export function JobsSection() {
             </ul>
           </details>
         ) : null}
-        <p className="text-[11px] text-secondary">
-          连接服务器的设备会同步到新章节，也会经由服务器读取章节。
-        </p>
+        <p className="text-[11px] text-secondary">{t("jobs.note")}</p>
       </div>
     </PageSection>
   );

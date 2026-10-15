@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /**
  * Reader-only platform controls from the Android bridge in MainActivity.kt.
  * Each call does nothing where the bridge is absent (desktop, browser preview).
@@ -92,5 +93,5 @@ export async function copyText(text: string): Promise<void> {
   area.select();
   const copied = document.execCommand("copy");
   area.remove();
-  if (!copied) throw new Error("无法复制到剪贴板");
+  if (!copied) throw new Error(t("system.copyFailed"));
 }

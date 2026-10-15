@@ -1,4 +1,5 @@
 import { common } from "./common";
+import { cloud } from "./cloud";
 import { sources } from "./sources";
 import { reader } from "./reader";
 import { shelf } from "./shelf";
@@ -9,6 +10,7 @@ import { update } from "./update";
 
 export const en = {
   ...common,
+  ...cloud,
   ...sources,
   ...reader,
   ...shelf,

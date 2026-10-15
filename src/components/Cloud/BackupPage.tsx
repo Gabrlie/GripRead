@@ -20,21 +20,22 @@ import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { describeError, formatSize, formatTime } from "./format";
+import { t } from "../../i18n";
 
 /** Legado's 恢复忽略列表 entries for GripRead's backup contents. */
-export const RESTORE_CATEGORIES: [RestoreCategory, string, string][] = [
-  ["reading-settings", "阅读设置", "字体、排版、翻页、朗读等阅读界面设置"],
-  ["theme", "主题与纸张色调", "深浅色、纸张色调和 OLED 纯黑"],
-  ["shelf-layout", "书架布局", "布局、排序和当前分组"],
-  ["replace-rules", "替换规则", ""],
-  ["toc-rules", "目录规则", ""],
-  ["groups", "分组", "新建备份里的分组"],
-  ["book-info", "书籍信息", "书名、作者、简介、封面、所在分组"],
-  ["progress", "阅读进度", ""],
-  ["bookmarks", "书签", ""],
-  ["reading-time", "阅读时长", ""],
-  ["sources", "书源", "书源的规则、开关、分组和顺序"],
-  ["online-books", "网络书籍", "书架上的网络书籍和它们的进度、书签"],
+export const restoreCategories = (): [RestoreCategory, string, string][] => [
+  ["reading-settings", t("backup.cat.reading"), t("backup.cat.reading.note")],
+  ["theme", t("backup.cat.theme"), t("backup.cat.theme.note")],
+  ["shelf-layout", t("backup.cat.shelf"), t("backup.cat.shelf.note")],
+  ["replace-rules", t("settings.replace"), ""],
+  ["toc-rules", t("reader.tool.tocRules"), ""],
+  ["groups", t("detail.group"), t("backup.cat.groups.note")],
+  ["book-info", t("detail.info"), t("backup.cat.books.note")],
+  ["progress", t("detail.progress"), ""],
+  ["bookmarks", t("contents.bookmarks"), ""],
+  ["reading-time", t("detail.readingTime"), ""],
+  ["sources", t("settings.sources"), t("backup.cat.sources.note")],
+  ["online-books", t("downloads.books"), t("backup.cat.online.note")],
 ];
 
 type Draft = Omit<SaveWebDavRequest, "password"> & { password: string };
@@ -124,9 +125,9 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
   };
   if (!settings || !draft)
     return (
-      <FullPage label="备份与恢复" onClose={onClose}>
+      <FullPage label={t("settings.backup")} onClose={onClose}>
         <p role="status" className="text-sm text-secondary px-1">
-          正在读取…
+          {t("common.loading")}
         </p>
       </FullPage>
     );
@@ -175,32 +176,30 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     </label>
   );
   const slowWarning = latency?.slow && (
-    <p className="text-[11px] text-error">
-      延迟较高（{latency.latencyMs} ms），不建议开启同步阅读进度和同步增强。
-    </p>
+    <p className="text-[11px] text-error">{t("backup.slow", { ms: latency.latencyMs })}</p>
   );
 
   return (
-    <FullPage label="备份与恢复" onClose={onClose}>
+    <FullPage label={t("settings.backup")} onClose={onClose}>
       <ServerPausedNote />
-      <PageSection title="WebDAV 账号">
+      <PageSection title={t("backup.account")}>
         <div className="p-4 space-y-3">
-          {field("服务器地址", "url", "留空使用坚果云", { inputMode: "url" })}
-          {field("账号", "username", "", { autoComplete: "username" })}
+          {field(t("backup.url"), "url", t("backup.url.placeholder"), { inputMode: "url" })}
+          {field(t("backup.username"), "username", "", { autoComplete: "username" })}
           <label className="block space-y-1 text-xs text-secondary">
-            密码
+            {t("network.proxy.password")}
             <span className="relative block">
               <Input
                 type={showPassword ? "text" : "password"}
                 value={draft.password}
                 autoComplete="current-password"
-                placeholder="坚果云请填写第三方应用密码"
+                placeholder={t("backup.password.placeholder")}
                 className="pr-10"
                 onChange={(event) => setDraft({ ...draft, password: event.target.value })}
               />
               <button
                 type="button"
-                aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                aria-label={showPassword ? t("backup.hidePassword") : t("backup.showPassword")}
                 aria-pressed={showPassword}
                 className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-secondary"
                 onClick={() => setShowPassword((shown) => !shown)}
@@ -209,12 +208,9 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               </button>
             </span>
           </label>
-          {field("子文件夹", "folder", "GripRead")}
-          {field("设备名称", "deviceName", deviceFallback)}
-          <p className="text-[11px] text-secondary">
-            备份文件名带上设备名称，便于区分来源。账号和密码只写入保存在本机的备份文件（导出到文件、本机备份文件夹），不会上传到
-            WebDAV。
-          </p>
+          {field(t("backup.folder"), "folder", "GripRead")}
+          {field(t("backup.device"), "deviceName", deviceFallback)}
+          <p className="text-[11px] text-secondary">{t("backup.account.note")}</p>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -224,11 +220,11 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 run("test", async () => {
                   const result = await sync.testWebDav(request());
                   setLatency(result);
-                  return `连接成功，延迟 ${result.latencyMs} ms`;
+                  return t("backup.connected", { ms: result.latencyMs });
                 })
               }
             >
-              {busy === "test" ? "正在测试…" : "测试连接"}
+              {busy === "test" ? t("network.testing") : t("backup.test")}
             </Button>
             <Button
               size="sm"
@@ -236,28 +232,28 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               onClick={() =>
                 run("save", async () => {
                   apply(await sync.saveWebDav(request()));
-                  return "已保存";
+                  return t("backup.saved");
                 })
               }
             >
-              保存
+              {t("common.save")}
             </Button>
           </div>
           {slowWarning}
         </div>
       </PageSection>
 
-      <PageSection title="同步">
+      <PageSection title={t("detail.sync")}>
         <div className="p-4 space-y-4">
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
-              同步阅读进度
+              {t("backup.syncProgress")}
               <span className="block text-[11px] text-secondary">
-                进入、退出阅读界面时同步；其他设备有新进度时询问是否跳转
+                {t("backup.syncProgress.note")}
               </span>
             </span>
             <Switch
-              aria-label="同步阅读进度"
+              aria-label={t("backup.syncProgress")}
               checked={draft.syncProgress}
               disabled={busy !== null}
               onCheckedChange={(syncProgress) =>
@@ -270,38 +266,38 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
           </label>
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
-              同步增强
-              <span className="block text-[11px] text-secondary">回到应用或网络恢复时也同步</span>
+              {t("backup.syncPlus")}
+              <span className="block text-[11px] text-secondary">{t("backup.syncPlus.note")}</span>
             </span>
             <Switch
-              aria-label="同步增强"
+              aria-label={t("backup.syncPlus")}
               checked={draft.syncProgressPlus}
               disabled={busy !== null || !draft.syncProgress}
               onCheckedChange={(syncProgressPlus) => saveSwitch({ syncProgressPlus })}
             />
           </label>
           <label className="flex items-center justify-between gap-3 text-sm">
-            <span>自动同步书籍信息到云书架</span>
+            <span>{t("backup.autoBookInfo")}</span>
             <Switch
-              aria-label="自动同步书籍信息到云书架"
+              aria-label={t("backup.autoBookInfo")}
               checked={draft.autoSyncBookInfo ?? false}
               disabled={busy !== null}
               onCheckedChange={(autoSyncBookInfo) => saveSwitch({ autoSyncBookInfo })}
             />
           </label>
           {slowWarning}
-          {!configured && <p className="text-[11px] text-secondary">设置 WebDAV 账号后生效。</p>}
+          {!configured && <p className="text-[11px] text-secondary">{t("backup.needsAccount")}</p>}
         </div>
       </PageSection>
 
-      <PageSection title="备份">
+      <PageSection title={t("backup.section")}>
         <div className="p-4 space-y-3">
-          <p className="text-xs text-secondary">不包含书籍文件，书籍请用云书架上传。</p>
+          <p className="text-xs text-secondary">{t("backup.noBooks")}</p>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="min-w-0">
-              本地备份文件夹
+              {t("backup.localFolder")}
               <span className="block text-[11px] text-secondary truncate">
-                {settings.localFolder ?? "未选择；选择后自动备份也会保存到这里"}
+                {settings.localFolder ?? t("backup.localFolder.none")}
               </span>
             </span>
             <span className="flex gap-1 shrink-0">
@@ -315,7 +311,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                   })
                 }
               >
-                选择
+                {t("backup.choose")}
               </Button>
               {settings.localFolder && (
                 <Button
@@ -328,29 +324,31 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                     })
                   }
                 >
-                  清除
+                  {t("data.clear")}
                 </Button>
               )}
             </span>
           </div>
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
-              每日自动备份
-              <span className="block text-[11px] text-secondary">有变化时备份，保留最近 7 份</span>
+              {t("backup.auto")}
+              <span className="block text-[11px] text-secondary">{t("backup.auto.note")}</span>
             </span>
             <Switch
-              aria-label="每日自动备份"
+              aria-label={t("backup.auto")}
               checked={draft.autoBackup}
               disabled={busy !== null}
               onCheckedChange={(autoBackup) => saveSwitch({ autoBackup })}
             />
           </label>
           {settings.lastBackupAt && (
-            <p className="text-xs">上次备份：{formatTime(settings.lastBackupAt)}</p>
+            <p className="text-xs">
+              {t("backup.last", { time: formatTime(settings.lastBackupAt) })}
+            </p>
           )}
           {settings.lastError && (
             <p className="text-xs text-error break-words">
-              上次同步失败：{describeError(settings.lastError)}
+              {t("backup.lastFailed", { error: describeError(settings.lastError) })}
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -362,12 +360,12 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                   const backup = await sync.backupNow();
                   await load();
                   if (backups) setBackups(await sync.listBackups());
-                  return `已备份：${backup.name}`;
+                  return t("backup.done", { name: backup.name });
                 })
               }
             >
               <Icon name="cloud" size={14} />
-              {busy === "backup" ? "正在备份…" : "备份到 WebDAV"}
+              {busy === "backup" ? t("backup.busy") : t("backup.toWebdav")}
             </Button>
             <Button
               size="sm"
@@ -375,20 +373,20 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               disabled={busy !== null}
               onClick={() =>
                 run("export", async () =>
-                  (await sync.exportBackupFile()) ? "备份文件已保存" : undefined,
+                  (await sync.exportBackupFile()) ? t("backup.fileSaved") : undefined,
                 )
               }
             >
               <Icon name="save" size={14} />
-              导出到文件
+              {t("backup.toFile")}
             </Button>
           </div>
         </div>
       </PageSection>
 
-      <PageSection title="恢复">
+      <PageSection title={t("shelf.bin.restore")}>
         <div className="p-4 space-y-3">
-          <p className="text-xs text-secondary">恢复前会先保存一个本机恢复点。</p>
+          <p className="text-xs text-secondary">{t("backup.restoreNote")}</p>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
@@ -401,7 +399,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
               }
             >
               <Icon name="cloud" size={14} />
-              {busy === "list" ? "正在读取…" : "从 WebDAV 恢复"}
+              {busy === "list" ? t("common.loading") : t("backup.fromWebdav")}
             </Button>
             <Button
               size="sm"
@@ -413,28 +411,28 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                   if (source)
                     setRestoring({
                       source,
-                      label: "所选文件",
+                      label: t("backup.chosenFile"),
                       preview: await sync.previewBackup(source),
                     });
                 })
               }
             >
               <Icon name="folder_open" size={14} />
-              从文件恢复
+              {t("backup.fromFile")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setIgnoring(true)}>
-              同步排除
+              {t("backup.exclusions")}
               {settings.restoreIgnore.length > 0 && (
                 <span className="ml-1 text-[11px] text-secondary">
-                  {settings.restoreIgnore.length} 项
+                  {t("backup.exclusionCount", { count: settings.restoreIgnore.length })}
                 </span>
               )}
             </Button>
           </div>
           {backups && (
-            <ul aria-label="WebDAV 备份" className="space-y-1">
+            <ul aria-label={t("backup.remote")} className="space-y-1">
               {backups.length === 0 && (
-                <li className="text-xs text-secondary py-2">WebDAV 上还没有备份。</li>
+                <li className="text-xs text-secondary py-2">{t("backup.remoteNone")}</li>
               )}
               {backups.map((backup) => (
                 <li
@@ -445,11 +443,12 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                     <span className="block text-sm truncate">
                       {formatTime(backup.modified)}
                       <span className="ml-2 text-[11px] text-secondary">
-                        {backup.automatic ? "自动" : "手动"} · {formatSize(backup.size)}
+                        {backup.automatic ? t("detail.automatic") : t("backup.manual")} ·{" "}
+                        {formatSize(backup.size)}
                       </span>
                     </span>
                     <span className="block text-[11px] text-secondary truncate">
-                      {backup.device ? `来自 ${backup.device}` : backup.name}
+                      {backup.device ? t("backup.from", { device: backup.device }) : backup.name}
                     </span>
                   </span>
                   <Button
@@ -460,19 +459,19 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                       preview({ kind: "remote", name: backup.name }, formatTime(backup.modified))
                     }
                   >
-                    恢复
+                    {t("shelf.bin.restore")}
                   </Button>
                   <Button
                     size="icon"
                     variant="ghost"
-                    aria-label={`删除备份 ${backup.name}`}
+                    aria-label={t("backup.delete", { name: backup.name })}
                     className="h-8 w-8 text-secondary"
                     disabled={busy !== null}
                     onClick={() =>
                       run("delete", async () => {
                         await sync.deleteBackup(backup.name);
                         setBackups(await sync.listBackups());
-                        return "已删除";
+                        return t("records.deleted");
                       })
                     }
                   >
@@ -484,7 +483,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
           )}
           {points.length > 0 && (
             <div className="space-y-1">
-              <p className="text-[11px] text-secondary">本机恢复点（恢复前自动保存）</p>
+              <p className="text-[11px] text-secondary">{t("backup.points")}</p>
               {points.map((point) => {
                 const time = Number(point.replace(/\D/g, ""));
                 return (
@@ -499,19 +498,19 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                       disabled={busy !== null}
                       onClick={() => preview({ kind: "recovery", name: point }, formatTime(time))}
                     >
-                      恢复
+                      {t("shelf.bin.restore")}
                     </Button>
                     <Button
                       size="icon"
                       variant="ghost"
-                      aria-label={`删除恢复点 ${formatTime(time)}`}
+                      aria-label={t("backup.deletePoint", { time: formatTime(time) })}
                       className="h-8 w-8 text-secondary"
                       disabled={busy !== null}
                       onClick={() =>
                         run("delete", async () => {
                           await sync.deleteRecoveryPoint(point);
                           setPoints(await sync.listRecoveryPoints());
-                          return "已删除";
+                          return t("records.deleted");
                         })
                       }
                     >
@@ -529,13 +528,13 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
         <Dialog open onOpenChange={(open) => !open && setIgnoring(false)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[80dvh] overflow-y-auto p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">同步排除</DialogTitle>
-              <DialogDescription>
-                开启的内容保留本机的：恢复备份时不覆盖，连接服务器时既不上传也不被覆盖。
-              </DialogDescription>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("backup.exclusions")}
+              </DialogTitle>
+              <DialogDescription>{t("backup.exclusions.note")}</DialogDescription>
             </DialogHeader>
             <ul className="space-y-1">
-              {RESTORE_CATEGORIES.map(([category, label, note]) => (
+              {restoreCategories().map(([category, label, note]) => (
                 <li key={category}>
                   <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm hover:bg-surface-container">
                     <span>
@@ -543,7 +542,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                       {note && <span className="block text-[11px] text-secondary">{note}</span>}
                     </span>
                     <Switch
-                      aria-label={`恢复时忽略${label}`}
+                      aria-label={t("backup.ignore", { label })}
                       checked={draft.restoreIgnore.includes(category)}
                       disabled={busy !== null}
                       onCheckedChange={(ignore) =>
@@ -566,42 +565,51 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
         <Dialog open onOpenChange={(open) => !open && setRestoring(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">恢复备份</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("backup.restoreTitle")}
+              </DialogTitle>
               <DialogDescription>
-                {restoring.label} · {restoring.preview.device || "未知设备"} ·{" "}
+                {restoring.label} · {restoring.preview.device || t("backup.unknownDevice")} ·{" "}
                 {formatTime(restoring.preview.createdAt)}
               </DialogDescription>
             </DialogHeader>
             <ul className="text-sm space-y-1">
               <li>
-                书籍 {restoring.preview.books} 本，本机已有 {restoring.preview.booksOnDevice} 本
+                {t("backup.preview.books", {
+                  books: restoring.preview.books,
+                  here: restoring.preview.booksOnDevice,
+                })}
               </li>
-              <li>书签 {restoring.preview.bookmarks} 个</li>
+              <li>{t("backup.preview.bookmarks", { count: restoring.preview.bookmarks })}</li>
               <li>
-                分组 {restoring.preview.groups} 个，替换规则 {restoring.preview.replaceRules}{" "}
-                条，自定义目录规则 {restoring.preview.tocRules} 条
+                {t("backup.preview.rules", {
+                  groups: restoring.preview.groups,
+                  replace: restoring.preview.replaceRules,
+                  toc: restoring.preview.tocRules,
+                })}
               </li>
               {(restoring.preview.onlineBooks > 0 || restoring.preview.bookSources > 0) && (
                 <li>
-                  网络书籍 {restoring.preview.onlineBooks} 本，书源 {restoring.preview.bookSources}{" "}
-                  个
+                  {t("backup.preview.online", {
+                    books: restoring.preview.onlineBooks,
+                    sources: restoring.preview.bookSources,
+                  })}
                 </li>
               )}
-              {restoring.preview.hasPreferences && <li>阅读设置（字体和背景图保留本机的）</li>}
+              {restoring.preview.hasPreferences && <li>{t("backup.preview.prefs")}</li>}
               {settings.restoreIgnore.length > 0 && (
                 <li className="text-secondary text-xs">
-                  忽略：
-                  {RESTORE_CATEGORIES.filter(([category]) =>
-                    settings.restoreIgnore.includes(category),
-                  )
+                  {t("backup.preview.ignored")}
+                  {restoreCategories()
+                    .filter(([category]) => settings.restoreIgnore.includes(category))
                     .map(([, label]) => label)
-                    .join("、")}
+                    .join(t("common.listSeparator"))}
                 </li>
               )}
             </ul>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setRestoring(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -623,7 +631,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                   })
                 }
               >
-                {busy === "restore" ? "正在恢复…" : "恢复"}
+                {busy === "restore" ? t("backup.restoring") : t("shelf.bin.restore")}
               </Button>
             </div>
           </DialogContent>
@@ -633,32 +641,42 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
         <Dialog open onOpenChange={(open) => !open && setReport(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">已恢复</DialogTitle>
-              <DialogDescription>恢复前的状态已保存为本机恢复点。</DialogDescription>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("backup.restored")}
+              </DialogTitle>
+              <DialogDescription>{t("backup.restored.note")}</DialogDescription>
             </DialogHeader>
             <ul className="text-sm space-y-1">
               <li>
-                书籍 {report.booksRestored} 本，进度 {report.positionsRestored} 本，新增书签{" "}
-                {report.bookmarksAdded} 个
+                {t("backup.report.books", {
+                  books: report.booksRestored,
+                  positions: report.positionsRestored,
+                  bookmarks: report.bookmarksAdded,
+                })}
               </li>
               {report.booksPending > 0 && (
-                <li>{report.booksPending} 本书不在本机，导入或从云书架下载后会自动恢复记录</li>
+                <li>{t("backup.report.pending", { count: report.booksPending })}</li>
               )}
               {(report.onlineBooksRestored > 0 || report.sourcesRestored > 0) && (
                 <li>
-                  网络书籍 {report.onlineBooksRestored} 本，书源 {report.sourcesRestored} 个
-                  （目录在第一次打开时读取）
+                  {t("backup.report.online", {
+                    books: report.onlineBooksRestored,
+                    sources: report.sourcesRestored,
+                  })}
                 </li>
               )}
               <li>
-                新建分组 {report.groupsCreated} 个，规则 {report.rulesRestored} 条
-                {report.preferencesRestored ? "，阅读设置已恢复" : ""}
+                {t("backup.report.rules", {
+                  groups: report.groupsCreated,
+                  rules: report.rulesRestored,
+                })}
+                {report.preferencesRestored ? t("backup.report.prefs") : ""}
               </li>
-              {report.webdavRestored && <li>WebDAV 账号已恢复</li>}
+              {report.webdavRestored && <li>{t("backup.report.webdav")}</li>}
             </ul>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setReport(null)}>
-                好的
+                {t("common.confirm")}
               </Button>
             </div>
           </DialogContent>

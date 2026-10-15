@@ -20,6 +20,7 @@ import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
 import { useUpdateInstall } from "../Updates/use-update-install";
 import { formatDate, useT, type MessageKey } from "../../i18n";
+import { t } from "../../i18n";
 
 const REPOSITORY = "https://github.com/Gabrlie/GripRead";
 
@@ -97,7 +98,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
     <FullPage label={t("about.title")} onClose={onClose}>
       <div className="flex flex-col items-center text-center gap-2 py-6">
         <img src="/icon-192.png" alt="" className="h-16 w-16 rounded-2xl shadow-sm" />
-        <h2 className="font-title-editorial text-xl font-semibold">手不释卷 · GripRead</h2>
+        <h2 className="font-title-editorial text-xl font-semibold">{t("app.fullName")}</h2>
         <p className="text-xs text-secondary">{t("about.version", { version: APP_VERSION })}</p>
       </div>
       <PageSection title={t("about.intro")}>

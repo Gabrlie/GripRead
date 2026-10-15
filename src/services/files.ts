@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { PickedFile } from "../types/generated";
 import { native, type TransportError } from "./transport";
+import { t } from "../i18n";
 
 export interface FileFilter {
   name: string;
@@ -48,7 +49,10 @@ export async function upload(file: File): Promise<string> {
   });
   const body = (await response.json()) as { path?: string } & Partial<TransportError>;
   if (!response.ok || !body.path)
-    throw { code: body.code ?? "io", message: body.message ?? "上传失败" } as TransportError;
+    throw {
+      code: body.code ?? "io",
+      message: body.message ?? t("files.uploadFailed"),
+    } as TransportError;
   return body.path;
 }
 

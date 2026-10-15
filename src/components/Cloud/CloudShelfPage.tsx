@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { describeError, formatSize, formatTime } from "./format";
+import { t } from "../../i18n";
 
 /**
  * The cloud bookshelf: book files in the WebDAV book folder. Local books
@@ -81,7 +82,7 @@ export function CloudShelfPage({
 
   return (
     <FullPage
-      label="云书架"
+      label={t("shelf.menu.cloud")}
       onClose={onClose}
       layer="z-[45]"
       actions={
@@ -94,27 +95,32 @@ export function CloudShelfPage({
               run("upload", async () => {
                 const report = await sync.uploadBooks([]);
                 await refresh();
-                const parts = [`上传 ${report.uploaded} 本`];
-                if (report.updated) parts.push(`更新信息 ${report.updated} 本`);
-                if (report.skipped) parts.push(`${report.skipped} 本已在云书架`);
+                const parts = [t("cloudShelf.uploaded", { count: report.uploaded })];
+                if (report.updated) parts.push(t("cloudShelf.updated", { count: report.updated }));
+                if (report.skipped) parts.push(t("cloudShelf.skipped", { count: report.skipped }));
                 if (report.failed.length)
-                  parts.push(`${report.failed.length} 本失败：${report.failed.join("；")}`);
-                return parts.join("，");
+                  parts.push(
+                    t("cloudShelf.failed", {
+                      count: report.failed.length,
+                      names: report.failed.join("; "),
+                    }),
+                  );
+                return parts.join(t("common.clauseSeparator"));
               })
             }
           >
             <Icon name="cloud" size={15} />
-            {busy === "upload" ? "正在上传…" : "全部上传"}
+            {busy === "upload" ? t("detail.uploading") : t("cloudShelf.uploadAll")}
           </Button>
         )
       }
     >
       {configured === false && (
         <div className="rounded-xl bg-surface-container-low p-4 space-y-3 text-sm">
-          <p>云书架使用 WebDAV 保存书籍文件。请先设置 WebDAV 账号。</p>
+          <p>{t("cloudShelf.needsAccount")}</p>
           {onSetUp && (
             <Button size="sm" onClick={onSetUp}>
-              设置 WebDAV
+              {t("cloudShelf.setUp")}
             </Button>
           )}
         </div>
@@ -123,26 +129,28 @@ export function CloudShelfPage({
         <p className="px-1 text-[11px] text-secondary">
           {server ? (
             <>
-              <span className="mr-1 rounded bg-primary/10 px-1.5 py-0.5 text-primary">服务器</span>
-              书籍保存在服务器 {server}，随书架同步。
+              <span className="mr-1 rounded bg-primary/10 px-1.5 py-0.5 text-primary">
+                {t("settings.server")}
+              </span>
+              {t("cloudShelf.onServer", { server })}
             </>
           ) : (
-            "书籍保存在 WebDAV 的 GripRead/Books 文件夹。"
+            t("cloudShelf.onWebdav")
           )}
-          {books && notUploaded > 0 && ` 本机还有 ${notUploaded} 本未上传。`}
+          {books && notUploaded > 0 && t("cloudShelf.notUploaded", { count: notUploaded })}
         </p>
       )}
       {busy === "load" && !books && (
         <p role="status" className="text-sm text-secondary px-1">
-          正在读取云书架…
+          {t("cloudShelf.loading")}
         </p>
       )}
       {books && books.length === 0 && (
-        <p className="text-sm text-secondary text-center py-8">云书架还是空的。</p>
+        <p className="text-sm text-secondary text-center py-8">{t("cloudShelf.empty")}</p>
       )}
       {books && books.length > 0 && (
         <ul
-          aria-label="云端书籍"
+          aria-label={t("cloudShelf.list")}
           className="rounded-xl bg-surface-container-low divide-y divide-surface-variant/30"
         >
           {books.map((book) => (
@@ -157,9 +165,9 @@ export function CloudShelfPage({
                 </span>
               </span>
               {book.localBookId ? (
-                <span className="text-[11px] text-primary shrink-0">已在书架</span>
+                <span className="text-[11px] text-primary shrink-0">{t("cloudShelf.onShelf")}</span>
               ) : book.localRemoved ? (
-                <span className="text-[11px] text-secondary shrink-0">在回收站</span>
+                <span className="text-[11px] text-secondary shrink-0">{t("cloudShelf.inBin")}</span>
               ) : (
                 <Button
                   size="sm"
@@ -173,7 +181,9 @@ export function CloudShelfPage({
                     })
                   }
                 >
-                  {busy === `pull:${book.name}` ? "下载中…" : "下载"}
+                  {busy === `pull:${book.name}`
+                    ? t("cloudShelf.downloading")
+                    : t("cloudShelf.download")}
                 </Button>
               )}
               {/* A server's books leave it with the shelf (the web version). */}
@@ -181,7 +191,7 @@ export function CloudShelfPage({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`从云书架删除 ${book.title}`}
+                  aria-label={t("cloudShelf.removeOne", { title: book.title })}
                   className="h-8 w-8 text-secondary shrink-0"
                   disabled={busy !== null}
                   onClick={() => setRemoving(book)}
@@ -197,14 +207,16 @@ export function CloudShelfPage({
         <Dialog open onOpenChange={(open) => !open && setRemoving(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">从云书架删除</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("detail.removeCloud")}
+              </DialogTitle>
               <DialogDescription>
-                删除 WebDAV 上的《{removing.title}》文件。本机书架和备份不受影响。
+                {t("cloudShelf.removeNote", { title: removing.title })}
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setRemoving(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -215,11 +227,11 @@ export function CloudShelfPage({
                   void run("delete", async () => {
                     await sync.deleteCloudBook(target.name);
                     await refresh();
-                    return `已删除《${target.title}》。`;
+                    return t("cloudShelf.removed", { title: target.title });
                   });
                 }}
               >
-                删除
+                {t("common.delete")}
               </Button>
             </div>
           </DialogContent>

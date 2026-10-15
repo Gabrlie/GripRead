@@ -1,6 +1,7 @@
 import { invokeCommand } from "./ipc";
 import { appLog } from "./log";
 import { native, type TransportError } from "./transport";
+import { t } from "../i18n";
 
 /** Whether the server has its password, and whether this page is signed in. */
 export interface ServerStatus {
@@ -86,7 +87,7 @@ export function browserName(): string {
         ? "Chrome"
         : /Safari\//.test(agent)
           ? "Safari"
-          : "浏览器";
+          : t("device.browser");
   return `${browser} · ${system}`;
 }
 

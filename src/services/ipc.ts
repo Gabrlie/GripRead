@@ -1,4 +1,5 @@
 import { addPluginListener } from "@tauri-apps/api/core";
+import { t } from "../i18n";
 import type { AppServices } from "./contracts";
 import { appLog } from "./log";
 import { androidApp, call, listen, native } from "./transport";
@@ -289,7 +290,7 @@ export const tauriServices: AppServices = {
     },
     pickBookCover: async (bookId) => {
       const selected = await pickFiles({
-        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+        filters: [{ name: t("files.images"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
       });
       if (selected === null || Array.isArray(selected)) return false;
       await invokeCommand<ReaderAsset>("set_book_cover", {
@@ -326,7 +327,7 @@ export const tauriServices: AppServices = {
       invokeCommand<TxtEncodingInfo>("get_txt_encoding", { request: { bookId } }),
     pickAndReassociateTxt: async (bookId) => {
       const selected = await pickFiles({
-        filters: [{ name: "TXT 文本", extensions: ["txt"] }],
+        filters: [{ name: t("files.txt"), extensions: ["txt"] }],
       });
       if (selected === null) return null;
       if (typeof selected !== "string") throw new Error("Expected one TXT file");
@@ -415,7 +416,7 @@ export const tauriServices: AppServices = {
       invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),
     pickRuleFile: async () => {
       const selected = await pickFiles({
-        filters: [{ name: "规则", extensions: ["json", "txt"] }],
+        filters: [{ name: t("files.rules"), extensions: ["json", "txt"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
       return invokeCommand<string>("read_source_file", {
@@ -447,7 +448,7 @@ export const tauriServices: AppServices = {
       }),
     pickAndImportFont: async () => {
       const selected = await pickFiles({
-        filters: [{ name: "字体", extensions: ["ttf", "otf", "ttc", "woff", "woff2"] }],
+        filters: [{ name: t("files.fonts"), extensions: ["ttf", "otf", "ttc", "woff", "woff2"] }],
       });
       if (selected === null) return null;
       if (typeof selected !== "string") throw new Error("Expected one font file");
@@ -458,7 +459,7 @@ export const tauriServices: AppServices = {
     listFonts: () => invokeCommand<ReaderAsset[]>("list_reader_fonts"),
     pickBackgroundImage: async () => {
       const selected = await pickFiles({
-        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+        filters: [{ name: t("files.images"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
       return invokeCommand<ReaderAsset>("import_reader_background", {
@@ -521,7 +522,7 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("delete_recovery_point", { request: { name } satisfies NameRequest }),
     pickBackupFile: async () => {
       const selected = await pickFiles({
-        filters: [{ name: "GripRead 备份", extensions: ["json"] }],
+        filters: [{ name: t("files.backups"), extensions: ["json"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
       return { kind: "file", name: selected } satisfies BackupSource;
@@ -541,7 +542,7 @@ export const tauriServices: AppServices = {
         ? null
         : await pickSaveTarget({
             defaultPath: `gripread-backup-${new Date().toISOString().slice(0, 10)}.json`,
-            filters: [{ name: "GripRead 备份", extensions: ["json"] }],
+            filters: [{ name: t("files.backups"), extensions: ["json"] }],
           });
       if (!android && path === null) return false;
       return finishSave(
@@ -616,7 +617,7 @@ export const tauriServices: AppServices = {
       invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),
     pickSourceFile: async () => {
       const selected = await pickFiles({
-        filters: [{ name: "书源", extensions: ["json", "txt"] }],
+        filters: [{ name: t("settings.sources"), extensions: ["json", "txt"] }],
       });
       if (selected === null || Array.isArray(selected)) return null;
       return invokeCommand<string>("read_source_file", {
@@ -652,7 +653,7 @@ export const tauriServices: AppServices = {
         ? null
         : await pickSaveTarget({
             defaultPath: "bookSource.json",
-            filters: [{ name: "书源", extensions: ["json"] }],
+            filters: [{ name: t("settings.sources"), extensions: ["json"] }],
           });
       if (!android && path === null) return false;
       return finishSave(

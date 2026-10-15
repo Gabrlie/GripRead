@@ -9,6 +9,7 @@ import "@fontsource-variable/literata/wght.css";
 import "@fontsource-variable/noto-serif-sc/wght.css";
 import "@fontsource-variable/hanken-grotesk/wght.css";
 import "./styles.css";
+import { t } from "./i18n";
 
 async function start() {
   applySystemInsets();
@@ -33,5 +34,5 @@ async function start() {
 }
 void start().catch((error) => {
   console.error(error);
-  document.getElementById("root")!.textContent = "应用初始化失败，请重新启动。";
+  document.getElementById("root")!.textContent = t("app.startFailed");
 });

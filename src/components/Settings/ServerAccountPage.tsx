@@ -6,13 +6,14 @@ import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
+import { formatDate, t } from "../../i18n";
 
 function seen(at: number): string {
   const minutes = Math.round((Date.now() - at) / 60_000);
-  if (minutes < 10) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  if (minutes < 24 * 60) return `${Math.round(minutes / 60)} 小时前`;
-  return new Date(at).toLocaleDateString();
+  if (minutes < 10) return t("account.justNow");
+  if (minutes < 60) return t("account.minutes", { minutes });
+  if (minutes < 24 * 60) return t("account.hours", { hours: Math.round(minutes / 60) });
+  return formatDate(at);
 }
 
 /**
@@ -40,7 +41,7 @@ export function ServerAccountSections() {
   const revoke = (session: ServerSession) =>
     void serverAccount.revoke(session.id).then(
       () => {
-        toast(`已退出：${session.device}`);
+        toast(t("account.revoked", { device: session.device }));
         load();
       },
       (error: unknown) => toast({ text: describeError(error), error: true }),
@@ -54,7 +55,7 @@ export function ServerAccountSections() {
         () => {
           setCurrent("");
           setNext("");
-          toast("密码已修改，其他设备需要重新登录");
+          toast(t("account.passwordChanged"));
           load();
         },
         (error: unknown) => toast({ text: describeError(error), error: true }),
@@ -65,45 +66,49 @@ export function ServerAccountSections() {
   return (
     <>
       <JobsSection />
-      <PageSection title="已登录的设备">
+      <PageSection title={t("account.sessions")}>
         {failure && (
           <p role="alert" className="p-4 text-xs text-error">
             {failure}
           </p>
         )}
-        {sessions === null && !failure && <p className="p-4 text-sm text-secondary">正在读取…</p>}
+        {sessions === null && !failure && (
+          <p className="p-4 text-sm text-secondary">{t("common.loading")}</p>
+        )}
         {sessions?.map((session) => (
           <div key={session.id} className="flex items-center gap-3 px-4 py-3 text-sm">
             <span className="flex-1 min-w-0">
               <span className="block truncate">
                 {session.device}
-                {session.current && <span className="ml-1.5 text-[11px] text-primary">本机</span>}
+                {session.current && (
+                  <span className="ml-1.5 text-[11px] text-primary">{t("cloud.here")}</span>
+                )}
               </span>
               <span className="block text-[11px] text-secondary">{seen(session.lastSeen)}</span>
             </span>
             {!session.current && (
               <Button size="sm" variant="ghost" onClick={() => revoke(session)}>
-                退出
+                {t("account.revoke")}
               </Button>
             )}
           </div>
         ))}
       </PageSection>
 
-      <PageSection title="修改密码">
+      <PageSection title={t("account.changePassword")}>
         <div className="p-4 space-y-2">
           <Input
             type="password"
-            aria-label="当前密码"
-            placeholder="当前密码"
+            aria-label={t("account.current")}
+            placeholder={t("account.current")}
             autoComplete="current-password"
             value={current}
             onChange={(change) => setCurrent(change.target.value)}
           />
           <Input
             type="password"
-            aria-label="新密码"
-            placeholder="新密码（至少 6 位）"
+            aria-label={t("account.next")}
+            placeholder={t("account.next.placeholder")}
             autoComplete="new-password"
             value={next}
             onChange={(change) => setNext(change.target.value)}
@@ -114,7 +119,7 @@ export function ServerAccountSections() {
             disabled={busy || !current || next.length < 6}
             onClick={changePassword}
           >
-            修改密码
+            {t("account.changePassword")}
           </Button>
         </div>
       </PageSection>
@@ -131,7 +136,7 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
     );
 
   return (
-    <FullPage label="服务器账号" onClose={onClose}>
+    <FullPage label={t("settings.account")} onClose={onClose}>
       <ServerAccountSections />
       <PageSection>
         <button
@@ -139,7 +144,7 @@ export function ServerAccountPage({ onClose }: { onClose: () => void }) {
           onClick={logout}
           className="w-full px-4 py-3 text-left text-sm text-error"
         >
-          退出登录
+          {t("account.logout")}
         </button>
       </PageSection>
     </FullPage>

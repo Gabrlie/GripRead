@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { t } from "../../i18n";
 
 export interface Toast {
   id: number;
@@ -32,7 +33,7 @@ export function toast(message: string | Omit<Toast, "id">): void {
   let value = typeof message === "string" ? { text: message } : message;
   if (value.error && !value.action && viewLogs) {
     const open = viewLogs;
-    value = { ...value, action: { label: "查看日志", run: open } };
+    value = { ...value, action: { label: t("toast.showLog"), run: open } };
   }
   current = { ...value, id: nextId++ };
   clearTimeout(timer);
