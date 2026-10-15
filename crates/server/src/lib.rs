@@ -74,7 +74,11 @@ impl Platform for ServerPlatform {
         &self,
         _path: &str,
     ) -> Result<Vec<gripread_core::models::PickedFile>, AppError> {
-        Err(AppError::invalid_argument("网页版请直接选择多个文件上传"))
+        Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "webPickFiles",
+            "网页版请直接选择多个文件上传",
+        ))
     }
 
     fn save_document(
@@ -99,7 +103,11 @@ impl Platform for ServerPlatform {
         &self,
         _path: Option<&str>,
     ) -> Result<Option<(String, String)>, AppError> {
-        Err(AppError::invalid_argument("服务器不使用本地备份文件夹"))
+        Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "webNoBackupFolder",
+            "服务器不使用本地备份文件夹",
+        ))
     }
 }
 
@@ -207,7 +215,12 @@ pub fn app(config: Config) -> Result<Router, String> {
 }
 
 async fn unknown_api() -> Response {
-    failure(StatusCode::NOT_FOUND, "not_found", "服务器没有这个接口")
+    failure_keyed(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "noApi",
+        "服务器没有这个接口",
+    )
 }
 
 fn clear_old_uploads(uploads: &std::path::Path) {
@@ -231,16 +244,33 @@ fn failure(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "code": code, "message": message }))).into_response()
 }
 
+/// A failure the interface translates by `key`; `message` is the fallback.
+fn failure_keyed(status: StatusCode, code: &str, key: &str, message: &str) -> Response {
+    (
+        status,
+        Json(json!({ "code": code, "message": message, "key": key })),
+    )
+        .into_response()
+}
+
 fn app_error(error: AppError) -> Response {
     (StatusCode::BAD_REQUEST, Json(error)).into_response()
 }
 
 fn auth_error(error: AuthError) -> Response {
     match error {
-        AuthError::WrongState => {
-            failure(StatusCode::CONFLICT, "auth_state", "账号状态已变化，请刷新")
-        }
-        AuthError::BadPassword => failure(StatusCode::UNAUTHORIZED, "unauthorized", "密码不对"),
+        AuthError::WrongState => failure_keyed(
+            StatusCode::CONFLICT,
+            "auth_state",
+            "authState",
+            "账号状态已变化，请刷新",
+        ),
+        AuthError::BadPassword => failure_keyed(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "badPassword",
+            "密码不对",
+        ),
         AuthError::TooMany => failure(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -282,7 +312,12 @@ impl Server {
 }
 
 fn unauthorized() -> Response {
-    failure(StatusCode::UNAUTHORIZED, "unauthorized", "请先登录")
+    failure_keyed(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "signIn",
+        "请先登录",
+    )
 }
 
 /// The session cookie; `Secure` when the page came over HTTPS (through a
@@ -448,7 +483,12 @@ async fn revoke(
             log(format!("移除了设备「{}」", device.unwrap_or_default()));
             StatusCode::NO_CONTENT.into_response()
         }
-        Ok(false) => failure(StatusCode::NOT_FOUND, "not_found", "没有这台设备"),
+        Ok(false) => failure_keyed(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "noDevice",
+            "没有这台设备",
+        ),
         Err(error) => auth_error(error),
     }
 }
@@ -553,7 +593,12 @@ async fn export(State(server): State<Arc<Server>>, headers: HeaderMap) -> Respon
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take();
     let Some(export) = taken else {
-        return failure(StatusCode::NOT_FOUND, "not_found", "没有可下载的文件");
+        return failure_keyed(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "noDownload",
+            "没有可下载的文件",
+        );
     };
     let disposition = format!(
         "attachment; filename=\"export\"; filename*=UTF-8''{}",

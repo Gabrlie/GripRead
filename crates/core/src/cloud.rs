@@ -1423,7 +1423,9 @@ pub mod server {
             .server_books()?
             .into_iter()
             .find(|book| book.sha256 == sha256)
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "服务器上没有这本书"))?;
+            .ok_or_else(|| {
+                AppError::keyed(ErrorCode::NotFound, "serverNoBook", "服务器上没有这本书")
+            })?;
         let directory = data_root
             .join("document-staging")
             .join(format!("server-{}", Uuid::new_v4()));

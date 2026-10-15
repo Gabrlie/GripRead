@@ -92,6 +92,21 @@ export function format(template: string, params?: Params): string {
   });
 }
 
+/**
+ * An error from the core or the server in the current language: by its key
+ * (`error.<key>`) when the dictionary has it, else its own message.
+ */
+export function errorText(error: {
+  message: string;
+  key?: string | null;
+  params?: Record<string, string> | null;
+}): string {
+  if (!error.key) return error.message;
+  const key = `error.${error.key}` as MessageKey;
+  if (!(key in zhCN)) return error.message;
+  return t(key, error.params ?? undefined);
+}
+
 /** `t` for components: they re-render when the language changes. */
 export function useT(): typeof t {
   useSyncExternalStore(onLanguageChange, currentLocale, currentLocale);

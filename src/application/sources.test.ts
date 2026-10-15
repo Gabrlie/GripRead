@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BookSourceSummary } from "../types/generated";
 import {
   filterSources,
+  checkMessage,
   formatRespondTime,
   sortSources,
   sourceError,
@@ -72,6 +73,9 @@ describe("source lists", () => {
     expect(formatRespondTime(820)).toBe("820 毫秒");
     expect(formatRespondTime(1500)).toBe("1.5 秒");
     expect(formatRespondTime(181200)).toBe("超时");
+    expect(checkMessage("搜索·详情")).toBe("搜索 · 详情");
+    expect(checkMessage("校验成功（320 ms）")).toBe("校验成功（320 ms）");
+    expect(checkMessage("网站失效：连接失败")).toBe("网站失效：连接失败");
   });
 });
 

@@ -120,9 +120,14 @@ impl<'a> Archive<'a> {
 
 /// Reads one file of the EPUB (an image or the cover).
 pub fn read_file(bytes: &[u8], path: &str) -> Result<Vec<u8>, AppError> {
-    Archive::open(bytes)?
-        .read(path)
-        .ok_or_else(|| AppError::new(ErrorCode::FileNotFound, format!("EPUB 中没有 {path}")))
+    Archive::open(bytes)?.read(path).ok_or_else(|| {
+        AppError::keyed(
+            ErrorCode::FileNotFound,
+            "epubEntryMissing",
+            format!("EPUB 中没有 {path}"),
+        )
+        .with("path", path)
+    })
 }
 
 /// Reads one file of the EPUB at `path` without loading the whole book.
@@ -130,9 +135,14 @@ pub fn read_file_at(path: &std::path::Path, inner: &str) -> Result<Vec<u8>, AppE
     let file = std::fs::File::open(path)?;
     let mut zip =
         ZipArchive::new(file).map_err(|error| invalid(format!("EPUB 文件已损坏：{error}")))?;
-    let mut entry = zip
-        .by_name(inner)
-        .map_err(|_| AppError::new(ErrorCode::FileNotFound, format!("EPUB 中没有 {inner}")))?;
+    let mut entry = zip.by_name(inner).map_err(|_| {
+        AppError::keyed(
+            ErrorCode::FileNotFound,
+            "epubEntryMissing",
+            format!("EPUB 中没有 {inner}"),
+        )
+        .with("path", inner)
+    })?;
     let mut bytes = Vec::with_capacity(entry.size().min(64 << 20) as usize);
     entry.read_to_end(&mut bytes)?;
     Ok(bytes)

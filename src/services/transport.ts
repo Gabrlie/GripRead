@@ -13,6 +13,8 @@ export function androidApp(): boolean {
 export interface TransportError {
   code: string;
   message: string;
+  key?: string;
+  params?: Record<string, string>;
 }
 
 /** Called when the server says the page is not signed in. */
@@ -25,7 +27,12 @@ export function onSignedOut(listener: () => void): void {
 async function failure(response: Response): Promise<TransportError> {
   try {
     const body = (await response.json()) as Partial<TransportError>;
-    return { code: body.code ?? "io", message: body.message ?? response.statusText };
+    return {
+      code: body.code ?? "io",
+      message: body.message ?? response.statusText,
+      key: body.key,
+      params: body.params,
+    };
   } catch {
     return { code: "io", message: `${response.status} ${response.statusText}` };
   }

@@ -232,7 +232,12 @@ async fn put_book(
         return unauthorized();
     };
     if !protocol::valid_sha256(&sha256) {
-        return failure(StatusCode::BAD_REQUEST, "invalid_argument", "校验值无效");
+        return failure_keyed(
+            StatusCode::BAD_REQUEST,
+            "invalid_argument",
+            "badHash",
+            "校验值无效",
+        );
     }
     let folder = server.uploads.join(uuid::Uuid::new_v4().to_string());
     let target = folder.join("book.txt");
@@ -383,13 +388,23 @@ async fn get_cover(
 
 async fn send_file(path: Option<PathBuf>, mime: &'static str) -> Response {
     let Some(path) = path else {
-        return failure(StatusCode::NOT_FOUND, "not_found", "服务器上没有这个文件");
+        return failure_keyed(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "serverNoFile",
+            "服务器上没有这个文件",
+        );
     };
     match tokio::fs::File::open(&path).await {
         Ok(file) => {
             let stream = tokio_util::io::ReaderStream::new(file);
             ([(header::CONTENT_TYPE, mime)], Body::from_stream(stream)).into_response()
         }
-        Err(_) => failure(StatusCode::NOT_FOUND, "not_found", "服务器上没有这个文件"),
+        Err(_) => failure_keyed(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "serverNoFile",
+            "服务器上没有这个文件",
+        ),
     }
 }

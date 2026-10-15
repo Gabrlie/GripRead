@@ -1387,11 +1387,16 @@ pub async fn save_reader_locator(
     let locator = request.locator.clone();
     if let Some(saved) = for_online_book(state, &request.locator.book_id, move |storage| {
         let guard = lock_storage(storage)?;
-        let index = crate::storage::resource_chapter(&locator.resource_id)
-            .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?;
+        let index = crate::storage::resource_chapter(&locator.resource_id).ok_or_else(|| {
+            AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notOnlineChapter",
+                "不是网络书籍的章节",
+            )
+        })?;
         guard
             .online_chapter(&locator.book_id, index)?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "chapterMissing", "没有这一章"))?;
         guard.save_position_record(&locator)?;
         Ok(locator)
     })
@@ -1935,7 +1940,11 @@ fn write_local_backup(
 /// While the GripRead server is connected, WebDAV pauses (its settings stay).
 fn webdav_paused(state: &AppState) -> Result<(), AppError> {
     if state.sync.connected() {
-        return Err(AppError::invalid_argument("已连接服务器，WebDAV 已暂停"));
+        return Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "webdavPaused",
+            "已连接服务器，WebDAV 已暂停",
+        ));
     }
     Ok(())
 }

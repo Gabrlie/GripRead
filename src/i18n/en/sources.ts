@@ -283,4 +283,7 @@ export const sources = {
   "discover.refreshKinds": "Refresh categories",
   "discover.loading": "Reading categories…",
   "discover.none": "No categories",
+  "src.check.passed": "Passed ({ms} ms)",
+  "src.check.details": "Details",
+  "src.check.text": "Text",
 } satisfies Messages<typeof zh>;

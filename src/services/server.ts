@@ -1,3 +1,4 @@
+import { errorText } from "../i18n";
 import { invokeCommand } from "./ipc";
 import { appLog } from "./log";
 import { native, type TransportError } from "./transport";
@@ -42,7 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // Keep the status as the message.
     }
     appLog.write("warn", "server", `${path}：${error.message}`);
-    throw new Error(error.message);
+    throw new Error(errorText(error));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

@@ -349,7 +349,12 @@ async fn chapter(
         return unauthorized();
     }
     let (Some(key), Some(url)) = (query.get("key").cloned(), query.get("url").cloned()) else {
-        return failure(StatusCode::BAD_REQUEST, "invalid_argument", "缺少参数");
+        return failure_keyed(
+            StatusCode::BAD_REQUEST,
+            "invalid_argument",
+            "missingParam",
+            "缺少参数",
+        );
     };
     let title = query.get("title").cloned().unwrap_or_default();
     let storage = server.core.storage.clone();
@@ -393,7 +398,12 @@ async fn chapter(
         Ok(Ok(Some(text))) => {
             ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response()
         }
-        Ok(Ok(None)) => failure(StatusCode::NOT_FOUND, "not_found", "服务器上没有这一章"),
+        Ok(Ok(None)) => failure_keyed(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "serverNoChapter",
+            "服务器上没有这一章",
+        ),
         Ok(Err(error)) => failure(StatusCode::BAD_GATEWAY, "upstream", &error.message),
         Err(error) => failure(
             StatusCode::INTERNAL_SERVER_ERROR,

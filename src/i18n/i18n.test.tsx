@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { en } from "./en";
-import { format, setLanguage, t, useT } from "./index";
+import { errorText, format, setLanguage, t, useT } from "./index";
 import { zhCN } from "./zh-CN";
 
 /** Every area of the Chinese texts, which define the keys. */
@@ -38,6 +38,19 @@ describe("interface languages", () => {
     act(() => setLanguage("system"));
     expect(screen.getByRole("heading").textContent).toBe("设置");
     expect(document.documentElement.lang).toBe("zh-Hans");
+  });
+
+  it("translates keyed errors and keeps the message of others", () => {
+    const error = {
+      message: "没有这个书源：a.com",
+      key: "sourceMissingUrl",
+      params: { url: "a.com" },
+    };
+    expect(errorText(error)).toBe("没有这个书源：a.com");
+    setLanguage("en");
+    expect(errorText(error)).toBe("No such source: a.com");
+    expect(errorText({ message: "磁盘已满" })).toBe("磁盘已满");
+    expect(errorText({ message: "旧服务器", key: "somethingNew" })).toBe("旧服务器");
   });
 
   it("defines each key in one area only", () => {

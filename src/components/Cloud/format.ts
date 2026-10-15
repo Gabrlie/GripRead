@@ -1,5 +1,5 @@
 /** Display helpers for backups and cloud books. */
-import { formatDateTime, t } from "../../i18n";
+import { errorText, formatDateTime, t } from "../../i18n";
 
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -18,7 +18,7 @@ export function describeError(error: unknown): string {
     error instanceof Error
       ? error.message
       : typeof error === "object" && error !== null && "message" in error
-        ? String(error.message)
+        ? errorText(error as { message: string; key?: string; params?: Record<string, string> })
         : String(error);
   const message = text.replace(/^[a-z_]+:\s*/, "");
   if (/WebDAV is not set up/.test(message)) return t("error.webdavUnset");

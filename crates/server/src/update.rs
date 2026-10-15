@@ -55,7 +55,14 @@ async fn asset(
         };
     let file = match tokio::fs::File::open(&path).await {
         Ok(file) => file,
-        Err(_) => return failure(StatusCode::NOT_FOUND, "not_found", "服务器上没有这个文件"),
+        Err(_) => {
+            return failure_keyed(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "serverNoFile",
+                "服务器上没有这个文件",
+            )
+        }
     };
     let length = file
         .metadata()

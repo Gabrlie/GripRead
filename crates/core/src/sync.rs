@@ -246,7 +246,11 @@ pub fn import_book_file(
     file: &Path,
 ) -> Result<bool, AppError> {
     if !valid_sha256(sha256) || sha256_file(file)? != sha256 {
-        return Err(AppError::invalid_argument("书籍文件与它的校验值不符"));
+        return Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "bookHash",
+            "书籍文件与它的校验值不符",
+        ));
     }
     let mut guard = lock(storage)?;
     if guard.book_for_source(sha256)?.is_some() {
@@ -278,7 +282,11 @@ pub fn store_cover(storage: &Mutex<Storage>, name: &str, bytes: &[u8]) -> Result
         .map(|byte| format!("{byte:02x}"))
         .collect();
     if !valid_cover_name(name) || !name.starts_with(&digest) {
-        return Err(AppError::invalid_argument("封面文件与它的校验值不符"));
+        return Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "coverHash",
+            "封面文件与它的校验值不符",
+        ));
     }
     let guard = lock(storage)?;
     let directory = guard.cover_cache();

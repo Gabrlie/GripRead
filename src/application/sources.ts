@@ -1,5 +1,5 @@
 import type { BookSourceSummary } from "../types/generated";
-import { t } from "../i18n";
+import { t, type MessageKey } from "../i18n";
 
 /** Legado's 书源管理 filters. */
 export type SourceFilter =
@@ -155,6 +155,23 @@ export function sortSources(
 export function sourceError(source: BookSourceSummary): string | null {
   const first = source.comment.split("\n")[0] ?? "";
   return first.startsWith("// Error: ") ? first.slice("// Error: ".length) : null;
+}
+
+/** The core's check stages (搜索·详情 …) and success line in the interface's language. */
+export function checkMessage(message: string): string {
+  const passed = /^校验成功（(\d+) ms）$/.exec(message);
+  if (passed) return t("src.check.passed", { ms: passed[1] });
+  const stages: Record<string, MessageKey> = {
+    搜索: "header.search",
+    发现: "nav.discover",
+    详情: "src.check.details",
+    目录: "detail.contents",
+    正文: "src.check.text",
+  };
+  const parts = message.split("·");
+  return parts.every((part) => part in stages)
+    ? parts.map((part) => t(stages[part])).join(" · ")
+    : message;
 }
 
 /** Response time as Legado shows it in the list. */

@@ -112,9 +112,14 @@ pub(crate) fn load_source(
     let guard = storage
         .lock()
         .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
-    guard
-        .book_source(url)?
-        .ok_or_else(|| AppError::new(ErrorCode::NotFound, format!("没有这个书源：{url}")))
+    guard.book_source(url)?.ok_or_else(|| {
+        AppError::keyed(
+            ErrorCode::NotFound,
+            "sourceMissingUrl",
+            format!("没有这个书源：{url}"),
+        )
+        .with("url", url)
+    })
 }
 
 pub(crate) fn session_for(
@@ -272,7 +277,11 @@ pub async fn read_source_file(
         )?;
         let bytes = std::fs::read(&path)?;
         if bytes.len() > 32 * 1024 * 1024 {
-            return Err(AppError::invalid_argument("文件太大，不像书源文件"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "sourceFileTooBig",
+                "文件太大，不像书源文件",
+            ));
         }
         Ok(http::decode_body(&bytes, None, None))
     })
@@ -348,7 +357,7 @@ pub async fn get_source_login_form(
     with_storage(state, move |storage| {
         let source = storage
             .book_source(&request.url)?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这个书源"))?;
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "sourceMissing", "没有这个书源"))?;
         let rows = source
             .login_ui()
             .map(|ui| login_rows(&ui))

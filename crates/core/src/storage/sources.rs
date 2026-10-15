@@ -89,8 +89,14 @@ impl Storage {
     }
 
     fn required_source(&self, url: &str) -> Result<BookSource, AppError> {
-        self.book_source(url)?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, format!("没有这个书源：{url}")))
+        self.book_source(url)?.ok_or_else(|| {
+            AppError::keyed(
+                ErrorCode::NotFound,
+                "sourceMissingUrl",
+                format!("没有这个书源：{url}"),
+            )
+            .with("url", url)
+        })
     }
 
     /// Every stored source, in the manual order.

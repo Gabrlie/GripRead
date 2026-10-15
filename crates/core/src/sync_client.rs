@@ -114,7 +114,12 @@ fn now_millis() -> i64 {
 }
 
 fn network_error(error: impl std::fmt::Display) -> AppError {
-    AppError::new(ErrorCode::Io, format!("服务器连接失败：{error}"))
+    AppError::keyed(
+        ErrorCode::Io,
+        "serverUnreachable",
+        format!("服务器连接失败：{error}"),
+    )
+    .with("error", &error)
 }
 
 fn agent(timeout: Duration) -> ureq::Agent {
@@ -138,8 +143,9 @@ fn normalize_address(address: &str) -> String {
 
 /// The server's error message for a failed request.
 fn failure(status: u16, body: &str) -> AppError {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
+    let value = serde_json::from_str::<Value>(body).ok();
+    let message = value
+        .as_ref()
         .and_then(|value| value["message"].as_str().map(str::to_string))
         .unwrap_or_else(|| format!("HTTP {status}"));
     let code = if status == 401 {
@@ -147,7 +153,11 @@ fn failure(status: u16, body: &str) -> AppError {
     } else {
         ErrorCode::Io
     };
-    AppError::new(code, message)
+    // The server's key, when it sent one, travels on for translation.
+    match value.as_ref().and_then(|value| value["key"].as_str()) {
+        Some(key) => AppError::keyed(code, key, message),
+        None => AppError::new(code, message),
+    }
 }
 
 struct Http<'a> {
@@ -158,7 +168,11 @@ struct Http<'a> {
 
 /// An older server answered with its page: it lacks the route.
 fn too_old() -> AppError {
-    AppError::invalid_argument("服务器版本较旧，不支持这个功能，请更新服务器")
+    AppError::keyed(
+        ErrorCode::InvalidArgument,
+        "serverTooOld",
+        "服务器版本较旧，不支持这个功能，请更新服务器",
+    )
 }
 
 /// A request answered by the page rather than the API (a server too old to
@@ -419,7 +433,11 @@ impl SyncClient {
     pub fn update_shelf(&self, keys: Vec<String>) -> Result<Option<ShelfUpdateReply>, AppError> {
         let config = self.config();
         if !config.connected() {
-            return Err(AppError::invalid_argument("未连接服务器"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notConnected",
+                "未连接服务器",
+            ));
         }
         let request = Request::builder()
             .method(Method::POST)
@@ -452,12 +470,20 @@ impl SyncClient {
     pub fn api(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, AppError> {
         let config = self.config();
         if !config.connected() {
-            return Err(AppError::invalid_argument("未连接服务器"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notConnected",
+                "未连接服务器",
+            ));
         }
         let method = Method::from_bytes(method.to_ascii_uppercase().as_bytes())
             .map_err(|_| AppError::invalid_argument("unknown method"))?;
         if !management_route(&method, path) {
-            return Err(AppError::invalid_argument("不支持的服务器接口"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "badRoute",
+                "不支持的服务器接口",
+            ));
         }
         let timeout = if path == "/api/jobs/update" {
             SHELF_UPDATE_TIMEOUT
@@ -505,7 +531,11 @@ impl SyncClient {
     pub fn server_books(&self) -> Result<Vec<ServerBook>, AppError> {
         let config = self.config();
         if !config.connected() {
-            return Err(AppError::invalid_argument("未连接服务器"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notConnected",
+                "未连接服务器",
+            ));
         }
         let http = Http {
             address: &config.address,
@@ -519,7 +549,11 @@ impl SyncClient {
     pub fn download_server_book(&self, sha256: &str, target: &Path) -> Result<(), AppError> {
         let config = self.config();
         if !config.connected() {
-            return Err(AppError::invalid_argument("未连接服务器"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notConnected",
+                "未连接服务器",
+            ));
         }
         if !protocol::valid_sha256(sha256) {
             return Err(AppError::invalid_argument("unknown server book"));
@@ -532,7 +566,11 @@ impl SyncClient {
         if http.download(&format!("/api/blobs/book/{sha256}"), target)? {
             Ok(())
         } else {
-            Err(AppError::new(ErrorCode::NotFound, "服务器上没有这本书"))
+            Err(AppError::keyed(
+                ErrorCode::NotFound,
+                "serverNoBook",
+                "服务器上没有这本书",
+            ))
         }
     }
 
@@ -643,7 +681,7 @@ impl SyncClient {
         )?;
         let token = reply["token"]
             .as_str()
-            .ok_or_else(|| AppError::new(ErrorCode::Io, "服务器没有返回登录凭据"))?
+            .ok_or_else(|| AppError::keyed(ErrorCode::Io, "noToken", "服务器没有返回登录凭据"))?
             .to_string();
         self.inner
             .storage

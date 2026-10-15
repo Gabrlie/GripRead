@@ -2225,7 +2225,7 @@ impl Storage {
         self.list_shelf_books(false, Some(book_id))?
             .into_iter()
             .next()
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "书籍不存在"))
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "bookMissing", "书籍不存在"))
     }
     fn list_shelf_books(
         &self,
@@ -4553,7 +4553,7 @@ impl Storage {
         book_id: &str,
     ) -> Result<(PathBuf, Vec<crate::epub::EpubImage>, Option<String>), AppError> {
         let record = self.asset_for_book(book_id)?;
-        let not_epub = || AppError::new(ErrorCode::NotFound, "这本书不是 EPUB");
+        let not_epub = || AppError::keyed(ErrorCode::NotFound, "notEpub", "这本书不是 EPUB");
         if record.asset.kind != AssetKind::Epub {
             return Err(not_epub());
         }
@@ -4567,9 +4567,13 @@ impl Storage {
             )
             .optional()?
             .flatten();
-        let source = source
-            .filter(|path| !path.is_empty())
-            .ok_or_else(|| AppError::new(ErrorCode::AssetMissing, "EPUB 原文件不在了"))?;
+        let source = source.filter(|path| !path.is_empty()).ok_or_else(|| {
+            AppError::keyed(
+                ErrorCode::AssetMissing,
+                "epubSourceMissing",
+                "EPUB 原文件不在了",
+            )
+        })?;
         Ok((managed_path(&self.root, &source, "sources")?, images, cover))
     }
 
@@ -4600,7 +4604,7 @@ impl Storage {
         let image = images
             .into_iter()
             .nth(index as usize)
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这张图片"))?;
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "imageMissing", "没有这张图片"))?;
         Ok((source, image.path))
     }
 

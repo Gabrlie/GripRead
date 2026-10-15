@@ -46,6 +46,11 @@ Engines and keys stay in a device-local file. The target language and display sy
 
 Commands and results are recorded here per batch.
 
+**Interface languages:**
+- `pnpm check` passed with 246 frontend, 228 core, and 13 server tests.
+- Each extraction batch was committed after typecheck and tests.
+- A rebuild of the English source area after a faulty deduplication script was checked by the typecheck and the one-area test.
+
 ## Handoff
 
 Pending.

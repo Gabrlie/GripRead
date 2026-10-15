@@ -3,7 +3,7 @@
 //! when the app returns to the foreground (the device's proxy may have
 //! changed), and the limits searches and downloads read.
 
-use crate::error::AppError;
+use crate::error::{AppError, ErrorCode};
 use crate::models::{
     ConcurrencyLimits, ConcurrencyPreset, NetworkCheck, NetworkSettings, NetworkState, ProxyKind,
 };
@@ -262,7 +262,13 @@ pub fn check(settings: &NetworkSettings, kind: &str) -> Result<NetworkCheck, App
                 doh_enabled: true,
                 ..settings.clone()
             })
-            .ok_or_else(|| AppError::invalid_argument("DoH 地址需要以 https:// 开头"))?;
+            .ok_or_else(|| {
+                AppError::keyed(
+                    ErrorCode::InvalidArgument,
+                    "dohHttps",
+                    "DoH 地址需要以 https:// 开头",
+                )
+            })?;
             let (took, addresses) =
                 crate::sources::network::test_doh(server, "www.baidu.com").map_err(failed)?;
             Ok(NetworkCheck {
@@ -279,8 +285,9 @@ pub fn check(settings: &NetworkSettings, kind: &str) -> Result<NetworkCheck, App
             })
         }
         _ => {
-            let proxy =
-                proxy_url(settings).ok_or_else(|| AppError::invalid_argument("请先填写代理"))?;
+            let proxy = proxy_url(settings).ok_or_else(|| {
+                AppError::keyed(ErrorCode::InvalidArgument, "needProxy", "请先填写代理")
+            })?;
             let (took, status) =
                 crate::sources::network::test_proxy(&proxy, "https://www.baidu.com/")
                     .map_err(failed)?;

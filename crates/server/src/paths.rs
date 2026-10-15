@@ -3,7 +3,7 @@
 //! token from `/api/upload`, which becomes that file's path here; any other
 //! path is refused, so a request cannot read or write elsewhere on the host.
 
-use gripread_core::error::AppError;
+use gripread_core::error::{AppError, ErrorCode};
 use serde_json::Value;
 use std::path::Path;
 
@@ -38,7 +38,13 @@ pub fn file_name(name: &str) -> String {
 }
 
 fn resolve(token: &str, uploads: &Path) -> Result<String, AppError> {
-    let refused = || AppError::invalid_argument("服务器上只能使用上传的文件");
+    let refused = || {
+        AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "uploadsOnly",
+            "服务器上只能使用上传的文件",
+        )
+    };
     let rest = token.strip_prefix(PREFIX).ok_or_else(refused)?;
     let (id, name) = rest.split_once('/').ok_or_else(refused)?;
     if uuid::Uuid::parse_str(id).is_err() || name != file_name(name) {

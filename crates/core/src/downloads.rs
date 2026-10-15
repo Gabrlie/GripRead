@@ -118,7 +118,11 @@ impl Downloads {
         let (count, _) = self.inner.store.chapters(book_id)?;
         let end = end.min(count);
         if start >= end {
-            return Err(AppError::invalid_argument("没有要缓存的章节"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "nothingToCache",
+                "没有要缓存的章节",
+            ));
         }
         let job = {
             let mut jobs = lock(&self.inner.jobs);

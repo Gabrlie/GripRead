@@ -275,4 +275,7 @@ export const sources = {
   "discover.refreshKinds": "刷新分类",
   "discover.loading": "正在读取分类…",
   "discover.none": "没有分类",
+  "src.check.passed": "校验成功（{ms} ms）",
+  "src.check.details": "详情",
+  "src.check.text": "正文",
 } as const;

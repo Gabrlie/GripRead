@@ -308,7 +308,11 @@ impl Storage {
         on_shelf: bool,
     ) -> Result<String, AppError> {
         if book.source_url.trim().is_empty() || book.book_url.trim().is_empty() {
-            return Err(AppError::invalid_argument("网络书籍缺少书源或地址"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "onlineNoSource",
+                "网络书籍缺少书源或地址",
+            ));
         }
         let existing: Option<String> = self
             .conn
@@ -544,7 +548,11 @@ impl Storage {
     ) -> Result<Option<(u32, bool)>, AppError> {
         self.online_record(book_id)?;
         if chapters.is_empty() {
-            return Err(AppError::invalid_argument("新书源的目录为空"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "newSourceTocEmpty",
+                "新书源的目录为空",
+            ));
         }
         let position = self.online_position(book_id)?;
         let old_chapters = self.online_chapters(book_id)?;
@@ -625,7 +633,7 @@ impl Storage {
                 },
             )
             .optional()?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "网络书籍不存在"))
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "onlineMissing", "网络书籍不存在"))
             .and_then(|(title, json, on_shelf, can_update)| {
                 Ok(OnlineRecord {
                     book_id: book_id.to_string(),

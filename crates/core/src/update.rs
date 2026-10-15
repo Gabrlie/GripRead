@@ -88,8 +88,8 @@ pub fn parse_version(text: &str) -> Option<Version> {
     Version::parse(text.trim().trim_start_matches('v')).ok()
 }
 
-fn update_error(message: impl Into<String>) -> AppError {
-    AppError::new(ErrorCode::Io, message)
+fn update_error(key: &str, message: impl Into<String>) -> AppError {
+    AppError::keyed(ErrorCode::Io, key, message)
 }
 
 fn now_ms() -> i64 {
@@ -182,10 +182,9 @@ pub fn accelerated(template: &str, url: &str, tag: &str, name: &str) -> String {
 /// sends downloads elsewhere), through the app's proxy when `proxied`.
 fn agent(root: &Path, timeout: Duration, proxied: bool) -> Result<ureq::Agent, AppError> {
     let proxy = match proxied.then(|| crate::network::proxy(root)).flatten() {
-        Some(address) => Some(
-            ureq::Proxy::new(&address)
-                .map_err(|error| update_error(format!("代理设置无效：{error}")))?,
-        ),
+        Some(address) => Some(ureq::Proxy::new(&address).map_err(|error| {
+            update_error("badProxy", format!("代理设置无效：{error}")).with("error", &error)
+        })?),
         None => None,
     };
     Ok(ureq::Agent::config_builder()
@@ -209,12 +208,16 @@ fn get(
     if let Upstream::Server { token, .. } = upstream {
         request = request.header("Authorization", format!("Bearer {token}"));
     }
-    let response = request
-        .call()
-        .map_err(|error| update_error(format!("连接更新服务器失败：{error}")))?;
+    let response = request.call().map_err(|error| {
+        update_error("updateUnreachable", format!("连接更新服务器失败：{error}"))
+            .with("error", &error)
+    })?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        return Err(update_error(format!("更新服务器返回 HTTP {status}")));
+        return Err(
+            update_error("updateHttp", format!("更新服务器返回 HTTP {status}"))
+                .with("status", status),
+        );
     }
     Ok(response)
 }
@@ -234,8 +237,13 @@ pub fn fetch_releases(root: &Path, upstream: &Upstream) -> Result<Vec<Release>, 
         .with_config()
         .limit(16 * 1024 * 1024)
         .read_to_string()
-        .map_err(|error| update_error(format!("读取发布信息失败：{error}")))?;
-    serde_json::from_str(&text).map_err(|error| update_error(format!("发布信息无效：{error}")))
+        .map_err(|error| {
+            update_error("releasesUnread", format!("读取发布信息失败：{error}"))
+                .with("error", &error)
+        })?;
+    serde_json::from_str(&text).map_err(|error| {
+        update_error("releasesInvalid", format!("发布信息无效：{error}")).with("error", &error)
+    })
 }
 
 /// The release notes for 更新日志: the changes and commits, without the
@@ -356,7 +364,9 @@ fn asset_url(upstream: &Upstream, release: &Release, name: &str) -> Result<Strin
             .asset(name)
             .map(|asset| asset.browser_download_url.clone())
             .filter(|url| !url.is_empty())
-            .ok_or_else(|| update_error(format!("发布中没有 {name}")))
+            .ok_or_else(|| {
+                update_error("assetMissing", format!("发布中没有 {name}")).with("name", name)
+            })
     };
     Ok(match upstream {
         Upstream::GitHub { .. } => github()?,
@@ -414,9 +424,12 @@ pub fn download(
     )?
     .body_mut()
     .read_to_string()
-    .map_err(|error| update_error(format!("读取校验值失败：{error}")))?;
-    let expected =
-        checksum_of(&sums, name).ok_or_else(|| update_error(format!("校验值中没有 {name}")))?;
+    .map_err(|error| {
+        update_error("sumsUnread", format!("读取校验值失败：{error}")).with("error", &error)
+    })?;
+    let expected = checksum_of(&sums, name).ok_or_else(|| {
+        update_error("sumMissing", format!("校验值中没有 {name}")).with("name", name)
+    })?;
 
     fs::create_dir_all(folder)?;
     let target = folder.join(name);
@@ -436,11 +449,16 @@ pub fn download(
         let mut reported = Instant::now();
         loop {
             if cancel.load(Ordering::Acquire) {
-                return Err(AppError::new(ErrorCode::ImportCancelled, "已取消下载"));
+                return Err(AppError::keyed(
+                    ErrorCode::ImportCancelled,
+                    "downloadCancelled",
+                    "已取消下载",
+                ));
             }
-            let read = reader
-                .read(&mut buffer)
-                .map_err(|error| update_error(format!("下载中断：{error}")))?;
+            let read = reader.read(&mut buffer).map_err(|error| {
+                update_error("downloadInterrupted", format!("下载中断：{error}"))
+                    .with("error", &error)
+            })?;
             if read == 0 {
                 break;
             }
@@ -455,7 +473,10 @@ pub fn download(
         file.sync_all()?;
         progress(received, total);
         if hex::encode(hasher.finalize()) != expected {
-            return Err(update_error("下载的安装包校验失败，请重试"));
+            return Err(update_error(
+                "packageChecksum",
+                "下载的安装包校验失败，请重试",
+            ));
         }
         Ok(())
     })();
@@ -517,10 +538,10 @@ pub fn cached_asset(root: &Path, tag: &str, name: &str) -> Result<PathBuf, AppEr
     let release = releases
         .iter()
         .find(|release| release.tag_name == tag)
-        .ok_or_else(|| AppError::new(ErrorCode::FileNotFound, "没有这个版本"))?;
+        .ok_or_else(|| AppError::keyed(ErrorCode::FileNotFound, "noVersion", "没有这个版本"))?;
     let asset = release
         .asset(name)
-        .ok_or_else(|| AppError::new(ErrorCode::FileNotFound, "没有这个文件"))?;
+        .ok_or_else(|| AppError::keyed(ErrorCode::FileNotFound, "noFile", "没有这个文件"))?;
     let assets = root.join("updates").join("assets");
     let folder = assets.join(tag);
     let path = folder.join(&asset.name);
@@ -534,7 +555,9 @@ pub fn cached_asset(root: &Path, tag: &str, name: &str) -> Result<PathBuf, AppEr
             &mut response.body_mut().with_config().limit(1 << 31).reader(),
             &mut file,
         )
-        .map_err(|error| update_error(format!("下载中断：{error}")))?;
+        .map_err(|error| {
+            update_error("downloadInterrupted", format!("下载中断：{error}")).with("error", &error)
+        })?;
         file.sync_all()?;
         fs::rename(&partial, &path)?;
         prune_assets(&assets, tag);
@@ -580,8 +603,13 @@ fn upstream_for(
                 template => template.to_string(),
             },
         },
-        UpdateSource::Server => server()
-            .ok_or_else(|| AppError::invalid_argument("下载方式是 服务器，但还没有连接服务器"))?,
+        UpdateSource::Server => server().ok_or_else(|| {
+            AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "updateNeedsServer",
+                "下载方式是 服务器，但还没有连接服务器",
+            )
+        })?,
     })
 }
 
@@ -647,7 +675,7 @@ pub async fn check_update(
         Ok(check)
     })
     .await
-    .map_err(|error| update_error(error.to_string()))?
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
 }
 
 /// Downloads and installs `version`: the APK through the system installer
@@ -678,12 +706,17 @@ pub async fn install_update(
             );
         };
         let (releases, upstream) = releases_for(&root, server.as_ref(), &target)?;
-        let release = find_release(&releases, &request.version)
-            .ok_or_else(|| update_error(format!("没有找到版本 {}", request.version)))?;
+        let release = find_release(&releases, &request.version).ok_or_else(|| {
+            update_error(
+                "versionMissing",
+                format!("没有找到版本 {}", request.version),
+            )
+            .with("version", &request.version)
+        })?;
         match &target {
             UpdateTarget::Android { folder, .. } => {
                 let name = asset_for(release, &target)
-                    .ok_or_else(|| update_error("这个版本没有适合本机的安装包"))?
+                    .ok_or_else(|| update_error("noPackage", "这个版本没有适合本机的安装包"))?
                     .name
                     .clone();
                 let automatic = load_settings(&root).source == UpdateSource::Auto;
@@ -721,11 +754,11 @@ pub async fn install_update(
                 )?;
                 Ok(InstallOutcome::Started)
             }
-            UpdateTarget::None => Err(update_error("网页版请更新服务器镜像")),
+            UpdateTarget::None => Err(update_error("webUpdate", "网页版请更新服务器镜像")),
         }
     })
     .await
-    .map_err(|error| update_error(error.to_string()));
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()));
     crate::source_commands::SourceOperations::finish(&cancels, &request.operation_id);
     result?
 }

@@ -583,7 +583,11 @@ fn cover_bytes(
     match lock()?.cached_cover(&key)? {
         CachedCover::Kept(path) => return Ok(std::fs::read(path)?),
         CachedCover::RecentlyFailed => {
-            return Err(AppError::new(ErrorCode::Io, "封面暂时无法下载"));
+            return Err(AppError::keyed(
+                ErrorCode::Io,
+                "coverUnavailable",
+                "封面暂时无法下载",
+            ));
         }
         CachedCover::Unknown => {}
     }

@@ -1,5 +1,5 @@
 import { addPluginListener } from "@tauri-apps/api/core";
-import { t } from "../i18n";
+import { errorText, t } from "../i18n";
 import type { AppServices } from "./contracts";
 import { appLog } from "./log";
 import { androidApp, call, listen, native } from "./transport";
@@ -165,7 +165,8 @@ export class ReaderServiceError extends Error {
   public readonly code: ErrorCode;
 
   public constructor(error: AppError) {
-    super(`${error.code}: ${error.message}`);
+    // The message is in the interface's language when the core keyed it.
+    super(`${error.code}: ${errorText(error)}`);
     this.name = "ReaderServiceError";
     this.code = error.code;
   }
@@ -184,7 +185,12 @@ function normalizeError(value: unknown): AppError {
       ERROR_CODES.has(code as ErrorCode) &&
       typeof message === "string"
     ) {
-      return { code: code as ErrorCode, message };
+      return {
+        code: code as ErrorCode,
+        message,
+        key: typeof value.key === "string" ? value.key : undefined,
+        params: isRecord(value.params) ? (value.params as Record<string, string>) : undefined,
+      };
     }
   }
   const serialized = (() => {

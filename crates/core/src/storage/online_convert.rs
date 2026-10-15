@@ -25,7 +25,11 @@ impl Storage {
         let record = self.online_record(book_id)?;
         let chapters = self.online_chapters(book_id)?;
         if chapters.is_empty() || texts.len() != chapters.len() {
-            return Err(AppError::invalid_argument("章节还没有全部缓存"));
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notAllCached",
+                "章节还没有全部缓存",
+            ));
         }
         // Chapter starts in the written text, in UTF-16 units.
         let mut text = String::new();

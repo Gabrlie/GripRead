@@ -6,6 +6,7 @@ import {
   basicFilters,
   sourceSorts,
   filterSources,
+  checkMessage,
   formatRespondTime,
   sameFilter,
   sortSources,
@@ -124,7 +125,7 @@ export function SourceManagePage({
             current && {
               ...current,
               checked: event.finished ? event.checked : current.checked,
-              current: `${event.name}：${event.message}`,
+              current: `${event.name}: ${checkMessage(event.message)}`,
             },
         );
       })

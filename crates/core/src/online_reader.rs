@@ -85,7 +85,7 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
         let guard = lock(storage)?;
         let chapter = guard
             .online_chapter(book_id, index)?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "chapterMissing", "没有这一章"))?;
         let path = guard.online_chapter_path(book_id, &chapter);
         (chapter, path)
     };
@@ -204,7 +204,7 @@ pub fn chapter_text(
         let guard = lock(storage)?;
         let chapter = guard
             .online_chapter(book_id, index)?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "没有这一章"))?;
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "chapterMissing", "没有这一章"))?;
         (
             chapter,
             guard.online_chapter_count(book_id)?,
@@ -334,8 +334,13 @@ pub fn read_window(
         .map(|locator| locator.resource_id.clone())
         .or_else(|| request.resource_id.clone());
     let index = match resource {
-        Some(resource) => resource_chapter(&resource)
-            .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?,
+        Some(resource) => resource_chapter(&resource).ok_or_else(|| {
+            AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notOnlineChapter",
+                "不是网络书籍的章节",
+            )
+        })?,
         None => 0,
     };
     ensure_toc(storage, book_id)?;
@@ -388,8 +393,13 @@ pub fn resolve_offset(
     storage: &Shared,
     request: &ResolveOffsetRequest,
 ) -> Result<ReaderLocator, AppError> {
-    let index = resource_chapter(&request.resource_id)
-        .ok_or_else(|| AppError::invalid_argument("不是网络书籍的章节"))?;
+    let index = resource_chapter(&request.resource_id).ok_or_else(|| {
+        AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "notOnlineChapter",
+            "不是网络书籍的章节",
+        )
+    })?;
     let chapter = chapter_text(storage, &request.book_id, index)?;
     Ok(locator_in(
         &request.book_id,
@@ -407,7 +417,7 @@ pub fn resolve_progress(
 ) -> Result<ReaderLocator, AppError> {
     let count = lock(storage)?.online_chapter_count(book_id)?;
     if count == 0 {
-        return Err(AppError::new(ErrorCode::NotFound, "目录为空"));
+        return Err(AppError::keyed(ErrorCode::NotFound, "tocEmpty", "目录为空"));
     }
     let index = ((progress.clamp(0.0, 1.0) * count as f64) as u32).min(count - 1);
     let chapter = chapter_text(storage, book_id, index)?;
@@ -460,7 +470,14 @@ pub fn search(storage: &Shared, request: &SearchRequest) -> Result<SearchRespons
             fancy_regex::RegexBuilder::new(&request.query)
                 .case_insensitive(!request.case_sensitive)
                 .build()
-                .map_err(|error| AppError::invalid_argument(format!("正则表达式无效：{error}")))?,
+                .map_err(|error| {
+                    AppError::keyed(
+                        ErrorCode::InvalidArgument,
+                        "badRegex",
+                        format!("正则表达式无效：{error}"),
+                    )
+                    .with("error", &error)
+                })?,
         )
     } else {
         None
@@ -471,7 +488,11 @@ pub fn search(storage: &Shared, request: &SearchRequest) -> Result<SearchRespons
         request.query.to_lowercase()
     };
     if needle.is_empty() {
-        return Err(AppError::invalid_argument("搜索内容不能为空"));
+        return Err(AppError::keyed(
+            ErrorCode::InvalidArgument,
+            "searchEmpty",
+            "搜索内容不能为空",
+        ));
     }
     let limit = request.limit.max(1) as usize;
     let mut matches = Vec::new();
