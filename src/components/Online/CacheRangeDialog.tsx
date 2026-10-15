@@ -4,6 +4,7 @@ import type { LibraryBook } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "../ui/toast";
+import { t } from "../../i18n";
 
 /** A chosen range, `[start, end)` in chapter positions. */
 export interface ChapterRange {
@@ -59,7 +60,7 @@ export function CacheRangeDialog({
   const queue = (range: ChapterRange) => {
     onClose();
     void runtime.services.sources.enqueueDownload(book.book.id, range.start, range.end).then(
-      () => toast("已加入下载"),
+      () => toast(t("downloads.added")),
       (failure: unknown) => toast({ text: String(failure), error: true }),
     );
   };
@@ -75,7 +76,7 @@ export function CacheRangeDialog({
         className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3"
       >
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">缓存</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">{t("detail.cache")}</DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-3 gap-2">
           <Button
@@ -83,38 +84,38 @@ export function CacheRangeDialog({
             size="sm"
             onClick={() => queue(presetRange(book, "next50", current))}
           >
-            后面 50 章
+            {t("downloads.next50")}
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => queue(presetRange(book, "rest", current))}
           >
-            后面全部
+            {t("downloads.allAfter")}
           </Button>
           <Button variant="outline" size="sm" onClick={() => queue(presetRange(book, "all"))}>
-            全部
+            {t("downloads.all")}
           </Button>
         </div>
         <fieldset className="space-y-2 rounded-xl bg-surface-container-low p-3">
-          <legend className="sr-only">自定义</legend>
-          <span className="text-xs text-secondary">自定义（共 {total} 章）</span>
+          <legend className="sr-only">{t("style.custom")}</legend>
+          <span className="text-xs text-secondary">{t("cache.custom", { total })}</span>
           {(
             [
-              ["从第", from, setFrom, start],
-              ["到第", to, setTo, end],
+              [t("cache.from"), from, setFrom, start],
+              [t("cache.to"), to, setTo, end],
             ] as const
           ).map(([label, value, set, number]) => (
             <label key={label} className="flex items-center gap-2 text-sm">
               <span className="shrink-0">{label}</span>
               <input
-                aria-label={`${label}几章`}
+                aria-label={t("cache.which", { label })}
                 inputMode="numeric"
                 value={value}
                 onChange={(change) => set(change.target.value.replace(/\D/g, ""))}
                 className="w-16 h-8 rounded-lg bg-surface px-2 text-center tabular-nums outline-none"
               />
-              <span className="shrink-0">章</span>
+              <span className="shrink-0">{t("cache.chapterSuffix")}</span>
               <span className="flex-1 min-w-0 truncate text-[11px] text-secondary">
                 {titleAt(number)}
               </span>
@@ -126,7 +127,7 @@ export function CacheRangeDialog({
             disabled={total === 0}
             onClick={() => queue({ start: start - 1, end })}
           >
-            缓存第 {start}–{end} 章
+            {t("cache.range", { start, end })}
           </Button>
         </fieldset>
       </DialogContent>

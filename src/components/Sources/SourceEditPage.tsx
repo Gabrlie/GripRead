@@ -14,13 +14,14 @@ import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import { SOURCE_TABS, fieldValue, withField, type SourceJson } from "./source-fields";
+import { t } from "../../i18n";
 
 const JSON_TAB = "json";
 
 function parseSource(text: string): SourceJson {
   const value: unknown = JSON.parse(text);
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("书源 JSON 必须是一个对象");
+    throw new Error(t("srcEdit.notObject"));
   return value as SourceJson;
 }
 
@@ -104,7 +105,7 @@ export function SourceEditPage({
       setSavedText(JSON.stringify(value));
       setSavedUrl(summary.url);
       onSaved();
-      toast("书源已保存");
+      toast(t("srcEdit.saved"));
       return summary.url;
     } catch (failure) {
       toast({ text: String(failure), error: true });
@@ -120,7 +121,7 @@ export function SourceEditPage({
       <Button
         variant="ghost"
         size="icon"
-        aria-label="保存书源"
+        aria-label={t("srcEdit.save")}
         className="h-9 w-9 rounded-full text-primary"
         onClick={() => void save()}
       >
@@ -128,7 +129,7 @@ export function SourceEditPage({
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger
-          aria-label="更多"
+          aria-label={t("reader.more")}
           className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
         >
           <Icon name="more_vert" size={19} />
@@ -142,7 +143,7 @@ export function SourceEditPage({
             }
           >
             <Icon name="bug_report" size={15} />
-            保存并调试
+            {t("srcEdit.saveDebug")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() =>
@@ -152,17 +153,19 @@ export function SourceEditPage({
             }
           >
             <Icon name="login" size={15} />
-            登录
+            {t("src.login")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
               const value = current();
               if (value)
-                void copyText(JSON.stringify(value, null, 2)).then(() => toast("书源已复制"));
+                void copyText(JSON.stringify(value, null, 2)).then(() =>
+                  toast(t("srcEdit.copied")),
+                );
             }}
           >
             <Icon name="content_copy" size={15} />
-            复制源
+            {t("srcEdit.copy")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() =>
@@ -172,15 +175,13 @@ export function SourceEditPage({
                   const parsed = parseSource(text);
                   setSource(parsed);
                   if (tab === JSON_TAB) setJsonText(JSON.stringify(parsed, null, 2));
-                  toast("已粘贴，保存后生效");
+                  toast(t("srcEdit.pasted"));
                 })
-                .catch(() =>
-                  toast({ text: "无法读取剪贴板里的书源，可以在 JSON 页直接粘贴", error: true }),
-                )
+                .catch(() => toast({ text: t("srcEdit.pasteFailed"), error: true }))
             }
           >
             <Icon name="content_paste" size={15} />
-            粘贴源
+            {t("srcEdit.paste")}
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!savedUrl}
@@ -190,17 +191,17 @@ export function SourceEditPage({
             }
           >
             <Icon name="code" size={15} />
-            设置源变量
+            {t("srcEdit.variables")}
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!savedUrl}
             onClick={() =>
               savedUrl &&
-              void service.clearCookies(savedUrl).then(() => toast("已清除这个网站的 Cookie"))
+              void service.clearCookies(savedUrl).then(() => toast(t("srcEdit.cookiesCleared")))
             }
           >
             <Icon name="delete" size={15} />
-            清除 Cookie
+            {t("srcEdit.clearCookies")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -209,7 +210,7 @@ export function SourceEditPage({
 
   return (
     <FullPage
-      label={url ? "编辑书源" : "新建书源"}
+      label={url ? t("srcEdit.edit") : t("src.new")}
       onClose={close}
       actions={actions}
       layer="z-[45]"
@@ -282,7 +283,7 @@ export function SourceEditPage({
       {tab === JSON_TAB && (
         <div className="space-y-2">
           <textarea
-            aria-label="书源 JSON"
+            aria-label={t("srcEdit.json")}
             value={jsonText}
             onChange={(event) => setJsonText(event.target.value)}
             spellCheck={false}
@@ -302,12 +303,14 @@ export function SourceEditPage({
         <Dialog open onOpenChange={(open) => !open && setConfirmClose(false)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">放弃修改？</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("srcEdit.discardAsk")}
+              </DialogTitle>
             </DialogHeader>
-            <p className="text-sm text-secondary">书源有未保存的修改。</p>
+            <p className="text-sm text-secondary">{t("srcEdit.unsaved")}</p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={onClose}>
-                放弃
+                {t("srcEdit.discard")}
               </Button>
               <Button
                 size="sm"
@@ -317,7 +320,7 @@ export function SourceEditPage({
                   })
                 }
               >
-                保存
+                {t("common.save")}
               </Button>
             </div>
           </DialogContent>
@@ -328,13 +331,15 @@ export function SourceEditPage({
         <Dialog open onOpenChange={(open) => !open && setVariable(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">源变量</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("srcEdit.variablesTitle")}
+              </DialogTitle>
             </DialogHeader>
             {typeof source.variableComment === "string" && source.variableComment && (
               <p className="text-xs text-secondary whitespace-pre-wrap">{source.variableComment}</p>
             )}
             <textarea
-              aria-label="源变量"
+              aria-label={t("srcEdit.variablesTitle")}
               rows={5}
               value={variable}
               onChange={(event) => setVariable(event.target.value)}
@@ -342,18 +347,18 @@ export function SourceEditPage({
             />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setVariable(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
                 onClick={() =>
                   void service.setVariable(savedUrl, variable || null).then(() => {
                     setVariable(null);
-                    toast("源变量已保存");
+                    toast(t("srcEdit.variablesSaved"));
                   })
                 }
               >
-                保存
+                {t("common.save")}
               </Button>
             </div>
           </DialogContent>

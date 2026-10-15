@@ -11,6 +11,7 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { OnlineBookPage } from "./OnlineBookPage";
 import { SearchResultRow } from "./SearchPage";
+import { t } from "../../i18n";
 
 function asResult(book: OnlineBook): OnlineSearchResult {
   return {
@@ -103,7 +104,7 @@ export function ExploreListPage({
 
   return (
     <FullPage label={`${sourceName} · ${kind.title}`} onClose={onClose} layer="z-[44]">
-      <ul className="space-y-1.5" aria-label="书籍">
+      <ul className="space-y-1.5" aria-label={t("records.books")}>
         {books.map((book) => (
           <SearchResultRow
             key={book.bookUrl}
@@ -115,20 +116,20 @@ export function ExploreListPage({
       </ul>
       {loading && (
         <p role="status" className="py-4 text-center text-xs text-secondary">
-          正在加载第 {page} 页…
+          {t("explore.loading", { page })}
         </p>
       )}
       {error && (
         <div role="alert" className="py-4 text-center space-y-2">
           <p className="text-xs text-error break-words">{error}</p>
           <Button size="sm" variant="outline" onClick={() => setAttempt((value) => value + 1)}>
-            重试
+            {t("common.retry")}
           </Button>
         </div>
       )}
       {ended && (
         <p className="py-4 text-center text-xs text-secondary">
-          {books.length ? "没有更多了" : "这个分类没有书籍"}
+          {books.length ? t("explore.end") : t("explore.empty")}
         </p>
       )}
       <div ref={sentinel} className="h-4" />

@@ -4,6 +4,7 @@ import type { SourceLoginForm } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { t } from "../../i18n";
 
 /**
  * A source's `loginUi` form. 登录 saves the values and runs the source's
@@ -47,7 +48,7 @@ export function SourceLoginDialog({
         const toasts = report.logs.filter((line) => line.startsWith("[toast] "));
         const text =
           toasts.map((line) => line.slice(8)).join("\n") ||
-          (report.result && report.result !== "undefined" ? report.result : "已执行");
+          (report.result && report.result !== "undefined" ? report.result : t("srcLogin.done"));
         setMessage({ text, error: false });
       },
       (failure: unknown) => {
@@ -63,15 +64,11 @@ export function SourceLoginDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[86dvh] overflow-y-auto p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">登录</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">{t("src.login")}</DialogTitle>
         </DialogHeader>
-        {form?.browserOnly && (
-          <p className="text-sm text-secondary">这个书源在网页中登录，登录后关闭网页即可。</p>
-        )}
+        {form?.browserOnly && <p className="text-sm text-secondary">{t("srcLogin.web")}</p>}
         {form && !form.browserOnly && inputs.length === 0 && buttons.length === 0 && (
-          <p className="text-sm text-secondary">
-            这个书源没有登录界面，点“登录”会运行书源的登录脚本。
-          </p>
+          <p className="text-sm text-secondary">{t("srcLogin.script")}</p>
         )}
         {inputs.map((row) => (
           <label key={row.name} className="block space-y-1 text-xs text-secondary">
@@ -109,11 +106,15 @@ export function SourceLoginDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            关闭
+            {t("common.close")}
           </Button>
           {form && (
             <Button size="sm" disabled={busy} onClick={() => run(null)}>
-              {busy ? "登录中…" : form.browserOnly ? "打开网页登录" : "登录"}
+              {busy
+                ? t("srcLogin.busy")
+                : form.browserOnly
+                  ? t("srcLogin.openWeb")
+                  : t("src.login")}
             </Button>
           )}
         </div>

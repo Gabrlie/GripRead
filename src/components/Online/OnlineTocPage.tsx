@@ -11,6 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { t } from "../../i18n";
 
 /**
  * An online book's 目录 as its own page, laid out like the local contents
@@ -78,14 +79,14 @@ export function OnlineTocPage({
       ref={page}
       role="dialog"
       aria-modal="true"
-      aria-label="目录"
+      aria-label={t("detail.contents")}
       data-open=""
       className="fixed inset-0 z-[46] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
       <header className="shrink-0 border-b border-surface-variant/30">
         <div className="h-14 px-2 flex items-center gap-1 max-w-3xl mx-auto w-full">
           <Button
-            aria-label="返回"
+            aria-label={t("common.back")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 rounded-full text-secondary shrink-0"
@@ -100,15 +101,15 @@ export function OnlineTocPage({
           ) : (
             <Input
               autoFocus
-              aria-label="搜索章节"
-              placeholder="搜索章节"
+              aria-label={t("contents.searchChapters")}
+              placeholder={t("contents.searchChapters")}
               className="flex-1 h-9"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
           )}
           <Button
-            aria-label={filter === null ? "搜索目录" : "关闭搜索"}
+            aria-label={filter === null ? t("contents.search") : t("contents.closeSearch")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 rounded-full text-secondary shrink-0"
@@ -118,7 +119,7 @@ export function OnlineTocPage({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
-              aria-label="目录选项"
+              aria-label={t("contents.options")}
               className="h-9 w-9 rounded-full flex items-center justify-center text-secondary hover:bg-surface-container/60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 shrink-0"
             >
               <Icon name="more_vert" size={19} />
@@ -130,7 +131,7 @@ export function OnlineTocPage({
                 ) : (
                   <span aria-hidden="true" className="w-[15px]" />
                 )}
-                倒序显示
+                {t("contents.reverse")}
               </DropdownMenuItem>
               {volumes.length > 0 && (
                 <DropdownMenuItem
@@ -139,7 +140,7 @@ export function OnlineTocPage({
                   }
                 >
                   <Icon name={collapsed.size ? "expand_more" : "expand_less"} size={15} />
-                  {collapsed.size ? "展开全部卷" : "收起全部卷"}
+                  {collapsed.size ? t("contents.expandAll") : t("contents.collapseAll")}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
@@ -161,7 +162,9 @@ export function OnlineTocPage({
                   <span className="flex-1 min-w-0 truncate font-medium">{chapter.title}</span>
                   <button
                     aria-label={
-                      collapsed.has(index) ? `展开 ${chapter.title}` : `收起 ${chapter.title}`
+                      collapsed.has(index)
+                        ? t("contents.expand", { title: chapter.title })
+                        : t("contents.collapse", { title: chapter.title })
                     }
                     aria-expanded={!collapsed.has(index)}
                     className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container"
@@ -183,7 +186,7 @@ export function OnlineTocPage({
                 <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
                 {chapter.isVip && (
                   <span className="text-[10px] text-secondary shrink-0">
-                    {chapter.isPay ? "已购" : "VIP"}
+                    {chapter.isPay ? t("onlineToc.bought") : "VIP"}
                   </span>
                 )}
                 {isCurrent && <Icon name="my_location" size={14} className="shrink-0" />}
@@ -191,15 +194,19 @@ export function OnlineTocPage({
             );
           })}
           <div style={{ height: windowed.after }} />
-          {chapters.length === 0 && <p className="m-4 text-sm text-secondary">目录为空。</p>}
+          {chapters.length === 0 && (
+            <p className="m-4 text-sm text-secondary">{t("contents.empty")}</p>
+          )}
         </div>
       </div>
 
       <footer className="shrink-0 border-t border-surface-variant/30">
         <div className="max-w-3xl mx-auto w-full flex items-center gap-1 px-3 py-1.5">
-          <p className="flex-1 min-w-0 text-[11px] text-secondary">共 {count} 章</p>
+          <p className="flex-1 min-w-0 text-[11px] text-secondary">
+            {t("onlineToc.count", { count })}
+          </p>
           <Button
-            aria-label="回到顶部"
+            aria-label={t("contents.top")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 text-secondary"
@@ -208,7 +215,7 @@ export function OnlineTocPage({
             <Icon name="vertical_align_top" size={18} />
           </Button>
           <Button
-            aria-label="滚到底部"
+            aria-label={t("contents.bottom")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 text-secondary"

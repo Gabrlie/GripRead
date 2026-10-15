@@ -26,17 +26,20 @@ function describe(
       : origin.latestChapterTitle;
   const size =
     loaded && loaded !== "failed"
-      ? `${loaded.chapters.filter((chapter) => !chapter.isVolume).length} 章`
+      ? t("detail.chapters", {
+          count: loaded.chapters.filter((chapter) => !chapter.isVolume).length,
+        })
       : "";
   const parts = [checkAuthor ? "" : origin.author, latest, size].filter(Boolean);
   if (parts.length) return parts.join(" · ");
-  return loaded === "failed" ? "读取失败" : loaded ? "—" : "正在读取最新章节…";
+  return loaded === "failed" ? t("change.failedRead") : loaded ? "—" : t("change.loadingLatest");
 }
 import { ALL_SOURCES, mergeOnlineBook } from "../../application/online";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
+import { t } from "../../i18n";
 
 /**
  * Legado's 换源: every enabled source is searched for the book's name; the
@@ -168,12 +171,14 @@ export function ChangeSourceDialog({
       const result = await service.changeSource({ bookId: book.book.id, book: info, chapters });
       toast(
         result.certain
-          ? `已换到 ${info.sourceName}`
-          : `已换到 ${info.sourceName}，没有找到对应章节，停在原来的位置附近`,
+          ? t("change.done", { source: info.sourceName })
+          : t("change.doneUncertain", { source: info.sourceName }),
       );
       onChanged(result);
     })()
-      .catch((failure: unknown) => toast({ text: `换源失败：${String(failure)}`, error: true }))
+      .catch((failure: unknown) =>
+        toast({ text: t("change.failed", { error: String(failure) }), error: true }),
+      )
       .finally(() => setSwitching(null));
   };
 
@@ -185,12 +190,14 @@ export function ChangeSourceDialog({
         className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md h-[70dvh] p-5 gap-3 flex flex-col"
       >
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">换源</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("detail.changeSource")}
+          </DialogTitle>
         </DialogHeader>
         <div className="flex items-center gap-2">
           <input
-            aria-label="筛选书源"
-            placeholder="书源名称"
+            aria-label={t("change.filter")}
+            placeholder={t("field.source-name")}
             value={filter}
             onChange={(change) => setFilter(change.target.value)}
             className="flex-1 min-w-0 h-9 rounded-lg bg-surface-container-low px-3 text-sm outline-none"
@@ -203,18 +210,22 @@ export function ChangeSourceDialog({
               checkAuthor ? "bg-primary text-on-primary" : "bg-surface-container-low text-secondary"
             }`}
           >
-            校验作者
+            {t("change.checkAuthor")}
           </button>
         </div>
         <div className="flex items-center gap-2 h-7">
           <p role="status" className="flex-1 text-[11px] text-secondary">
             {running
-              ? `正在搜索 ${event.searched}/${event.total}，找到 ${candidates.length} 个`
+              ? t("change.searching", {
+                  done: event.searched,
+                  total: event.total,
+                  found: candidates.length,
+                })
               : stopped
-                ? `已停止，找到 ${candidates.length} 个`
+                ? t("change.stopped", { found: candidates.length })
                 : event
-                  ? `找到 ${candidates.length} 个书源`
-                  : "正在搜索…"}
+                  ? t("change.found", { found: candidates.length })
+                  : t("search.searching")}
           </p>
           {running && !stopped ? (
             <Button
@@ -226,7 +237,7 @@ export function ChangeSourceDialog({
                 void service.cancel(operation.current);
               }}
             >
-              停止
+              {t("search.stop")}
             </Button>
           ) : (
             stopped && (
@@ -239,12 +250,12 @@ export function ChangeSourceDialog({
                   setRound((value) => value + 1);
                 }}
               >
-                继续
+                {t("downloads.resume")}
               </Button>
             )
           )}
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto space-y-1" aria-label="可换的书源">
+        <ul className="flex-1 min-h-0 overflow-y-auto space-y-1" aria-label={t("change.list")}>
           {candidates.map((origin) => {
             const current = origin.sourceUrl === online.book.sourceUrl;
             return (
@@ -263,7 +274,9 @@ export function ChangeSourceDialog({
                   </span>
                   {current && <Icon name="check" size={15} className="text-primary shrink-0" />}
                   {switching === origin.sourceUrl && (
-                    <span className="text-[11px] text-secondary shrink-0">正在换源…</span>
+                    <span className="text-[11px] text-secondary shrink-0">
+                      {t("change.switching")}
+                    </span>
                   )}
                 </button>
               </li>
@@ -272,7 +285,7 @@ export function ChangeSourceDialog({
         </ul>
         <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            关闭
+            {t("common.close")}
           </Button>
         </div>
       </DialogContent>

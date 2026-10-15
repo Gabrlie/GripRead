@@ -23,6 +23,7 @@ import { ExploreListPage } from "../Online/ExploreListPage";
 import { SourceManagePage } from "../Sources/SourceManagePage";
 import { SourceEditPage } from "../Sources/SourceEditPage";
 import { toast } from "../ui/toast";
+import { t } from "../../i18n";
 
 /** A kind's width from Legado's `layout_flexBasisPercent`, as a CSS basis. */
 function kindBasis(kind: ExploreKind): string | undefined {
@@ -122,21 +123,21 @@ export function DiscoverView() {
   return (
     <div className="flex-1 flex flex-col relative w-full pt-[calc(3.5rem+var(--safe-top))] pb-[calc(5rem+var(--safe-bottom))] md:pb-8 bg-surface min-w-0">
       <Header
-        title="发现"
+        title={t("nav.discover")}
         subtitle="EXPLORE"
         onSearchClick={() => setSearching({ groups: [], sourceUrls: [] })}
         menuItems={[
-          { icon: "public", label: "书源管理", onSelect: () => setManaging(true) },
-          { icon: "refresh", label: "刷新", onSelect: () => void load() },
+          { icon: "public", label: t("settings.sources"), onSelect: () => setManaging(true) },
+          { icon: "refresh", label: t("logs.refresh"), onSelect: () => void load() },
         ]}
       />
       <main className="flex-1 w-full max-w-3xl mx-auto px-4 md:px-8 space-y-3 pt-3">
-        <section aria-label="书源搜索" className="space-y-2">
+        <section aria-label={t("discover.search")} className="space-y-2">
           <label className="flex items-center gap-2 rounded-xl bg-surface-container-low px-3 h-10">
             <Icon name="search" size={16} className="text-secondary" />
             <input
-              aria-label="筛选发现书源"
-              placeholder="筛选书源"
+              aria-label={t("discover.filter")}
+              placeholder={t("change.filter")}
               value={filter}
               onChange={(change) => setFilter(change.target.value)}
               className="flex-1 min-w-0 bg-transparent text-sm outline-none"
@@ -146,11 +147,11 @@ export function DiscoverView() {
             <div
               className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1"
               role="group"
-              aria-label="书源范围"
+              aria-label={t("discover.scope")}
             >
               {[null, ...groups].map((name) => (
                 <button
-                  key={name ?? "全部"}
+                  key={name ?? t("downloads.all")}
                   type="button"
                   aria-pressed={group === name}
                   onClick={() => setGroup(name)}
@@ -160,7 +161,7 @@ export function DiscoverView() {
                       : "bg-surface-container-low text-secondary"
                   }`}
                 >
-                  {name ?? "全部"}
+                  {name ?? t("downloads.all")}
                 </button>
               ))}
             </div>
@@ -170,17 +171,15 @@ export function DiscoverView() {
         {sources !== null && explorable.length === 0 && (
           <div className="py-12 text-center space-y-3">
             <p className="text-sm text-secondary">
-              {sources.length === 0
-                ? "还没有书源。导入书源后，这里会显示它们的发现分类。"
-                : "启用的书源都没有发现分类，或发现已被禁用。"}
+              {sources.length === 0 ? t("discover.noSources") : t("discover.noCategories")}
             </p>
             <Button size="sm" variant="outline" onClick={() => setManaging(true)}>
-              书源管理
+              {t("settings.sources")}
             </Button>
           </div>
         )}
 
-        <ul className="space-y-1.5" aria-label="发现书源">
+        <ul className="space-y-1.5" aria-label={t("discover.sources")}>
           {shown.map((source) => {
             const state = kinds[source.url];
             const open = expanded === source.url;
@@ -202,7 +201,7 @@ export function DiscoverView() {
                   </button>
                   <DropdownMenu>
                     <DropdownMenuTrigger
-                      aria-label={`${source.name} 的更多操作`}
+                      aria-label={t("src.moreOne", { name: source.name })}
                       className="h-9 w-9 mr-1 rounded-full inline-flex items-center justify-center text-secondary"
                     >
                       <Icon name="more_vert" size={16} />
@@ -213,7 +212,7 @@ export function DiscoverView() {
                         onClick={() => setSearching({ groups: [], sourceUrls: [source.url] })}
                       >
                         <Icon name="search" size={15} />
-                        在此书源搜索
+                        {t("discover.searchHere")}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {
@@ -222,11 +221,11 @@ export function DiscoverView() {
                         }}
                       >
                         <Icon name="refresh" size={15} />
-                        刷新分类
+                        {t("discover.refreshKinds")}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setEditing(source.url)}>
                         <Icon name="edit" size={15} />
-                        编辑书源
+                        {t("srcEdit.edit")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -235,7 +234,7 @@ export function DiscoverView() {
                   <div className="px-3 pb-3">
                     {state === "loading" && (
                       <p role="status" className="text-xs text-secondary">
-                        正在读取分类…
+                        {t("discover.loading")}
                       </p>
                     )}
                     {typeof state === "string" && state !== "loading" && (
@@ -244,7 +243,7 @@ export function DiscoverView() {
                       </p>
                     )}
                     {Array.isArray(state) && state.length === 0 && (
-                      <p className="text-xs text-secondary">没有分类</p>
+                      <p className="text-xs text-secondary">{t("discover.none")}</p>
                     )}
                     {Array.isArray(state) && state.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">

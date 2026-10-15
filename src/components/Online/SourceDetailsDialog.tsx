@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
+import { t } from "../../i18n";
 
 /**
  * Legado's 换封面: every enabled source is searched for the title, and a
@@ -85,17 +86,19 @@ export function SourceDetailsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-lg h-[70dvh] p-5 gap-3 flex flex-col">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">从书源选择封面</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("detail.sourceCover")}
+          </DialogTitle>
         </DialogHeader>
         <p role="status" className="text-[11px] text-secondary">
           {running
-            ? `正在搜索 ${event.searched}/${event.total}`
+            ? t("cover.searching", { done: event.searched, total: event.total })
             : event
-              ? `找到 ${found.length} 个`
-              : "正在搜索…"}
+              ? t("cover.found", { found: found.length })
+              : t("search.searching")}
         </p>
         <ul
-          aria-label="书源里的这本书"
+          aria-label={t("cover.list")}
           className="flex-1 min-h-0 overflow-y-auto grid grid-cols-3 gap-2 content-start"
         >
           {found.map((book) => {
@@ -111,7 +114,9 @@ export function SourceDetailsDialog({
                   />
                 </div>
                 <p className="text-[11px] truncate">{book.sourceName}</p>
-                <p className="text-[10px] text-secondary truncate">{book.author || "未知作者"}</p>
+                <p className="text-[10px] text-secondary truncate">
+                  {book.author || t("shelf.unknownAuthor")}
+                </p>
                 <div className="flex flex-col gap-1">
                   <Button
                     size="sm"
@@ -121,11 +126,11 @@ export function SourceDetailsDialog({
                     onClick={() =>
                       act(book, async () => {
                         await onCover(book);
-                        toast("封面已更换");
+                        toast(t("cover.changed"));
                       })
                     }
                   >
-                    {busy === key ? "处理中…" : "用这个封面"}
+                    {busy === key ? t("detail.working") : t("cover.use")}
                   </Button>
                 </div>
               </li>
@@ -134,7 +139,7 @@ export function SourceDetailsDialog({
         </ul>
         <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            关闭
+            {t("common.close")}
           </Button>
         </div>
       </DialogContent>

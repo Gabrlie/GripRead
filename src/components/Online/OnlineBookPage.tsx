@@ -21,6 +21,7 @@ import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineTocPage } from "./OnlineTocPage";
 import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
+import { t } from "../../i18n";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -110,7 +111,7 @@ export function OnlineBookPage({
       }
       return kept;
     }
-    if (!book || !chapters) throw new Error("详情和目录还没有读取完");
+    if (!book || !chapters) throw new Error(t("onlineBook.notReady"));
     const entry = await service.addOnlineBook({ book, chapters, onShelf: shelf });
     if (shelf) {
       setKept(entry);
@@ -141,45 +142,47 @@ export function OnlineBookPage({
         await service.leaveOnlineBook(kept.book.id);
         setKept(null);
         void runtime?.library.refresh();
-        toast("已移出书架");
+        toast(t("onlineBook.removed"));
         return;
       }
       await keep(true);
-      toast("已加入书架");
+      toast(t("onlineBook.added"));
     });
 
   const actions = (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="更多"
+        aria-label={t("reader.more")}
         className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
       >
         <Icon name="more_vert" size={19} />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuItem
-          onClick={() => void copyText(shown.bookUrl).then(() => toast("已复制书籍地址"))}
+          onClick={() => void copyText(shown.bookUrl).then(() => toast(t("onlineBook.urlCopied")))}
         >
           <Icon name="link" size={15} />
-          拷贝书籍 URL
+          {t("onlineBook.copyUrl")}
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!book?.tocUrl}
-          onClick={() => book && void copyText(book.tocUrl).then(() => toast("已复制目录地址"))}
+          onClick={() =>
+            book && void copyText(book.tocUrl).then(() => toast(t("onlineBook.tocCopied")))
+          }
         >
           <Icon name="toc_rule" size={15} />
-          拷贝目录 URL
+          {t("onlineBook.copyToc")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setRefresh((value) => value + 1)}>
           <Icon name="refresh" size={15} />
-          刷新
+          {t("logs.refresh")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 
   return (
-    <FullPage label="书籍详情" onClose={onClose} actions={actions} layer="z-[45]">
+    <FullPage label={t("detail.title")} onClose={onClose} actions={actions} layer="z-[45]">
       <div className="flex gap-4">
         <div className="w-24 h-32 shrink-0 rounded-md overflow-hidden shadow-sm bg-surface-container">
           <OnlineCover
@@ -191,7 +194,7 @@ export function OnlineBookPage({
         </div>
         <div className="flex-1 min-w-0 space-y-1">
           <h2 className="font-title-editorial text-lg font-semibold leading-snug">{shown.name}</h2>
-          <p className="text-xs text-secondary">{shown.author || "未知作者"}</p>
+          <p className="text-xs text-secondary">{shown.author || t("shelf.unknownAuthor")}</p>
           {shown.kind && (
             <div className="flex flex-wrap gap-1">
               {shown.kind
@@ -210,16 +213,20 @@ export function OnlineBookPage({
           )}
           {shown.wordCount && <p className="text-[11px] text-secondary">{shown.wordCount}</p>}
           {shown.latestChapterTitle && (
-            <p className="text-[11px] text-secondary truncate">最新：{shown.latestChapterTitle}</p>
+            <p className="text-[11px] text-secondary truncate">
+              {t("shelf.latest", { chapter: shown.latestChapterTitle })}
+            </p>
           )}
           {onShelf && (
             <p className="text-[11px] text-primary">
-              已在书架{keptHere ? "" : `（${kept?.online?.book.sourceName}）`}
+              {t("onlineBook.onShelf", {
+                where: keptHere ? "" : ` (${kept?.online?.book.sourceName})`,
+              })}
             </p>
           )}
           {kept && !onShelf && kept.online?.readChapterTitle && (
             <p className="text-[11px] text-secondary truncate">
-              上次读到：{kept.online.readChapterTitle}
+              {t("onlineBook.lastRead", { chapter: kept.online.readChapterTitle })}
             </p>
           )}
         </div>
@@ -227,11 +234,13 @@ export function OnlineBookPage({
 
       <section className="rounded-xl bg-surface-container-low px-3 py-2.5 flex items-center gap-2">
         <Icon name="public" size={15} className="text-secondary" />
-        <span className="flex-1 min-w-0 text-sm truncate">来源：{origin?.sourceName}</span>
+        <span className="flex-1 min-w-0 text-sm truncate">
+          {t("onlineBook.source", { source: origin?.sourceName ?? "" })}
+        </span>
         {result.origins.length > 1 && (
           <DropdownMenu>
             <DropdownMenuTrigger className="h-7 px-2.5 rounded-full text-xs bg-surface-container text-primary">
-              换源（{result.origins.length}）
+              {t("onlineBook.change", { count: result.origins.length })}
             </DropdownMenuTrigger>
             <DropdownMenuContent className="max-h-80 overflow-y-auto">
               {result.origins.map((item, index) => (
@@ -258,7 +267,7 @@ export function OnlineBookPage({
 
       {shown.intro && (
         <section className="rounded-xl bg-surface-container-low p-3">
-          <h3 className="text-[11px] text-secondary mb-1">简介</h3>
+          <h3 className="text-[11px] text-secondary mb-1">{t("detail.intro")}</h3>
           <p data-selectable="true" className="text-sm leading-relaxed whitespace-pre-wrap">
             {shown.intro}
           </p>
@@ -267,7 +276,7 @@ export function OnlineBookPage({
 
       {loading && (
         <p role="status" className="text-xs text-secondary px-1">
-          正在读取详情与目录…
+          {t("onlineBook.loading")}
         </p>
       )}
       {error && (
@@ -283,7 +292,9 @@ export function OnlineBookPage({
           onClick={() => setShowChapters(true)}
         >
           <span className="flex-1 min-w-0 truncate">
-            目录（{chapters.filter((chapter) => !chapter.isVolume).length} 章）
+            {t("onlineBook.contents", {
+              count: chapters.filter((chapter) => !chapter.isVolume).length,
+            })}
             {book?.latestChapterTitle && (
               <span className="ml-2 text-[11px] text-secondary">{book.latestChapterTitle}</span>
             )}
@@ -299,14 +310,14 @@ export function OnlineBookPage({
           disabled={busy || (!onShelf && (!book || !chapters))}
           onClick={toggleShelf}
         >
-          {onShelf ? "移出书架" : "加入书架"}
+          {onShelf ? t("detail.remove") : t("reader.addToShelf")}
         </Button>
         <Button
           className="flex-1"
           disabled={busy || !onRead || (!(onShelf && kept) && (!book || !chapters?.length))}
           onClick={() => read(null)}
         >
-          阅读
+          {t("onlineBook.read")}
         </Button>
       </div>
 

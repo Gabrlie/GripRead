@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { t } from "../../i18n";
 
 export type ImportMethod = "network" | "file" | "paste";
 
@@ -32,9 +33,15 @@ function remember(url: string) {
 }
 
 const STATUS_LABEL: Record<SourceImportStatus, string> = {
-  new: "新增",
-  update: "更新",
-  existing: "已有",
+  get new() {
+    return t("srcImport.new");
+  },
+  get update() {
+    return t("srcImport.update");
+  },
+  get existing() {
+    return t("srcImport.existing");
+  },
 };
 
 /**
@@ -132,7 +139,11 @@ export function SourceImportDialog({
       return next;
     });
 
-  const title = { network: "网络导入", file: "本地导入", paste: "粘贴导入" }[method];
+  const title = {
+    network: t("src.importNetwork"),
+    file: t("src.importFile"),
+    paste: t("src.importPaste"),
+  }[method];
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] p-5 gap-3 flex flex-col">
@@ -142,14 +153,14 @@ export function SourceImportDialog({
         {!preview && method === "network" && (
           <div className="space-y-2">
             <Input
-              aria-label="书源地址"
+              aria-label={t("srcImport.address")}
               placeholder="https://…/bookSource.json"
               inputMode="url"
               value={input}
               onChange={(event) => setInput(event.target.value)}
             />
             {history.length > 0 && (
-              <ul className="space-y-1" aria-label="导入过的地址">
+              <ul className="space-y-1" aria-label={t("srcImport.history")}>
                 {history.map((url) => (
                   <li key={url}>
                     <button
@@ -168,9 +179,9 @@ export function SourceImportDialog({
         )}
         {!preview && method === "paste" && (
           <textarea
-            aria-label="书源 JSON"
+            aria-label={t("srcEdit.json")}
             rows={8}
-            placeholder="粘贴书源 JSON，单个书源或数组都可以"
+            placeholder={t("srcImport.placeholder")}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"
@@ -178,15 +189,16 @@ export function SourceImportDialog({
         )}
         {!preview && method === "file" && busy && (
           <p role="status" className="text-sm text-secondary">
-            正在读取文件…
+            {t("srcImport.reading")}
           </p>
         )}
         {preview && (
           <div className="flex-1 min-h-0 flex flex-col gap-2">
             <p className="text-xs text-secondary">
-              共 {preview.items.length} 个书源，已选 {chosen.size} 个
-              {preview.skipped > 0 && `；跳过 ${preview.skipped} 个音频、图片或文件书源`}
-              {preview.invalid.length > 0 && `；${preview.invalid.length} 个无法识别`}
+              {t("srcImport.count", { total: preview.items.length, chosen: chosen.size })}
+              {preview.skipped > 0 && t("srcImport.skipped", { count: preview.skipped })}
+              {preview.invalid.length > 0 &&
+                t("srcImport.invalid", { count: preview.invalid.length })}
             </p>
             <div className="flex gap-2 text-xs">
               <button
@@ -194,19 +206,22 @@ export function SourceImportDialog({
                 className="text-primary"
                 onClick={() => setChosen(new Set(preview.items.map((item) => item.url)))}
               >
-                全选
+                {t("downloads.selectAll")}
               </button>
               <button type="button" className="text-primary" onClick={() => setChosen(new Set())}>
-                全不选
+                {t("srcImport.selectNone")}
               </button>
             </div>
-            <ul className="flex-1 min-h-0 overflow-y-auto space-y-1" aria-label="待导入的书源">
+            <ul
+              className="flex-1 min-h-0 overflow-y-auto space-y-1"
+              aria-label={t("srcImport.list")}
+            >
               {preview.items.map((item) => (
                 <li key={item.url}>
                   <label className="flex items-center gap-2 rounded-lg bg-surface-container-low px-2 py-1.5">
                     <input
                       type="checkbox"
-                      aria-label={`导入 ${item.name}`}
+                      aria-label={t("srcImport.one", { name: item.name })}
                       checked={chosen.has(item.url)}
                       onChange={() => toggle(item.url)}
                     />
@@ -227,7 +242,7 @@ export function SourceImportDialog({
             </ul>
             {preview.invalid.length > 0 && (
               <details className="text-[11px] text-secondary">
-                <summary>无法识别的条目</summary>
+                <summary>{t("srcImport.invalidList")}</summary>
                 <ul className="list-disc pl-4">
                   {preview.invalid.map((reason, index) => (
                     <li key={index}>{reason}</li>
@@ -238,9 +253,9 @@ export function SourceImportDialog({
             <div className="space-y-1.5 rounded-xl bg-surface-container-low p-3 text-xs">
               {(
                 [
-                  ["保留本地书源名称", keepName, setKeepName],
-                  ["保留本地分组", keepGroup, setKeepGroup],
-                  ["保留本地启用状态", keepEnabled, setKeepEnabled],
+                  [t("srcImport.keepName"), keepName, setKeepName],
+                  [t("srcImport.keepGroup"), keepGroup, setKeepGroup],
+                  [t("srcImport.keepEnabled"), keepEnabled, setKeepEnabled],
                 ] as [string, boolean, (value: boolean) => void][]
               ).map(([label, value, set]) => (
                 <label key={label} className="flex items-center justify-between">
@@ -258,16 +273,16 @@ export function SourceImportDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           {preview ? (
             <Button size="sm" disabled={busy || chosen.size === 0} onClick={save}>
-              导入 {chosen.size} 个
+              {t("srcImport.importCount", { count: chosen.size })}
             </Button>
           ) : (
             method !== "file" && (
               <Button size="sm" disabled={busy || !input.trim()} onClick={load}>
-                {busy ? "读取中…" : "下一步"}
+                {busy ? t("srcImport.busy") : t("srcImport.next")}
               </Button>
             )
           )}

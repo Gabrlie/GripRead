@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineBookPage } from "./OnlineBookPage";
+import { t } from "../../i18n";
 
 /**
  * Legado's 搜索: every chosen source is asked at once and results arrive as
@@ -99,7 +100,7 @@ export function SearchPage({
           total: 0,
           done: true,
           results: [],
-          failures: [{ sourceName: "搜索", message: String(failure) }],
+          failures: [{ sourceName: t("header.search"), message: String(failure) }],
         });
       });
   };
@@ -121,7 +122,7 @@ export function SearchPage({
   const running = event !== null && !event.done;
 
   return (
-    <FullPage label="搜索" onClose={onClose} layer="z-[44]">
+    <FullPage label={t("header.search")} onClose={onClose} layer="z-[44]">
       <form
         className="flex gap-2"
         onSubmit={(submit) => {
@@ -132,8 +133,8 @@ export function SearchPage({
         <label className="flex-1 min-w-0 flex items-center gap-2 rounded-xl bg-surface-container-low px-3 h-10">
           <Icon name="search" size={16} className="text-secondary" />
           <input
-            aria-label="书名或作者"
-            placeholder="书名或作者"
+            aria-label={t("onlineSearch.query")}
+            placeholder={t("onlineSearch.query")}
             autoFocus={!initialKey}
             enterKeyHint="search"
             value={key}
@@ -141,18 +142,18 @@ export function SearchPage({
             className="flex-1 min-w-0 bg-transparent text-sm outline-none"
           />
           {key && (
-            <button type="button" aria-label="清除" onClick={() => setKey("")}>
+            <button type="button" aria-label={t("data.clear")} onClick={() => setKey("")}>
               <Icon name="close" size={15} className="text-secondary" />
             </button>
           )}
         </label>
         {running ? (
           <Button type="button" variant="outline" onClick={stop}>
-            停止
+            {t("search.stop")}
           </Button>
         ) : (
           <Button type="submit" disabled={!key.trim()}>
-            搜索
+            {t("header.search")}
           </Button>
         )}
       </form>
@@ -173,14 +174,14 @@ export function SearchPage({
             precise ? "bg-primary text-on-primary" : "bg-surface-container-low text-secondary"
           }`}
         >
-          精准搜索
+          {t("onlineSearch.exact")}
         </button>
       </div>
 
       {event === null && history.length > 0 && (
-        <section aria-label="搜索历史" className="space-y-2">
+        <section aria-label={t("onlineSearch.history")} className="space-y-2">
           <div className="flex items-center justify-between px-1 text-[11px] text-secondary">
-            搜索历史
+            {t("onlineSearch.history")}
             <button
               type="button"
               onClick={() => {
@@ -188,7 +189,7 @@ export function SearchPage({
                 setHistory([]);
               }}
             >
-              清除
+              {t("data.clear")}
             </button>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -218,21 +219,19 @@ export function SearchPage({
           ) : null}
           <span>
             {running
-              ? `正在搜索 ${event.searched}/${event.total}`
-              : `${event.total} 个书源，找到 ${event.results.length} 本`}
+              ? t("cover.searching", { done: event.searched, total: event.total })
+              : t("onlineSearch.summary", { total: event.total, found: event.results.length })}
           </span>
         </div>
       )}
 
       {event?.done && event.results.length === 0 && (
         <p className="py-8 text-center text-sm text-secondary">
-          {event.total === 0
-            ? "没有可用于搜索的书源，先在书源管理里导入或启用书源。"
-            : "没有找到。"}
+          {event.total === 0 ? t("onlineSearch.noSources") : t("onlineSearch.none")}
         </p>
       )}
 
-      <ul className="space-y-1.5" aria-label="搜索结果">
+      <ul className="space-y-1.5" aria-label={t("onlineSearch.results")}>
         {event?.results.map((result) => (
           <SearchResultRow
             key={`${result.name}\n${result.author}`}
@@ -245,7 +244,7 @@ export function SearchPage({
 
       {event && event.failures.length > 0 && event.done && (
         <details className="px-1 text-[11px] text-secondary">
-          <summary>{event.failures.length} 个书源出错</summary>
+          <summary>{t("onlineSearch.failures", { count: event.failures.length })}</summary>
           <ul className="mt-1 space-y-0.5">
             {event.failures.map((failure, index) => (
               <li key={index} className="break-words">
@@ -323,7 +322,7 @@ export function SearchResultRow({
             <span className="text-sm font-medium truncate">{result.name}</span>
             {result.origins.length > 1 && (
               <span className="shrink-0 rounded-full bg-primary/10 text-primary text-[10px] px-1.5 leading-4">
-                {result.origins.length} 个书源
+                {t("onlineSearch.origins", { count: result.origins.length })}
               </span>
             )}
           </span>
@@ -332,7 +331,7 @@ export function SearchResultRow({
           </span>
           {result.latestChapterTitle && (
             <span className="block text-[11px] text-secondary truncate">
-              最新：{result.latestChapterTitle}
+              {t("shelf.latest", { chapter: result.latestChapterTitle })}
             </span>
           )}
           {result.origins.length === 1 && (
@@ -368,14 +367,16 @@ function ScopeDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] p-5 gap-3 flex flex-col">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">搜索范围</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("onlineSearch.scope")}
+          </DialogTitle>
         </DialogHeader>
         <Button variant="outline" size="sm" onClick={() => onChoose(ALL_SOURCES)}>
-          全部启用的书源
+          {t("onlineSearch.allEnabled")}
         </Button>
         {allGroups.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[11px] text-secondary">分组（可多选）</p>
+            <p className="text-[11px] text-secondary">{t("onlineSearch.groups")}</p>
             <div className="flex flex-wrap gap-1.5">
               {allGroups.map((name) => {
                 const on = groups.includes(name);
@@ -401,14 +402,14 @@ function ScopeDialog({
               disabled={!groups.length}
               onClick={() => onChoose({ groups, sourceUrls: [] })}
             >
-              搜索所选分组
+              {t("onlineSearch.searchGroups")}
             </Button>
           </div>
         )}
-        <p className="text-[11px] text-secondary">单个书源</p>
+        <p className="text-[11px] text-secondary">{t("online.oneSource")}</p>
         <input
-          aria-label="筛选书源"
-          placeholder="书源名称"
+          aria-label={t("change.filter")}
+          placeholder={t("field.source-name")}
           value={filter}
           onChange={(change) => setFilter(change.target.value)}
           className="h-9 rounded-lg bg-surface-container-low px-3 text-sm outline-none"
@@ -422,7 +423,11 @@ function ScopeDialog({
                 className="w-full text-left rounded-lg px-3 py-2 text-sm hover:bg-surface-container-low"
               >
                 {source.name}
-                {!source.enabled && <span className="ml-2 text-[11px] text-secondary">已禁用</span>}
+                {!source.enabled && (
+                  <span className="ml-2 text-[11px] text-secondary">
+                    {t("src.filter.disabled")}
+                  </span>
+                )}
               </button>
             </li>
           ))}
