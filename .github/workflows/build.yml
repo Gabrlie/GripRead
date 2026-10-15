@@ -6,6 +6,9 @@
 #   v0.2.1          release, from a commit on main; image :latest, :0.2.1, :0.2
 #
 # The tag's version must match package.json apart from the pre-release part.
+# A tag on a commit whose dev or main push already passed the checks skips
+# them (it waits for that run if it is still going): a tag cannot read the
+# branch's build cache, so checking again would compile everything anew.
 # The release page comes from scripts/release.mjs: the CHANGELOG.md entry,
 # the commits since the previous release of the same kind, downloads, and the
 # image.
@@ -24,6 +27,8 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  # Reading the branch run of a tagged commit.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,6 +43,7 @@ jobs:
       release: ${{ steps.version.outputs.release }}
       publish: ${{ steps.version.outputs.publish }}
       platforms: ${{ steps.version.outputs.platforms }}
+      checked: ${{ steps.checked.outputs.checked }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -76,8 +82,35 @@ jobs:
           else
             echo 'platforms=[{"platform":"linux/amd64","runner":"ubuntu-latest"}]' >> "$GITHUB_OUTPUT"
           fi
+      - id: checked
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Build runs of this commit pushed to dev or main.
+          query="repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=50"
+          filter='[.workflow_runs[] | select(.name == "Build" and (.head_branch == "dev" or .head_branch == "main"))]'
+          checked=false
+          # Up to 30 minutes for a branch run still in progress.
+          for attempt in $(seq 1 60); do
+            runs=$(gh api "$query" --jq "$filter")
+            if [ "$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$runs")" -gt 0 ]; then
+              checked=true
+              break
+            fi
+            if [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")" -eq 0 ]; then
+              break
+            fi
+            sleep 30
+          done
+          echo "checked=$checked" >> "$GITHUB_OUTPUT"
+          if [ "$checked" = true ]; then
+            echo "This commit passed the checks on its branch; they are not run again."
+          fi
 
   check:
+    needs: version
+    if: needs.version.outputs.checked != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -101,7 +134,7 @@ jobs:
 
   image:
     needs: [version, check]
-    if: needs.version.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.version.outputs.publish == 'true' && (needs.check.result == 'success' || needs.check.result == 'skipped') }}
     strategy:
       matrix:
         include: ${{ fromJSON(needs.version.outputs.platforms) }}
@@ -139,6 +172,7 @@ jobs:
 
   manifest:
     needs: [version, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -168,7 +202,7 @@ jobs:
 
   apk:
     needs: [version, check]
-    if: needs.version.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.version.outputs.publish == 'true' && (needs.check.result == 'success' || needs.check.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -183,6 +217,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
+          # A tag's cache is never read again (each tag is its own scope);
+          # saving it only crowds the branch caches out of the 10 GB limit.
+          save-if: ${{ github.ref_type != 'tag' }}
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -233,7 +270,7 @@ jobs:
 
   desktop:
     needs: [version, check]
-    if: needs.version.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.version.outputs.publish == 'true' && (needs.check.result == 'success' || needs.check.result == 'skipped') }}
     strategy:
       matrix:
         include:
@@ -256,6 +293,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          # A tag's cache is never read again (each tag is its own scope);
+          # saving it only crowds the branch caches out of the 10 GB limit.
+          save-if: ${{ github.ref_type != 'tag' }}
       - run: pnpm install --frozen-lockfile
       - name: Version
         run: node scripts/version.mjs stamp "${{ needs.version.outputs.version }}"
@@ -287,6 +327,7 @@ jobs:
 
   release:
     needs: [version, apk, desktop, manifest]
+    if: ${{ !cancelled() && needs.apk.result == 'success' && needs.desktop.result == 'success' && needs.manifest.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       # The full history and tags, for the commits since the previous release.
