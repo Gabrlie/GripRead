@@ -26,6 +26,7 @@ pub mod storage;
 pub mod sync;
 pub mod sync_client;
 pub mod transform;
+pub mod translation;
 pub mod txt;
 pub mod txt_toc;
 pub mod typegen;

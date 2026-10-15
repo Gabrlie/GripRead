@@ -1,5 +1,8 @@
 import type {
   BookImage,
+  BookTranslation,
+  TranslationEngine,
+  TranslationSettings,
   InstallOutcome,
   SaveUpdateSettingsRequest,
   UpdateCheck,
@@ -346,6 +349,20 @@ export interface UpdateService {
   cancel(operationId: string): Promise<CancelResult>;
   onProgress(listener: (progress: UpdateProgress) => void): Promise<Unsubscribe>;
 }
+/** 翻译: engines and settings kept on this device, and each book's translation. */
+export interface TranslationService {
+  getSettings(): Promise<TranslationSettings>;
+  saveSettings(settings: TranslationSettings): Promise<TranslationSettings>;
+  /** Translates a sample sentence with `engine`; resolves with the translation. */
+  testEngine(engine: TranslationEngine, target: string): Promise<string>;
+  /** The book's language (detected the first time) and its translation. */
+  getBook(bookId: string): Promise<BookTranslation>;
+  /** `null` turns translation off. */
+  setBook(bookId: string, translateTo: string | null): Promise<BookTranslation>;
+  /** `null` detects the language again. */
+  setLanguage(bookId: string, language: string | null): Promise<BookTranslation>;
+}
+
 export interface AppServices {
   library: LibraryService;
   reader: ReaderService;
@@ -353,4 +370,5 @@ export interface AppServices {
   sync: SyncService;
   sources: SourceService;
   updates: UpdateService;
+  translation: TranslationService;
 }

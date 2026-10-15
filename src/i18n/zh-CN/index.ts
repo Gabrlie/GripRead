@@ -1,4 +1,5 @@
 import { common } from "./common";
+import { translation } from "./translation";
 import { cloud } from "./cloud";
 import { sources } from "./sources";
 import { reader } from "./reader";
@@ -11,6 +12,7 @@ import { update } from "./update";
 /** The interface texts in 简体中文, which define the keys. */
 export const zhCN = {
   ...common,
+  ...translation,
   ...cloud,
   ...sources,
   ...reader,

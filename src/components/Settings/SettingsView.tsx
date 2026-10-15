@@ -28,6 +28,7 @@ import { DataManagerPage } from "./DataManagerPage";
 import { NetworkSettingsPage } from "./NetworkSettingsPage";
 import { ServerAccountPage } from "./ServerAccountPage";
 import { ServerSyncPage } from "./ServerSyncPage";
+import { TranslationSettingsPage } from "./TranslationSettingsPage";
 import { native } from "../../services/transport";
 import {
   languageChoice,
@@ -53,7 +54,8 @@ type Page =
   | "cache"
   | "network"
   | "account"
-  | "server";
+  | "server"
+  | "translation";
 
 const THEMES: [ThemeMode, MessageKey][] = [
   ["system", "common.followSystem"],
@@ -361,6 +363,12 @@ export function SettingsView() {
             detail={t("settings.toc.note")}
             onClick={() => setPage("toc")}
           />
+          <PageLink
+            icon="translate"
+            label={t("translation.title")}
+            detail={t("translation.note")}
+            onClick={() => setPage("translation")}
+          />
         </PageSection>
 
         {/* The web version is the server: it neither backs up nor syncs. */}
@@ -460,6 +468,7 @@ export function SettingsView() {
       {page === "logs" && <LogPage onClose={close} />}
       {page === "cache" && <DataManagerPage onClose={close} />}
       {page === "network" && <NetworkSettingsPage onClose={close} />}
+      {page === "translation" && <TranslationSettingsPage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

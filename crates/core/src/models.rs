@@ -2312,3 +2312,104 @@ pub struct BookImageRequest {
     pub book_id: String,
     pub index: u32,
 }
+
+/// The kind of service a translation engine talks to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum EngineKind {
+    /// Any OpenAI-compatible chat API (OpenAI, DeepSeek, 通义, Kimi,
+    /// OpenRouter, Ollama, …).
+    #[default]
+    OpenAi,
+    Claude,
+    Gemini,
+    Deepl,
+}
+
+/// A translation engine, kept on this device with its key.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TranslationEngine {
+    pub id: String,
+    pub name: String,
+    pub kind: EngineKind,
+    /// The API address; empty uses the kind's official one.
+    pub base_url: String,
+    pub model: String,
+    pub api_key: String,
+    /// Extra instructions for language models (style, names, terms).
+    pub prompt: String,
+}
+
+/// How a translated book reads: the translation alone, or each paragraph
+/// followed by its translation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TranslationDisplay {
+    #[default]
+    Translated,
+    Bilingual,
+}
+
+/// 翻译 settings, kept on this device only (keys never enter backups or sync).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TranslationSettings {
+    pub engines: Vec<TranslationEngine>,
+    /// The engine books are translated with.
+    pub default_engine: Option<String>,
+    /// The language books are translated into (a code such as `zh-CN`).
+    pub target: String,
+    pub display: TranslationDisplay,
+    /// Books detected in another language start translated.
+    pub auto_translate: bool,
+    /// Chapters of online books translated ahead of the one being read.
+    pub ahead: u32,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        Self {
+            engines: Vec::new(),
+            default_engine: None,
+            target: "zh-CN".into(),
+            display: TranslationDisplay::Translated,
+            auto_translate: false,
+            ahead: 2,
+        }
+    }
+}
+
+/// A book's language and whether it is read translated.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookTranslation {
+    pub book_id: String,
+    /// The book's language, detected or chosen; `None` until known.
+    pub language: Option<String>,
+    /// The language the book is read in when translated.
+    pub translate_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookTranslationRequest {
+    pub book_id: String,
+    /// The language to translate into; `None` turns translation off.
+    pub translate_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookLanguageRequest {
+    pub book_id: String,
+    /// `None` detects it again.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TestEngineRequest {
+    pub engine: TranslationEngine,
+    pub target: String,
+}

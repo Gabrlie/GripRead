@@ -80,6 +80,8 @@ import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { t } from "../../i18n";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
+import { TranslationDialog } from "./dialogs/TranslationDialog";
+import { TranslationSettingsPage } from "../Settings/TranslationSettingsPage";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
 import { keepOnlineCover, updateOnlineToc } from "../../application/online";
@@ -728,7 +730,9 @@ export function ReaderView() {
     }
   };
   /** Dialogs opened from the top bar's 更多 menu, and the book detail page. */
-  const [dialog, setDialog] = useState<"conversion" | "tools" | "detail" | null>(null);
+  const [dialog, setDialog] = useState<
+    "conversion" | "tools" | "detail" | "translation" | "translationSettings" | null
+  >(null);
   // 更新目录 reports its outcome once the directory has been read again.
   const refreshingDirectory = useRef(false);
   useEffect(() => {
@@ -853,6 +857,17 @@ export function ReaderView() {
     (encoding: TxtEncoding) => redecode((id) => runtime.library.decodeTxt(id, encoding)),
     [redecode, runtime.library],
   );
+  /** Reads the book again in place, as after its translation changed. */
+  const reopen = useCallback(() => {
+    if (!bookId || !controller) return;
+    const epoch = sessionEpoch.current;
+    run(async () => {
+      await controller.flush();
+      if (epoch !== sessionEpoch.current) return;
+      runtime.positions.forget(bookId);
+      await controller.open(bookId);
+    });
+  }, [bookId, controller, run, runtime, sessionEpoch]);
   /** Applies replace rules and Chinese conversion when they changed. */
   const applyTransforms = useCallback(
     () =>
@@ -1242,6 +1257,7 @@ export function ReaderView() {
           onToggleReplace={() => toggleBookReplace(!useReplaceRules)}
           conversion={style?.chineseConversion ?? "off"}
           onOpenConversion={() => setDialog("conversion")}
+          onOpenTranslation={() => setDialog("translation")}
           onOpenTools={() => setDialog("tools")}
           onOpenDetail={() => {
             void pauseAutomatic();
@@ -1641,6 +1657,18 @@ export function ReaderView() {
             </div>
           </DialogContent>
         </Dialog>
+      )}
+      {dialog === "translation" && bookId && (
+        <TranslationDialog
+          bookId={bookId}
+          online={Boolean(activeBook.online)}
+          onChanged={reopen}
+          onOpenSettings={() => setDialog("translationSettings")}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "translationSettings" && (
+        <TranslationSettingsPage layer="z-[60]" onClose={() => setDialog("translation")} />
       )}
       {dialog === "conversion" && style && (
         <ConversionDialog

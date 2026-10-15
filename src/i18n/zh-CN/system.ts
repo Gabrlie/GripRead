@@ -93,4 +93,5 @@ export const system = {
   "data.part.assets": "封面、字体与背景",
   "data.part.backups": "恢复点",
   "data.part.database": "数据库",
+  "data.part.translations": "翻译缓存",
 } as const;

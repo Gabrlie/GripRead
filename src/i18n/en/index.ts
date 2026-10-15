@@ -1,4 +1,5 @@
 import { common } from "./common";
+import { translation } from "./translation";
 import { cloud } from "./cloud";
 import { sources } from "./sources";
 import { reader } from "./reader";
@@ -10,6 +11,7 @@ import { update } from "./update";
 
 export const en = {
   ...common,
+  ...translation,
   ...cloud,
   ...sources,
   ...reader,

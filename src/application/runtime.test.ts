@@ -1,3 +1,4 @@
+import { translationServiceMocks } from "../test/translation";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AppServices,
@@ -117,6 +118,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     sync: syncServiceMocks(),
     sources: sourceServiceMocks(),
     updates: updateServiceMocks(),
+    translation: translationServiceMocks(),
   };
 }
 

@@ -16,6 +16,11 @@ import type {
   UpdateCheck,
   UpdateProgress,
   UpdateSettings,
+  BookLanguageRequest,
+  BookTranslation,
+  BookTranslationRequest,
+  TestEngineRequest,
+  TranslationSettings,
 } from "../types/generated";
 import type {
   SearchOnlineRequest,
@@ -822,5 +827,26 @@ export const tauriServices: AppServices = {
         request: { operationId } satisfies ImportOperationRequest,
       }),
     onProgress: (listener) => listen<UpdateProgress>("update-progress", listener),
+  },
+  translation: {
+    getSettings: () => invokeCommand<TranslationSettings>("get_translation_settings"),
+    saveSettings: (settings) =>
+      invokeCommand<TranslationSettings>("save_translation_settings", { request: settings }),
+    testEngine: (engine, target) =>
+      invokeCommand<string>("test_translation_engine", {
+        request: { engine, target } satisfies TestEngineRequest,
+      }),
+    getBook: (bookId) =>
+      invokeCommand<BookTranslation>("get_book_translation", {
+        request: { bookId } satisfies BookRequest,
+      }),
+    setBook: (bookId, translateTo) =>
+      invokeCommand<BookTranslation>("set_book_translation", {
+        request: { bookId, translateTo } satisfies BookTranslationRequest,
+      }),
+    setLanguage: (bookId, language) =>
+      invokeCommand<BookTranslation>("set_book_language", {
+        request: { bookId, language } satisfies BookLanguageRequest,
+      }),
   },
 };

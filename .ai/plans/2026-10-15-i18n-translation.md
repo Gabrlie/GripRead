@@ -51,6 +51,12 @@ Commands and results are recorded here per batch.
 - Each extraction batch was committed after typecheck and tests.
 - A rebuild of the English source area after a faulty deduplication script was checked by the typecheck and the one-area test.
 
+**Translation, online books (C1):**
+- `pnpm check` passed with 249 frontend, 232 core, and 13 server tests.
+- Each engine kind (OpenAI-compatible, Claude, Gemini, DeepL) translated against an in-process stub.
+- Detection was checked on English, simplified and traditional Chinese, and Japanese samples.
+- Local books follow in C2.
+
 ## Handoff
 
 Pending.

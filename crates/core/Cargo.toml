@@ -56,6 +56,7 @@ cipher = { version = "0.4", features = ["block-padding", "alloc"] }
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 ego-tree = "0.11"
 tokio = { version = "1.53", features = ["rt"] }
+whatlang = "0.16"
 
 # rquickjs ships no pregenerated bindings for Android; generate them there.
 [target.'cfg(target_os = "android")'.dependencies]

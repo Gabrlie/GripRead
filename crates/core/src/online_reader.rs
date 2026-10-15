@@ -200,7 +200,7 @@ pub fn chapter_text(
     book_id: &str,
     index: u32,
 ) -> Result<Arc<ChapterText>, AppError> {
-    let (chapter, count, transform) = {
+    let (chapter, count, transform, translation) = {
         let guard = lock(storage)?;
         let chapter = guard
             .online_chapter(book_id, index)?
@@ -209,12 +209,17 @@ pub fn chapter_text(
             chapter,
             guard.online_chapter_count(book_id)?,
             guard.book_transform(book_id)?,
+            chapter_translation(&guard, book_id)?,
         )
     };
     let key = format!(
-        "{book_id}\n{index}\n{}\n{count}\n{}",
+        "{book_id}\n{index}\n{}\n{count}\n{}\n{}",
         chapter_version(book_id, &chapter),
-        serde_json::to_string(&transform).unwrap_or_default()
+        serde_json::to_string(&transform).unwrap_or_default(),
+        translation
+            .as_ref()
+            .map(ChapterTranslation::spec)
+            .unwrap_or_default()
     );
     if let Some(found) = shown().lock().ok().and_then(|list| {
         list.iter()
@@ -223,9 +228,20 @@ pub fn chapter_text(
     }) {
         return Ok(found);
     }
-    let text = Arc::new(build_chapter_text(
-        storage, book_id, index, &chapter, count, &transform,
-    )?);
+    let (text, complete) = build_chapter_text(
+        storage,
+        book_id,
+        index,
+        &chapter,
+        count,
+        &transform,
+        translation.as_ref(),
+    )?;
+    let text = Arc::new(text);
+    // A chapter whose translation failed is built again next time.
+    if !complete {
+        return Ok(text);
+    }
     if let Ok(mut list) = shown().lock() {
         list.retain(|(kept, _)| *kept != key);
         list.push_back((key, text.clone()));
@@ -236,6 +252,44 @@ pub fn chapter_text(
     Ok(text)
 }
 
+/// How an online book is translated as it is read: the engine, its
+/// target, and the display; `None` when it is read as written.
+pub struct ChapterTranslation {
+    pub engine: crate::models::TranslationEngine,
+    pub source: Option<String>,
+    pub target: String,
+    pub display: crate::models::TranslationDisplay,
+    pub root: std::path::PathBuf,
+}
+
+impl ChapterTranslation {
+    fn spec(&self) -> String {
+        crate::translation::spec(&self.engine, &self.target, self.display)
+    }
+}
+
+/// The book's translation when it is on and an engine is set up.
+pub fn chapter_translation(
+    storage: &Storage,
+    book_id: &str,
+) -> Result<Option<ChapterTranslation>, AppError> {
+    let (language, target) = storage.book_translation(book_id)?;
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    let root = storage.root_path().to_path_buf();
+    let settings = crate::translation::load_settings(&root);
+    Ok(
+        crate::translation::default_engine(&settings).map(|engine| ChapterTranslation {
+            engine: engine.clone(),
+            source: language,
+            target,
+            display: settings.display,
+            root,
+        }),
+    )
+}
+
 fn build_chapter_text(
     storage: &Shared,
     book_id: &str,
@@ -243,7 +297,8 @@ fn build_chapter_text(
     chapter: &OnlineChapter,
     count: u32,
     transform: &transform::TextTransform,
-) -> Result<ChapterText, AppError> {
+    translation: Option<&ChapterTranslation>,
+) -> Result<(ChapterText, bool), AppError> {
     let raw = raw_chapter(storage, book_id, index)?;
     let body = raw.trim_matches('\n');
     let joined = if body.is_empty() {
@@ -251,13 +306,41 @@ fn build_chapter_text(
     } else {
         format!("{}\n{}", chapter.title, body)
     };
-    let text = transform::apply(&joined, transform).0;
-    Ok(ChapterText {
-        index,
-        count,
-        version: chapter_version(book_id, chapter),
-        units: text.encode_utf16().collect(),
-    })
+    let mut text = transform::apply(&joined, transform).0;
+    let mut complete = true;
+    // A translated book reads the translation; when the engine fails, the
+    // chapter shows as written and says so in the log.
+    if let Some(translation) = translation {
+        let lines: Vec<&str> = text.split('\n').collect();
+        match crate::translation::translate_lines(
+            storage,
+            &translation.root,
+            &translation.engine,
+            translation.source.as_deref(),
+            &translation.target,
+            &lines,
+        ) {
+            Ok(translated) => {
+                text = crate::translation::compose(&lines, &translated, translation.display)
+            }
+            Err(failure) => {
+                complete = false;
+                crate::app_log::warn(
+                    "translation",
+                    format!("《{}》翻译失败：{}", chapter.title, failure.message),
+                )
+            }
+        }
+    }
+    Ok((
+        ChapterText {
+            index,
+            count,
+            version: chapter_version(book_id, chapter),
+            units: text.encode_utf16().collect(),
+        },
+        complete,
+    ))
 }
 
 fn is_low_surrogate(unit: u16) -> bool {
@@ -385,6 +468,7 @@ pub fn read_window(
         guard.clear_online_new_chapters(book_id)?;
     }
     pre_download(storage.clone(), book_id.clone(), index);
+    translate_ahead(storage.clone(), book_id.clone(), index);
     Ok(window_of(book_id, &chapter, start, end))
 }
 
@@ -653,6 +737,53 @@ fn pre_download(storage: Shared, book_id: String, index: u32) {
     if started.is_err() {
         if let Ok(mut set) = running().lock() {
             set.remove(&book_id);
+        }
+    }
+}
+
+/// A translated book translates the chapters after `index` in the
+/// background (翻译设置's 提前翻译), so turning to them does not wait.
+fn translate_ahead(storage: Shared, book_id: String, index: u32) {
+    let ahead = {
+        let Ok(guard) = storage.lock() else {
+            return;
+        };
+        match chapter_translation(&guard, &book_id) {
+            Ok(Some(_)) => crate::translation::load_settings(guard.root_path())
+                .ahead
+                .min(10),
+            _ => return,
+        }
+    };
+    let key = format!("translate\n{book_id}");
+    if ahead == 0
+        || !running()
+            .lock()
+            .map(|mut set| set.insert(key.clone()))
+            .unwrap_or(false)
+    {
+        return;
+    }
+    let started = spawn_engine({
+        let key = key.clone();
+        move || {
+            let count = storage
+                .lock()
+                .map(|guard| guard.online_chapter_count(&book_id).unwrap_or(0))
+                .unwrap_or(0);
+            for next in index + 1..(index + 1 + ahead).min(count) {
+                if chapter_text(&storage, &book_id, next).is_err() {
+                    break;
+                }
+            }
+            if let Ok(mut set) = running().lock() {
+                set.remove(&key);
+            }
+        }
+    });
+    if started.is_err() {
+        if let Ok(mut set) = running().lock() {
+            set.remove(&key);
         }
     }
 }

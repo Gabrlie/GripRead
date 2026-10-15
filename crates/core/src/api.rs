@@ -102,6 +102,10 @@ pub fn mutates(name: &str) -> bool {
         "set_detailed_log",
         // Update settings and installs stay on the device.
         "save_update_settings",
+        // So do translation settings and each book's translation.
+        "save_translation_settings",
+        "set_book_translation",
+        "set_book_language",
         "install_update",
         "forget_sync_server_login",
         "server_api",
@@ -206,6 +210,12 @@ pub const COMMANDS: &[&str] = &[
     "list_online_chapters",
     "list_reader_fonts",
     "list_recovery_points",
+    "get_translation_settings",
+    "save_translation_settings",
+    "test_translation_engine",
+    "get_book_translation",
+    "set_book_translation",
+    "set_book_language",
     "delete_recovery_point",
     "list_remote_backups",
     "list_removed_books",
@@ -484,6 +494,24 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "list_reader_fonts" => reply(crate::commands::list_reader_fonts(state).await),
         "list_recovery_points" => reply(crate::commands::list_recovery_points(state).await),
+        "get_translation_settings" => {
+            reply(crate::translation::commands::get_translation_settings(state).await)
+        }
+        "save_translation_settings" => reply(
+            crate::translation::commands::save_translation_settings(state, request(args)?).await,
+        ),
+        "test_translation_engine" => reply(
+            crate::translation::commands::test_translation_engine(state, request(args)?).await,
+        ),
+        "get_book_translation" => {
+            reply(crate::translation::commands::get_book_translation(state, request(args)?).await)
+        }
+        "set_book_translation" => {
+            reply(crate::translation::commands::set_book_translation(state, request(args)?).await)
+        }
+        "set_book_language" => {
+            reply(crate::translation::commands::set_book_language(state, request(args)?).await)
+        }
         "delete_recovery_point" => {
             reply(crate::commands::delete_recovery_point(state, request(args)?).await)
         }

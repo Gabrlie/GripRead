@@ -33,6 +33,7 @@ interface ReaderTopBarProps {
   onToggleReplace: () => void;
   conversion: ChineseConversion;
   onOpenConversion: () => void;
+  onOpenTranslation: () => void;
   /** The bottom bar configuration. */
   onOpenTools: () => void;
   /** The book detail page; the title opens it too. */
@@ -72,6 +73,7 @@ export function ReaderTopBar({
   onToggleReplace,
   conversion,
   onOpenConversion,
+  onOpenTranslation,
   onOpenTools,
   onOpenDetail,
   txtTools = true,
@@ -180,6 +182,10 @@ export function ReaderTopBar({
               <span className="ml-auto pl-3 text-[11px] text-secondary">
                 {CONVERSION_LABELS[conversion]}
               </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenTranslation}>
+              <Icon name="translate" size={15} />
+              {t("translation.title")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenTools}>
               <Icon name="tune" size={15} />

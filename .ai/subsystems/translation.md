@@ -2,6 +2,8 @@
 
 Status: planned
 
+Online books are implemented (engines, settings, cache, detection, the reader's 翻译 dialog, and 设置 › 翻译); local books are planned.
+
 ## Scope
 
 A book in another language can be read translated into the reader's language, as the translation alone (仅译文) or with each paragraph followed by its translation (双语对照). Translation runs on the device through a large language model (OpenAI-compatible services, Claude, Gemini) or DeepL. The server does not translate.
@@ -10,7 +12,7 @@ A book in another language can be read translated into the reader's language, as
 
 **Settings:**
 - **Device-local:** engines with their addresses, models, keys, and prompts, kept in a device-local file that is never in backups or sync records.
-- **Synced with the reading preferences:** the target language, the display, and the default engine.
+- **Also device-local:** the target language, the display, the default engine, 提前翻译 (chapters of online books translated ahead, two by default), and 自动翻译外语书籍. Each book's language and its translation are stored with the book on the device (`book_translation`, schema 23).
 
 **Cache:** translations are cached by source line, target, and engine (kind, model, prompt), and are cleared in 数据管理.
 

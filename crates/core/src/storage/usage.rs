@@ -106,6 +106,12 @@ impl Storage {
                     true,
                 ),
                 part("logs", "日志", size(&["logs"]), true),
+                part(
+                    "translations",
+                    "翻译缓存",
+                    self.translation_cache_bytes()?,
+                    true,
+                ),
                 part("books", "本地书籍", size(&["books", "sources"]), false),
                 part("assets", "封面、字体与背景", size(&["assets"]), false),
                 part("backups", "恢复点", size(&["backups"]), false),
@@ -141,6 +147,9 @@ impl Storage {
         }
         if wants("logs") {
             crate::app_log::clear();
+        }
+        if wants("translations") {
+            self.clear_translation_cache()?;
         }
         Ok(cleared)
     }

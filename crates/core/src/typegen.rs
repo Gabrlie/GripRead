@@ -174,6 +174,14 @@ const IPC_TYPES: &[&str] = &[
     "SyncServerStatus",
     "UpdateChannel",
     "UpdateSource",
+    "EngineKind",
+    "TranslationEngine",
+    "TranslationDisplay",
+    "TranslationSettings",
+    "BookTranslation",
+    "BookTranslationRequest",
+    "BookLanguageRequest",
+    "TestEngineRequest",
     "UpdateSettings",
     "SaveUpdateSettingsRequest",
     "UpdateKind",
@@ -381,6 +389,14 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<SyncServerStatus>(&config)?;
     export_all::<UpdateChannel>(&config)?;
     export_all::<UpdateSource>(&config)?;
+    export_all::<EngineKind>(&config)?;
+    export_all::<TranslationEngine>(&config)?;
+    export_all::<TranslationDisplay>(&config)?;
+    export_all::<TranslationSettings>(&config)?;
+    export_all::<BookTranslation>(&config)?;
+    export_all::<BookTranslationRequest>(&config)?;
+    export_all::<BookLanguageRequest>(&config)?;
+    export_all::<TestEngineRequest>(&config)?;
     export_all::<UpdateSettings>(&config)?;
     export_all::<SaveUpdateSettingsRequest>(&config)?;
     export_all::<UpdateKind>(&config)?;

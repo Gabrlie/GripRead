@@ -3,6 +3,7 @@
  * browser with a sample novel, so layouts can be inspected and captured
  * without Tauri. Production builds never import this module.
  */
+import { memoryTranslation } from "./translation";
 import type { AppServices } from "../services/contracts";
 import type {
   SyncServerStatus,
@@ -561,6 +562,7 @@ export function previewServices(): AppServices {
       cancel: async () => ({ requested: true }),
       onProgress: async () => () => undefined,
     },
+    translation: memoryTranslation(),
   };
 }
 

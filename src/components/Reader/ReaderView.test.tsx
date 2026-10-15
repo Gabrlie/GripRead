@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { translationServiceMocks } from "../../test/translation";
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -243,6 +244,7 @@ function runtime() {
     sync: syncServiceMocks(),
     sources: sourceServiceMocks(),
     updates: updateServiceMocks(),
+    translation: translationServiceMocks(),
   } satisfies AppServices);
 }
 

@@ -95,4 +95,5 @@ export const system = {
   "data.part.assets": "Covers, fonts, and backgrounds",
   "data.part.backups": "Recovery points",
   "data.part.database": "Database",
+  "data.part.translations": "Translations",
 } satisfies Messages<typeof zh>;
