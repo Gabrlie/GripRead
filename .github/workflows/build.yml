@@ -90,15 +90,27 @@ jobs:
           # The Build runs of this commit pushed to dev or main.
           query="repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=50"
           filter='[.workflow_runs[] | select(.name == "Build" and (.head_branch == "dev" or .head_branch == "main"))]'
+          # A tag is usually pushed together with its branch, so the branch's
+          # run may not exist yet: when the commit is the tip of dev or main,
+          # one is coming and is waited for.
+          git fetch --quiet origin dev main || true
+          expected=false
+          for branch in dev main; do
+            if [ "$(git rev-parse -q --verify "origin/$branch" || true)" = "$GITHUB_SHA" ]; then
+              expected=true
+            fi
+          done
           checked=false
-          # Up to 30 minutes for a branch run still in progress.
+          # Up to 30 minutes for the branch run to appear and finish.
           for attempt in $(seq 1 60); do
             runs=$(gh api "$query" --jq "$filter")
             if [ "$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$runs")" -gt 0 ]; then
               checked=true
               break
             fi
-            if [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")" -eq 0 ]; then
+            pending=$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")
+            if [ "$pending" -eq 0 ] && { [ "$expected" = false ] || [ "$(jq length <<<"$runs")" -gt 0 ]; }; then
+              # No run to wait for, or the branch run ended without passing.
               break
             fi
             sleep 30
