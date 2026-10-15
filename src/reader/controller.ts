@@ -19,6 +19,7 @@ import type {
   ReaderPresentationContext,
   ReaderSnapshot,
 } from "./types";
+import { t } from "../i18n";
 
 /** Options used to construct a framework-independent reader controller. */
 export interface ReaderControllerOptions {
@@ -265,7 +266,7 @@ export class ReaderController {
           this.suppressPositionSave = false;
         } catch (error) {
           if (!requiresRelocation(error)) throw error;
-          positionWarning = "上次阅读位置属于旧正文版本，已从开头打开；可使用目录或搜索重新定位。";
+          positionWarning = t("reader.oldPosition");
           this.suppressPositionSave = true;
           measured = await this.readAndMeasure(bookId, null, "forward", epoch);
         }

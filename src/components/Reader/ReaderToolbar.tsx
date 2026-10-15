@@ -12,6 +12,7 @@ import {
 import type { ReaderPanel } from "./use-reader-panel";
 import type { ChineseConversion, ReaderTool } from "../../types/generated";
 import { READER_TOOLS } from "./reader-tools";
+import { t } from "../../i18n";
 
 const hiddenClass = (visible: boolean, hidden: string) =>
   `transition-transform duration-300 motion-reduce:transition-none ${visible ? "translate-y-0" : hidden}`;
@@ -45,9 +46,15 @@ interface ReaderTopBarProps {
 }
 
 const CONVERSION_LABELS: Record<ChineseConversion, string> = {
-  off: "不转换",
-  to_simplified: "繁转简",
-  to_traditional: "简转繁",
+  get off() {
+    return t("reader.conversion.off");
+  },
+  get to_simplified() {
+    return t("reader.conversion.toSimplified");
+  },
+  get to_traditional() {
+    return t("reader.conversion.toTraditional");
+  },
 };
 
 /** Legado's read menu title bar: book and chapter, TXT tools, and More. */
@@ -91,7 +98,7 @@ export function ReaderTopBar({
       <div className="h-14 px-2 sm:px-4 flex items-center max-w-4xl mx-auto gap-1">
         <Button
           data-testid="reader-close"
-          aria-label="返回书架"
+          aria-label={t("reader.backToShelf")}
           variant="ghost"
           size="icon"
           disabled={closing}
@@ -102,7 +109,7 @@ export function ReaderTopBar({
         </Button>
         <button
           type="button"
-          aria-label="书籍详情"
+          aria-label={t("detail.title")}
           className="flex-1 min-w-0 px-1 text-left rounded-lg"
           onClick={onOpenDetail}
         >
@@ -113,8 +120,8 @@ export function ReaderTopBar({
         </button>
         {onCache && (
           <Button
-            aria-label="缓存"
-            title="缓存"
+            aria-label={t("detail.cache")}
+            title={t("detail.cache")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 text-secondary rounded-full"
@@ -125,8 +132,8 @@ export function ReaderTopBar({
         )}
         {onChangeSource && (
           <Button
-            aria-label="换源"
-            title="换源"
+            aria-label={t("detail.changeSource")}
+            title={t("detail.changeSource")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 text-secondary rounded-full"
@@ -135,11 +142,11 @@ export function ReaderTopBar({
             <Icon name="swap_horiz" size={19} />
           </Button>
         )}
-        {txtTools && action("rules", "TXT目录规则", "toc_rule")}
-        {txtTools && action("encoding", "设置编码", "translate")}
+        {txtTools && action("rules", t("settings.toc"), "toc_rule")}
+        {txtTools && action("encoding", t("reader.setEncoding"), "translate")}
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label="更多"
+            aria-label={t("reader.more")}
             className="h-9 w-9 rounded-full flex items-center justify-center text-secondary hover:bg-surface-container/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <Icon name="more_vert" size={19} />
@@ -147,38 +154,40 @@ export function ReaderTopBar({
           <DropdownMenuContent>
             <DropdownMenuItem disabled={!canBookmark} onClick={onAddBookmark}>
               <Icon name="bookmark_add" size={15} />
-              添加书签
+              {t("reader.addBookmark")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onRefreshDirectory}>
               <Icon name="refresh" size={15} />
-              更新目录
+              {t("shelf.menu.update")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onOpenPanel("style")}>
               <Icon name="swap_vert" size={15} />
-              翻页动画
+              {t("style.effect")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onToggleReplace}>
               <Icon name={replaceEnabled ? "check" : "find_replace"} size={15} />
-              替换净化{replaceEnabled ? "：开" : "：关"}
+              {t("reader.replaceState", {
+                state: replaceEnabled ? t("common.on") : t("common.off"),
+              })}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onOpenPanel("replace")}>
               <Icon name="find_replace" size={15} />
-              替换规则
+              {t("settings.replace")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenConversion}>
               <Icon name="translate" size={15} />
-              简繁转换
+              {t("reader.conversion")}
               <span className="ml-auto pl-3 text-[11px] text-secondary">
                 {CONVERSION_LABELS[conversion]}
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenTools}>
               <Icon name="tune" size={15} />
-              底部工具栏
+              {t("reader.bottomTools")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenDetail}>
               <Icon name="info" size={15} />
-              书籍详情
+              {t("detail.title")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -247,11 +256,11 @@ export function ReaderBottomBar({
             disabled={previous.disabled}
             onClick={previous.onClick}
           >
-            上一章
+            {t("style.tap.previousChapter")}
           </Button>
           <Slider
             data-testid="reader-progress"
-            aria-label="章节进度"
+            aria-label={t("style.slot.chapterProgress")}
             className="flex-1"
             min={0}
             max={100}
@@ -275,14 +284,14 @@ export function ReaderBottomBar({
             disabled={next.disabled}
             onClick={next.onClick}
           >
-            下一章
+            {t("style.tap.nextChapter")}
           </Button>
         </div>
         <div className="flex items-center justify-around">
           {tools.map((item) => {
             const { label, icon } =
               item === "night" && night
-                ? { label: "日间", icon: "light_mode" }
+                ? { label: t("reader.day"), icon: "light_mode" }
                 : READER_TOOLS[item];
             return <span key={item}>{tool(label, icon, () => onTool(item))}</span>;
           })}
@@ -322,7 +331,7 @@ export function ReaderBrightnessBar({
     >
       <button
         type="button"
-        aria-label="亮度跟随系统"
+        aria-label={t("reader.brightnessSystem")}
         aria-pressed={following}
         className={`h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-semibold ${following ? "bg-primary text-on-primary" : "text-secondary hover:bg-surface-container"}`}
         onClick={() => onChange(following ? systemValue : null)}
@@ -331,7 +340,7 @@ export function ReaderBrightnessBar({
       </button>
       <div className="h-40 py-1">
         <Slider
-          aria-label="屏幕亮度"
+          aria-label={t("reader.brightness")}
           orientation="vertical"
           min={0}
           max={100}

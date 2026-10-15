@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { InfoBar, InfoSlot, Margins } from "../../types/generated";
 import { system } from "../../services/system";
+import { formatClock, t } from "../../i18n";
 
 export interface InfoValues {
   bookTitle: string;
@@ -12,8 +13,7 @@ export interface InfoValues {
 }
 
 function useClock(): string {
-  const format = () =>
-    new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const format = () => formatClock(Date.now());
   const [time, setTime] = useState(format);
   useEffect(() => {
     const timer = window.setInterval(() => setTime(format()), 20_000);
@@ -60,7 +60,7 @@ export function ReaderInfoBar({
       case "time":
         return time;
       case "battery":
-        return battery === null ? "" : `电量 ${battery}%`;
+        return battery === null ? "" : t("reader.battery", { level: battery });
       case "chapter_title":
         return values.chapterTitle;
       case "book_title":

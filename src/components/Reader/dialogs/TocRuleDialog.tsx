@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/dialog";
+import { t } from "../../../i18n";
 
 interface TocRuleDialogProps {
   rules: TxtTocRule[];
@@ -65,18 +66,18 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
           <DialogTitle>
             {view.kind === "edit"
               ? view.rule.id
-                ? "编辑规则"
-                : "新建规则"
+                ? t("tocRule.edit")
+                : t("tocRule.new")
               : view.kind === "import"
-                ? "导入规则"
-                : "TXT目录规则"}
+                ? t("tocRule.import")
+                : t("settings.toc")}
           </DialogTitle>
           <DialogDescription>
             {view.kind === "list"
-              ? "选择本书使用的规则；开启的规则参与自动识别，排在前面的优先。"
+              ? t("tocRule.listNote")
               : view.kind === "import"
-                ? "粘贴从阅读（Legado）或本应用导出的规则 JSON。"
-                : "正则按多行模式匹配，一次匹配就是一个章节标题。"}
+                ? t("tocRule.importNote")
+                : t("tocRule.editNote")}
           </DialogDescription>
         </DialogHeader>
         {view.kind === "list" && (
@@ -96,7 +97,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
             onSave={(rule) =>
               props.onSave(rule).then(
                 () => {
-                  toast(rule.id ? "规则已保存。" : "规则已添加。");
+                  toast(rule.id ? t("tocRule.saved") : t("tocRule.added"));
                   setView({ kind: "list" });
                 },
                 (error: unknown) => toast({ text: String(error), error: true }),
@@ -112,7 +113,11 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
             onImport={(json) =>
               props.onImport(json).then(
                 (added) => {
-                  toast(added?.length ? `已导入 ${added.length} 条规则。` : "没有新的规则。");
+                  toast(
+                    added?.length
+                      ? t("tocRule.imported", { count: added.length })
+                      : t("tocRule.noneNew"),
+                  );
                   setView({ kind: "list" });
                 },
                 (error: unknown) => toast({ text: String(error), error: true }),
@@ -162,7 +167,7 @@ function RuleList({
       <div
         className="max-h-[min(38dvh,20rem)] min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
         role="radiogroup"
-        aria-label="本书目录规则"
+        aria-label={t("tocRule.bookRule")}
       >
         <button
           role="radio"
@@ -173,11 +178,11 @@ function RuleList({
         >
           {radio(settings.ruleId === null)}
           <span className="flex-1 min-w-0">
-            <span className="block text-sm font-medium">自动识别</span>
+            <span className="block text-sm font-medium">{t("reader.encoding.auto")}</span>
             <span className="block text-[11px] text-secondary truncate">
               {settings.ruleId === null && detectedName
-                ? `当前识别为：${detectedName}`
-                : "从开启的规则中选出匹配最多的一条"}
+                ? t("tocRule.detected", { name: detectedName })
+                : t("tocRule.autoNote")}
             </span>
           </span>
         </button>
@@ -197,19 +202,20 @@ function RuleList({
               <span className="flex-1 min-w-0">
                 <span className="block text-sm truncate">{rule.name}</span>
                 <span className="block text-[11px] text-secondary truncate">
-                  {rule.example.split("\n")[0] || (rule.pattern ? rule.pattern : "按字数分章")}
+                  {rule.example.split("\n")[0] ||
+                    (rule.pattern ? rule.pattern : t("tocRule.byLength"))}
                 </span>
               </span>
             </button>
             <Switch
-              aria-label={`${rule.name} 参与自动识别`}
+              aria-label={t("tocRule.enabled", { name: rule.name })}
               size="sm"
               checked={rule.enabled}
               disabled={busy}
               onCheckedChange={(enabled) => report(onSave({ ...rule, enabled }))}
             />
             <Button
-              aria-label={`上移 ${rule.name}`}
+              aria-label={t("tools.up", { name: rule.name })}
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-secondary"
@@ -219,7 +225,7 @@ function RuleList({
               <Icon name="arrow_upward" size={14} />
             </Button>
             <Button
-              aria-label={`下移 ${rule.name}`}
+              aria-label={t("tools.down", { name: rule.name })}
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-secondary"
@@ -229,7 +235,7 @@ function RuleList({
               <Icon name="arrow_downward" size={14} />
             </Button>
             <Button
-              aria-label={`编辑 ${rule.name}`}
+              aria-label={t("style.editNamed", { name: rule.name })}
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-secondary"
@@ -240,12 +246,12 @@ function RuleList({
             </Button>
             {!rule.builtin && (
               <Button
-                aria-label={`删除 ${rule.name}`}
+                aria-label={t("shelf.bin.deleteBook", { title: rule.name })}
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 text-secondary"
                 disabled={busy}
-                onClick={() => report(onDelete(rule), "规则已删除。")}
+                onClick={() => report(onDelete(rule), t("tocRule.deleted"))}
               >
                 <Icon name="delete" size={14} />
               </Button>
@@ -255,8 +261,8 @@ function RuleList({
       </div>
       <label className="flex items-center justify-between gap-3 text-sm px-1">
         <span>
-          拆分超长章节
-          <span className="block text-[11px] text-secondary">超过约 10 万字节的章节按长度分段</span>
+          {t("tocRule.split")}
+          <span className="block text-[11px] text-secondary">{t("tocRule.split.note")}</span>
         </span>
         <Switch
           checked={settings.splitLongChapters}
@@ -267,25 +273,20 @@ function RuleList({
       <div className="flex flex-wrap gap-2 pt-1">
         <Button size="sm" disabled={busy} onClick={() => onEdit(NEW_TOC_RULE)}>
           <Icon name="add" size={14} />
-          新建
+          {t("tocRule.create")}
         </Button>
         <Button size="sm" variant="outline" disabled={busy} onClick={onShowImport}>
           <Icon name="content_paste" size={14} />
-          导入
+          {t("common.import")}
         </Button>
         <Button
           size="sm"
           variant="outline"
           disabled={busy}
-          onClick={() =>
-            report(
-              onExport().then(copyText),
-              "全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。",
-            )
-          }
+          onClick={() => report(onExport().then(copyText), t("tocRule.exported"))}
         >
           <Icon name="content_copy" size={14} />
-          导出
+          {t("common.export")}
         </Button>
       </div>
     </>
@@ -313,14 +314,14 @@ export function TocRuleEditor({
   return (
     <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
       <label className="block space-y-1 text-xs text-secondary">
-        名称
+        {t("style.name")}
         <Input
           value={draft.name}
           onChange={(event) => setDraft({ ...draft, name: event.target.value })}
         />
       </label>
       <label className="block space-y-1 text-xs text-secondary">
-        正则（留空表示按字数分章）
+        {t("tocRule.pattern")}
         <textarea
           rows={3}
           spellCheck={false}
@@ -333,7 +334,7 @@ export function TocRuleEditor({
         />
       </label>
       <label className="block space-y-1 text-xs text-secondary">
-        示例（也用于测试）
+        {t("tocRule.example")}
         <textarea
           rows={3}
           className={area}
@@ -351,7 +352,7 @@ export function TocRuleEditor({
           ) : tested.length ? (
             tested.map((title, index) => <p key={index}>✓ {title}</p>)
           ) : (
-            <p className="text-secondary">示例中没有匹配的标题。</p>
+            <p className="text-secondary">{t("tocRule.noMatch")}</p>
           )}
         </div>
       )}
@@ -366,13 +367,13 @@ export function TocRuleEditor({
             )
           }
         >
-          测试
+          {t("tocRule.test")}
         </Button>
         <Button variant="ghost" size="sm" onClick={onCancel}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button size="sm" disabled={busy || !draft.name.trim()} onClick={() => onSave(draft)}>
-          保存
+          {t("common.save")}
         </Button>
       </div>
     </div>
@@ -406,7 +407,7 @@ export function TocRuleImport({
       )}
       <textarea
         rows={8}
-        aria-label="规则 JSON"
+        aria-label={t("tocRule.json")}
         spellCheck={false}
         className="w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
         placeholder='[{"name":"示例","rule":"^第.+章.*$","enable":true}]'
@@ -420,14 +421,14 @@ export function TocRuleImport({
             size="sm"
             onClick={() => void navigator.clipboard.readText().then(setJson, () => undefined)}
           >
-            从剪贴板粘贴
+            {t("rules.paste")}
           </Button>
         )}
         <Button variant="ghost" size="sm" onClick={onCancel}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button size="sm" disabled={busy || !json.trim()} onClick={() => onImport(json)}>
-          导入
+          {t("common.import")}
         </Button>
       </div>
     </div>

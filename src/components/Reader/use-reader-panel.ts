@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { t } from "../../i18n";
 
 /**
  * Reader tools, following Legado's read menu: full-screen Contents and Search
@@ -9,14 +10,30 @@ export type ReaderPanel =
 
 /** Accessible labels of the menu buttons that open each top-level panel. */
 export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
-  contents: "目录",
-  search: "搜索",
-  rules: "TXT目录规则",
-  encoding: "设置编码",
-  style: "界面",
-  settings: "设置",
-  replace: "更多",
-  aloud: "朗读",
+  get contents() {
+    return t("detail.contents");
+  },
+  get search() {
+    return t("header.search");
+  },
+  get rules() {
+    return t("settings.toc");
+  },
+  get encoding() {
+    return t("reader.setEncoding");
+  },
+  get style() {
+    return t("style.main");
+  },
+  get settings() {
+    return t("nav.settings");
+  },
+  get replace() {
+    return t("reader.more");
+  },
+  get aloud() {
+    return t("reader.tool.aloud");
+  },
 };
 
 /**

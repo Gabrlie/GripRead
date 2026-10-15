@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../ui/Icon";
 import { readerSelection, type ReaderSelection } from "./selection";
+import { t } from "../../i18n";
 
 export interface SelectionActions {
   copy: (selection: ReaderSelection) => void;
@@ -11,11 +12,41 @@ export interface SelectionActions {
 }
 
 const ACTIONS: { key: keyof SelectionActions; label: string; icon: string }[] = [
-  { key: "copy", label: "复制", icon: "content_copy" },
-  { key: "bookmark", label: "书签", icon: "bookmark_add" },
-  { key: "search", label: "搜索", icon: "search" },
-  { key: "replace", label: "替换", icon: "find_replace" },
-  { key: "share", label: "分享", icon: "share" },
+  {
+    key: "copy",
+    get label() {
+      return t("reader.copy");
+    },
+    icon: "content_copy",
+  },
+  {
+    key: "bookmark",
+    get label() {
+      return t("style.tap.bookmark");
+    },
+    icon: "bookmark_add",
+  },
+  {
+    key: "search",
+    get label() {
+      return t("header.search");
+    },
+    icon: "search",
+  },
+  {
+    key: "replace",
+    get label() {
+      return t("reader.tool.replace");
+    },
+    icon: "find_replace",
+  },
+  {
+    key: "share",
+    get label() {
+      return t("logs.share");
+    },
+    icon: "share",
+  },
 ];
 
 /**
@@ -56,7 +87,7 @@ export function SelectionMenu({
   return (
     <div
       role="toolbar"
-      aria-label="选中文字"
+      aria-label={t("reader.selection")}
       data-reader-control=""
       className="fixed z-[60] -translate-x-1/2 flex items-center gap-0.5 rounded-xl bg-inverse-surface text-inverse-on-surface shadow-lg px-1 py-1"
       style={{

@@ -129,6 +129,7 @@ export function formatClock(at: number | Date, seconds = false): string {
   return new Date(at).toLocaleTimeString(intlLocale(), {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
     ...(seconds ? { second: "2-digit" } : {}),
   });
 }

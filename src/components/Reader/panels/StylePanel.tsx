@@ -23,6 +23,7 @@ import {
   DialogTitle,
   SheetContent,
 } from "../../ui/dialog";
+import { t } from "../../../i18n";
 
 interface StylePanelProps {
   /** The view shown first; the bottom bar's 设置 tool opens 更多设置. */
@@ -38,37 +39,48 @@ interface StylePanelProps {
 
 type View = "main" | "text" | "margins" | "info" | "title" | "more" | { preset: number };
 
-const EFFECTS = [
-  ["cover", "覆盖"],
-  ["slide", "平移"],
-  ["curl", "仿真"],
-  ["fade", "淡入"],
-  ["instant", "无"],
-] as const;
+const effects = () =>
+  [
+    ["cover", t("style.effect.cover")],
+    ["slide", t("style.effect.slide")],
+    ["curl", t("style.effect.curl")],
+    ["fade", t("style.effect.fade")],
+    ["instant", t("common.none")],
+  ] as const;
 
-const SLOTS: [InfoSlot, string][] = [
-  ["none", "无"],
-  ["time", "时间"],
-  ["battery", "电量"],
-  ["chapter_title", "章节名"],
-  ["book_title", "书名"],
-  ["chapter_progress", "章节进度"],
-  ["book_progress", "全书进度"],
+const slots = (): [InfoSlot, string][] => [
+  ["none", t("common.none")],
+  ["time", t("style.slot.time")],
+  ["battery", t("style.slot.battery")],
+  ["chapter_title", t("style.slot.chapterTitle")],
+  ["book_title", t("style.slot.bookTitle")],
+  ["chapter_progress", t("style.slot.chapterProgress")],
+  ["book_progress", t("style.slot.bookProgress")],
 ];
 
-const TAP_ACTIONS: [TapAction, string][] = [
-  ["menu", "菜单"],
-  ["next", "下一页"],
-  ["previous", "上一页"],
-  ["next-chapter", "下一章"],
-  ["previous-chapter", "上一章"],
-  ["contents", "目录"],
-  ["search", "搜索"],
-  ["bookmark", "书签"],
-  ["none", "无"],
+const tapActions = (): [TapAction, string][] => [
+  ["menu", t("style.tap.menu")],
+  ["next", t("style.tap.next")],
+  ["previous", t("style.tap.previous")],
+  ["next-chapter", t("style.tap.nextChapter")],
+  ["previous-chapter", t("style.tap.previousChapter")],
+  ["contents", t("detail.contents")],
+  ["search", t("header.search")],
+  ["bookmark", t("style.tap.bookmark")],
+  ["none", t("common.none")],
 ];
 
-const ZONE_NAMES = ["左上", "中上", "右上", "左中", "中间", "右中", "左下", "中下", "右下"];
+const zoneNames = () => [
+  t("style.zone.topLeft"),
+  t("style.zone.top"),
+  t("style.zone.topRight"),
+  t("style.zone.left"),
+  t("style.zone.centre"),
+  t("style.zone.right"),
+  t("style.zone.bottomLeft"),
+  t("style.zone.bottom"),
+  t("style.zone.bottomRight"),
+];
 
 const selectClass =
   "rounded-lg border border-surface-variant bg-surface-container px-2 py-1.5 text-xs min-w-0";
@@ -179,14 +191,14 @@ export function StylePanel({
     return <MarginsDialog style={style} setStyle={setStyle} onBack={() => setView("main")} />;
   const title =
     typeof view === "object"
-      ? "编辑样式"
+      ? t("style.editPreset")
       : {
-          main: "界面",
-          text: "文字",
-          margins: "边距",
-          info: "页眉页脚",
-          title: "标题",
-          more: "更多设置",
+          main: t("style.main"),
+          text: t("style.text"),
+          margins: t("style.margins"),
+          info: t("style.info"),
+          title: t("style.title"),
+          more: t("style.more"),
         }[view];
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -194,7 +206,7 @@ export function StylePanel({
         <DialogHeader className="flex-row items-center gap-2 space-y-0">
           {view !== "main" && (
             <Button
-              aria-label="返回界面设置"
+              aria-label={t("style.back")}
               variant="ghost"
               size="icon"
               className="h-7 w-7 -ml-1"
@@ -204,9 +216,7 @@ export function StylePanel({
             </Button>
           )}
           <DialogTitle className="text-sm">{title}</DialogTitle>
-          <DialogDescription className="sr-only">
-            调整会立即预览，并保留当前阅读位置。
-          </DialogDescription>
+          <DialogDescription className="sr-only">{t("style.note")}</DialogDescription>
         </DialogHeader>
         {view === "main" && (
           <MainView
@@ -229,8 +239,8 @@ export function StylePanel({
           <div className="space-y-4">
             {(
               [
-                ["header", "页眉"],
-                ["footer", "页脚"],
+                ["header", t("style.header")],
+                ["footer", t("style.footer")],
               ] as const
             ).map(([position, label]) => (
               <InfoEditor
@@ -244,20 +254,20 @@ export function StylePanel({
         )}
         {view === "title" && (
           <div className="space-y-3">
-            <Section title="章节标题">
+            <Section title={t("style.chapterTitles")}>
               <Choice
-                label="标题位置"
+                label={t("style.titlePosition")}
                 value={style.titleMode}
                 options={[
-                  ["left", "居左"],
-                  ["center", "居中"],
-                  ["hidden", "隐藏"],
+                  ["left", t("style.align.left")],
+                  ["center", t("style.align.centre")],
+                  ["hidden", t("style.align.hidden")],
                 ]}
                 onChange={(titleMode) => setStyle({ titleMode })}
               />
             </Section>
             <Range
-              label="标题字号"
+              label={t("style.titleSize")}
               min={1}
               max={2}
               step={0.05}
@@ -307,7 +317,7 @@ function MainView({
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button
-          aria-label="减小字号"
+          aria-label={t("style.smaller")}
           variant="outline"
           size="sm"
           className="h-8 w-10 text-xs"
@@ -316,7 +326,7 @@ function MainView({
           A-
         </Button>
         <input
-          aria-label="字号"
+          aria-label={t("style.fontSize")}
           type="range"
           min={12}
           max={40}
@@ -326,7 +336,7 @@ function MainView({
           className="flex-1 accent-primary"
         />
         <Button
-          aria-label="增大字号"
+          aria-label={t("style.larger")}
           variant="outline"
           size="sm"
           className="h-8 w-10 text-xs"
@@ -339,10 +349,10 @@ function MainView({
       <div className="grid grid-cols-4 gap-2">
         {(
           [
-            ["text", "文字", "format_size"],
-            ["margins", "边距", "space_bar"],
-            ["info", "页眉页脚", "info"],
-            ["title", "标题", "toc_rule"],
+            ["text", t("style.text"), "format_size"],
+            ["margins", t("style.margins"), "space_bar"],
+            ["info", t("style.info"), "info"],
+            ["title", t("style.title"), "toc_rule"],
           ] as const
         ).map(([target, label, icon]) => (
           <button
@@ -355,36 +365,36 @@ function MainView({
           </button>
         ))}
       </div>
-      <Section title="翻页动画">
+      <Section title={t("style.effect")}>
         <Choice
-          label="翻页动画"
-          options={EFFECTS}
+          label={t("style.effect")}
+          options={effects()}
           value={preferences.pageTurnEffect}
           disabled={scroll}
           onChange={(pageTurnEffect) => onChange({ pageTurnEffect })}
         />
       </Section>
-      <Section title="阅读方式">
+      <Section title={t("style.mode")}>
         <Choice
-          label="阅读方式"
+          label={t("style.mode")}
           options={[
-            ["single", "单页"],
-            ["double", "双页"],
-            ["scroll", "滚动"],
+            ["single", t("style.mode.single")],
+            ["double", t("style.mode.double")],
+            ["scroll", t("style.mode.scroll")],
           ]}
           value={preferences.readingMode}
           onChange={(readingMode) => onChange({ readingMode })}
         />
         {preferences.readingMode === "double" && (
-          <p className="text-[11px] text-secondary">窄屏自动显示单页，展开后恢复双页。</p>
+          <p className="text-[11px] text-secondary">{t("style.doubleNote")}</p>
         )}
       </Section>
-      <Section title={`背景样式（${night ? "夜间" : "日间"}，长按或点铅笔编辑）`}>
+      <Section title={t("style.presets", { time: night ? t("style.night") : t("style.day") })}>
         <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
           {style.presets.map((preset, index) => (
             <div key={index} className="flex flex-col items-center gap-1 shrink-0">
               <button
-                aria-label={`样式 ${preset.name}`}
+                aria-label={t("style.preset", { name: preset.name })}
                 aria-pressed={style.selected === index}
                 className={`h-11 w-11 rounded-full border text-sm font-medium flex items-center justify-center transition-shadow ${style.selected === index ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : "border-black/10"}`}
                 style={{
@@ -397,10 +407,10 @@ function MainView({
                   onOpen({ preset: index });
                 }}
               >
-                文
+                {t("style.sample")}
               </button>
               <button
-                aria-label={`编辑 ${preset.name}`}
+                aria-label={t("style.editNamed", { name: preset.name })}
                 className="text-[10px] text-secondary flex items-center gap-0.5"
                 onClick={() => onOpen({ preset: index })}
               >
@@ -411,10 +421,13 @@ function MainView({
           ))}
           {style.presets.length < 32 && (
             <button
-              aria-label="新建样式"
+              aria-label={t("style.newPreset")}
               className="h-11 w-11 shrink-0 rounded-full border border-dashed border-surface-variant flex items-center justify-center text-secondary"
               onClick={() => {
-                const copy: StylePreset = { ...style.presets[style.selected], name: "自定义" };
+                const copy: StylePreset = {
+                  ...style.presets[style.selected],
+                  name: t("style.custom"),
+                };
                 setStyle({ presets: [...style.presets, copy], selected: style.presets.length });
                 onOpen({ preset: style.presets.length });
               }}
@@ -426,7 +439,7 @@ function MainView({
       </Section>
       <Button variant="outline" className="w-full h-9 text-xs" onClick={() => onOpen("more")}>
         <Icon name="settings" size={14} />
-        更多设置
+        {t("style.more")}
       </Button>
     </div>
   );
@@ -474,15 +487,17 @@ function TextView({
   );
   return (
     <div className="space-y-4">
-      <Section title="字体">
-        <div role="radiogroup" aria-label="字体" className="space-y-1.5">
+      <Section title={t("style.font")}>
+        <div role="radiogroup" aria-label={t("style.font")} className="space-y-1.5">
           {fontButton(
             !style.fontAssetId && preferences.fontFamily === "serif",
-            "思源宋体（内置）",
+            t("style.font.serif"),
             () => choose("serif"),
           )}
-          {fontButton(!style.fontAssetId && preferences.fontFamily === "sans", "系统黑体", () =>
-            choose("sans"),
+          {fontButton(
+            !style.fontAssetId && preferences.fontFamily === "sans",
+            t("style.font.sans"),
+            () => choose("sans"),
           )}
           {assets?.map((asset) =>
             fontButton(
@@ -490,7 +505,7 @@ function TextView({
               asset.name,
               () => choose({ asset: asset.id }),
               <Button
-                aria-label={`删除字体 ${asset.name}`}
+                aria-label={t("style.font.delete", { name: asset.name })}
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8 text-secondary"
@@ -519,18 +534,18 @@ function TextView({
                 if (!asset) return;
                 setAssets((list) => [...(list ?? []), asset]);
                 setStyle({ fontAssetId: asset.id });
-                toast(`已导入 ${asset.name}`);
+                toast(t("style.font.imported", { name: asset.name }));
               },
               (error: unknown) => toast({ text: String(error), error: true }),
             )
           }
         >
           <Icon name="add" size={14} />
-          导入字体（TTF/OTF/WOFF）
+          {t("style.font.import")}
         </Button>
       </Section>
       <Range
-        label="字重"
+        label={t("style.weight")}
         min={100}
         max={900}
         step={100}
@@ -539,7 +554,7 @@ function TextView({
         onChange={(fontWeight) => setStyle({ fontWeight })}
       />
       <Range
-        label="字距"
+        label={t("style.letterSpacing")}
         min={-0.1}
         max={0.5}
         step={0.01}
@@ -548,7 +563,7 @@ function TextView({
         onChange={(letterSpacing) => setStyle({ letterSpacing })}
       />
       <Range
-        label="行距"
+        label={t("style.lineSpacing")}
         min={1}
         max={3.5}
         step={0.1}
@@ -557,7 +572,7 @@ function TextView({
         onChange={(lineHeight) => onChange({ lineHeight })}
       />
       <Range
-        label="段距"
+        label={t("style.paragraphSpacing")}
         min={0}
         max={3}
         step={0.1}
@@ -566,12 +581,12 @@ function TextView({
         onChange={(paragraphSpacing) => setStyle({ paragraphSpacing })}
       />
       <Range
-        label="缩进"
+        label={t("style.indent")}
         min={0}
         max={4}
         step={1}
         value={style.indent}
-        format={(value) => `${value} 字`}
+        format={(value) => t("style.indentValue", { value })}
         onChange={(indent) => setStyle({ indent })}
       />
     </div>
@@ -592,7 +607,7 @@ function InfoEditor({
       <label className="flex items-center justify-between text-xs">
         <span className="font-medium">{label}</span>
         <Switch
-          aria-label={`显示${label}`}
+          aria-label={t("style.showBar", { bar: label })}
           checked={bar.visible}
           onCheckedChange={(visible) => onChange({ ...bar, visible })}
         />
@@ -600,20 +615,20 @@ function InfoEditor({
       <div className="grid grid-cols-3 gap-2">
         {(
           [
-            ["left", "左"],
-            ["middle", "中"],
-            ["right", "右"],
+            ["left", t("style.side.left")],
+            ["middle", t("style.side.middle")],
+            ["right", t("style.side.right")],
           ] as const
         ).map(([position, name]) => (
           <select
             key={position}
-            aria-label={`${label}${name}`}
+            aria-label={t("style.barSlot", { bar: label, position: name })}
             className={selectClass}
             disabled={!bar.visible}
             value={bar[position]}
             onChange={(event) => onChange({ ...bar, [position]: event.target.value as InfoSlot })}
           >
-            {SLOTS.map(([slot, text]) => (
+            {slots().map(([slot, text]) => (
               <option key={slot} value={slot}>
                 {text}
               </option>
@@ -653,44 +668,44 @@ function MoreView({
   );
   return (
     <div className="space-y-4">
-      {toggle("屏幕常亮", "阅读时不自动熄屏", style.keepScreenOn, (keepScreenOn) =>
+      {toggle(t("style.keepOn"), t("style.keepOn.note"), style.keepScreenOn, (keepScreenOn) =>
         setStyle({ keepScreenOn }),
       )}
       {toggle(
-        "隐藏状态栏",
-        "阅读时隐藏系统状态栏和导航栏，打开菜单时显示",
+        t("style.hideBars"),
+        t("style.hideBars.note"),
         style.hideSystemBars,
         (hideSystemBars) => setStyle({ hideSystemBars }),
       )}
-      {toggle("音量键翻页", "音量减下一页，音量加上一页", style.volumeKeys, (volumeKeys) =>
+      {toggle(t("style.volumeKeys"), t("style.volumeKeys.note"), style.volumeKeys, (volumeKeys) =>
         setStyle({ volumeKeys }),
       )}
       {toggle(
-        "菜单跟随背景",
-        "阅读菜单使用当前样式的背景和文字颜色",
+        t("style.menuTheme"),
+        t("style.menuTheme.note"),
         style.menuFollowsPage,
         (menuFollowsPage) => setStyle({ menuFollowsPage }),
       )}
       <div className="flex items-center justify-between gap-3 text-xs">
         <span>
-          预下载章节数
-          <span className="block text-[11px] text-secondary">网络书籍</span>
+          {t("style.preDownload")}
+          <span className="block text-[11px] text-secondary">{t("downloads.books")}</span>
         </span>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            aria-label="减少预下载章节"
+            aria-label={t("style.preDownload.less")}
             className="h-7 w-7 rounded-full border border-surface-variant"
             onClick={() => onPreDownload(Math.max(0, preDownload - 5))}
           >
             −
           </button>
-          <span className="w-8 text-center tabular-nums" aria-label="预下载章节数">
+          <span className="w-8 text-center tabular-nums" aria-label={t("style.preDownload")}>
             {preDownload}
           </span>
           <button
             type="button"
-            aria-label="增加预下载章节"
+            aria-label={t("style.preDownload.more")}
             className="h-7 w-7 rounded-full border border-surface-variant"
             onClick={() => onPreDownload(Math.min(50, preDownload + 5))}
           >
@@ -700,15 +715,15 @@ function MoreView({
       </div>
       <div className="flex items-center justify-between gap-3 text-xs">
         <span>
-          屏幕方向
-          <span className="block text-[11px] text-secondary">只在阅读时生效</span>
+          {t("style.orientation")}
+          <span className="block text-[11px] text-secondary">{t("style.orientation.note")}</span>
         </span>
-        <div role="radiogroup" aria-label="屏幕方向" className="flex gap-1">
+        <div role="radiogroup" aria-label={t("style.orientation")} className="flex gap-1">
           {(
             [
-              ["auto", "跟随系统"],
-              ["portrait", "竖屏"],
-              ["landscape", "横屏"],
+              ["auto", t("common.followSystem")],
+              ["portrait", t("style.portrait")],
+              ["landscape", t("style.landscape")],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -724,16 +739,16 @@ function MoreView({
           ))}
         </div>
       </div>
-      <Section title="点击区域">
+      <Section title={t("style.tapZones")}>
         <div className="grid grid-cols-3 gap-1.5">
           {style.tapZones.map((action, index) => (
             <label
               key={index}
               className="flex flex-col gap-1 rounded-lg bg-surface-container px-2 py-1.5 text-[10px] text-secondary"
             >
-              {ZONE_NAMES[index]}
+              {zoneNames()[index]}
               <select
-                aria-label={`${ZONE_NAMES[index]}点击`}
+                aria-label={t("style.zoneTap", { zone: zoneNames()[index] })}
                 className="bg-transparent text-xs text-on-surface outline-none"
                 value={action}
                 onChange={(event) => {
@@ -742,7 +757,7 @@ function MoreView({
                   setStyle({ tapZones });
                 }}
               >
-                {TAP_ACTIONS.map(([value, text]) => (
+                {tapActions().map(([value, text]) => (
                   <option key={value} value={value}>
                     {text}
                   </option>
@@ -771,7 +786,7 @@ function MoreView({
             })
           }
         >
-          恢复默认
+          {t("detail.resetCover")}
         </Button>
       </Section>
     </div>
@@ -812,7 +827,7 @@ function PresetEditor({
             )
           }
         >
-          {preset[key] ? "更换" : "选择图片"}
+          {preset[key] ? t("style.image.change") : t("style.image.choose")}
         </Button>
         {preset[key] && (
           <Button
@@ -821,7 +836,7 @@ function PresetEditor({
             className="h-7 text-[11px]"
             onClick={() => update({ [key]: null })}
           >
-            移除
+            {t("style.image.remove")}
           </Button>
         )}
       </span>
@@ -852,29 +867,29 @@ function PresetEditor({
           className="rounded-lg py-3"
           style={{ background: preset.background, color: preset.text }}
         >
-          日间预览
+          {t("style.dayPreview")}
         </span>
         <span
           className="rounded-lg py-3"
           style={{ background: preset.nightBackground, color: preset.nightText }}
         >
-          夜间预览
+          {t("style.nightPreview")}
         </span>
       </div>
       <label className="block space-y-1 text-xs text-secondary">
-        名称
+        {t("style.name")}
         <Input
           value={preset.name}
           maxLength={24}
           onChange={(event) => update({ name: event.target.value })}
         />
       </label>
-      {color("日间背景", "background")}
-      {image("日间背景图", "backgroundImage")}
-      {color("日间文字", "text")}
-      {color("夜间背景", "nightBackground")}
-      {image("夜间背景图", "nightBackgroundImage")}
-      {color("夜间文字", "nightText")}
+      {color(t("style.dayBackground"), "background")}
+      {image(t("style.dayImage"), "backgroundImage")}
+      {color(t("style.dayText"), "text")}
+      {color(t("style.nightBackground"), "nightBackground")}
+      {image(t("style.nightImage"), "nightBackgroundImage")}
+      {color(t("style.nightText"), "nightText")}
       {imageError && (
         <p role="alert" className="text-xs text-error break-words">
           {imageError}
@@ -891,22 +906,23 @@ function PresetEditor({
             onDone();
           }}
         >
-          删除样式
+          {t("style.deletePreset")}
         </Button>
         <Button size="sm" disabled={!preset.name.trim()} onClick={onDone}>
-          完成
+          {t("common.done")}
         </Button>
       </div>
     </div>
   );
 }
 
-const SIDES = [
-  ["top", "上"],
-  ["bottom", "下"],
-  ["left", "左"],
-  ["right", "右"],
-] as const;
+const sides = () =>
+  [
+    ["top", t("style.side.top")],
+    ["bottom", t("style.side.bottom")],
+    ["left", t("style.side.left")],
+    ["right", t("style.side.right")],
+  ] as const;
 
 /**
  * Legado's PaddingConfigDialog as a small centred dialog over a live page:
@@ -932,23 +948,21 @@ function MarginsDialog({
         className="grid-cols-1 bg-surface border border-surface-variant/50 rounded-2xl w-[min(18rem,calc(100%-2rem))] sm:max-w-xs p-3.5 gap-2.5 shadow-xl"
       >
         <DialogHeader>
-          <DialogTitle className="text-sm">边距</DialogTitle>
-          <DialogDescription className="sr-only">
-            调整时页面会实时显示效果，单位为像素。
-          </DialogDescription>
+          <DialogTitle className="text-sm">{t("style.margins")}</DialogTitle>
+          <DialogDescription className="sr-only">{t("style.margins.note")}</DialogDescription>
         </DialogHeader>
         <Choice
-          label="边距区域"
+          label={t("style.margins.area")}
           value={area}
           options={[
-            ["margins", "正文"],
-            ["headerMargins", "页眉"],
-            ["footerMargins", "页脚"],
+            ["margins", t("style.margins.text")],
+            ["headerMargins", t("style.header")],
+            ["footerMargins", t("style.footer")],
           ]}
           onChange={setArea}
         />
         <div className="space-y-1.5">
-          {SIDES.map(([side, label]) => (
+          {sides().map(([side, label]) => (
             <Range
               key={side}
               label={label}
@@ -963,9 +977,11 @@ function MarginsDialog({
         </div>
         {line && (
           <label className="flex items-center justify-between text-xs">
-            显示分隔线
+            {t("style.divider")}
             <Switch
-              aria-label={area === "headerMargins" ? "显示页眉分隔线" : "显示页脚分隔线"}
+              aria-label={
+                area === "headerMargins" ? t("style.divider.header") : t("style.divider.footer")
+              }
               checked={style[line]}
               onCheckedChange={(value) => setStyle({ [line]: value })}
             />

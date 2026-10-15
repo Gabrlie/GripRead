@@ -7,11 +7,16 @@ import {
   DialogTitle,
 } from "../../ui/dialog";
 import { Icon } from "../../ui/Icon";
+import { t } from "../../../i18n";
 
-const CHOICES: [ChineseConversion, string, string][] = [
-  ["off", "不转换", "按原文显示"],
-  ["to_simplified", "繁转简", "繁体字显示为简体"],
-  ["to_traditional", "简转繁", "简体字显示为繁体"],
+const choices = (): [ChineseConversion, string, string][] => [
+  ["off", t("reader.conversion.off"), t("reader.conversion.off.note")],
+  ["to_simplified", t("reader.conversion.toSimplified"), t("reader.conversion.toSimplified.note")],
+  [
+    "to_traditional",
+    t("reader.conversion.toTraditional"),
+    t("reader.conversion.toTraditional.note"),
+  ],
 ];
 
 /** Legado's 简繁转换 choice; changing it regenerates the book's text. */
@@ -28,11 +33,13 @@ export function ConversionDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-xs p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">简繁转换</DialogTitle>
-          <DialogDescription>所有书共用，切换后重新生成文本，阅读位置随之调整。</DialogDescription>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("reader.conversion")}
+          </DialogTitle>
+          <DialogDescription>{t("reader.conversion.note")}</DialogDescription>
         </DialogHeader>
-        <div role="radiogroup" aria-label="简繁转换" className="space-y-1">
-          {CHOICES.map(([choice, label, note]) => (
+        <div role="radiogroup" aria-label={t("reader.conversion")} className="space-y-1">
+          {choices().map(([choice, label, note]) => (
             <button
               key={choice}
               type="button"

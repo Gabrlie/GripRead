@@ -9,6 +9,7 @@ import type {
   TxtTocRule,
 } from "../../types/generated";
 import type { ReaderActions } from "./use-reader-actions";
+import { t } from "../../i18n";
 
 const NO_LISTING: TocListing = {
   entries: [],
@@ -126,7 +127,9 @@ export function useReaderTools(
         await writeSettings(bookId, settings);
       } catch (failure) {
         if (epoch === sessionEpoch.current)
-          fail(`目录设置保存失败：${String(failure)}`, () => saveTocSettings(settings));
+          fail(t("reader.tocSettingsFailed", { error: String(failure) }), () =>
+            saveTocSettings(settings),
+          );
       } finally {
         if (epoch === sessionEpoch.current) setBusy(false);
       }

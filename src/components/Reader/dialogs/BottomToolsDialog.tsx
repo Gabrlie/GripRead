@@ -10,6 +10,7 @@ import {
 } from "../../ui/dialog";
 import { Icon } from "../../ui/Icon";
 import { ALL_READER_TOOLS, MAX_BOTTOM_TOOLS, READER_TOOLS } from "../reader-tools";
+import { t } from "../../../i18n";
 
 /**
  * The bottom bar's buttons as a floating dialog from the top bar's 更多
@@ -28,8 +29,10 @@ export function BottomToolsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[80dvh] overflow-y-auto p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">底部工具栏</DialogTitle>
-          <DialogDescription>选择阅读菜单底部显示的按钮和顺序。</DialogDescription>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("reader.bottomTools")}
+          </DialogTitle>
+          <DialogDescription>{t("tools.note")}</DialogDescription>
         </DialogHeader>
         <BottomToolsEditor tools={tools} onChange={onChange} />
       </DialogContent>
@@ -57,8 +60,8 @@ export function BottomToolsEditor({
   const full = tools.length >= MAX_BOTTOM_TOOLS;
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-secondary">最多 {MAX_BOTTOM_TOOLS} 个，至少保留 1 个。</p>
-      <ul aria-label="底部工具栏按钮" className="space-y-1">
+      <p className="text-[11px] text-secondary">{t("tools.limit", { max: MAX_BOTTOM_TOOLS })}</p>
+      <ul aria-label={t("tools.list")} className="space-y-1">
         {tools.map((tool, index) => (
           <li
             key={tool}
@@ -69,7 +72,7 @@ export function BottomToolsEditor({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`上移 ${READER_TOOLS[tool].label}`}
+              aria-label={t("tools.up", { name: READER_TOOLS[tool].label })}
               className="h-7 w-7 text-secondary"
               disabled={index === 0}
               onClick={() => move(index, -1)}
@@ -79,7 +82,7 @@ export function BottomToolsEditor({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`下移 ${READER_TOOLS[tool].label}`}
+              aria-label={t("tools.down", { name: READER_TOOLS[tool].label })}
               className="h-7 w-7 text-secondary"
               disabled={index === tools.length - 1}
               onClick={() => move(index, 1)}
@@ -89,7 +92,7 @@ export function BottomToolsEditor({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`移除 ${READER_TOOLS[tool].label}`}
+              aria-label={t("tools.remove", { name: READER_TOOLS[tool].label })}
               className="h-7 w-7 text-secondary"
               disabled={tools.length <= 1}
               onClick={() => onChange(tools.filter((item) => item !== tool))}
@@ -100,13 +103,13 @@ export function BottomToolsEditor({
         ))}
       </ul>
       {hidden.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" aria-label="可添加的按钮">
+        <div className="flex flex-wrap gap-1.5" aria-label={t("tools.available")}>
           {hidden.map((tool) => (
             <button
               key={tool}
               type="button"
               disabled={full}
-              aria-label={`添加 ${READER_TOOLS[tool].label}`}
+              aria-label={t("tools.add", { name: READER_TOOLS[tool].label })}
               onClick={() => onChange([...tools, tool])}
               className="h-7 px-2.5 rounded-full text-[11px] border border-surface-variant flex items-center gap-1 disabled:opacity-40"
             >
@@ -122,7 +125,7 @@ export function BottomToolsEditor({
         className="h-7 text-[11px]"
         onClick={() => onChange(DEFAULT_READING_STYLE.bottomTools)}
       >
-        恢复默认
+        {t("detail.resetCover")}
       </Button>
     </div>
   );

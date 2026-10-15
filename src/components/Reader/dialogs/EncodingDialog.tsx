@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/dialog";
+import { t } from "../../../i18n";
 
 interface EncodingDialogProps {
   encodingInfo: TxtEncodingInfo | null;
@@ -21,16 +22,29 @@ interface EncodingDialogProps {
 
 /** Legado's charset names mapped onto the decoders GripRead supports. */
 const CHOICES: { encoding: TxtEncoding; label: string; note?: string }[] = [
-  { encoding: "auto", label: "自动识别" },
+  {
+    encoding: "auto",
+    get label() {
+      return t("reader.encoding.auto");
+    },
+  },
   { encoding: "utf8", label: "UTF-8" },
-  { encoding: "gbk", label: "GBK", note: "含 GB2312" },
+  {
+    encoding: "gbk",
+    label: "GBK",
+    get note() {
+      return t("reader.encoding.gbkNote");
+    },
+  },
   { encoding: "gb18030", label: "GB18030" },
   { encoding: "utf16_le", label: "UTF-16LE", note: "Unicode" },
   { encoding: "utf16_be", label: "UTF-16BE" },
 ];
 
 export const ENCODING_NAMES: Record<TxtEncoding, string> = {
-  auto: "自动识别",
+  get auto() {
+    return t("reader.encoding.auto");
+  },
   utf8: "UTF-8",
   gbk: "GBK",
   gb18030: "GB18030",
@@ -55,14 +69,14 @@ export function EncodingDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-sm p-4 gap-3">
         <DialogHeader>
-          <DialogTitle>设置编码</DialogTitle>
+          <DialogTitle>{t("reader.setEncoding")}</DialogTitle>
           <DialogDescription>
             {encodingInfo
-              ? `识别结果：${ENCODING_NAMES[encodingInfo.detected]}。重新解码只在本机进行。`
-              : "正在读取编码信息…"}
+              ? t("reader.encoding.detected", { name: ENCODING_NAMES[encodingInfo.detected] })
+              : t("reader.encoding.loading")}
           </DialogDescription>
         </DialogHeader>
-        <div role="radiogroup" aria-label="文本编码" className="space-y-1">
+        <div role="radiogroup" aria-label={t("detail.encoding")} className="space-y-1">
           {CHOICES.map((choice) => (
             <button
               key={choice.encoding}
@@ -78,25 +92,23 @@ export function EncodingDialog({
           ))}
         </div>
         {encodingInfo?.state === "replacement_characters" && (
-          <p className="text-xs text-error">当前编码出现了无法识别的字符，请换一种编码。</p>
+          <p className="text-xs text-error">{t("reader.encoding.bad")}</p>
         )}
         {encodingInfo && !encodingInfo.canChange && (
           <div className="space-y-2">
-            <p className="text-xs text-secondary">
-              这本书没有保留原始字节。重新选择原始 TXT 并通过校验后即可切换编码。
-            </p>
+            <p className="text-xs text-secondary">{t("reader.encoding.noSource")}</p>
             <Button type="button" variant="outline" size="sm" onClick={onReassociate}>
-              关联原始 TXT
+              {t("reader.encoding.link")}
             </Button>
           </div>
         )}
         {decoding && (
           <div className="flex items-center justify-between gap-3">
             <p role="status" className="text-xs text-secondary">
-              正在重新解码…
+              {t("reader.encoding.decoding")}
             </p>
             <Button type="button" variant="outline" size="sm" onClick={onCancelDecode}>
-              取消
+              {t("common.cancel")}
             </Button>
           </div>
         )}

@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu";
+import { currentLocale, t } from "../../../i18n";
 
 interface ContentsPageProps {
   bookTitle: string;
@@ -43,6 +44,8 @@ const VOLUME_ROW = 40;
 
 /** Chapter counts in the form Legado shows, e.g. 3256字 or 1.2万字. */
 export function formatLength(units: number): string {
+  if (currentLocale() === "en")
+    return units >= 1_000 ? `${(units / 1_000).toFixed(1)}k` : `${units}`;
   return units >= 10_000 ? `${(units / 10_000).toFixed(1)}万字` : `${units}字`;
 }
 
@@ -136,14 +139,14 @@ export function ContentsPage({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="目录"
+      aria-label={t("detail.contents")}
       data-open=""
       className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
       <header className="shrink-0 border-b border-surface-variant/30">
         <div className="h-14 px-2 flex items-center gap-1 max-w-3xl mx-auto w-full">
           <Button
-            aria-label="返回阅读"
+            aria-label={t("detail.backToReading")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 rounded-full text-secondary shrink-0"
@@ -158,15 +161,19 @@ export function ContentsPage({
           ) : (
             <Input
               autoFocus
-              aria-label={tab === "toc" ? "搜索章节" : "搜索书签"}
-              placeholder={tab === "toc" ? "搜索章节" : "搜索书签"}
+              aria-label={
+                tab === "toc" ? t("contents.searchChapters") : t("contents.searchBookmarks")
+              }
+              placeholder={
+                tab === "toc" ? t("contents.searchChapters") : t("contents.searchBookmarks")
+              }
               className="flex-1 h-9"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
           )}
           <Button
-            aria-label={filter === null ? "搜索目录" : "关闭搜索"}
+            aria-label={filter === null ? t("contents.search") : t("contents.closeSearch")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 rounded-full text-secondary shrink-0"
@@ -176,7 +183,7 @@ export function ContentsPage({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
-              aria-label="目录选项"
+              aria-label={t("contents.options")}
               className="h-9 w-9 rounded-full flex items-center justify-center text-secondary hover:bg-surface-container/60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 shrink-0"
             >
               <Icon name="more_vert" size={19} />
@@ -185,23 +192,23 @@ export function ContentsPage({
               {txtTools && (
                 <DropdownMenuItem onClick={onOpenRules}>
                   <Icon name="toc_rule" size={15} />
-                  TXT目录规则
+                  {t("settings.toc")}
                 </DropdownMenuItem>
               )}
               {txtTools && (
                 <DropdownMenuItem disabled={busy} onClick={onToggleSplit}>
                   <Checkmark on={splitLongChapters} />
-                  拆分超长章节
+                  {t("tocRule.split")}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setReversed((value) => !value)}>
                 <Checkmark on={reversed} />
-                倒序显示
+                {t("contents.reverse")}
               </DropdownMenuItem>
               {txtTools && (
                 <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
                   <Checkmark on={showLength} />
-                  显示字数
+                  {t("contents.lengths")}
                 </DropdownMenuItem>
               )}
               {volumes.length > 0 && (
@@ -213,17 +220,29 @@ export function ContentsPage({
                   }
                 >
                   <Icon name={collapsed.size ? "expand_more" : "expand_less"} size={15} />
-                  {collapsed.size ? "展开全部卷" : "收起全部卷"}
+                  {collapsed.size ? t("contents.expandAll") : t("contents.collapseAll")}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div role="tablist" aria-label="目录与书签" className="flex max-w-3xl mx-auto w-full">
+        <div
+          role="tablist"
+          aria-label={t("contents.tabs")}
+          className="flex max-w-3xl mx-auto w-full"
+        >
           {(
             [
-              ["toc", `目录${toc.length ? ` ${toc.length}` : ""}`],
-              ["bookmarks", `书签${bookmarks.length ? ` ${bookmarks.length}` : ""}`],
+              [
+                "toc",
+                toc.length ? t("contents.tabToc", { count: toc.length }) : t("detail.contents"),
+              ],
+              [
+                "bookmarks",
+                bookmarks.length
+                  ? t("contents.tabBookmarks", { count: bookmarks.length })
+                  : t("contents.bookmarks"),
+              ],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -248,13 +267,13 @@ export function ContentsPage({
             <div role="alert" className="m-4 text-sm text-error space-y-2">
               <p>{error}</p>
               <Button variant="outline" size="sm" onClick={onReload}>
-                重新加载
+                {t("shelf.reload")}
               </Button>
             </div>
           )}
           {loading && (
             <p role="status" className="m-4 text-sm text-secondary">
-              正在读取目录…
+              {t("contents.loading")}
             </p>
           )}
           {tab === "toc" && rows.length > 0 && <div style={{ height: windowed.before }} />}
@@ -276,7 +295,9 @@ export function ContentsPage({
                     </button>
                     <button
                       aria-label={
-                        collapsed.has(entry.ordinal) ? `展开 ${entry.title}` : `收起 ${entry.title}`
+                        collapsed.has(entry.ordinal)
+                          ? t("contents.expand", { title: entry.title })
+                          : t("contents.collapse", { title: entry.title })
                       }
                       aria-expanded={!collapsed.has(entry.ordinal)}
                       className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container"
@@ -311,7 +332,7 @@ export function ContentsPage({
           {tab === "toc" && rows.length > 0 && <div style={{ height: windowed.after }} />}
           {tab === "toc" && !loading && !error && toc.length === 0 && (
             <p className="m-4 text-sm text-secondary">
-              {txtTools ? "没有识别到章节，可以在 TXT目录规则 中换一条规则。" : "目录为空。"}
+              {txtTools ? t("contents.noChapters") : t("contents.empty")}
             </p>
           )}
           {tab === "bookmarks" &&
@@ -333,7 +354,9 @@ export function ContentsPage({
                       className="flex-1 min-w-0 text-left space-y-1"
                       onClick={() => onOpenBookmark(bookmark)}
                     >
-                      <p className="text-sm line-clamp-2">{bookmark.excerpt || "（空白位置）"}</p>
+                      <p className="text-sm line-clamp-2">
+                        {bookmark.excerpt || t("contents.blank")}
+                      </p>
                       {bookmark.note && (
                         <p className="text-xs text-primary line-clamp-3 break-words">
                           {bookmark.note}
@@ -341,11 +364,11 @@ export function ContentsPage({
                       )}
                       <p className="text-[11px] text-secondary">
                         {chapterTitleAt(toc, bookmark.locator, resourceId !== undefined)}
-                        {stale ? " · 旧正文版本" : ""}
+                        {stale ? t("contents.stale") : ""}
                       </p>
                     </button>
                     <Button
-                      aria-label="编辑书签备注"
+                      aria-label={t("contents.editNote")}
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-secondary shrink-0"
@@ -354,7 +377,7 @@ export function ContentsPage({
                       <Icon name="edit" size={15} />
                     </Button>
                     <Button
-                      aria-label="删除书签"
+                      aria-label={t("contents.deleteBookmark")}
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-secondary shrink-0"
@@ -366,9 +389,7 @@ export function ContentsPage({
                 );
               })}
           {tab === "bookmarks" && bookmarks.length === 0 && !loading && (
-            <p className="m-4 text-sm text-secondary">
-              还没有书签。可以在右上角添加，或长按选中文字后添加。
-            </p>
+            <p className="m-4 text-sm text-secondary">{t("contents.noBookmarks")}</p>
           )}
         </div>
       </div>
@@ -377,13 +398,13 @@ export function ContentsPage({
         <footer className="shrink-0 border-t border-surface-variant/30">
           <div className="max-w-3xl mx-auto w-full flex items-center gap-1 px-3 py-1.5">
             <div className="flex-1 min-w-0">
-              <p className="text-xs truncate">{currentEntry?.title ?? "全文"}</p>
+              <p className="text-xs truncate">{currentEntry?.title ?? t("shelf.wholeText")}</p>
               <p className="text-[11px] text-secondary">
-                {currentIndex + 1}/{toc.length} · {ruleName || "自动识别"}
+                {currentIndex + 1}/{toc.length} · {ruleName || t("reader.encoding.auto")}
               </p>
             </div>
             <Button
-              aria-label="回到顶部"
+              aria-label={t("contents.top")}
               variant="ghost"
               size="icon"
               className="h-9 w-9 text-secondary"
@@ -392,7 +413,7 @@ export function ContentsPage({
               <Icon name="vertical_align_top" size={18} />
             </Button>
             <Button
-              aria-label="定位当前章节"
+              aria-label={t("contents.current")}
               variant="ghost"
               size="icon"
               className="h-9 w-9 text-secondary"
@@ -401,7 +422,7 @@ export function ContentsPage({
               <Icon name="my_location" size={18} />
             </Button>
             <Button
-              aria-label="滚到底部"
+              aria-label={t("contents.bottom")}
               variant="ghost"
               size="icon"
               className="h-9 w-9 text-secondary"
@@ -430,5 +451,5 @@ function chapterTitleAt(toc: TocEntry[], locator: ReaderLocator, byResource: boo
     if (entry.locator.offset <= offset) title = entry.title;
     else break;
   }
-  return title || "开头";
+  return title || t("contents.start");
 }

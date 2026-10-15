@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/dialog";
+import { formatDateTime, t } from "../../../i18n";
 
 /**
  * The contents entry a position is in: by chapter for an online book, whose
@@ -26,8 +27,10 @@ export function chapterIndexOf(toc: readonly TocEntry[], locator: ReaderLocator)
 /** How the cloud position compares with this device's, in chapters. */
 export function chapterGap(cloud: number, here: number): string | null {
   if (cloud < 0 || here < 0) return null;
-  if (cloud === here) return "在同一章";
-  return cloud > here ? `云端领先 ${cloud - here} 章` : `云端落后 ${here - cloud} 章`;
+  if (cloud === here) return t("cloud.sameChapter");
+  return cloud > here
+    ? t("cloud.ahead", { count: cloud - here })
+    : t("cloud.behind", { count: here - cloud });
 }
 
 /**
@@ -50,16 +53,16 @@ export function CloudProgressDialog({
   const cloudIndex = chapterIndexOf(toc, prompt.locator);
   const hereIndex = here ? chapterIndexOf(toc, here) : -1;
   const place = (index: number, fallback: string) =>
-    index >= 0 ? `第 ${index + 1} 章 · ${toc[index].title}` : fallback;
+    index >= 0 ? t("cloud.place", { number: index + 1, title: toc[index].title }) : fallback;
   const gap = chapterGap(cloudIndex, hereIndex);
   return (
     <Dialog open onOpenChange={(open) => !open && onAnswer(false)}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">云端进度</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">{t("cloud.title")}</DialogTitle>
           <DialogDescription>
-            {prompt.deviceName || "另一台设备"} ·{" "}
-            {new Date(prompt.writtenAt).toLocaleString("zh-CN", {
+            {prompt.deviceName || t("cloud.otherDevice")} ·{" "}
+            {formatDateTime(prompt.writtenAt, {
               month: "2-digit",
               day: "2-digit",
               hour: "2-digit",
@@ -68,25 +71,25 @@ export function CloudProgressDialog({
           </DialogDescription>
         </DialogHeader>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-          <dt className="text-secondary">云端</dt>
+          <dt className="text-secondary">{t("cloud.cloud")}</dt>
           <dd className="min-w-0">
             <span className="block truncate">
-              {place(cloudIndex, prompt.chapterTitle || "未知章节")}
+              {place(cloudIndex, prompt.chapterTitle || t("cloud.unknownChapter"))}
             </span>
             {prompt.excerpt && (
               <span className="block text-xs text-secondary truncate">{prompt.excerpt}</span>
             )}
           </dd>
-          <dt className="text-secondary">本机</dt>
-          <dd className="min-w-0 truncate">{place(hereIndex, "未知章节")}</dd>
+          <dt className="text-secondary">{t("cloud.here")}</dt>
+          <dd className="min-w-0 truncate">{place(hereIndex, t("cloud.unknownChapter"))}</dd>
         </dl>
-        <p className="text-sm">{gap ? `${gap}，` : "云端进度与当前不同，"}是否跳转到云端进度？</p>
+        <p className="text-sm">{gap ? t("cloud.askGap", { gap }) : t("cloud.askDiffer")}</p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => onAnswer(false)}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button size="sm" onClick={() => onAnswer(true)}>
-            跳转
+            {t("cloud.jump")}
           </Button>
         </div>
       </DialogContent>

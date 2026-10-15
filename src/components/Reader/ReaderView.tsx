@@ -78,6 +78,7 @@ import { TocRuleDialog } from "./dialogs/TocRuleDialog";
 import { EncodingDialog } from "./dialogs/EncodingDialog";
 import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
+import { t } from "../../i18n";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
@@ -215,7 +216,7 @@ export function ReaderView() {
         setFontError(null);
       },
       (error: unknown) => {
-        if (!cancelled) setFontError(`字体无法使用，已改用默认字体：${String(error)}`);
+        if (!cancelled) setFontError(t("reader.fontFailed", { error: String(error) }));
       },
     );
     return () => {
@@ -649,7 +650,7 @@ export function ReaderView() {
       });
       if (epoch !== sessionEpoch.current) return;
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      toast("已添加书签");
+      toast(t("reader.bookmarkAdded"));
     });
   }, [
     bookId,
@@ -687,7 +688,7 @@ export function ReaderView() {
     setAutoPanel(true);
     if (autoSession && automaticTurn.running) return;
     if (!canStartAutomatic) {
-      toast(state.hasAfter ? "现在还不能自动翻页，请稍后再试" : "已经到书的末尾了");
+      toast(state.hasAfter ? t("reader.autoNotYet") : t("reader.end"));
       return;
     }
     setAutoSession(true);
@@ -722,7 +723,7 @@ export function ReaderView() {
       void pauseAutomatic();
       run(async () => {
         await controller.seek(prompt.locator);
-        toast(`已同步 ${prompt.deviceName || "其他设备"} 的进度`);
+        toast(t("reader.progressSynced", { device: prompt.deviceName || t("reader.otherDevice") }));
       });
     }
   };
@@ -733,7 +734,11 @@ export function ReaderView() {
   useEffect(() => {
     if (!refreshingDirectory.current || tools.loading) return;
     refreshingDirectory.current = false;
-    toast(tools.error ? `目录更新失败：${tools.error}` : `目录已更新，共 ${tools.toc.length} 章`);
+    toast(
+      tools.error
+        ? t("detail.updateFailed", { error: tools.error })
+        : t("reader.tocUpdated", { count: tools.toc.length }),
+    );
   }, [tools.loading, tools.error, tools.toc]);
   const saveNote = useCallback(
     async (note: string) => {
@@ -761,7 +766,7 @@ export function ReaderView() {
         note,
       });
       setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      toast("已添加书签");
+      toast(t("reader.bookmarkAdded"));
     },
     [bookId, noteDraft, runtime.services.reader, setBookmarks, state.contentWindow],
   );
@@ -769,8 +774,8 @@ export function ReaderView() {
     () => ({
       copy: (selection) =>
         void copyText(selection.text).then(
-          () => toast("已复制"),
-          () => toast("复制失败"),
+          () => toast(t("reader.copied")),
+          () => toast(t("reader.copyFailed")),
         ),
       bookmark: (selection) => setNoteDraft({ excerpt: selection.text, offset: selection.start }),
       search: (selection) => {
@@ -779,7 +784,7 @@ export function ReaderView() {
       },
       share: (selection) =>
         void system.share(selection.text).then(
-          (result) => result === "copied" && toast("已复制，可粘贴分享"),
+          (result) => result === "copied" && toast(t("reader.copiedShare")),
           () => undefined,
         ),
       // Legado's 替换: a plain-text rule for the selection, scoped to this book.
@@ -1201,7 +1206,7 @@ export function ReaderView() {
         <ReaderTopBar
           visible={controls && !previewing}
           title={activeBook.book.title}
-          subtitle={state.chapter?.title ?? "全文"}
+          subtitle={state.chapter?.title ?? t("shelf.wholeText")}
           closing={closing}
           onBack={() => void close()}
           onOpenPanel={openPanel}
@@ -1209,11 +1214,14 @@ export function ReaderView() {
           onAddBookmark={addBookmark}
           onRefreshDirectory={() => {
             if (activeBook.online) {
-              toast("正在更新目录…");
+              toast(t("shelf.updating"));
               void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(
                 ([outcome]) => {
                   if (outcome?.error)
-                    toast({ text: `目录更新失败：${outcome.error}`, error: true });
+                    toast({
+                      text: t("detail.updateFailed", { error: outcome.error }),
+                      error: true,
+                    });
                   else {
                     refreshingDirectory.current = true;
                     reloadTools();
@@ -1224,7 +1232,7 @@ export function ReaderView() {
               return;
             }
             refreshingDirectory.current = true;
-            toast("正在更新目录…");
+            toast(t("shelf.updating"));
             reloadTools();
           }}
           txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
@@ -1317,11 +1325,11 @@ export function ReaderView() {
         )}
         {!page && state.loading && (
           <p role="status" className="text-sm text-secondary">
-            正在读取正文…
+            {t("reader.loadingText")}
           </p>
         )}
         {!state.loading && state.contentWindow?.totalLength === 0 && (
-          <p className="text-sm text-secondary">这本书暂无正文。</p>
+          <p className="text-sm text-secondary">{t("reader.noText")}</p>
         )}
       </ReaderSurface>
       <div
@@ -1361,7 +1369,7 @@ export function ReaderView() {
                     )
             }
           >
-            重试
+            {t("common.retry")}
           </Button>
         </div>
       )}
@@ -1458,7 +1466,7 @@ export function ReaderView() {
           onSeek={seekTo}
           onOpenBookmark={(bookmark) => {
             if (bookmark.contentVersion !== state.contentWindow?.contentVersion) {
-              fail("该书签属于旧正文版本，请从目录重新定位。");
+              fail(t("reader.oldBookmark"));
               return;
             }
             seekTo(bookmark.locator);
@@ -1520,11 +1528,13 @@ export function ReaderView() {
           className="fixed z-30 right-3 bottom-[calc(1rem+var(--safe-bottom))] flex items-center gap-1 rounded-full bg-inverse-surface text-inverse-on-surface shadow-md pl-3 pr-1 py-1 text-xs"
         >
           <button type="button" className="py-1" onClick={() => openPanel("aloud")}>
-            {aloud.state === "playing" ? "朗读中" : "朗读已暂停"}
+            {aloud.state === "playing" ? t("reader.aloudPlaying") : t("reader.aloudPaused")}
           </button>
           <button
             type="button"
-            aria-label={aloud.state === "playing" ? "暂停朗读" : "继续朗读"}
+            aria-label={
+              aloud.state === "playing" ? t("reader.aloudPause") : t("reader.aloudResume")
+            }
             className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/10"
             onClick={() => (aloud.state === "playing" ? readAloud.pause() : readAloud.resume())}
           >
@@ -1532,7 +1542,7 @@ export function ReaderView() {
           </button>
           <button
             type="button"
-            aria-label="退出朗读"
+            aria-label={t("reader.aloudStop")}
             className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/10"
             onClick={() => readAloud.stop()}
           >
@@ -1593,9 +1603,11 @@ export function ReaderView() {
         <Dialog open onOpenChange={(open) => !open && setAskShelf(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">加入书架</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("reader.addToShelf")}
+              </DialogTitle>
             </DialogHeader>
-            <p className="text-sm">《{activeBook.book.title}》还不在书架上，是否加入书架？</p>
+            <p className="text-sm">{t("reader.askAdd", { title: activeBook.book.title })}</p>
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
@@ -1607,7 +1619,7 @@ export function ReaderView() {
                   close(toDetail);
                 }}
               >
-                不加入
+                {t("reader.dontAdd")}
               </Button>
               <Button
                 size="sm"
@@ -1624,7 +1636,7 @@ export function ReaderView() {
                   );
                 }}
               >
-                加入书架
+                {t("reader.addToShelf")}
               </Button>
             </div>
           </DialogContent>
@@ -1673,7 +1685,7 @@ export function ReaderView() {
           onSave={async (rule) => {
             await runtime.services.reader.saveReplaceRule(rule);
             setReplaceDraft(null);
-            toast("已添加替换规则");
+            toast(t("reader.ruleAdded"));
             // A book with 替换净化 off turns it on to show the new rule.
             if (useReplaceRules) applyTransformsRef.current();
             else toggleBookReplace(true);

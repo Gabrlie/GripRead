@@ -1,4 +1,5 @@
 import type { ContentWindow, TocEntry } from "../types/generated";
+import { t } from "../i18n";
 
 export interface ReaderChapter {
   title: string;
@@ -30,8 +31,9 @@ export function chapterRanges(
     start: entry.locator.offset,
     end: unique[index + 1]?.locator.offset ?? window.totalLength,
   }));
-  if (!ranges.length) return [{ title: "全文", start: 0, end: window.totalLength }];
-  if (ranges[0].start > 0) ranges.unshift({ title: "序言", start: 0, end: ranges[0].start });
+  if (!ranges.length) return [{ title: t("shelf.wholeText"), start: 0, end: window.totalLength }];
+  if (ranges[0].start > 0)
+    ranges.unshift({ title: t("reader.preface"), start: 0, end: ranges[0].start });
   return ranges;
 }
 

@@ -3,6 +3,7 @@ import type { ReaderSearch } from "../use-reader-search";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
 import { Input } from "../../ui/input";
+import { t } from "../../../i18n";
 
 interface SearchPageProps {
   search: ReaderSearch;
@@ -76,7 +77,7 @@ export function SearchPage({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="搜索正文"
+      aria-label={t("search.title")}
       data-open=""
       className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
@@ -90,7 +91,7 @@ export function SearchPage({
         >
           <Button
             type="button"
-            aria-label="返回阅读"
+            aria-label={t("detail.backToReading")}
             variant="ghost"
             size="icon"
             className="h-9 w-9 rounded-full text-secondary shrink-0"
@@ -100,8 +101,8 @@ export function SearchPage({
           </Button>
           <Input
             autoFocus
-            aria-label="搜索关键词"
-            placeholder="搜索正文"
+            aria-label={t("search.query")}
+            placeholder={t("search.title")}
             className="flex-1 h-9"
             value={search.query}
             onChange={(event) => search.setQuery(event.target.value)}
@@ -110,9 +111,9 @@ export function SearchPage({
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="正则表达式"
+            aria-label={t("search.regex")}
             aria-pressed={search.regex}
-            title="正则表达式"
+            title={t("search.regex")}
             className={`h-9 w-9 rounded-full shrink-0 ${search.regex ? "text-primary bg-primary/10" : "text-secondary"}`}
             onClick={() => search.setRegex(!search.regex)}
           >
@@ -120,7 +121,7 @@ export function SearchPage({
           </Button>
           {search.searching ? (
             <Button type="button" variant="ghost" className="h-9 shrink-0" onClick={search.cancel}>
-              停止
+              {t("search.stop")}
             </Button>
           ) : (
             <Button
@@ -129,7 +130,7 @@ export function SearchPage({
               className="h-9 shrink-0 text-primary"
               disabled={!search.query.trim()}
             >
-              搜索
+              {t("header.search")}
             </Button>
           )}
         </form>
@@ -143,18 +144,22 @@ export function SearchPage({
           )}
           {search.searching && search.matches.length === 0 && (
             <p role="status" className="text-sm text-secondary px-1">
-              正在搜索…
+              {t("search.searching")}
             </p>
           )}
-          {byResource && <p className="text-[11px] text-secondary px-1">仅搜索已缓存章节</p>}
+          {byResource && (
+            <p className="text-[11px] text-secondary px-1">{t("search.cachedOnly")}</p>
+          )}
           {search.complete && search.matches.length === 0 && (
-            <p className="text-sm text-secondary px-1">没有找到“{search.query}”。</p>
+            <p className="text-sm text-secondary px-1">
+              {t("search.none", { query: search.query })}
+            </p>
           )}
           {search.matches.length > 0 && (
             <p className="text-xs text-secondary px-1">
               {search.hasMore
-                ? `已找到 ${search.matches.length} 处以上`
-                : `共 ${search.matches.length} 处`}
+                ? t("search.more", { count: search.matches.length })
+                : t("search.count", { count: search.matches.length })}
             </p>
           )}
           {search.matches.map((match, index) => (
@@ -165,7 +170,7 @@ export function SearchPage({
             >
               <span className="flex items-center gap-2 text-xs">
                 <span className="flex-1 min-w-0 truncate text-primary font-medium">
-                  {chapterAt(toc, match, byResource) || "开头"}
+                  {chapterAt(toc, match, byResource) || t("contents.start")}
                 </span>
                 {!byResource && (
                   <span className="text-secondary tabular-nums shrink-0">{percent(match)}</span>
@@ -183,7 +188,7 @@ export function SearchPage({
               disabled={search.searching}
               onClick={search.loadMore}
             >
-              加载更多
+              {t("search.loadMore")}
             </Button>
           )}
         </div>
@@ -214,7 +219,7 @@ export function SearchResultBar({
     <div className="fixed bottom-0 inset-x-0 z-30 pb-safe pointer-events-none">
       <div className="max-w-md mx-auto m-3 rounded-2xl bg-surface/95 backdrop-blur-xl border border-surface-variant/40 shadow-sm flex items-center gap-1 px-2 py-1.5 pointer-events-auto">
         <Button
-          aria-label="上一个结果"
+          aria-label={t("search.previous")}
           variant="ghost"
           size="icon"
           className="h-9 w-9"
@@ -224,11 +229,10 @@ export function SearchResultBar({
           <Icon name="chevron_left" size={20} />
         </Button>
         <button className="flex-1 text-center text-xs text-secondary py-2" onClick={onList}>
-          第 {index + 1}/{count}
-          {hasMore ? "+" : ""} 处 · 结果列表
+          {t("search.position", { index: index + 1, count, more: hasMore ? "+" : "" })}
         </button>
         <Button
-          aria-label="下一个结果"
+          aria-label={t("search.next")}
           variant="ghost"
           size="icon"
           className="h-9 w-9"
@@ -238,7 +242,7 @@ export function SearchResultBar({
           <Icon name="chevron_right" size={20} />
         </Button>
         <Button
-          aria-label="退出搜索"
+          aria-label={t("search.leave")}
           variant="ghost"
           size="icon"
           className="h-9 w-9"
