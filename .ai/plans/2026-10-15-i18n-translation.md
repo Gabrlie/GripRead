@@ -33,7 +33,7 @@ Before them, publishing moved onto the tag's branch and pre-release pages list o
 2. engines, settings, cache, detection, and online chapters;
 3. local books and the reader.
 
-Engines and keys stay in a device-local file. The target language and display sync with the reading preferences. Local books keep a deterministic transform by reading translations from per-book snapshots.
+Engines, keys, the target language, and the display stay in a device-local file. Local books keep a deterministic transform by reading translations from fixed snapshots ([decision](../notes/implemented/2026-10-15-translation-snapshots.md)).
 
 ## Acceptance criteria
 
@@ -55,7 +55,12 @@ Commands and results are recorded here per batch.
 - `pnpm check` passed with 249 frontend, 232 core, and 13 server tests.
 - Each engine kind (OpenAI-compatible, Claude, Gemini, DeepL) translated against an in-process stub.
 - Detection was checked on English, simplified and traditional Chinese, and Japanese samples.
-- Local books follow in C2.
+
+**Translation, local books (C2):**
+- `pnpm check` passed with 250 frontend, 234 core, and 13 server tests.
+- A snapshot rewrites a local book in both displays and keeps the saved position; re-importing the file still finds the book; turning translation off gives the original back.
+- The job translated a TXT end to end against the stub engine and its snapshot was applied by a re-decode.
+- Not yet run: a device test with a real engine.
 
 ## Handoff
 

@@ -182,6 +182,8 @@ const IPC_TYPES: &[&str] = &[
     "BookTranslationRequest",
     "BookLanguageRequest",
     "TestEngineRequest",
+    "TranslateBookRequest",
+    "BookTranslationEvent",
     "UpdateSettings",
     "SaveUpdateSettingsRequest",
     "UpdateKind",
@@ -397,6 +399,8 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<BookTranslationRequest>(&config)?;
     export_all::<BookLanguageRequest>(&config)?;
     export_all::<TestEngineRequest>(&config)?;
+    export_all::<TranslateBookRequest>(&config)?;
+    export_all::<BookTranslationEvent>(&config)?;
     export_all::<UpdateSettings>(&config)?;
     export_all::<SaveUpdateSettingsRequest>(&config)?;
     export_all::<UpdateKind>(&config)?;

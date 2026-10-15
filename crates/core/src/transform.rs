@@ -20,15 +20,37 @@ pub(crate) struct TransformRule {
     pub(crate) regex: bool,
 }
 
+/// A local book read translated: lines found in the snapshot `snapshot`
+/// (a fixed file of translations, see [`crate::translation`]) are replaced
+/// by, or followed by, their translation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct TranslationSpec {
+    pub(crate) snapshot: String,
+    pub(crate) bilingual: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct TextTransform {
     pub(crate) rules: Vec<TransformRule>,
     pub(crate) chinese: ChineseConversion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) translation: Option<TranslationSpec>,
 }
 
 impl TextTransform {
     pub(crate) fn is_identity(&self) -> bool {
-        self.rules.is_empty() && self.chinese == ChineseConversion::Off
+        self.rules.is_empty()
+            && self.chinese == ChineseConversion::Off
+            && self.translation.is_none()
+    }
+
+    /// The same transform without its translation: the lines a translation
+    /// is made from.
+    pub(crate) fn untranslated(&self) -> Self {
+        Self {
+            translation: None,
+            ..self.clone()
+        }
     }
 
     /// The stored form: `None` for the identity transform.
@@ -134,10 +156,19 @@ pub(crate) fn validate_rule(rule: &TransformRule) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Applies the rules to each line (so `^` and `$` anchor to lines), then the
-/// Chinese conversion, which never changes length. Invalid or runaway
-/// expressions leave the line unchanged.
+/// Applies the rules to each line (so `^` and `$` anchor to lines), then a
+/// translation from its snapshot, then the Chinese conversion, which never
+/// changes length. Invalid or runaway expressions leave the line unchanged;
+/// lines the snapshot lacks stay as written.
 pub(crate) fn apply(text: &str, transform: &TextTransform) -> (String, OffsetMap) {
+    let snapshot = transform
+        .translation
+        .as_ref()
+        .and_then(|spec| crate::translation::snapshot(&spec.snapshot));
+    let bilingual = transform
+        .translation
+        .as_ref()
+        .is_some_and(|spec| spec.bilingual);
     let compiled: Vec<CompiledRule<'_>> = transform
         .rules
         .iter()
@@ -167,6 +198,12 @@ pub(crate) fn apply(text: &str, transform: &TextTransform) -> (String, OffsetMap
             if let Some(next) = replace_line(&current, rule) {
                 current = std::borrow::Cow::Owned(next);
             }
+        }
+        if let Some(translated) = snapshot
+            .as_ref()
+            .and_then(|snapshot| crate::translation::translate_from(snapshot, &current, bilingual))
+        {
+            current = std::borrow::Cow::Owned(translated);
         }
         let source_units = units(line);
         if current.as_ref() == line {
@@ -299,6 +336,7 @@ mod tests {
                 rule(r"(\d+)章", "第$1章", true),
             ],
             chinese: ChineseConversion::Off,
+            translation: None,
         };
         let text = "12章 开始\n正文（本章完）\n广告 点击\n结尾";
         let (output, map) = apply(text, &transform);
@@ -320,6 +358,7 @@ mod tests {
         let transform = TextTransform {
             rules: vec![rule("(", "x", true)],
             chinese: ChineseConversion::Off,
+            translation: None,
         };
         assert!(validate_rule(&transform.rules[0]).is_err());
         assert_eq!(apply("原文", &transform).0, "原文");
@@ -331,6 +370,7 @@ mod tests {
         let to_traditional = TextTransform {
             rules: Vec::new(),
             chinese: ChineseConversion::ToTraditional,
+            translation: None,
         };
         let (traditional, map) = apply(simplified, &to_traditional);
         assert_eq!(traditional, "頭髮裏的雲在說話，後來門開了。");
@@ -342,6 +382,7 @@ mod tests {
         let to_simplified = TextTransform {
             rules: Vec::new(),
             chinese: ChineseConversion::ToSimplified,
+            translation: None,
         };
         assert_eq!(
             apply("頭髮裡的雲在說話", &to_simplified).0,

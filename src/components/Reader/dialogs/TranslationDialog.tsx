@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { useRuntime } from "../../../application/runtime";
 import { LANGUAGES, languageName, sameLanguage } from "../../../application/translation";
-import { t } from "../../../i18n";
-import type { BookTranslation, TranslationSettings } from "../../../types/generated";
+import { errorText, t } from "../../../i18n";
+import type {
+  BookTranslation,
+  BookTranslationEvent,
+  TranslationSettings,
+} from "../../../types/generated";
 import { describeError } from "../../Cloud/format";
 import { Button } from "../../ui/button";
 import {
@@ -21,7 +25,8 @@ const selectClass =
 /**
  * 翻译 from the reader's menu: the book's language (detected, or chosen),
  * reading it translated into the language of 设置 › 翻译, and how the
- * translation reads. `onChanged` reopens the book in place.
+ * translation reads. `onChanged` shows the book again in place. A local
+ * book is translated by a background job, shown here while it runs.
  */
 export function TranslationDialog({
   bookId,
@@ -40,6 +45,22 @@ export function TranslationDialog({
   const [settings, setSettings] = useState<TranslationSettings | null>(null);
   const [book, setBook] = useState<BookTranslation | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<BookTranslationEvent | null>(null);
+
+  useEffect(() => {
+    if (online) return;
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void service
+      .onBookProgress((event) => {
+        if (event.bookId === bookId) setProgress(event);
+      })
+      .then((stop) => (active ? (unlisten = stop) : stop()));
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [service, bookId, online]);
 
   useEffect(() => {
     let active = true;
@@ -63,6 +84,9 @@ export function TranslationDialog({
         (value) => {
           setBook(value);
           onChanged();
+          if (online) return;
+          if (value.translateTo) void service.translateBook(bookId, false);
+          else void service.stopBook(bookId);
         },
         (failure: unknown) => toast({ text: describeError(failure), error: true }),
       )
@@ -110,9 +134,7 @@ export function TranslationDialog({
             <span className="text-xs text-secondary">{t("translation.book.detecting")}</span>
           )}
         </label>
-        {!online ? (
-          <p className="text-xs text-secondary">{t("translation.book.local")}</p>
-        ) : !hasEngine ? (
+        {!hasEngine ? (
           <div className="space-y-2">
             <p className="text-xs text-secondary">{t("translation.book.needEngine")}</p>
             <Button size="sm" variant="outline" onClick={onOpenSettings}>
@@ -130,6 +152,13 @@ export function TranslationDialog({
                 onCheckedChange={(on) => change(() => service.setBook(bookId, on ? target : null))}
               />
             </label>
+            {!online && book?.translateTo && (
+              <LocalProgress
+                progress={progress}
+                onRun={(whole) => void service.translateBook(bookId, whole)}
+                onStop={() => void service.stopBook(bookId)}
+              />
+            )}
             {same && !book?.translateTo && (
               <p className="text-[11px] text-secondary">
                 {t("translation.book.same", { target: languageName(target) })}
@@ -164,5 +193,50 @@ export function TranslationDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function LocalProgress({
+  progress,
+  onRun,
+  onStop,
+}: {
+  progress: BookTranslationEvent | null;
+  onRun: (whole: boolean) => void;
+  onStop: () => void;
+}) {
+  const running = Boolean(progress && !progress.finished);
+  return (
+    <div className="space-y-2 rounded-lg bg-surface-container px-3 py-2 text-xs">
+      <p className="text-secondary">{t("translation.book.local")}</p>
+      {progress && progress.total > 0 && (
+        <p role="status">
+          {progress.finished && !progress.error && progress.done === progress.total
+            ? t("translation.book.done")
+            : t("translation.book.progress", { done: progress.done, total: progress.total })}
+        </p>
+      )}
+      {progress?.error && (
+        <p role="alert" className="text-error break-words">
+          {t("translation.book.failed", { error: errorText(progress.error) })}
+        </p>
+      )}
+      <div className="flex gap-2">
+        {running ? (
+          <Button size="sm" variant="outline" onClick={onStop}>
+            {t("translation.book.stop")}
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" variant="outline" onClick={() => onRun(false)}>
+              {t("translation.book.continue")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onRun(true)}>
+              {t("translation.book.whole")}
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

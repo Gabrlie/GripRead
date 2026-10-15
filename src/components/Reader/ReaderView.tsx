@@ -881,6 +881,34 @@ export function ReaderView() {
   );
   const applyTransformsRef = useRef(applyTransforms);
   applyTransformsRef.current = applyTransforms;
+  // A translated local book: each new snapshot of its translations is
+  // applied like a changed rule, and the job resumes when the book opens.
+  const localBook = Boolean(bookId) && !activeBook?.online;
+  const [translating, setTranslating] = useState<number | null>(null);
+  useEffect(() => {
+    if (!bookId || !localBook) return;
+    const service = runtime.services.translation;
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    setTranslating(null);
+    void service
+      .onBookProgress((event) => {
+        if (event.bookId !== bookId) return;
+        setTranslating(
+          event.finished || !event.total ? null : Math.floor((event.done * 100) / event.total),
+        );
+        if (event.applied) applyTransformsRef.current();
+      })
+      .then((stop) => (active ? (unlisten = stop) : stop()));
+    void service.getBook(bookId).then(
+      (book) => active && book.translateTo && void service.translateBook(bookId, false),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [bookId, localBook, runtime]);
   // A book opened after rules or the conversion changed gets them applied.
   const transformsChecked = useRef<string | null>(null);
   useEffect(() => {
@@ -1658,11 +1686,19 @@ export function ReaderView() {
           </DialogContent>
         </Dialog>
       )}
+      {translating !== null && (
+        <span
+          role="status"
+          className="pointer-events-none fixed right-3 top-[calc(env(safe-area-inset-top)+0.5rem)] z-[55] rounded-full bg-surface-container/90 px-2 py-0.5 text-[11px] text-secondary shadow-sm"
+        >
+          {t("translation.book.running", { percent: translating })}
+        </span>
+      )}
       {dialog === "translation" && bookId && (
         <TranslationDialog
           bookId={bookId}
           online={Boolean(activeBook.online)}
-          onChanged={reopen}
+          onChanged={localBook ? applyTransforms : reopen}
           onOpenSettings={() => setDialog("translationSettings")}
           onClose={() => setDialog(null)}
         />

@@ -2413,3 +2413,26 @@ pub struct TestEngineRequest {
     pub engine: TranslationEngine,
     pub target: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateBookRequest {
+    pub book_id: String,
+    /// 翻译整本: the whole book, not only the stretch ahead of the reader.
+    pub whole: bool,
+}
+
+/// Progress of translating a local book (`book-translation`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookTranslationEvent {
+    pub book_id: String,
+    /// Lines translated in this run, of those it set out to translate.
+    pub done: u32,
+    pub total: u32,
+    /// A new snapshot is ready: the text should be generated again.
+    pub applied: bool,
+    pub finished: bool,
+    /// Why the run stopped early; translations made so far are kept.
+    pub error: Option<crate::error::AppError>,
+}

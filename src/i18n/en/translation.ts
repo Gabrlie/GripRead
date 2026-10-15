@@ -51,7 +51,14 @@ export const translation = {
   "translation.book.needEngine": "Add an engine in Settings › Translation first.",
   "translation.book.openSettings": "Translation settings",
   "translation.book.local":
-    "Translating local books comes in a later version; online books can be translated now.",
+    "Translated in the background from where you are; each finished stretch replaces the original.",
+  "translation.book.whole": "Translate whole book",
+  "translation.book.continue": "Continue",
+  "translation.book.stop": "Stop",
+  "translation.book.progress": "{done}/{total} paragraphs translated",
+  "translation.book.running": "Translating {percent}%",
+  "translation.book.done": "This stretch is translated",
+  "translation.book.failed": "Translation stopped: {error}",
   "translation.book.slow":
     "Chapters are translated as they open, which can take a few seconds or more.",
   "translation.lang.zh-CN": "Simplified Chinese",

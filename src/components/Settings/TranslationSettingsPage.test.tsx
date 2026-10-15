@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
+import type { BookTranslationEvent } from "../../types/generated";
 import { translationServiceMocks, translationSettings } from "../../test/translation";
 import { TranslationDialog } from "../Reader/dialogs/TranslationDialog";
 import { TranslationSettingsPage } from "./TranslationSettingsPage";
@@ -90,6 +91,73 @@ describe("翻译", () => {
     await userEvent.click(screen.getByRole("switch", { name: /翻译成简体中文/ }));
     expect(translation.setBook).toHaveBeenCalledWith("b", "zh-CN");
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("translates a local book in the background and shows how far it got", async () => {
+    let listener: ((event: BookTranslationEvent) => void) | undefined;
+    const translation = translationServiceMocks({
+      getSettings: vi.fn(async () =>
+        translationSettings({
+          engines: [
+            {
+              id: "e",
+              name: "DeepL",
+              kind: "deepl",
+              baseUrl: "",
+              model: "",
+              apiKey: "k",
+              prompt: "",
+            },
+          ],
+        }),
+      ),
+      getBook: vi.fn(async (bookId: string) => ({ bookId, language: "en", translateTo: null })),
+      onBookProgress: vi.fn(async (next) => {
+        listener = next;
+        return () => undefined;
+      }),
+    });
+    const onChanged = vi.fn();
+    render(
+      <RuntimeContext.Provider value={runtime(translation)}>
+        <TranslationDialog
+          bookId="b"
+          online={false}
+          onChanged={onChanged}
+          onOpenSettings={() => undefined}
+          onClose={() => undefined}
+        />
+      </RuntimeContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole("switch", { name: /翻译成简体中文/ }));
+    await waitFor(() => expect(translation.translateBook).toHaveBeenCalledWith("b", false));
+    expect(onChanged).toHaveBeenCalled();
+    act(() =>
+      listener?.({
+        bookId: "b",
+        done: 100,
+        total: 300,
+        applied: false,
+        finished: false,
+        error: null,
+      }),
+    );
+    expect(await screen.findByText("已翻译 100/300 段")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "停止" }));
+    expect(translation.stopBook).toHaveBeenCalledWith("b");
+    act(() =>
+      listener?.({
+        bookId: "b",
+        done: 100,
+        total: 300,
+        applied: true,
+        finished: true,
+        error: { code: "io", message: "x", key: "engineCount", params: {} },
+      }),
+    );
+    expect(await screen.findByText("翻译中断：翻译结果的行数不对。")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "翻译整本" }));
+    expect(translation.translateBook).toHaveBeenLastCalledWith("b", true);
   });
 
   it("asks for an engine before translating", async () => {

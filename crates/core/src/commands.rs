@@ -1855,6 +1855,7 @@ pub async fn test_replace_rule(
     let transform = crate::transform::TextTransform {
         rules: vec![rule],
         chinese: crate::models::ChineseConversion::Off,
+        translation: None,
     };
     Ok(crate::transform::apply(&request.sample, &transform).0)
 }

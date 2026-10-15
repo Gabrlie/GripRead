@@ -39,5 +39,8 @@ export function memoryTranslation(): TranslationService {
       books.set(bookId, next);
       return next;
     },
+    translateBook: async () => undefined,
+    stopBook: async () => undefined,
+    onBookProgress: async () => () => undefined,
   };
 }

@@ -95,7 +95,7 @@ pub fn fingerprint(engine: &TranslationEngine) -> String {
     hex::encode(&hash.finalize()[..12])
 }
 
-fn line_hash(line: &str) -> String {
+pub(crate) fn line_hash(line: &str) -> String {
     hex::encode(&Sha256::digest(line.as_bytes())[..16])
 }
 
@@ -557,6 +557,104 @@ pub fn compose(
     out
 }
 
+// --- Snapshots: the fixed translations a local book's text is made from ---
+
+/// Data folders known to this process, where snapshots are kept.
+fn roots() -> &'static Mutex<Vec<std::path::PathBuf>> {
+    static ROOTS: std::sync::OnceLock<Mutex<Vec<std::path::PathBuf>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(Default::default)
+}
+
+type Snapshot = std::sync::Arc<std::collections::HashMap<String, String>>;
+
+/// Snapshots read recently, by digest.
+fn loaded() -> &'static Mutex<Vec<(String, Snapshot)>> {
+    static LOADED: std::sync::OnceLock<Mutex<Vec<(String, Snapshot)>>> = std::sync::OnceLock::new();
+    LOADED.get_or_init(Default::default)
+}
+const LOADED_KEPT: usize = 4;
+
+pub fn register_root(root: &Path) {
+    if let Ok(mut list) = roots().lock() {
+        if !list.iter().any(|known| known == root) {
+            list.push(root.to_path_buf());
+        }
+    }
+}
+
+fn snapshot_path(root: &Path, digest: &str) -> std::path::PathBuf {
+    root.join("translations").join(format!("{digest}.json"))
+}
+
+/// A snapshot by its digest: line hashes to translations. Snapshots never
+/// change once written, so a transform naming one reproduces its text.
+pub fn snapshot(digest: &str) -> Option<Snapshot> {
+    if let Some(found) = loaded()
+        .lock()
+        .ok()?
+        .iter()
+        .find(|(known, _)| known == digest)
+        .map(|(_, snapshot)| snapshot.clone())
+    {
+        return Some(found);
+    }
+    let paths: Vec<_> = roots()
+        .lock()
+        .ok()?
+        .iter()
+        .map(|root| snapshot_path(root, digest))
+        .collect();
+    let snapshot: Snapshot = paths
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .map(std::sync::Arc::new)?;
+    if let Ok(mut list) = loaded().lock() {
+        list.push((digest.to_string(), snapshot.clone()));
+        while list.len() > LOADED_KEPT {
+            list.remove(0);
+        }
+    }
+    Some(snapshot)
+}
+
+/// Writes a snapshot of `lines` (line hash to translation) and returns its
+/// digest, which names it.
+pub fn write_snapshot(
+    root: &Path,
+    lines: &std::collections::BTreeMap<String, String>,
+) -> Result<String, AppError> {
+    let text = serde_json::to_string(lines)?;
+    let digest = hex::encode(&Sha256::digest(text.as_bytes())[..16]);
+    let path = snapshot_path(root, &digest);
+    if !path.exists() {
+        fs::create_dir_all(path.parent().unwrap_or(root))?;
+        let partial = path.with_extension("json.part");
+        fs::write(&partial, text)?;
+        fs::rename(&partial, &path)?;
+    }
+    Ok(digest)
+}
+
+/// A line as read with the snapshot: its translation, or the line followed
+/// by it; `None` when the snapshot lacks the line or it is not translated.
+pub fn translate_from(
+    snapshot: &std::collections::HashMap<String, String>,
+    line: &str,
+    bilingual: bool,
+) -> Option<String> {
+    if !translatable(line) {
+        return None;
+    }
+    let (marks, text) = split_marks(line);
+    let translated = snapshot.get(&line_hash(text))?;
+    Some(if bilingual {
+        format!("{line}\n{translated}")
+    } else {
+        format!("{marks}{translated}")
+    })
+}
+
 /// What a chapter's translation depends on, for caches of shown text.
 pub fn spec(engine: &TranslationEngine, target: &str, display: TranslationDisplay) -> String {
     format!("{target}:{display:?}:{}", fingerprint(engine))
@@ -678,9 +776,201 @@ pub mod commands {
         request: BookTranslationRequest,
     ) -> Result<BookTranslation, AppError> {
         let guard = lock(state)?;
+        let (_, before) = guard.book_translation(&request.book_id)?;
+        // Translations into another language do not carry over.
+        if before.is_some() && request.translate_to.is_some() && before != request.translate_to {
+            guard.set_book_snapshot(&request.book_id, None)?;
+        }
         guard.set_book_translate_to(&request.book_id, request.translate_to.as_deref())?;
         crate::online_reader::forget_shown(&request.book_id);
         current(&guard, &request.book_id)
+    }
+
+    /// Lines translated ahead of the reader when not translating the whole book.
+    const WINDOW: usize = 3_000;
+    /// Lines translated between the first snapshot and the next ones.
+    const FIRST_STEP: usize = 200;
+    const STEP: usize = 1_500;
+
+    fn running() -> &'static Mutex<std::collections::HashSet<String>> {
+        static RUNNING: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+            std::sync::OnceLock::new();
+        RUNNING.get_or_init(Default::default)
+    }
+
+    /// Translates a local book in the background: the stretch from the
+    /// reader's place onward, or 翻译整本 the whole book. Translations go
+    /// into snapshots, first after a short stretch and then every so often;
+    /// each `applied` event asks the reader to generate the text again.
+    /// `cancel_source_operation` with `translate:<book id>` stops it.
+    pub async fn translate_book(
+        state: &Arc<AppState>,
+        request: crate::models::TranslateBookRequest,
+    ) -> Result<(), AppError> {
+        let id = request.book_id.clone();
+        if !running()
+            .lock()
+            .map(|mut set| set.insert(id.clone()))
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let operation = format!("translate:{id}");
+        let cancel = state.operations.register(&operation);
+        let cancels = state.operations.cancels();
+        let storage = state.storage.clone();
+        let root = state.data_root.clone();
+        let events = state.events.clone();
+        tokio::task::spawn_blocking(move || {
+            let emit = |done: usize,
+                        total: usize,
+                        applied: bool,
+                        finished: bool,
+                        error: Option<AppError>| {
+                let event = crate::models::BookTranslationEvent {
+                    book_id: id.clone(),
+                    done: done as u32,
+                    total: total as u32,
+                    applied,
+                    finished,
+                    error,
+                };
+                events.emit(
+                    "book-translation",
+                    serde_json::to_value(event).unwrap_or_default(),
+                );
+            };
+            let result = run_book(&storage, &root, &id, request.whole, &cancel, &emit);
+            if let Err(failure) = result {
+                emit(0, 0, false, true, Some(failure));
+            }
+            crate::source_commands::SourceOperations::finish(&cancels, &operation);
+            if let Ok(mut set) = running().lock() {
+                set.remove(&id);
+            }
+        });
+        Ok(())
+    }
+
+    pub(crate) fn run_book(
+        storage: &Mutex<Storage>,
+        root: &Path,
+        book_id: &str,
+        whole: bool,
+        cancel: &std::sync::atomic::AtomicBool,
+        emit: &dyn Fn(usize, usize, bool, bool, Option<AppError>),
+    ) -> Result<(), AppError> {
+        use std::sync::atomic::Ordering;
+        let (source, language, target, snapshot) = {
+            let guard = storage
+                .lock()
+                .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+            let (language, target) = guard.book_translation(book_id)?;
+            let Some(target) = target else {
+                return Ok(());
+            };
+            (
+                guard.translation_source(book_id)?,
+                language,
+                target,
+                guard.book_snapshot(book_id)?,
+            )
+        };
+        let settings = load_settings(root);
+        let Some(engine) = default_engine(&settings).cloned() else {
+            return Ok(());
+        };
+        let lines = source.lines()?;
+        let mut kept: std::collections::BTreeMap<String, String> = snapshot
+            .as_deref()
+            .and_then(super::snapshot)
+            .map(|known| {
+                known
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // From the reader's place onward (a little before it), or everything.
+        let start = if whole {
+            0
+        } else {
+            ((source.reached * lines.len() as f64) as usize).saturating_sub(20)
+        };
+        let end = if whole {
+            lines.len()
+        } else {
+            (start + WINDOW).min(lines.len())
+        };
+        let wanted: Vec<usize> = (start..end)
+            .filter(|&index| {
+                translatable(&lines[index])
+                    && !kept.contains_key(&line_hash(split_marks(&lines[index]).1))
+            })
+            .collect();
+        let total = wanted.len();
+        if total == 0 {
+            emit(0, 0, false, true, None);
+            return Ok(());
+        }
+        let mut done = 0;
+        let mut since_snapshot = 0;
+        let mut step = FIRST_STEP;
+        let mut failure = None;
+        for chunk in wanted.chunks(100) {
+            if cancel.load(Ordering::Acquire) {
+                break;
+            }
+            let texts: Vec<&str> = chunk.iter().map(|&index| lines[index].as_str()).collect();
+            match translate_lines(storage, root, &engine, language.as_deref(), &target, &texts) {
+                Ok(translated) => {
+                    for (text, translation) in texts.iter().zip(translated) {
+                        if let Some(translation) = translation {
+                            kept.insert(line_hash(split_marks(text).1), translation);
+                        }
+                    }
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+            done += chunk.len();
+            since_snapshot += chunk.len();
+            let snapshot_now = since_snapshot >= step && done < total;
+            if snapshot_now {
+                publish(storage, root, book_id, &kept)?;
+                since_snapshot = 0;
+                step = STEP;
+            }
+            emit(done, total, snapshot_now, false, None);
+        }
+        if done > 0 {
+            publish(storage, root, book_id, &kept)?;
+        }
+        if let Ok(guard) = storage.lock() {
+            let _ = guard.prune_snapshots();
+        }
+        emit(done, total, done > 0, true, failure.clone());
+        match failure {
+            Some(error) if done == 0 => Err(error),
+            _ => Ok(()),
+        }
+    }
+
+    /// Writes the translations so far as the book's snapshot.
+    fn publish(
+        storage: &Mutex<Storage>,
+        root: &Path,
+        book_id: &str,
+        kept: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), AppError> {
+        let digest = write_snapshot(root, kept)?;
+        storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .set_book_snapshot(book_id, Some(&digest))?;
+        Ok(())
     }
 
     pub async fn set_book_language(
@@ -850,6 +1140,68 @@ mod tests {
         )
         .unwrap();
         assert_eq!(again, vec![Some("[He came.]".to_string())]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_local_book_is_translated_into_a_snapshot_and_read_translated() {
+        let base = stub();
+        let root =
+            std::env::temp_dir().join(format!("gripread-translation-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let data = root.join("data");
+        let source = root.join("night.txt");
+        fs::write(
+            &source,
+            "Chapter One\nThe night was quiet.\n\nLater the door opened.",
+        )
+        .unwrap();
+        let mut opened = Storage::open(&data).unwrap();
+        let id = opened
+            .import_txt(
+                &source,
+                "import",
+                &std::sync::atomic::AtomicBool::new(false),
+                |_, _, _| {},
+            )
+            .unwrap()
+            .book
+            .id;
+        opened.set_book_translate_to(&id, Some("zh-CN")).unwrap();
+        let mut settings = load_settings(&data);
+        settings.engines = vec![engine(EngineKind::OpenAi, &base)];
+        save_settings(&data, &settings).unwrap();
+        let storage = Mutex::new(opened);
+        let events = Mutex::new(Vec::new());
+        commands::run_book(
+            &storage,
+            &data,
+            &id,
+            true,
+            &std::sync::atomic::AtomicBool::new(false),
+            &|done, total, applied, finished, error| {
+                events
+                    .lock()
+                    .unwrap()
+                    .push((done, total, applied, finished, error.is_none()))
+            },
+        )
+        .unwrap();
+        // Three lines to translate; the last event applies the snapshot.
+        assert_eq!(
+            events.lock().unwrap().last(),
+            Some(&(3, 3, true, true, true))
+        );
+        let mut storage = storage.into_inner().unwrap();
+        assert!(storage.text_transform_pending(&id).unwrap());
+        storage
+            .set_txt_encoding(&id, crate::models::TxtEncoding::Auto)
+            .unwrap();
+        assert_eq!(
+            storage.read_content_window(&id, None, 200).unwrap().text,
+            "[Chapter One]\n[The night was quiet.]\n\n[Later the door opened.]"
+        );
+        drop(storage);
         fs::remove_dir_all(&root).unwrap();
     }
 

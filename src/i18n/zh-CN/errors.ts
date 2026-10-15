@@ -1,6 +1,11 @@
 /** Errors the interface explains, by what the core reported. */
 export const errors = {
   "error.webdavUnset": "还没有设置 WebDAV 账号。",
+  "error.engineUnreachable": "翻译服务连接失败：{error}",
+  "error.engineHttp": "翻译服务返回 HTTP {status}：{detail}",
+  "error.engineAnswer": "翻译服务的回答无法识别。",
+  "error.engineCount": "翻译结果的行数不对。",
+  "error.noSourceToTranslate": "这本书没有保留原始文件，无法翻译。",
   "error.webdavAuth": "WebDAV 账号或密码不正确。",
   "error.webdavMissing": "WebDAV 地址不存在，请检查服务器地址。",
   "error.webdavFull": "WebDAV 空间不足。",

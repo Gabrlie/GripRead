@@ -1,6 +1,7 @@
 import type {
   BookImage,
   BookTranslation,
+  BookTranslationEvent,
   TranslationEngine,
   TranslationSettings,
   InstallOutcome,
@@ -361,6 +362,13 @@ export interface TranslationService {
   setBook(bookId: string, translateTo: string | null): Promise<BookTranslation>;
   /** `null` detects the language again. */
   setLanguage(bookId: string, language: string | null): Promise<BookTranslation>;
+  /**
+   * Translates a local book in the background, from the reader's place on or
+   * the whole book; progress arrives through `onBookProgress`.
+   */
+  translateBook(bookId: string, whole: boolean): Promise<void>;
+  stopBook(bookId: string): Promise<void>;
+  onBookProgress(listener: (event: BookTranslationEvent) => void): Promise<() => void>;
 }
 
 export interface AppServices {

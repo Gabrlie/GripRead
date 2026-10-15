@@ -19,6 +19,8 @@ import type {
   BookLanguageRequest,
   BookTranslation,
   BookTranslationRequest,
+  BookTranslationEvent,
+  TranslateBookRequest,
   TestEngineRequest,
   TranslationSettings,
 } from "../types/generated";
@@ -848,5 +850,15 @@ export const tauriServices: AppServices = {
       invokeCommand<BookTranslation>("set_book_language", {
         request: { bookId, language } satisfies BookLanguageRequest,
       }),
+    translateBook: (bookId, whole) =>
+      invokeCommand<void>("translate_book", {
+        request: { bookId, whole } satisfies TranslateBookRequest,
+      }),
+    stopBook: async (bookId) => {
+      await invokeCommand<CancelResult>("cancel_source_operation", {
+        request: { operationId: `translate:${bookId}` } satisfies ImportOperationRequest,
+      });
+    },
+    onBookProgress: (listener) => listen<BookTranslationEvent>("book-translation", listener),
   },
 };

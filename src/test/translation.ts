@@ -39,6 +39,9 @@ export function translationServiceMocks(
       books.set(bookId, next);
       return next;
     }),
+    translateBook: vi.fn(async () => undefined),
+    stopBook: vi.fn(async () => undefined),
+    onBookProgress: vi.fn(async () => () => undefined),
     ...overrides,
   };
 }

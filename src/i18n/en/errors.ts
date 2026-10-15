@@ -3,6 +3,11 @@ import type { errors as zh } from "../zh-CN/errors";
 
 export const errors = {
   "error.webdavUnset": "No WebDAV account is set up yet.",
+  "error.engineUnreachable": "Could not reach the translation service: {error}",
+  "error.engineHttp": "The translation service answered HTTP {status}: {detail}",
+  "error.engineAnswer": "The translation service's answer could not be read.",
+  "error.engineCount": "The translation has the wrong number of lines.",
+  "error.noSourceToTranslate": "This book kept no original file, so it cannot be translated.",
   "error.webdavAuth": "The WebDAV account or password is wrong.",
   "error.webdavMissing": "The WebDAV address does not exist; check the server address.",
   "error.webdavFull": "The WebDAV storage is full.",

@@ -53,7 +53,7 @@ pub use portable::{
 };
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
-pub use translation::CachedLine;
+pub use translation::{CachedLine, TranslationSource};
 
 const CURRENT_SCHEMA_VERSION: i64 = 23;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
@@ -352,6 +352,8 @@ impl Storage {
         fs::create_dir_all(root.join("staging"))?;
 
         let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        // Translation snapshots of local books are found under this folder.
+        crate::translation::register_root(&root);
         let lock_path = root.join(".data.lock");
         let data_lock = OpenOptions::new()
             .read(true)
@@ -1121,7 +1123,8 @@ impl Storage {
                 "CREATE TABLE book_translation (
                      book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
                      language TEXT,
-                     translate_to TEXT
+                     translate_to TEXT,
+                     snapshot TEXT
                  );
                  CREATE TABLE translations (
                      source_hash TEXT NOT NULL,
@@ -2867,6 +2870,7 @@ impl Storage {
         Ok(TextTransform {
             rules,
             chinese: self.get_settings()?.style.chinese_conversion,
+            translation: self.translation_spec(book_id)?,
         })
     }
 
@@ -9139,6 +9143,81 @@ mod tests {
         second.delete_recovery_point(&point).unwrap();
         second.delete_recovery_point(&point).unwrap();
         assert!(second.list_recovery_points().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_translation_snapshot_rewrites_a_local_book_and_keeps_its_place() {
+        let root = TestRoot::new();
+        let text = "Chapter One\nThe night was quiet.\nLater the door opened.";
+        let source = write_source(&root.0, "night.txt", text.as_bytes());
+        let app_root = root.0.join("data");
+        let mut storage = Storage::open(&app_root).unwrap();
+        let id = import(&mut storage, &source, "night").book.id.clone();
+        let at = |storage: &Storage, needle: &str| {
+            let context = storage.content_read_context(&id).unwrap();
+            let verified = verify_content_context(&context).unwrap();
+            let text = read_verified_text(&context, &verified).unwrap();
+            let byte = text.find(needle).unwrap();
+            resolve_offset_from_context(
+                &ResolveOffsetRequest {
+                    book_id: id.clone(),
+                    content_version: context.record.asset.content_version.clone(),
+                    resource_id: context.record.asset.id.clone(),
+                    offset: text[..byte].encode_utf16().count() as u64,
+                },
+                &context,
+                &verified,
+            )
+            .unwrap()
+        };
+        storage.save_position(&at(&storage, "Later")).unwrap();
+        // Translated into Chinese, but nothing is translated yet.
+        storage.set_book_translate_to(&id, Some("zh-CN")).unwrap();
+        assert!(!storage.text_transform_pending(&id).unwrap());
+        let translated = [
+            ("Chapter One", "第一章"),
+            ("The night was quiet.", "夜很静。"),
+            ("Later the door opened.", "后来门开了。"),
+        ];
+        let snapshot = crate::translation::write_snapshot(
+            &app_root,
+            &translated
+                .iter()
+                .map(|(line, text)| (crate::translation::line_hash(line), text.to_string()))
+                .collect(),
+        )
+        .unwrap();
+        storage.set_book_snapshot(&id, Some(&snapshot)).unwrap();
+        assert!(storage.text_transform_pending(&id).unwrap());
+        storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
+        let window = storage.read_content_window(&id, None, 200).unwrap();
+        assert_eq!(window.text, "第一章\n夜很静。\n后来门开了。");
+        let saved = storage.saved_position(&id).unwrap().unwrap();
+        assert!(window
+            .text
+            .encode_utf16()
+            .skip(saved.offset as usize)
+            .take(2)
+            .eq("后来".encode_utf16()));
+        // The snapshot reproduces the text: importing the file again finds it.
+        assert_eq!(import(&mut storage, &source, "again").book.id, id);
+        // 双语对照 keeps each line and adds its translation.
+        let mut settings = crate::translation::load_settings(&app_root);
+        settings.display = crate::models::TranslationDisplay::Bilingual;
+        crate::translation::save_settings(&app_root, &settings).unwrap();
+        assert!(storage.text_transform_pending(&id).unwrap());
+        storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
+        assert_eq!(
+            storage.read_content_window(&id, None, 200).unwrap().text,
+            "Chapter One\n第一章\nThe night was quiet.\n夜很静。\nLater the door opened.\n后来门开了。"
+        );
+        // Turning translation off gives the original back.
+        storage.set_book_translate_to(&id, None).unwrap();
+        storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
+        assert_eq!(
+            storage.read_content_window(&id, None, 200).unwrap().text,
+            text
+        );
     }
 
     #[test]
