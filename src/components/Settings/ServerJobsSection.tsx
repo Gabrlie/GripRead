@@ -132,6 +132,23 @@ export function JobsSection() {
             {busy ? "更新中…" : "立即更新"}
           </Button>
         </div>
+        {status?.failures?.length ? (
+          <details className="rounded-lg bg-surface-container-low px-3 py-2 text-xs">
+            <summary className="cursor-pointer text-error">
+              {status.failures.length} 本更新失败
+            </summary>
+            <ul className="mt-2 space-y-1.5">
+              {status.failures.map((failure, index) => (
+                <li key={`${failure.title}-${index}`}>
+                  <span className="block">{failure.title || "未知书籍"}</span>
+                  <span className="block text-[11px] text-secondary break-words">
+                    {failure.error}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
         <p className="text-[11px] text-secondary">
           连接服务器的设备会同步到新章节，也会经由服务器读取章节。
         </p>

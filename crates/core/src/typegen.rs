@@ -173,6 +173,7 @@ const IPC_TYPES: &[&str] = &[
     "BookImageRequest",
     "SyncServerStatus",
     "UpdateChannel",
+    "UpdateSource",
     "UpdateSettings",
     "SaveUpdateSettingsRequest",
     "UpdateKind",
@@ -379,6 +380,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<BookImageRequest>(&config)?;
     export_all::<SyncServerStatus>(&config)?;
     export_all::<UpdateChannel>(&config)?;
+    export_all::<UpdateSource>(&config)?;
     export_all::<UpdateSettings>(&config)?;
     export_all::<SaveUpdateSettingsRequest>(&config)?;
     export_all::<UpdateKind>(&config)?;

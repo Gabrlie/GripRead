@@ -1090,11 +1090,23 @@ impl Storage {
     }
 
     pub fn read_recovery_point(&self, name: &str) -> Result<BackupDocument, AppError> {
+        parse_backup(&fs::read(self.recovery_point(name)?)?)
+    }
+
+    /// Removes a recovery point; one already gone counts as removed.
+    pub fn delete_recovery_point(&self, name: &str) -> Result<(), AppError> {
+        match fs::remove_file(self.recovery_point(name)?) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+
+    fn recovery_point(&self, name: &str) -> Result<PathBuf, AppError> {
         if !name.starts_with("recovery-") || !name.ends_with(".json") || name.contains(['/', '\\'])
         {
             return Err(AppError::invalid_argument("unknown recovery point"));
         }
-        parse_backup(&fs::read(self.root.join("backups").join(name))?)
+        Ok(self.root.join("backups").join(name))
     }
 
     /// Merges `document` into the library. Books on this device take the

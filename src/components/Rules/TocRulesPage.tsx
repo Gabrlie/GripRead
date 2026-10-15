@@ -183,6 +183,7 @@ export function TocRulesPage({
             {importing && (
               <TocRuleImport
                 busy={busy}
+                loader={service}
                 onCancel={() => setImporting(false)}
                 onImport={(json) =>
                   void change(async () => {

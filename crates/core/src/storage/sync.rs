@@ -150,8 +150,18 @@ fn preference_records(
     Ok(vec![
         ("prefs:reading".into(), reading),
         ("prefs:theme".into(), Value::Object(theme)),
-        ("prefs:shelf".into(), serde_json::to_value(shelf)?),
+        ("prefs:shelf".into(), shelf_record(shelf)?),
     ])
+}
+
+/// The shelf's layout and order; the group shown is this device's own, so
+/// switching groups neither syncs nor moves other devices.
+fn shelf_record(shelf: &ShelfPreferences) -> Result<Value, AppError> {
+    let mut value = serde_json::to_value(shelf)?;
+    if let Value::Object(fields) = &mut value {
+        fields.remove("groupId");
+    }
+    Ok(value)
 }
 
 /// Whether a preferences record holds the defaults a new library starts with.
@@ -482,7 +492,18 @@ impl Storage {
     fn apply_preferences(&mut self, which: &str, value: &Value) -> Result<(), AppError> {
         match which {
             "shelf" => {
-                let shelf: ShelfPreferences = serde_json::from_value(value.clone())?;
+                // Layout and order come in; the group shown stays this device's
+                // (older devices still send theirs).
+                let current = self.get_shelf_preferences()?;
+                let mut merged = serde_json::to_value(&current)?;
+                if let (Value::Object(target), Value::Object(fields)) = (&mut merged, value) {
+                    for (key, field) in fields {
+                        if key != "groupId" {
+                            target.insert(key.clone(), field.clone());
+                        }
+                    }
+                }
+                let shelf: ShelfPreferences = serde_json::from_value(merged)?;
                 if self.save_shelf_preferences(&shelf).is_err() {
                     let mut shelf = shelf;
                     shelf.group_id = "all".into();

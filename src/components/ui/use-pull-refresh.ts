@@ -69,9 +69,14 @@ export function usePullRefresh(
         return;
       }
       if (dy <= 0 || window.scrollY > 0) {
-        if (distance) update(0, true);
+        // Back above where it started: an ordinary scroll from here on.
+        start = null;
+        if (distance) update(0, false);
         return;
       }
+      // While pulling, the page itself does not scroll, so moving back up
+      // shrinks the pull instead of scrolling under it.
+      if (event.cancelable) event.preventDefault();
       update(pullDistance(dy - SLOP), true);
     };
     const up = () => {
@@ -82,7 +87,7 @@ export function usePullRefresh(
       if (pulled >= PULL_TRIGGER) refresh.current();
     };
     element.addEventListener("touchstart", down, { passive: true });
-    element.addEventListener("touchmove", move, { passive: true });
+    element.addEventListener("touchmove", move, { passive: false });
     element.addEventListener("touchend", up);
     element.addEventListener("touchcancel", up);
     return () => {

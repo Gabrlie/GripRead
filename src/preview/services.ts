@@ -256,6 +256,8 @@ export function previewServices(): AppServices {
   const unsupported = () => Promise.reject(new Error("预览模式不支持此操作"));
   let updates: UpdateSettings = {
     channel: "stable",
+    source: "auto",
+    accelerator: "https://gh-proxy.com/{url}",
     autoCheck: false,
     lastCheck: null,
     skipped: null,
@@ -389,6 +391,8 @@ export function previewServices(): AppServices {
         (replaceRules = ids.map((id) => replaceRules.find((rule) => rule.id === id)!)),
       importReplaceRules: async () => [],
       exportReplaceRules: async () => JSON.stringify(replaceRules),
+      fetchRuleText: () => unsupported(),
+      pickRuleFile: async () => null,
       testReplaceRule: async (rule, sample) =>
         sample.replace(
           new RegExp(
@@ -479,6 +483,7 @@ export function previewServices(): AppServices {
         backups = backups.filter((backup) => backup.name !== name);
       },
       listRecoveryPoints: async () => [],
+      deleteRecoveryPoint: async () => undefined,
       pickBackupFile: async () => null,
       previewBackup: async () => ({
         createdAt: Date.now() - 86_400_000,

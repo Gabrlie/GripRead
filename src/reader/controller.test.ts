@@ -105,6 +105,12 @@ function serviceFor(
     async exportReplaceRules() {
       return "[]";
     },
+    async fetchRuleText() {
+      return "";
+    },
+    async pickRuleFile() {
+      return null;
+    },
     async testReplaceRule(_rule, sample) {
       return sample;
     },

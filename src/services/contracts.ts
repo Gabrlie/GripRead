@@ -166,6 +166,10 @@ export interface ReaderService {
   orderReplaceRules(ids: string[]): Promise<ReplaceRule[]>;
   importReplaceRules(json: string): Promise<ReplaceRule[]>;
   exportReplaceRules(): Promise<string>;
+  /** 网络导入 for rules (replace or chapter rules): the text at an address. */
+  fetchRuleText(url: string): Promise<string>;
+  /** 本地导入 for rules: a picked JSON or text file's text, `null` when none was picked. */
+  pickRuleFile(): Promise<string | null>;
   testReplaceRule(rule: ReplaceRule, sample: string): Promise<string>;
   cancelSearch(operationId: string): Promise<CancelResult>;
 }
@@ -206,6 +210,7 @@ export interface SyncService {
   listBackups(): Promise<RemoteBackup[]>;
   deleteBackup(name: string): Promise<void>;
   listRecoveryPoints(): Promise<string[]>;
+  deleteRecoveryPoint(name: string): Promise<void>;
   /** Picks a backup file; `null` when cancelled. */
   pickBackupFile(): Promise<BackupSource | null>;
   previewBackup(source: BackupSource): Promise<BackupPreview>;
@@ -334,7 +339,8 @@ export interface UpdateService {
   getSettings(): Promise<UpdateSettings>;
   saveSettings(request: SaveUpdateSettingsRequest): Promise<UpdateSettings>;
   /** The channel's newest release against the running version, and recent notes. */
-  check(current: string): Promise<UpdateCheck>;
+  /** `automatic` (自动检查更新) alone counts toward the daily check. */
+  check(current: string, automatic?: boolean): Promise<UpdateCheck>;
   /** Downloads and installs `version`; progress comes through `onProgress`. */
   install(operationId: string, version: string): Promise<InstallOutcome>;
   cancel(operationId: string): Promise<CancelResult>;

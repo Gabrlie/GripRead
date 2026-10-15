@@ -9,6 +9,19 @@ use std::path::{Path, PathBuf};
 use crate::error::{AppError, ErrorCode};
 use crate::models::PickedFile;
 
+/// The address of a release file by name along an update route.
+pub type ArchiveAddress = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Where the desktop updater fetches a release: its manifest
+/// (`latest.json`), the address of an archive by file name (the manifest
+/// lists GitHub's), and the header and proxy the route needs.
+pub struct DesktopUpdate {
+    pub manifest: String,
+    pub archive: ArchiveAddress,
+    pub authorization: Option<String>,
+    pub proxy: Option<String>,
+}
+
 pub trait Platform: Send + Sync {
     /// The download queue changed (Android shows its progress notification).
     fn downloads_changed(&self, _jobs: &[crate::models::DownloadJob]) {}
@@ -75,7 +88,7 @@ pub trait Platform: Send + Sync {
     /// and relaunches it; `progress` gets the bytes received and the total.
     fn install_desktop_update(
         &self,
-        _manifest: &str,
+        _update: &DesktopUpdate,
         _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<(), AppError> {
         Err(AppError::new(

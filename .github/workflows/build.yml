@@ -272,7 +272,7 @@ jobs:
           apks=src-tauri/gen/android/app/build/outputs/apk
           for pair in universal:universal arm64:arm64-v8a arm:armeabi-v7a x86:x86 x86_64:x86_64; do
             flavor=${pair%%:*}
-            cp "$apks/$flavor/release/app-$flavor-release.apk" "out/gripread-$VERSION-${pair#*:}.apk"
+            cp "$apks/$flavor/release/app-$flavor-release.apk" "out/GripRead-$VERSION-Android-${pair#*:}.apk"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -326,11 +326,12 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           bundle=target/${{ matrix.target }}/release/bundle
-          name=gripread-$VERSION-macos-${{ matrix.arch }}
+          case "${{ matrix.arch }}" in arm64) label=AppleSilicon ;; *) label=Intel ;; esac
+          updater=updater-macos-${{ matrix.arch }}.app.tar.gz
           mkdir -p out
-          cp "$bundle"/dmg/*.dmg "out/$name.dmg"
-          cp "$bundle"/macos/*.app.tar.gz "out/$name.app.tar.gz"
-          cp "$bundle"/macos/*.app.tar.gz.sig "out/$name.app.tar.gz.sig"
+          cp "$bundle"/dmg/*.dmg "out/GripRead-$VERSION-macOS-$label.dmg"
+          cp "$bundle"/macos/*.app.tar.gz "out/$updater"
+          cp "$bundle"/macos/*.app.tar.gz.sig "out/$updater.sig"
       - uses: actions/upload-artifact@v4
         with:
           name: app-macos-${{ matrix.arch }}
@@ -367,12 +368,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
           RELEASE: ${{ needs.version.outputs.release }}
         run: |
           flags=()
           [ "$RELEASE" = true ] || flags=(--prerelease)
-          gh release create "v$VERSION" out/* --verify-tag --title "手不释卷 v$VERSION" \
+          # Installers by platform first, then checksums and updater files.
+          mapfile -t files < <(node scripts/release.mjs order "$VERSION" out | sed 's|^|out/|')
+          gh release create "v$VERSION" "${files[@]}" --verify-tag --title "手不释卷 v$VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
           if [ "$RELEASE" != true ]; then
             # Keep the five newest pre-releases.

@@ -32,8 +32,8 @@ const FILE: &str = "sync-server.json";
 const LOGIN_FILE: &str = "sync-server-login.json";
 const QUIET: Duration = Duration::from_secs(3);
 const LONGEST: Duration = Duration::from_secs(10);
-/// A long poll waits this long on the server for another device's change.
-const WAIT: Duration = Duration::from_secs(25);
+/// While a book is open, progress goes up at least this often.
+const READING_ROUND: Duration = Duration::from_secs(5 * 60);
 const RETRY_FIRST: Duration = Duration::from_secs(30);
 const RETRY_LONGEST: Duration = Duration::from_secs(300);
 /// A chapter the server may first have to fetch from its source.
@@ -92,9 +92,8 @@ struct Inner {
     syncing: AtomicBool,
     /// The book open in the reader, which gets a prompt for others' progress.
     open_book: Mutex<Option<String>>,
-    /// Rounds and the long poll keep their connections between requests.
+    /// Rounds keep their connections between requests.
     agent: ureq::Agent,
-    waiter: ureq::Agent,
     /// Covers known to be on the server this session, so a book record
     /// changed by reading does not send its cover again.
     covers: Mutex<std::collections::HashSet<String>>,
@@ -248,8 +247,11 @@ impl Http<'_> {
 }
 
 impl SyncClient {
-    /// Loads the connection and starts the worker and the long poll; both
-    /// stay idle until a server is connected.
+    /// Loads the connection and starts the worker, which stays idle until a
+    /// server is connected. Rounds run on events, not continuously: changes
+    /// to what sync carries (after they pause), opening and closing a book,
+    /// leaving and returning to the app, a changed network, 立即同步, and
+    /// every few minutes while a book is open.
     pub fn start(root: &Path, storage: Arc<Mutex<Storage>>, events: Arc<dyn Events>) -> Self {
         let config: Config = fs::read_to_string(root.join(FILE))
             .ok()
@@ -267,7 +269,6 @@ impl SyncClient {
                 syncing: AtomicBool::new(false),
                 open_book: Mutex::new(None),
                 agent: agent(Duration::from_secs(120)),
-                waiter: agent(WAIT + Duration::from_secs(15)),
                 covers: Mutex::default(),
                 background: AtomicBool::new(false),
             }),
@@ -276,10 +277,6 @@ impl SyncClient {
         let _ = std::thread::Builder::new()
             .name("sync".into())
             .spawn(move || worker.work());
-        let listener = client.clone();
-        let _ = std::thread::Builder::new()
-            .name("sync-wait".into())
-            .spawn(move || listener.listen());
         if connected {
             client.now();
         }
@@ -355,9 +352,8 @@ impl SyncClient {
     /// system may cut connections, so failures there are retried quietly.
     pub fn set_background(&self, background: bool) {
         self.inner.background.store(background, Ordering::Release);
-        if !background {
-            self.now();
-        }
+        // Leaving sends what reading changed; returning catches up.
+        self.now();
     }
 
     fn background(&self) -> bool {
@@ -584,10 +580,21 @@ impl SyncClient {
         }
     }
 
+    /// The reader opened a book or closed it; closing sends its progress.
     pub fn set_open_book(&self, book_id: Option<String>) {
+        let closed = book_id.is_none();
         if let Ok(mut open) = self.inner.open_book.lock() {
             *open = book_id;
         }
+        if closed {
+            self.changed();
+        }
+        // The worker's reading timer follows the open book.
+        self.inner.signal.notify_all();
+    }
+
+    fn reading(&self) -> bool {
+        self.inner.open_book.lock().is_ok_and(|open| open.is_some())
     }
 
     /// Whether 更新目录 asks the server while connected.
@@ -691,6 +698,7 @@ impl SyncClient {
 
     fn work(&self) {
         let mut failures = 0u32;
+        let mut last_round = Instant::now();
         loop {
             {
                 let Ok(mut wake) = self.inner.wake.lock() else {
@@ -698,17 +706,23 @@ impl SyncClient {
                 };
                 loop {
                     let now = Instant::now();
+                    // After a failure, changes wait for the retry; events
+                    // (`now`) still run a round.
                     let due = wake
                         .changed
-                        .map(|(first, last)| (last + QUIET).min(first + LONGEST));
+                        .map(|(first, last)| (last + QUIET).min(first + LONGEST))
+                        .map(|due| wake.retry_at.map_or(due, |retry| due.max(retry)));
                     let retry = wake.retry_at;
+                    let reading = (self.connected() && !self.background() && self.reading())
+                        .then_some(last_round + READING_ROUND);
                     if wake.now
                         || due.is_some_and(|due| due <= now)
                         || retry.is_some_and(|retry| retry <= now)
+                        || reading.is_some_and(|at| at <= now)
                     {
                         break;
                     }
-                    let next = [due, retry].into_iter().flatten().min();
+                    let next = [due, retry, reading].into_iter().flatten().min();
                     wake = match next {
                         Some(at) => match self.inner.signal.wait_timeout(wake, at - now) {
                             Ok((wake, _)) => wake,
@@ -728,9 +742,13 @@ impl SyncClient {
                 self.inner.syncing.store(true, Ordering::Release);
                 self.announce();
                 let result = self.round();
+                last_round = Instant::now();
                 self.inner.syncing.store(false, Ordering::Release);
                 match result {
                     Ok(()) => {
+                        if failures > 0 {
+                            crate::app_log::info("sync", "服务器同步已恢复");
+                        }
                         failures = 0;
                         self.update(|config| {
                             config.last_sync = Some(now_millis());
@@ -746,7 +764,13 @@ impl SyncClient {
                     }
                     Err(error) => {
                         failures += 1;
-                        crate::app_log::warn("sync", format!("同步失败：{}", error.message));
+                        // One line for an outage, however many rounds it fails.
+                        if failures == 1 {
+                            crate::app_log::warn(
+                                "sync",
+                                format!("同步失败，稍后重试：{}", error.message),
+                            );
+                        }
                         self.update(|config| config.last_error = Some(error.message.clone()));
                         let delay = RETRY_FIRST
                             .saturating_mul(2u32.saturating_pow(failures - 1))
@@ -762,41 +786,6 @@ impl SyncClient {
                 wake.rounds += 1;
             }
             self.inner.signal.notify_all();
-        }
-    }
-
-    /// Waits on the server for another device's change, then syncs.
-    fn listen(&self) {
-        let mut failures = 0u32;
-        loop {
-            let config = self.config();
-            if !config.connected() || self.background() {
-                std::thread::sleep(Duration::from_secs(5));
-                continue;
-            }
-            let http = Http {
-                address: &config.address,
-                token: &config.token,
-                agent: self.inner.waiter.clone(),
-            };
-            let path = format!("/api/sync/wait?since={}", config.cursor);
-            match http.json::<Value>(Method::GET, &path, None) {
-                Ok(reply) => {
-                    failures = 0;
-                    if reply["head"]
-                        .as_i64()
-                        .is_some_and(|head| head > config.cursor)
-                    {
-                        self.now();
-                        // Let the round move the cursor before waiting again.
-                        std::thread::sleep(Duration::from_secs(1));
-                    }
-                }
-                Err(_) => {
-                    failures += 1;
-                    std::thread::sleep(Duration::from_secs((5 * u64::from(failures)).min(60)));
-                }
-            }
         }
     }
 

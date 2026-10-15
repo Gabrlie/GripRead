@@ -712,6 +712,16 @@ impl Storage {
         Ok(added)
     }
 
+    /// An update elsewhere (the server) succeeded without new chapters
+    /// reaching this device: the 更新失败 mark goes.
+    pub fn clear_online_update_error(&self, book_id: &str) -> Result<(), AppError> {
+        self.conn.execute(
+            "UPDATE online_books SET update_error = NULL, last_check_time = ?2 WHERE book_id = ?1",
+            params![book_id, now_millis()],
+        )?;
+        Ok(())
+    }
+
     pub fn record_online_update_error(&self, book_id: &str, error: &str) -> Result<(), AppError> {
         self.conn.execute(
             "UPDATE online_books SET update_error = ?2, last_check_time = ?3 WHERE book_id = ?1",

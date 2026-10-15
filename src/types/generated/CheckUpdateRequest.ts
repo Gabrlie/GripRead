@@ -4,4 +4,9 @@ export type CheckUpdateRequest = {
 /**
  * The running version (package.json, stamped by release builds).
  */
-current: string, };
+current: string, 
+/**
+ * 自动检查更新, which alone counts toward the daily check; checking
+ * on 关于 leaves the next automatic check (and its prompt) due.
+ */
+automatic?: boolean, };

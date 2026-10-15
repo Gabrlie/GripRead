@@ -4,10 +4,12 @@
 //! the Tauri updater on the release's `latest.json`; the web version only
 //! says that a newer server image exists.
 //!
-//! While the device is connected to a GripRead server, release lists and
-//! APKs come through the server, which caches them (`/api/update/…`), so
-//! devices that reach GitHub slowly download from their own server; GitHub
-//! is the fallback when the server fails.
+//! 下载方式 picks the route: 自动 (the connected GripRead server, which
+//! caches releases and files under `/api/update/…`, else GitHub through the
+//! app's proxy, falling back to GitHub when the server fails), 直连 (GitHub
+//! without a proxy), 代理 (GitHub through the app's proxy), 加速器 (the
+//! release list from GitHub, files through an accelerator address), and
+//! 服务器 (the connected server only).
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -25,9 +27,9 @@ use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AvailableUpdate, CheckUpdateRequest, InstallOutcome, InstallUpdateRequest, ReleaseNote,
     SaveUpdateSettingsRequest, UpdateChannel, UpdateCheck, UpdateKind, UpdateProgress,
-    UpdateSettings,
+    UpdateSettings, UpdateSource, DEFAULT_ACCELERATOR,
 };
-use crate::platform::UpdateTarget;
+use crate::platform::{DesktopUpdate, UpdateTarget};
 
 /// Where GripRead is published.
 pub const REPOSITORY: &str = "Gabrlie/GripRead";
@@ -118,6 +120,11 @@ pub fn save_settings(
 ) -> Result<UpdateSettings, AppError> {
     let mut settings = load_settings(root);
     settings.channel = request.channel;
+    settings.source = request.source;
+    settings.accelerator = match request.accelerator.trim() {
+        "" => DEFAULT_ACCELERATOR.to_string(),
+        accelerator => accelerator.to_string(),
+    };
     settings.auto_check = request.auto_check;
     settings.skipped = request.skipped;
     write_settings(root, &settings)?;
@@ -135,18 +142,46 @@ pub fn mark_checked(root: &Path) {
 /// Where releases and files come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Upstream {
-    GitHub,
+    /// GitHub, through the app's proxy or not.
+    GitHub { proxy: bool },
+    /// GitHub's release list directly, files through an accelerator address.
+    Accelerator { template: String },
     /// A GripRead server's mirror, with its address and session token.
-    Server {
-        address: String,
-        token: String,
-    },
+    Server { address: String, token: String },
+}
+
+impl Upstream {
+    /// GitHub as 自动 reaches it, and as the server does for its mirror.
+    pub const GITHUB: Upstream = Upstream::GitHub { proxy: true };
+
+    fn proxied(&self) -> bool {
+        matches!(self, Upstream::GitHub { proxy: true })
+    }
+}
+
+/// A file's address through an accelerator: `{url}`, `{path}`, `{tag}`,
+/// and `{name}` are filled in; a template without them is a prefix.
+pub fn accelerated(template: &str, url: &str, tag: &str, name: &str) -> String {
+    let template = template.trim();
+    let path = url.strip_prefix("https://github.com/").unwrap_or(url);
+    if ["{url}", "{path}", "{tag}", "{name}"]
+        .iter()
+        .any(|marker| template.contains(marker))
+    {
+        template
+            .replace("{url}", url)
+            .replace("{path}", path)
+            .replace("{tag}", tag)
+            .replace("{name}", name)
+    } else {
+        format!("{template}{url}")
+    }
 }
 
 /// An HTTP client that verifies certificates and follows redirects (GitHub
-/// sends downloads elsewhere), through the app's proxy.
-fn agent(root: &Path, timeout: Duration) -> Result<ureq::Agent, AppError> {
-    let proxy = match crate::network::proxy(root) {
+/// sends downloads elsewhere), through the app's proxy when `proxied`.
+fn agent(root: &Path, timeout: Duration, proxied: bool) -> Result<ureq::Agent, AppError> {
+    let proxy = match proxied.then(|| crate::network::proxy(root)).flatten() {
         Some(address) => Some(
             ureq::Proxy::new(&address)
                 .map_err(|error| update_error(format!("代理设置无效：{error}")))?,
@@ -187,12 +222,12 @@ fn get(
 /// The published releases, newest first as the upstream lists them.
 pub fn fetch_releases(root: &Path, upstream: &Upstream) -> Result<Vec<Release>, AppError> {
     let url = match upstream {
-        Upstream::GitHub => {
+        Upstream::GitHub { .. } | Upstream::Accelerator { .. } => {
             format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=30")
         }
         Upstream::Server { address, .. } => format!("{address}/api/update/releases"),
     };
-    let agent = agent(root, Duration::from_secs(30))?;
+    let agent = agent(root, Duration::from_secs(30), upstream.proxied())?;
     let mut response = get(&agent, upstream, &url)?;
     let text = response
         .body_mut()
@@ -237,7 +272,12 @@ fn asset_for<'a>(release: &'a Release, target: &UpdateTarget) -> Option<&'a Rele
     abis.iter()
         .map(String::as_str)
         .chain(["universal"])
-        .find_map(|abi| release.asset(&format!("gripread-{version}-{abi}.apk")))
+        .find_map(|abi| {
+            release
+                .asset(&format!("GripRead-{version}-Android-{abi}.apk"))
+                // Releases up to 0.2.1-beta.1 named them in lower case.
+                .or_else(|| release.asset(&format!("gripread-{version}-{abi}.apk")))
+        })
 }
 
 /// What the channel offers to a copy at `current`: a newer release, if
@@ -311,24 +351,47 @@ pub fn checksum_of(sums: &str, name: &str) -> Option<String> {
 }
 
 fn asset_url(upstream: &Upstream, release: &Release, name: &str) -> Result<String, AppError> {
-    Ok(match upstream {
-        Upstream::GitHub => release
+    let github = || {
+        release
             .asset(name)
             .map(|asset| asset.browser_download_url.clone())
             .filter(|url| !url.is_empty())
-            .ok_or_else(|| update_error(format!("发布中没有 {name}")))?,
+            .ok_or_else(|| update_error(format!("发布中没有 {name}")))
+    };
+    Ok(match upstream {
+        Upstream::GitHub { .. } => github()?,
+        Upstream::Accelerator { template } => {
+            accelerated(template, &github()?, &release.tag_name, name)
+        }
         Upstream::Server { address, .. } => {
             format!("{address}/api/update/asset/{}/{name}", release.tag_name)
         }
     })
 }
 
-/// The desktop updater's manifest for a release.
-pub fn manifest_url(release: &Release) -> String {
-    format!(
-        "https://github.com/{REPOSITORY}/releases/download/{}/latest.json",
-        release.tag_name
-    )
+/// How the desktop updater reaches a release: its `latest.json` and its
+/// archives along the same route as everything else.
+fn desktop_update(root: &Path, upstream: &Upstream, release: &Release) -> DesktopUpdate {
+    let manifest = asset_url(upstream, release, "latest.json").unwrap_or_else(|_| {
+        format!(
+            "https://github.com/{REPOSITORY}/releases/download/{}/latest.json",
+            release.tag_name
+        )
+    });
+    let route = upstream.clone();
+    let release = release.clone();
+    DesktopUpdate {
+        manifest,
+        archive: Box::new(move |name: &str| asset_url(&route, &release, name).ok()),
+        authorization: match upstream {
+            Upstream::Server { token, .. } => Some(format!("Bearer {token}")),
+            _ => None,
+        },
+        proxy: upstream
+            .proxied()
+            .then(|| crate::network::proxy(root))
+            .flatten(),
+    }
 }
 
 /// Downloads `name` of `release` into `folder`, verified against the
@@ -343,7 +406,7 @@ pub fn download(
     cancel: &AtomicBool,
     progress: &dyn Fn(u64, Option<u64>),
 ) -> Result<PathBuf, AppError> {
-    let agent = agent(root, Duration::from_secs(60))?;
+    let agent = agent(root, Duration::from_secs(60), upstream.proxied())?;
     let sums = get(
         &agent,
         upstream,
@@ -400,14 +463,21 @@ pub fn download(
         let _ = fs::remove_file(&partial);
         return Err(error);
     }
+    keep_download(folder, name)?;
+    Ok(target)
+}
+
+/// Gives the verified `<name>.part` its name, then removes older downloads
+/// (and their partial files); the new file is never among them.
+fn keep_download(folder: &Path, name: &str) -> Result<(), AppError> {
+    fs::rename(folder.join(format!("{name}.part")), folder.join(name))?;
     for entry in fs::read_dir(folder)?.flatten() {
         let file = entry.file_name().to_string_lossy().to_string();
-        if file.starts_with("gripread-") && file != name {
+        if file.to_ascii_lowercase().starts_with("gripread-") && file != name {
             let _ = fs::remove_file(entry.path());
         }
     }
-    fs::rename(&partial, &target)?;
-    Ok(target)
+    Ok(())
 }
 
 /// The server's mirror: the release list, cached for ten minutes in
@@ -427,7 +497,7 @@ pub fn cached_releases(root: &Path) -> Result<Vec<Release>, AppError> {
             return Ok(releases);
         }
     }
-    match fetch_releases(root, &Upstream::GitHub) {
+    match fetch_releases(root, &Upstream::GITHUB) {
         Ok(releases) => {
             fs::create_dir_all(&folder)?;
             let partial = path.with_extension("json.part");
@@ -456,8 +526,8 @@ pub fn cached_asset(root: &Path, tag: &str, name: &str) -> Result<PathBuf, AppEr
     let path = folder.join(&asset.name);
     if !path.is_file() {
         fs::create_dir_all(&folder)?;
-        let agent = agent(root, Duration::from_secs(60))?;
-        let mut response = get(&agent, &Upstream::GitHub, &asset.browser_download_url)?;
+        let agent = agent(root, Duration::from_secs(60), true)?;
+        let mut response = get(&agent, &Upstream::GITHUB, &asset.browser_download_url)?;
         let partial = folder.join(format!("{}.part", asset.name));
         let mut file = File::create(&partial)?;
         std::io::copy(
@@ -488,31 +558,60 @@ fn prune_assets(assets: &Path, keep: &str) {
     }
 }
 
-/// The releases for a check or an install: through the connected server,
-/// else GitHub (on the server itself, through its own cache).
+/// The route 下载方式 picks. 自动 uses the connected server, else GitHub;
+/// 服务器 needs a connection.
+fn upstream_for(
+    settings: &UpdateSettings,
+    server: Option<&(String, String)>,
+) -> Result<Upstream, AppError> {
+    let server = || {
+        server.map(|(address, token)| Upstream::Server {
+            address: address.clone(),
+            token: token.clone(),
+        })
+    };
+    Ok(match settings.source {
+        UpdateSource::Auto => server().unwrap_or(Upstream::GITHUB),
+        UpdateSource::Direct => Upstream::GitHub { proxy: false },
+        UpdateSource::Proxy => Upstream::GITHUB,
+        UpdateSource::Accelerator => Upstream::Accelerator {
+            template: match settings.accelerator.trim() {
+                "" => DEFAULT_ACCELERATOR.to_string(),
+                template => template.to_string(),
+            },
+        },
+        UpdateSource::Server => server()
+            .ok_or_else(|| AppError::invalid_argument("下载方式是 服务器，但还没有连接服务器"))?,
+    })
+}
+
+/// The releases for a check or an install along the chosen route. Only
+/// 自动 falls back from the server to GitHub; the server itself reads its
+/// own cache.
 fn releases_for(
     root: &Path,
     server: Option<&(String, String)>,
     target: &UpdateTarget,
 ) -> Result<(Vec<Release>, Upstream), AppError> {
-    if let Some((address, token)) = server {
-        let upstream = Upstream::Server {
-            address: address.clone(),
-            token: token.clone(),
-        };
-        match fetch_releases(root, &upstream) {
-            Ok(releases) => return Ok((releases, upstream)),
-            Err(error) => crate::app_log::warn(
+    let settings = load_settings(root);
+    let upstream = upstream_for(&settings, server)?;
+    if matches!(target, UpdateTarget::None) {
+        return Ok((cached_releases(root)?, Upstream::GITHUB));
+    }
+    match fetch_releases(root, &upstream) {
+        Ok(releases) => Ok((releases, upstream)),
+        Err(error)
+            if settings.source == UpdateSource::Auto
+                && matches!(upstream, Upstream::Server { .. }) =>
+        {
+            crate::app_log::warn(
                 "update",
                 format!("通过服务器检查更新失败，改为直连 GitHub：{}", error.message),
-            ),
+            );
+            Ok((fetch_releases(root, &Upstream::GITHUB)?, Upstream::GITHUB))
         }
+        Err(error) => Err(error),
     }
-    let releases = match target {
-        UpdateTarget::None => cached_releases(root)?,
-        _ => fetch_releases(root, &Upstream::GitHub)?,
-    };
-    Ok((releases, Upstream::GitHub))
 }
 
 pub async fn get_update_settings(state: &Arc<AppState>) -> Result<UpdateSettings, AppError> {
@@ -541,8 +640,10 @@ pub async fn check_update(
             &request.current,
             &target,
         );
-        check.via_server = upstream != Upstream::GitHub;
-        mark_checked(&root);
+        check.via_server = matches!(upstream, Upstream::Server { .. });
+        if request.automatic == Some(true) {
+            mark_checked(&root);
+        }
         Ok(check)
     })
     .await
@@ -585,19 +686,23 @@ pub async fn install_update(
                     .ok_or_else(|| update_error("这个版本没有适合本机的安装包"))?
                     .name
                     .clone();
+                let automatic = load_settings(&root).source == UpdateSource::Auto;
                 let path =
                     match download(&root, &upstream, release, &name, folder, &cancel, &progress) {
                         Err(error)
-                            if upstream != Upstream::GitHub
+                            if automatic
+                                && matches!(upstream, Upstream::Server { .. })
                                 && error.code != ErrorCode::ImportCancelled =>
                         {
                             crate::app_log::warn(
                                 "update",
                                 format!("通过服务器下载失败，改为直连 GitHub：{}", error.message),
                             );
+                            // The bar starts over for the second download.
+                            progress(0, None);
                             download(
                                 &root,
-                                &Upstream::GitHub,
+                                &Upstream::GITHUB,
                                 release,
                                 &name,
                                 folder,
@@ -610,7 +715,10 @@ pub async fn install_update(
                 platform.install_apk(&path)
             }
             UpdateTarget::Desktop { .. } => {
-                platform.install_desktop_update(&manifest_url(release), &progress)?;
+                platform.install_desktop_update(
+                    &desktop_update(&root, &upstream, release),
+                    &progress,
+                )?;
                 Ok(InstallOutcome::Started)
             }
             UpdateTarget::None => Err(update_error("网页版请更新服务器镜像")),
@@ -665,8 +773,8 @@ mod tests {
                 "v0.2.1",
                 false,
                 &[
-                    "gripread-0.2.1-armeabi-v7a.apk",
-                    "gripread-0.2.1-universal.apk",
+                    "GripRead-0.2.1-Android-armeabi-v7a.apk",
+                    "GripRead-0.2.1-Android-universal.apk",
                 ],
             ),
             release("v0.2.0", false, &[]),
@@ -718,11 +826,11 @@ mod tests {
         };
         assert_eq!(
             pick(&["arm64-v8a", "armeabi-v7a"]).as_deref(),
-            Some("gripread-0.2.1-armeabi-v7a.apk")
+            Some("GripRead-0.2.1-Android-armeabi-v7a.apk")
         );
         assert_eq!(
             pick(&["x86_64"]).as_deref(),
-            Some("gripread-0.2.1-universal.apk")
+            Some("GripRead-0.2.1-Android-universal.apk")
         );
         let web = plan(
             &releases(),
@@ -740,6 +848,78 @@ mod tests {
         assert_eq!(check.update.unwrap().notes, "## 更新内容\n\n- v0.2.1");
         assert_eq!(trim_notes("- only\n"), "- only");
         assert_eq!(trim_notes("## 下载\n\nx"), "");
+    }
+
+    #[test]
+    fn a_finished_download_keeps_its_file_and_drops_older_ones() {
+        let folder = std::env::temp_dir().join(format!("gripread-update-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let name = "GripRead-0.2.1-Android-arm64-v8a.apk";
+        fs::write(folder.join(format!("{name}.part")), b"new").unwrap();
+        fs::write(folder.join("gripread-0.2.0-arm64-v8a.apk"), b"old").unwrap();
+        fs::write(
+            folder.join("GripRead-0.2.1-beta.1-Android-x86.apk.part"),
+            b"x",
+        )
+        .unwrap();
+        keep_download(&folder, name).unwrap();
+        let left: Vec<String> = fs::read_dir(&folder)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(left, vec![name.to_string()]);
+        assert_eq!(fs::read(folder.join(name)).unwrap(), b"new");
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn accelerators_fill_in_their_template_or_prefix() {
+        let url = "https://github.com/Gabrlie/GripRead/releases/download/v0.2.1/a.apk";
+        assert_eq!(
+            accelerated("https://gh-proxy.com/{url}", url, "v0.2.1", "a.apk"),
+            format!("https://gh-proxy.com/{url}")
+        );
+        assert_eq!(
+            accelerated("https://ghfast.top/", url, "v0.2.1", "a.apk"),
+            format!("https://ghfast.top/{url}")
+        );
+        assert_eq!(
+            accelerated("https://mirror.example/{path}", url, "v0.2.1", "a.apk"),
+            "https://mirror.example/Gabrlie/GripRead/releases/download/v0.2.1/a.apk"
+        );
+        assert_eq!(
+            accelerated("https://cdn.example/{tag}/{name}", url, "v0.2.1", "a.apk"),
+            "https://cdn.example/v0.2.1/a.apk"
+        );
+    }
+
+    #[test]
+    fn the_route_follows_the_download_setting() {
+        let server = ("https://reader.example".to_string(), "t".to_string());
+        let with = |source| UpdateSettings {
+            source,
+            ..UpdateSettings::default()
+        };
+        assert!(matches!(
+            upstream_for(&with(UpdateSource::Auto), Some(&server)).unwrap(),
+            Upstream::Server { .. }
+        ));
+        assert_eq!(
+            upstream_for(&with(UpdateSource::Auto), None).unwrap(),
+            Upstream::GITHUB
+        );
+        assert_eq!(
+            upstream_for(&with(UpdateSource::Direct), Some(&server)).unwrap(),
+            Upstream::GitHub { proxy: false }
+        );
+        assert_eq!(
+            upstream_for(&with(UpdateSource::Accelerator), None).unwrap(),
+            Upstream::Accelerator {
+                template: DEFAULT_ACCELERATOR.into()
+            }
+        );
+        assert!(upstream_for(&with(UpdateSource::Server), None).is_err());
     }
 
     #[test]
@@ -766,12 +946,18 @@ mod tests {
             &root,
             SaveUpdateSettingsRequest {
                 channel: UpdateChannel::Beta,
+                source: UpdateSource::Accelerator,
+                accelerator: " ".into(),
                 auto_check: false,
                 skipped: Some("0.2.1".into()),
             },
         )
         .unwrap();
         assert_eq!(saved.channel, UpdateChannel::Beta);
+        assert_eq!(
+            saved.accelerator, DEFAULT_ACCELERATOR,
+            "an empty address is the default"
+        );
         assert!(saved.last_check.is_some());
         assert_eq!(load_settings(&root), saved);
         fs::remove_dir_all(root).unwrap();

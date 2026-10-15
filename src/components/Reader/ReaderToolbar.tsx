@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { system } from "../../services/system";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Slider } from "../ui/slider";
@@ -306,6 +307,14 @@ export function ReaderBrightnessBar({
   onChange: (value: number | null) => void;
 }) {
   const following = value === null;
+  // While following, the bar shows the system's brightness as it changes.
+  const [systemValue, setSystemValue] = useState(() => system.getBrightness() ?? 0.5);
+  useEffect(() => {
+    if (!following) return;
+    setSystemValue(system.getBrightness() ?? 0.5);
+    return system.onBrightness(setSystemValue);
+  }, [following]);
+  const shown = value ?? systemValue;
   return (
     <div
       className={`fixed left-2 top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-2 rounded-full bg-surface/95 border border-surface-variant/40 shadow-sm px-1.5 py-2 transition-opacity duration-300 motion-reduce:transition-none ${visible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
@@ -316,7 +325,7 @@ export function ReaderBrightnessBar({
         aria-label="亮度跟随系统"
         aria-pressed={following}
         className={`h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-semibold ${following ? "bg-primary text-on-primary" : "text-secondary hover:bg-surface-container"}`}
-        onClick={() => onChange(following ? 0.5 : null)}
+        onClick={() => onChange(following ? systemValue : null)}
       >
         A
       </button>
@@ -327,7 +336,7 @@ export function ReaderBrightnessBar({
           min={0}
           max={100}
           step={1}
-          value={Math.round((value ?? 0.5) * 100)}
+          value={Math.round(shown * 100)}
           onValueChange={(next) => onChange((Array.isArray(next) ? next[0] : next) / 100)}
         />
       </div>

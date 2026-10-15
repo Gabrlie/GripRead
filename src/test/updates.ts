@@ -3,7 +3,15 @@ import type { UpdateService } from "../services/contracts";
 import type { UpdateCheck, UpdateSettings } from "../types/generated";
 
 export function updateSettings(overrides: Partial<UpdateSettings> = {}): UpdateSettings {
-  return { channel: "stable", autoCheck: true, lastCheck: null, skipped: null, ...overrides };
+  return {
+    channel: "stable",
+    source: "auto",
+    accelerator: "https://gh-proxy.com/{url}",
+    autoCheck: true,
+    lastCheck: null,
+    skipped: null,
+    ...overrides,
+  };
 }
 
 export function noUpdate(current = "0.2.1"): UpdateCheck {

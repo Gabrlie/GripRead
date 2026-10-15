@@ -8,6 +8,13 @@
 //   node scripts/release.mjs updater <version> <dir>
 //       latest.json for the desktop updater, from the .app.tar.gz.sig files
 //       in <dir>.
+//   node scripts/release.mjs order <version> <dir>
+//       The files in <dir> in the order the release lists them: installers
+//       by platform, then checksums and the updater's files.
+//
+// Files are named GripRead-<version>-Android-<abi>.apk and
+// GripRead-<version>-macOS-<AppleSilicon|Intel>.dmg; the macOS updater
+// archives are updater-macos-<arm64|x64>.app.tar.gz with their .sig.
 //
 // GITHUB_REPOSITORY (owner/name) and IMAGE (the server image) come from the
 // workflow environment.
@@ -82,18 +89,36 @@ const ANDROID = [
   ["universal", "不确定时选这个，包含所有架构，体积较大"],
 ];
 const MACOS = [
-  ["arm64", "Apple Silicon（M 系列芯片）"],
-  ["x64", "Intel 芯片"],
+  ["arm64", "AppleSilicon", "Apple Silicon（M 系列芯片）"],
+  ["x64", "Intel", "Intel 芯片"],
 ];
+
+export const apkName = (version, abi) => `GripRead-${version}-Android-${abi}.apk`;
+export const dmgName = (version, arch) =>
+  `GripRead-${version}-macOS-${MACOS.find(([key]) => key === arch)[1]}.dmg`;
+export const updaterArchive = (arch) => `updater-macos-${arch}.app.tar.gz`;
+
+/** The release's files in listing order: installers, then the rest. */
+export function assetOrder(files, version) {
+  const order = [
+    ...ANDROID.map(([abi]) => apkName(version, abi)),
+    ...MACOS.map(([arch]) => dmgName(version, arch)),
+    "SHA256SUMS",
+    "latest.json",
+    ...MACOS.flatMap(([arch]) => [updaterArchive(arch), `${updaterArchive(arch)}.sig`]),
+  ];
+  const rank = (file) => (order.includes(file) ? order.indexOf(file) : order.length);
+  return [...files].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
 
 function downloads(files, version, base) {
   const rows = [];
   for (const [abi, note] of ANDROID) {
-    const file = `gripread-${version}-${abi}.apk`;
+    const file = apkName(version, abi);
     if (files.includes(file)) rows.push(`| Android | [\`${file}\`](${base}/${file}) | ${note} |`);
   }
-  for (const [arch, note] of MACOS) {
-    const file = `gripread-${version}-macos-${arch}.dmg`;
+  for (const [arch, , note] of MACOS) {
+    const file = dmgName(version, arch);
     if (files.includes(file)) rows.push(`| macOS | [\`${file}\`](${base}/${file}) | ${note} |`);
   }
   return rows;
@@ -156,7 +181,7 @@ export function updaterManifest({ version, repo, notes, date, signatures }) {
     ["arm64", "darwin-aarch64"],
     ["x64", "darwin-x86_64"],
   ]) {
-    const archive = `gripread-${version}-macos-${arch}.app.tar.gz`;
+    const archive = updaterArchive(arch);
     const signature = signatures[`${archive}.sig`];
     if (signature)
       platforms[platform] = {
@@ -184,7 +209,7 @@ function commitsSince(previous) {
 
 function main([command, version, dir]) {
   if (!command || !version || !dir)
-    throw new Error("usage: release.mjs notes|updater <version> <dir>");
+    throw new Error("usage: release.mjs notes|updater|order <version> <dir>");
   const repo = process.env.GITHUB_REPOSITORY;
   if (!repo) throw new Error("GITHUB_REPOSITORY is not set");
   const files = readdirSync(dir);
@@ -203,6 +228,8 @@ function main([command, version, dir]) {
         files,
       }),
     );
+  } else if (command === "order") {
+    process.stdout.write(`${assetOrder(files, version).join("\n")}\n`);
   } else if (command === "updater") {
     const signatures = Object.fromEntries(
       files

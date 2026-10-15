@@ -63,7 +63,7 @@ const out = join(root, "target/apk");
 mkdirSync(out, { recursive: true });
 for (const target of targets) {
   const flavor = FLAVORS[target];
-  const apk = join(out, `gripread-${version}-${ABIS[target]}.apk`);
+  const apk = join(out, `GripRead-${version}-Android-${ABIS[target]}.apk`);
   copyFileSync(
     join(
       root,

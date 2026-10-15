@@ -62,6 +62,8 @@ export interface JobStatus {
   updated: number;
   newChapters: number;
   failed: number;
+  /** Which books failed in the last run (servers before 0.2.1-beta.2 leave it out). */
+  failures?: { title: string; error: string }[];
 }
 
 /** A short name for this browser, shown in 设备管理. */

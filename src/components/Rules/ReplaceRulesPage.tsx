@@ -9,6 +9,7 @@ import { toast } from "../ui/toast";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
+import { RuleTextLoader, type RuleTextService } from "./RuleTextLoader";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
@@ -222,6 +223,7 @@ export function ReplaceRulesPage({
       )}
       {importing && (
         <ImportDialog
+          service={service}
           onImport={(json) =>
             service.importReplaceRules(json).then((added) => {
               setImporting(false);
@@ -362,9 +364,11 @@ export function ReplaceRuleEditor({
 }
 
 function ImportDialog({
+  service,
   onImport,
   onClose,
 }: {
+  service: RuleTextService;
   onImport: (json: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -377,8 +381,14 @@ function ImportDialog({
           <DialogTitle className="font-title-editorial text-base">导入替换规则</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-secondary">
-          粘贴从阅读（Legado）或本应用导出的规则 JSON。只替换标题的规则不会导入。
+          从网络地址、文件或剪贴板读取，也可以直接粘贴阅读（Legado）或本应用导出的规则
+          JSON。只替换标题的规则不会导入。
         </p>
+        <RuleTextLoader
+          service={service}
+          historyKey="gripread.replaceRuleImportHistory"
+          onText={setJson}
+        />
         <textarea
           aria-label="规则 JSON"
           rows={8}

@@ -9,6 +9,7 @@
     "core:default",
     "dialog:allow-open",
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "core:window:allow-destroy"
   ]
 }

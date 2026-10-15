@@ -2,11 +2,19 @@ import { useEffect, useState } from "react";
 import { version } from "../../../package.json";
 import { useRuntime } from "../../application/runtime";
 import { openExternal } from "../../services/external";
-import type { UpdateChannel, UpdateCheck, UpdateSettings } from "../../types/generated";
+import { saveRequest } from "../../application/updates";
+import type {
+  UpdateChannel,
+  UpdateCheck,
+  UpdateSettings,
+  UpdateSource,
+} from "../../types/generated";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
+import { Input } from "../ui/input";
+import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
@@ -29,6 +37,15 @@ const FEATURES = [
   "兼容阅读（Legado）书源，追更与离线缓存",
   "替换净化、简繁转换、朗读与自动翻页",
   "WebDAV 备份，自建服务器多端实时同步",
+];
+
+/** 下载方式. */
+const SOURCES: [UpdateSource, string, string][] = [
+  ["auto", "自动", "连接服务器时经由服务器，否则按网络设置访问 GitHub"],
+  ["direct", "直连", "直接访问 GitHub，不使用代理"],
+  ["proxy", "代理", "通过 网络设置 中的代理访问 GitHub"],
+  ["accelerator", "加速器", "安装包经由加速地址下载"],
+  ["server", "服务器", "只经由已连接的 GripRead 服务器"],
 ];
 
 const CHANNELS: [UpdateChannel, string][] = [
@@ -67,16 +84,19 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
     runCheck();
   }, [service]);
 
+  const [accelerator, setAccelerator] = useState("");
+  useEffect(() => setAccelerator(settings?.accelerator ?? ""), [settings?.accelerator]);
   const save = (change: Partial<UpdateSettings>) => {
     if (!settings) return;
     const next = { ...settings, ...change };
     setSettings(next);
-    void service
-      .saveSettings({ channel: next.channel, autoCheck: next.autoCheck, skipped: next.skipped })
-      .then((saved) => {
+    void service.saveSettings(saveRequest(next)).then(
+      (saved) => {
         setSettings(saved);
-        if (change.channel) runCheck();
-      });
+        if (change.channel || change.source || change.accelerator !== undefined) runCheck();
+      },
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
+    );
   };
 
   const update = check?.update ?? null;
@@ -108,7 +128,11 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
             key={label}
             type="button"
             className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm"
-            onClick={() => void openExternal(url).catch(() => undefined)}
+            onClick={() =>
+              void openExternal(url).catch((failure: unknown) =>
+                toast({ text: `无法打开链接：${describeError(failure)}`, error: true }),
+              )
+            }
           >
             <Icon name={icon} size={18} className="text-secondary shrink-0" />
             <span className="flex-1">
@@ -190,10 +214,71 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                 ))}
               </div>
             </div>
+            <div className="px-4 py-3 space-y-2 text-sm">
+              <span>
+                下载方式
+                <span className="block text-[11px] text-secondary">
+                  {SOURCES.find(([source]) => source === settings.source)?.[2]}
+                </span>
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="下载方式"
+                className="grid grid-cols-5 gap-1 bg-surface-container p-1 rounded-lg"
+              >
+                {SOURCES.map(([source, label]) => (
+                  <button
+                    key={source}
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.source === source}
+                    onClick={() => settings.source !== source && save({ source })}
+                    className={`h-7 rounded-md text-xs ${settings.source === source ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {settings.source === "accelerator" && (
+                <form
+                  className="space-y-1"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    save({ accelerator: accelerator.trim() });
+                  }}
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      aria-label="加速地址"
+                      inputMode="url"
+                      autoCapitalize="none"
+                      value={accelerator}
+                      placeholder="https://gh-proxy.com/{url}"
+                      onChange={(change) => setAccelerator(change.target.value)}
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      variant="outline"
+                      disabled={accelerator.trim() === settings.accelerator}
+                    >
+                      保存
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-secondary">
+                    可用 {"{url}"}（GitHub 下载地址）、{"{path}"}（去掉 https://github.com/
+                    的部分）、{"{tag}"}（版本标签）、{"{name}"}（文件名）；不含这些时作为前缀加在
+                    GitHub 地址前。
+                  </p>
+                </form>
+              )}
+            </div>
             <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
               <span>
                 自动检查更新
-                <span className="block text-[11px] text-secondary">每天打开应用时检查一次</span>
+                <span className="block text-[11px] text-secondary">
+                  每天检查一次，发现新版本时提示
+                </span>
               </span>
               <Switch
                 aria-label="自动检查更新"

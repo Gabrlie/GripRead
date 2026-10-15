@@ -48,6 +48,7 @@ export function syncServiceMocks(): SyncService {
     listBackups: vi.fn(unconfigured),
     deleteBackup: vi.fn(unconfigured),
     listRecoveryPoints: vi.fn(async () => []),
+    deleteRecoveryPoint: vi.fn(async () => undefined),
     pickBackupFile: vi.fn(async () => null),
     previewBackup: vi.fn(unconfigured),
     restoreBackup: vi.fn(unconfigured),

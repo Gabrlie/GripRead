@@ -9104,6 +9104,10 @@ mod tests {
         assert_eq!(second.list_recovery_points().unwrap(), vec![point.clone()]);
         assert_eq!(second.read_recovery_point(&point).unwrap().books.len(), 2);
         assert!(second.read_recovery_point("../x.json").is_err());
+        assert!(second.delete_recovery_point("../x.json").is_err());
+        second.delete_recovery_point(&point).unwrap();
+        second.delete_recovery_point(&point).unwrap();
+        assert!(second.list_recovery_points().unwrap().is_empty());
     }
 
     #[test]
@@ -9718,6 +9722,32 @@ mod tests {
         let mut tablet_at = 0;
         sync_round(&mut server, &mut tablet, "tablet", &mut tablet_at);
         assert_eq!(tablet.get_settings().unwrap().style.indent, 3);
+    }
+
+    #[test]
+    fn the_shown_shelf_group_stays_on_its_device() {
+        let root = TestRoot::new();
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut tablet = Storage::open(&root.0.join("tablet")).unwrap();
+        let (mut phone_at, mut tablet_at) = (0, 0);
+        let mut shelf = phone.get_shelf_preferences().unwrap();
+        shelf.layout = crate::models::ShelfLayout::Grid;
+        shelf.group_id = "finished".into();
+        phone.save_shelf_preferences(&shelf).unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut tablet, "tablet", &mut tablet_at);
+        let on_tablet = tablet.get_shelf_preferences().unwrap();
+        assert_eq!(on_tablet.layout, crate::models::ShelfLayout::Grid);
+        assert_eq!(on_tablet.group_id, "all", "the group shown is not synced");
+        // Switching groups alone has nothing to send.
+        shelf.group_id = "reading".into();
+        phone.save_shelf_preferences(&shelf).unwrap();
+        assert!(phone
+            .sync_pending()
+            .unwrap()
+            .iter()
+            .all(|change| change.key != "prefs:shelf"));
     }
 
     #[test]

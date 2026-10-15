@@ -930,6 +930,25 @@ fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<St
         let total = keyed.len() as u32;
         let mut updated = 0;
         let mut missing = Vec::new();
+        // The server's outcome marks the book here too: 更新失败 with its
+        // reason, or cleared once an update succeeds.
+        let outcomes: Vec<(String, Option<String>)> = keyed
+            .iter()
+            .filter_map(|(key, book_id)| {
+                let book = reply.books.iter().find(|book| &book.key == key)?;
+                Some((book_id.clone(), book.error.clone()))
+            })
+            .collect();
+        let _ = with_storage(&state, move |storage| {
+            for (book_id, error) in &outcomes {
+                match error {
+                    Some(error) => storage.record_online_update_error(book_id, error)?,
+                    None => storage.clear_online_update_error(book_id)?,
+                }
+            }
+            Ok(())
+        })
+        .await;
         for (key, book_id) in keyed {
             let Some(book) = reply.books.iter().find(|book| book.key == key) else {
                 missing.push(book_id);

@@ -411,6 +411,17 @@ export const tauriServices: AppServices = {
     importReplaceRules: (json) =>
       invokeCommand<ReplaceRule[]>("import_replace_rules", { request: { json } }),
     exportReplaceRules: () => invokeCommand<string>("export_replace_rules"),
+    fetchRuleText: (url) =>
+      invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),
+    pickRuleFile: async () => {
+      const selected = await pickFiles({
+        filters: [{ name: "规则", extensions: ["json", "txt"] }],
+      });
+      if (selected === null || Array.isArray(selected)) return null;
+      return invokeCommand<string>("read_source_file", {
+        request: { path: selected } satisfies PathRequest,
+      });
+    },
     testReplaceRule: (rule, sample) =>
       invokeCommand<string>("test_replace_rule", { request: { rule, sample } }),
     updateBookmarkNote: (bookmarkId, note) =>
@@ -506,6 +517,8 @@ export const tauriServices: AppServices = {
     deleteBackup: (name) =>
       invokeCommand<void>("delete_remote_backup", { request: { name } satisfies NameRequest }),
     listRecoveryPoints: () => invokeCommand<string[]>("list_recovery_points"),
+    deleteRecoveryPoint: (name) =>
+      invokeCommand<void>("delete_recovery_point", { request: { name } satisfies NameRequest }),
     pickBackupFile: async () => {
       const selected = await pickFiles({
         filters: [{ name: "GripRead 备份", extensions: ["json"] }],
@@ -789,9 +802,9 @@ export const tauriServices: AppServices = {
       invokeCommand<UpdateSettings>("save_update_settings", {
         request: request satisfies SaveUpdateSettingsRequest,
       }),
-    check: (current) =>
+    check: (current, automatic) =>
       invokeCommand<UpdateCheck>("check_update", {
-        request: { current } satisfies CheckUpdateRequest,
+        request: { current, automatic } satisfies CheckUpdateRequest,
       }),
     install: (operationId, version) =>
       invokeCommand<InstallOutcome>("install_update", {

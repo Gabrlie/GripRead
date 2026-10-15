@@ -46,7 +46,7 @@ describe("关于", () => {
     page(updates);
     expect(await screen.findByText("发现新版本 9.9.9")).toBeTruthy();
     expect(updates.check).toHaveBeenCalledWith(APP_VERSION);
-    expect(screen.getByText(/经由服务器/)).toBeTruthy();
+    expect(screen.getByText(/发布 · 经由服务器/)).toBeTruthy();
     expect(screen.getAllByText(/新功能/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/abc1234\]/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /立即更新（2.0 MB）/ }));
@@ -66,18 +66,26 @@ describe("关于", () => {
     await userEvent.click(await screen.findByRole("button", { name: /立即更新/ }));
     expect(await screen.findByText(/安装未知应用/)).toBeTruthy();
     await userEvent.click(screen.getByRole("radio", { name: "测试版" }));
-    expect(updates.saveSettings).toHaveBeenCalledWith({
-      channel: "beta",
-      autoCheck: true,
-      skipped: null,
-    });
+    expect(updates.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "beta", autoCheck: true, skipped: null }),
+    );
     await vi.waitFor(() => expect(updates.check).toHaveBeenCalledTimes(2));
     await userEvent.click(screen.getByRole("switch", { name: /自动检查更新/ }));
-    expect(updates.saveSettings).toHaveBeenLastCalledWith({
-      channel: "beta",
-      autoCheck: false,
-      skipped: null,
-    });
+    expect(updates.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ channel: "beta", autoCheck: false }),
+    );
+    // 下载方式: an accelerator with its own address.
+    await userEvent.click(screen.getByRole("radio", { name: "加速器" }));
+    expect(updates.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: "accelerator" }),
+    );
+    const address = await screen.findByLabelText("加速地址");
+    await userEvent.clear(address);
+    await userEvent.type(address, "https://ghfast.top/");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(updates.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: "accelerator", accelerator: "https://ghfast.top/" }),
+    );
   });
 
   it("tells the web version to pull the server image", async () => {

@@ -122,6 +122,8 @@ function setup() {
     orderReplaceRules: vi.fn(async () => []),
     importReplaceRules: vi.fn(async () => []),
     exportReplaceRules: vi.fn(async () => "[]"),
+    fetchRuleText: vi.fn(async () => ""),
+    pickRuleFile: vi.fn(async () => null),
     testReplaceRule: vi.fn(async (_rule, sample: string) => sample),
     search: vi.fn(),
     cancelSearch: vi.fn(),

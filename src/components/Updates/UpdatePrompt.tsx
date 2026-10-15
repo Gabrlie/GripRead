@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { autoCheckDue, promptFor } from "../../application/updates";
+import { autoCheckDue, promptFor, saveRequest } from "../../application/updates";
 import { useRuntime } from "../../application/runtime";
 import { native } from "../../services/transport";
 import type { AvailableUpdate, UpdateKind, UpdateSettings } from "../../types/generated";
@@ -11,8 +11,9 @@ import { ReleaseNotes } from "./ReleaseNotes";
 import { useUpdateInstall } from "./use-update-install";
 
 /**
- * 自动检查更新: once a day at start, the app checks its channel and offers
- * a newer version: 立即更新, 跳过此版本, or 稍后 (asked again tomorrow).
+ * 自动检查更新: once a day, at start or on returning to the app, it checks
+ * its channel and offers a newer version: 立即更新, 跳过此版本, or 稍后
+ * (asked again tomorrow). Checks on 关于 do not count toward the day.
  */
 export function UpdatePrompt() {
   const service = useRuntime().services.updates;
@@ -26,15 +27,28 @@ export function UpdatePrompt() {
   useEffect(() => {
     if (!native) return;
     let active = true;
-    void (async () => {
-      const settings = await service.getSettings();
-      if (!autoCheckDue(settings)) return;
-      const check = await service.check(APP_VERSION);
-      const update = promptFor(check, settings);
-      if (active && update) setOffer({ update, kind: check.kind, settings });
-    })().catch(() => undefined);
+    let running = false;
+    const run = () => {
+      if (running) return;
+      running = true;
+      void (async () => {
+        const settings = await service.getSettings();
+        if (!autoCheckDue(settings)) return;
+        const check = await service.check(APP_VERSION, true);
+        const update = promptFor(check, settings);
+        if (active && update) setOffer({ update, kind: check.kind, settings });
+      })()
+        .catch(() => undefined)
+        .finally(() => {
+          running = false;
+        });
+    };
+    run();
+    const returned = () => document.visibilityState === "visible" && run();
+    document.addEventListener("visibilitychange", returned);
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", returned);
     };
   }, [service]);
 
@@ -71,11 +85,7 @@ export function UpdatePrompt() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                void service.saveSettings({
-                  channel: settings.channel,
-                  autoCheck: settings.autoCheck,
-                  skipped: update.version,
-                });
+                void service.saveSettings(saveRequest(settings, { skipped: update.version }));
                 close();
               }}
             >

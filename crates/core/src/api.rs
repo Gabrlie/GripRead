@@ -50,6 +50,28 @@ fn bytes(result: Result<Vec<u8>, AppError>) -> Result<Reply, AppError> {
     result.map(Reply::Bytes)
 }
 
+/// Whether a command starts a device's sync round once changes pause: one
+/// that [`mutates`], except reading itself. Positions, reading time, and
+/// opening and closing books go up on closing a book, leaving the app, and
+/// every few minutes while reading ([`crate::sync_client`]), not after
+/// every page; chapter downloads carry nothing sync does.
+pub fn starts_sync(name: &str) -> bool {
+    const READING: &[&str] = &[
+        "save_reader_locator",
+        "add_reading_time",
+        "set_sync_open_book",
+        "acknowledge_book_progress",
+        "upload_book_progress",
+        "sync_now",
+        "download_enqueue",
+        "download_pause",
+        "download_resume",
+        "download_cancel",
+        "download_clear_finished",
+    ];
+    mutates(name) && !READING.contains(&name)
+}
+
 /// Whether a command can change what sync carries. Reads, searches, source
 /// fetches, checks, exports, and the log cannot; anything else may.
 pub fn mutates(name: &str) -> bool {
@@ -184,6 +206,7 @@ pub const COMMANDS: &[&str] = &[
     "list_online_chapters",
     "list_reader_fonts",
     "list_recovery_points",
+    "delete_recovery_point",
     "list_remote_backups",
     "list_removed_books",
     "list_replace_rules",
@@ -248,11 +271,11 @@ pub const COMMANDS: &[&str] = &[
     "upload_cloud_books",
 ];
 
-/// Runs the command `name` with the page's arguments; one that may change
-/// what sync carries starts a sync once changes pause.
+/// Runs the command `name` with the page's arguments; one that changes
+/// what sync carries starts a sync once changes pause ([`starts_sync`]).
 pub async fn dispatch(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, AppError> {
     let reply = run(state, name, args).await;
-    if reply.is_ok() && mutates(name) {
+    if reply.is_ok() && starts_sync(name) {
         state.sync.changed();
     }
     reply
@@ -461,6 +484,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "list_reader_fonts" => reply(crate::commands::list_reader_fonts(state).await),
         "list_recovery_points" => reply(crate::commands::list_recovery_points(state).await),
+        "delete_recovery_point" => {
+            reply(crate::commands::delete_recovery_point(state, request(args)?).await)
+        }
         "list_remote_backups" => reply(crate::commands::list_remote_backups(state).await),
         "list_removed_books" => reply(crate::commands::list_removed_books(state).await),
         "list_replace_rules" => reply(crate::commands::list_replace_rules(state).await),
@@ -664,6 +690,11 @@ mod tests {
         ] {
             assert!(mutates(name), "{name}");
         }
+        // Turning pages and counting reading time wait for the next event.
+        assert!(!starts_sync("save_reader_locator"));
+        assert!(!starts_sync("add_reading_time"));
+        assert!(starts_sync("save_settings"));
+        assert!(!starts_sync("list_books"));
     }
 
     /// Every command the page calls is one the core answers.

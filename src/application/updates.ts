@@ -2,11 +2,21 @@ import type { UpdateService } from "../services/contracts";
 import type {
   AvailableUpdate,
   InstallOutcome,
+  SaveUpdateSettingsRequest,
   UpdateCheck,
   UpdateSettings,
 } from "../types/generated";
 
-/** 自动检查更新 runs at most this often, when the app starts. */
+/** The saved settings with `change`, as a save request. */
+export function saveRequest(
+  settings: UpdateSettings,
+  change: Partial<SaveUpdateSettingsRequest> = {},
+): SaveUpdateSettingsRequest {
+  const { channel, source, accelerator, autoCheck, skipped } = { ...settings, ...change };
+  return { channel, source, accelerator, autoCheck, skipped };
+}
+
+/** 自动检查更新 runs at most this often: at start, and on returning to the app. */
 export const AUTO_CHECK_EVERY_MS = 24 * 3600 * 1000;
 
 export function autoCheckDue(settings: UpdateSettings, now = Date.now()): boolean {

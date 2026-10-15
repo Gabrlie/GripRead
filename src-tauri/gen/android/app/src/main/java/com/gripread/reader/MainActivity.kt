@@ -3,8 +3,13 @@ package com.gripread.reader
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.content.res.Resources
+import android.database.ContentObserver
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.ActionMode
@@ -29,6 +34,7 @@ class MainActivity : TauriActivity() {
   private var tts: TextToSpeech? = null
   @Volatile private var ttsReady = false
   @Volatile private var ttsStatus = "pending"
+  private var brightnessObserver: ContentObserver? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -62,6 +68,28 @@ class MainActivity : TauriActivity() {
       ViewCompat.onApplyWindowInsets(view, windowInsets)
     }
     ViewCompat.requestApplyInsets(webView)
+    // The system brightness (by hand or automatic) reaches the reader's bar.
+    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+      override fun onChange(selfChange: Boolean) {
+        this@MainActivity.webView?.evaluateJavascript(
+          "window.dispatchEvent(new CustomEvent('gripread-brightness', { detail: ${systemBrightness()} }))",
+          null,
+        )
+      }
+    }
+    contentResolver.registerContentObserver(
+      Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false, observer,
+    )
+    brightnessObserver = observer
+  }
+
+  /** The system brightness setting from 0 to 1 (its maximum differs between devices). */
+  private fun systemBrightness(): Float {
+    val system = Resources.getSystem()
+    val id = system.getIdentifier("config_screenBrightnessSettingMaximum", "integer", "android")
+    val max = (if (id != 0) system.getInteger(id) else 255).coerceAtLeast(1)
+    val value = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, max / 2)
+    return (value.toFloat() / max).coerceIn(0f, 1f)
   }
 
   /** While enabled by the reader, volume keys turn pages instead of changing volume. */
@@ -91,6 +119,8 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    brightnessObserver?.let { contentResolver.unregisterContentObserver(it) }
+    brightnessObserver = null
     tts?.shutdown()
     tts = null
     super.onDestroy()
@@ -252,6 +282,13 @@ class MainActivity : TauriActivity() {
           if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else value.coerceIn(0.01f, 1f)
         window.attributes = attributes
       }
+    }
+
+    /** The brightness shown now: the reader's own, else the system's (0 to 1). */
+    @JavascriptInterface
+    fun getBrightness(): Float {
+      val own = window.attributes.screenBrightness
+      return if (own >= 0f) own else systemBrightness()
     }
 
     /** `auto`, `portrait`, or `landscape` (sensor-based within each). */

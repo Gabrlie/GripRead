@@ -501,6 +501,22 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                     >
                       恢复
                     </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`删除恢复点 ${formatTime(time)}`}
+                      className="h-8 w-8 text-secondary"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        run("delete", async () => {
+                          await sync.deleteRecoveryPoint(point);
+                          setPoints(await sync.listRecoveryPoints());
+                          return "已删除";
+                        })
+                      }
+                    >
+                      <Icon name="delete" size={15} />
+                    </Button>
                   </div>
                 );
               })}

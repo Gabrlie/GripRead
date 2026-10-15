@@ -483,6 +483,12 @@ html.shelf-hide-scrollbar body,
   scrollbar-width: none !important;
 }
 
+/* The shelf's own pull-down replaces the browser's overscroll. */
+html.shelf-hide-scrollbar,
+html.shelf-hide-scrollbar body {
+  overscroll-behavior-y: none;
+}
+
 html.shelf-hide-scrollbar::-webkit-scrollbar,
 html.shelf-hide-scrollbar body::-webkit-scrollbar,
 .shelf-hide-scrollbar::-webkit-scrollbar {

@@ -1693,6 +1693,7 @@ export function ReaderView() {
       )}
       {panel === "rules" && (
         <TocRuleDialog
+          loader={runtime.services.reader}
           rules={tools.rules}
           settings={tools.tocSettings}
           detectedName={tools.tocRuleName}

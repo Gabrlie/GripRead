@@ -33,7 +33,7 @@ import { DownloadManagerPage } from "./DownloadManagerPage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
-import { useSwipePages } from "../ui/use-swipe-pages";
+import { SLIDE_MS, useSwipePages } from "../ui/use-swipe-pages";
 
 /** 自动更新 runs again on returning to the app after this long. */
 const AUTO_UPDATE_GAP = 30 * 60_000;
@@ -137,8 +137,21 @@ export function BookshelfView() {
   const [updating, setUpdating] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const updatingRef = useRef(false);
-  /** `quiet` (自动更新) speaks up only about new chapters or failures. */
-  const handleUpdateOnline = (quiet = false) => {
+  /**
+   * `quiet` (自动更新) speaks up only about new chapters; failures show on
+   * the books. While the server updates books on its schedule, 自动更新 only
+   * syncs to collect what it found instead of asking it to fetch them all.
+   */
+  const handleUpdateOnline = async (quiet = false) => {
+    if (updatingRef.current) return;
+    const sync = runtime.services.sync;
+    if (quiet && sync?.getServer) {
+      const server = await sync.getServer().catch(() => null);
+      if (server?.connected && server.updateViaServer) {
+        await sync.syncServerNow().catch(() => undefined);
+        return;
+      }
+    }
     if (updatingRef.current) return;
     updatingRef.current = true;
     setUpdating("正在更新目录…");
@@ -148,7 +161,7 @@ export function BookshelfView() {
       .then((outcomes) => {
         const added = outcomes.reduce((sum, item) => sum + item.newChapters, 0);
         const failed = outcomes.filter((item) => item.error).length;
-        if (!quiet || added > 0 || failed > 0)
+        if (!quiet || added > 0)
           toast(
             outcomes.length === 0
               ? "书架上没有可以更新的网络书籍"
@@ -171,7 +184,7 @@ export function BookshelfView() {
   autoUpdateRef.current = () => {
     if (!autoUpdate || !hasOnline) return;
     lastAutoUpdate = Date.now();
-    handleUpdateOnline(true);
+    void handleUpdateOnline(true);
   };
   useEffect(() => {
     if (lastAutoUpdate === 0) autoUpdateRef.current();
@@ -185,20 +198,17 @@ export function BookshelfView() {
     return () => document.removeEventListener("visibilitychange", returned);
   }, []);
   const content = useRef<HTMLDivElement>(null);
-  const pull = usePullRefresh(content, () => handleUpdateOnline());
+  const pull = usePullRefresh(content, () => void handleUpdateOnline());
   // Swiping sideways moves between groups in the tab order.
   const groupIndex = Math.max(
     0,
     groups.findIndex((group) => group.id === selectedGroupId),
   );
-  const [arrival, setArrival] = useState<1 | -1 | null>(null);
   const swipe = useSwipePages(
     content,
     (step) => {
       const next = groups[groupIndex + step];
-      if (!next) return;
-      setArrival(step);
-      setShelf({ groupId: next.id });
+      if (next) setShelf({ groupId: next.id });
     },
     (step) => Boolean(groups[groupIndex + step]),
   );
@@ -320,12 +330,15 @@ export function BookshelfView() {
   };
 
   return (
-    <div className="flex-1 flex flex-col relative w-full bg-surface shelf-hide-scrollbar">
+    <div className="flex-1 flex flex-col relative w-full bg-surface shelf-hide-scrollbar overflow-x-clip">
       {/*
         统一连续毛玻璃顶栏 (Unified Continuous Glass Header)
         顶栏与分类横滑栏统一置于原生类苹果毛玻璃容器中，精准匹配 macOS 原生窗口标题栏透光率与色调
       */}
-      <div className="fixed top-0 left-0 right-0 z-30 md:left-64 glass-header pt-safe">
+      <div
+        data-no-swipe
+        className="fixed top-0 left-0 right-0 z-30 md:left-64 glass-header pt-safe"
+      >
         {/* Row 1: Header (h-14) */}
         <Header
           title="书架"
@@ -348,7 +361,7 @@ export function BookshelfView() {
                     icon: "refresh",
                     label: "更新目录",
                     detail: updating ?? undefined,
-                    onSelect: () => handleUpdateOnline(),
+                    onSelect: () => void handleUpdateOnline(),
                   },
                   { icon: "download", label: "下载管理", onSelect: () => setOffline(true) },
                 ]
@@ -375,8 +388,8 @@ export function BookshelfView() {
               onValueChange={(id) => {
                 if (hasDraggedRef.current) return;
                 const index = groups.findIndex((group) => group.id === id);
-                setArrival(index > groupIndex ? 1 : index < groupIndex ? -1 : null);
-                setShelf({ groupId: String(id) });
+                if (index === groupIndex) return;
+                swipe.slide(index > groupIndex ? 1 : -1, () => setShelf({ groupId: String(id) }));
               }}
               className="w-full min-w-0"
             >
@@ -452,16 +465,18 @@ export function BookshelfView() {
       {/* Main Content Area: 留出状态栏、连续顶栏与分组栏总高度空间 */}
       <div
         ref={content}
-        className="flex flex-col w-full max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8"
+        // The whole screen below the header swipes, however short the list.
+        className="flex flex-col w-full min-h-[100dvh] max-w-5xl mx-auto px-3 sm:px-4 md:px-8 pt-[calc(112px+var(--safe-top))] pb-[calc(6rem+var(--safe-bottom))] md:pb-8"
         style={{
+          touchAction: "pan-y",
           transform:
             pull.distance || swipe.offset
               ? `translate3d(${swipe.offset}px, ${pull.distance}px, 0)`
               : undefined,
           transition:
-            pull.dragging || swipe.dragging
+            pull.dragging || (!swipe.animate && swipe.offset !== 0)
               ? "none"
-              : "transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+              : `transform ${SLIDE_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`,
         }}
       >
         {/* Search Bar (Expandable) */}
@@ -530,17 +545,7 @@ export function BookshelfView() {
           </p>
         )}
         {/* Book List / Grid */}
-        <section
-          key={selectedGroupId}
-          aria-label="书架书籍列表"
-          className={`mt-1 pb-6 ${
-            arrival === 1
-              ? "animate-in fade-in slide-in-from-right-8 duration-200"
-              : arrival === -1
-                ? "animate-in fade-in slide-in-from-left-8 duration-200"
-                : ""
-          }`}
-        >
+        <section aria-label="书架书籍列表" className="mt-1 pb-6">
           {state.loading ? (
             <p role="status" className="text-xs text-secondary py-10 text-center">
               正在读取书架…

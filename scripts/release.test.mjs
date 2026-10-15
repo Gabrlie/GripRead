@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assetOrder,
   changelogEntry,
   parseCommit,
   previousTag,
@@ -63,7 +64,7 @@ test("the release page has the entry, grouped commits, downloads, and links", ()
       parseCommit("3333333cccc", "build: more targets"),
     ],
     previous: "v0.2.0",
-    files: ["gripread-0.3.0-arm64-v8a.apk", "gripread-0.3.0-macos-x64.dmg", "SHA256SUMS"],
+    files: ["GripRead-0.3.0-Android-arm64-v8a.apk", "GripRead-0.3.0-macOS-Intel.dmg", "SHA256SUMS"],
   });
   assert.match(notes, /^## 更新内容\n\n### 新增\n\n- EPUB/);
   assert.ok(notes.indexOf("不兼容变更") < notes.indexOf("新功能"));
@@ -73,7 +74,7 @@ test("the release page has the entry, grouped commits, downloads, and links", ()
   );
   assert.match(
     notes,
-    /\| Android \| \[`gripread-0.3.0-arm64-v8a.apk`\]\(https:\/\/github.com\/o\/r\/releases\/download\/v0.3.0\/gripread-0.3.0-arm64-v8a.apk\)/,
+    /\| Android \| \[`GripRead-0.3.0-Android-arm64-v8a.apk`\]\(https:\/\/github.com\/o\/r\/releases\/download\/v0.3.0\/GripRead-0.3.0-Android-arm64-v8a.apk\)/,
   );
   assert.match(notes, /\| macOS \| .*Intel/);
   assert.match(notes, /仍要打开/);
@@ -107,12 +108,35 @@ test("the updater manifest lists each signed macOS archive", () => {
     repo: "o/r",
     notes: "n",
     date: "d",
-    signatures: { "gripread-0.3.0-macos-arm64.app.tar.gz.sig": "sig\n" },
+    signatures: { "updater-macos-arm64.app.tar.gz.sig": "sig\n" },
   });
   assert.deepEqual(manifest.platforms, {
     "darwin-aarch64": {
       signature: "sig",
-      url: "https://github.com/o/r/releases/download/v0.3.0/gripread-0.3.0-macos-arm64.app.tar.gz",
+      url: "https://github.com/o/r/releases/download/v0.3.0/updater-macos-arm64.app.tar.gz",
     },
   });
+});
+
+test("the release lists installers by platform, then checksums and updater files", () => {
+  const files = [
+    "updater-macos-x64.app.tar.gz",
+    "latest.json",
+    "GripRead-0.3.0-macOS-Intel.dmg",
+    "SHA256SUMS",
+    "GripRead-0.3.0-Android-universal.apk",
+    "updater-macos-x64.app.tar.gz.sig",
+    "GripRead-0.3.0-Android-arm64-v8a.apk",
+    "GripRead-0.3.0-macOS-AppleSilicon.dmg",
+  ];
+  assert.deepEqual(assetOrder(files, "0.3.0"), [
+    "GripRead-0.3.0-Android-arm64-v8a.apk",
+    "GripRead-0.3.0-Android-universal.apk",
+    "GripRead-0.3.0-macOS-AppleSilicon.dmg",
+    "GripRead-0.3.0-macOS-Intel.dmg",
+    "SHA256SUMS",
+    "latest.json",
+    "updater-macos-x64.app.tar.gz",
+    "updater-macos-x64.app.tar.gz.sig",
+  ]);
 });

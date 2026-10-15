@@ -8,6 +8,8 @@ interface SystemBridge {
   setSystemBarsHidden(hidden: boolean): void;
   setSelectionMenu(enabled: boolean): void;
   setBrightness(value: number): void;
+  /** Absent in builds before 0.2.1-beta.2. */
+  getBrightness?(): number;
   setOrientation(orientation: string): void;
   share(text: string): void;
   battery(): number;
@@ -27,6 +29,20 @@ export const system = {
   setSelectionMenu: (enabled: boolean) => bridge()?.setSelectionMenu(enabled),
   /** Window brightness 0–1, or `null` to follow the system. */
   setBrightness: (value: number | null) => bridge()?.setBrightness(value ?? -1),
+  /** The brightness shown now (the reader's own, else the system's), 0–1. */
+  getBrightness: (): number | null => {
+    const value = bridge()?.getBrightness?.();
+    return value === undefined || !Number.isFinite(value) ? null : value;
+  },
+  /** The system brightness changed (by hand or automatically); 0–1. */
+  onBrightness: (listener: (value: number) => void) => {
+    const handle = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (typeof detail === "number") listener(detail);
+    };
+    window.addEventListener("gripread-brightness", handle);
+    return () => window.removeEventListener("gripread-brightness", handle);
+  },
   setOrientation: (orientation: "auto" | "portrait" | "landscape") =>
     bridge()?.setOrientation(orientation),
   /** Shares text through the system sheet; elsewhere uses the Web Share API or copies it. */

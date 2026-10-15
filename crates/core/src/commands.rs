@@ -2133,6 +2133,16 @@ pub async fn list_recovery_points(state: &Arc<AppState>) -> Result<Vec<String>, 
     with_storage(state, |storage| storage.list_recovery_points()).await
 }
 
+pub async fn delete_recovery_point(
+    state: &Arc<AppState>,
+    request: crate::models::NameRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.delete_recovery_point(&request.name)
+    })
+    .await
+}
+
 fn read_backup_source(
     app: &AppState,
     storage: &Mutex<Storage>,

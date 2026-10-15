@@ -171,6 +171,7 @@ export type { BookImage } from "./generated/BookImage";
 export type { BookImageRequest } from "./generated/BookImageRequest";
 export type { SyncServerStatus } from "./generated/SyncServerStatus";
 export type { UpdateChannel } from "./generated/UpdateChannel";
+export type { UpdateSource } from "./generated/UpdateSource";
 export type { UpdateSettings } from "./generated/UpdateSettings";
 export type { SaveUpdateSettingsRequest } from "./generated/SaveUpdateSettingsRequest";
 export type { UpdateKind } from "./generated/UpdateKind";

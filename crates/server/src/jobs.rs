@@ -46,6 +46,15 @@ pub struct JobStatus {
     pub updated: u32,
     pub new_chapters: u32,
     pub failed: u32,
+    /// Which books failed in the last run, and why.
+    pub failures: Vec<JobFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JobFailure {
+    pub title: String,
+    pub error: String,
 }
 
 #[derive(Default)]
@@ -152,6 +161,16 @@ async fn run_update(server: &Arc<Server>, keys: Vec<String>) -> ShelfUpdateReply
                 .iter()
                 .filter(|book| book.error.is_some())
                 .count() as u32,
+            failures: reply
+                .books
+                .iter()
+                .filter_map(|book| {
+                    Some(JobFailure {
+                        title: book.title.clone(),
+                        error: book.error.clone()?,
+                    })
+                })
+                .collect(),
         };
     }
     let added: u32 = reply.books.iter().map(|book| book.added).sum();
@@ -204,15 +223,23 @@ fn update_books(
                     while let Some((key, id)) = queue.lock().ok().and_then(|mut queue| queue.pop())
                     {
                         let result = update_book(storage, &id, prefetch);
+                        let title = storage
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.online_record(&id).ok())
+                            .map(|record| record.title)
+                            .unwrap_or_default();
                         if let Ok(mut results) = results.lock() {
                             results.push(match result {
                                 Ok(added) => BookUpdate {
                                     key,
+                                    title,
                                     added,
                                     error: None,
                                 },
                                 Err(error) => BookUpdate {
                                     key,
+                                    title,
                                     added: 0,
                                     error: Some(error.message),
                                 },

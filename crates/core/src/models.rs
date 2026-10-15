@@ -2147,11 +2147,36 @@ pub enum UpdateChannel {
     Beta,
 }
 
+/// 下载方式: where updates are checked for and downloaded from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateSource {
+    /// The connected server, else GitHub through the app's proxy.
+    #[default]
+    Auto,
+    /// GitHub without any proxy.
+    Direct,
+    /// GitHub through the app's proxy (网络设置).
+    Proxy,
+    /// GitHub's release list directly, files through an accelerator.
+    Accelerator,
+    /// The connected GripRead server's mirror.
+    Server,
+}
+
+/// The accelerator a new install suggests.
+pub const DEFAULT_ACCELERATOR: &str = "https://gh-proxy.com/{url}";
+
 /// 检查更新 settings, kept on the device only.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UpdateSettings {
     pub channel: UpdateChannel,
+    pub source: UpdateSource,
+    /// The accelerator's address: `{url}` (the GitHub download address),
+    /// `{path}` (it without `https://github.com/`), `{tag}`, and `{name}`
+    /// are filled in; without any of them it is a prefix.
+    pub accelerator: String,
     /// Check once a day when the app starts.
     pub auto_check: bool,
     /// When the last check finished.
@@ -2165,6 +2190,8 @@ impl Default for UpdateSettings {
     fn default() -> Self {
         Self {
             channel: UpdateChannel::Stable,
+            source: UpdateSource::Auto,
+            accelerator: DEFAULT_ACCELERATOR.into(),
             auto_check: true,
             last_check: None,
             skipped: None,
@@ -2176,6 +2203,8 @@ impl Default for UpdateSettings {
 #[serde(rename_all = "camelCase")]
 pub struct SaveUpdateSettingsRequest {
     pub channel: UpdateChannel,
+    pub source: UpdateSource,
+    pub accelerator: String,
     pub auto_check: bool,
     pub skipped: Option<String>,
 }
@@ -2236,6 +2265,11 @@ pub struct UpdateCheck {
 pub struct CheckUpdateRequest {
     /// The running version (package.json, stamped by release builds).
     pub current: String,
+    /// 自动检查更新, which alone counts toward the daily check; checking
+    /// on 关于 leaves the next automatic check (and its prompt) due.
+    #[serde(default)]
+    #[ts(optional)]
+    pub automatic: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

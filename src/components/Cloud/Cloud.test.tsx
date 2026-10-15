@@ -118,6 +118,24 @@ describe("backup and the cloud bookshelf", () => {
     );
   });
 
+  it("deletes a local recovery point", async () => {
+    const app = runtime();
+    const sync = app.services.sync;
+    let points = ["recovery-1791990000000.json"];
+    vi.mocked(sync.listRecoveryPoints).mockImplementation(async () => points);
+    vi.mocked(sync.deleteRecoveryPoint).mockImplementation(async (name) => {
+      points = points.filter((point) => point !== name);
+    });
+    render(
+      <RuntimeContext.Provider value={app}>
+        <BackupPage onClose={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /^删除恢复点/ }));
+    expect(sync.deleteRecoveryPoint).toHaveBeenCalledWith("recovery-1791990000000.json");
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^删除恢复点/ })).toBeNull());
+  });
+
   it("downloads a cloud book into the ordinary import", async () => {
     const app = runtime();
     const sync = app.services.sync;

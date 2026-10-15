@@ -83,6 +83,9 @@ pub struct ShelfUpdateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct BookUpdate {
     pub key: String,
+    /// The book's title, to say which one failed.
+    #[serde(default)]
+    pub title: String,
     pub added: u32,
     pub error: Option<String>,
 }

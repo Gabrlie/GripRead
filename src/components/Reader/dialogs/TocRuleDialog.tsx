@@ -6,6 +6,7 @@ import { Icon } from "../../ui/Icon";
 import { toast } from "../../ui/toast";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
+import { RuleTextLoader, type RuleTextService } from "../../Rules/RuleTextLoader";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,8 @@ interface TocRuleDialogProps {
   onImport: (json: string) => Promise<TxtTocRule[] | undefined>;
   onExport: () => Promise<string>;
   onTest: (pattern: string, sample: string) => Promise<string[]>;
+  /** 网络导入 and 本地导入 for the import view. */
+  loader?: RuleTextService;
   onClose: () => void;
 }
 
@@ -104,6 +107,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
         {view.kind === "import" && (
           <TocRuleImport
             busy={props.busy}
+            loader={props.loader}
             onCancel={() => setView({ kind: "list" })}
             onImport={(json) =>
               props.onImport(json).then(
@@ -375,19 +379,31 @@ export function TocRuleEditor({
   );
 }
 
-/** Pastes a rule export from Legado or GripRead. */
+/**
+ * Imports a rule export from Legado or GripRead: pasted, or with `loader`
+ * from an address, a file, or the clipboard.
+ */
 export function TocRuleImport({
   busy,
+  loader,
   onCancel,
   onImport,
 }: {
   busy: boolean;
+  loader?: RuleTextService;
   onCancel: () => void;
   onImport: (json: string) => void;
 }) {
   const [json, setJson] = useState("");
   return (
     <div className="space-y-3">
+      {loader && (
+        <RuleTextLoader
+          service={loader}
+          historyKey="gripread.tocRuleImportHistory"
+          onText={setJson}
+        />
+      )}
       <textarea
         rows={8}
         aria-label="规则 JSON"
@@ -398,13 +414,15 @@ export function TocRuleImport({
         onChange={(event) => setJson(event.target.value)}
       />
       <div className="flex gap-2 justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void navigator.clipboard.readText().then(setJson, () => undefined)}
-        >
-          从剪贴板粘贴
-        </Button>
+        {!loader && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void navigator.clipboard.readText().then(setJson, () => undefined)}
+          >
+            从剪贴板粘贴
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={onCancel}>
           取消
         </Button>

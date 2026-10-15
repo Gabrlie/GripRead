@@ -133,7 +133,9 @@ pub fn run() {
                 let state = app.state::<Arc<AppState>>();
                 let root = state.data_root.clone();
                 std::thread::spawn(move || gripread_core::network::refresh(&root));
-                // Back in the foreground: catch up with the server.
+                // Back in the foreground: catch up with the server (mobile
+                // does so as its window resumes).
+                #[cfg(not(mobile))]
                 state.sync.now();
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {

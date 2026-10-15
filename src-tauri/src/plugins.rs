@@ -39,7 +39,7 @@ impl<R: Runtime> gripread_core::platform::Platform for AppPlatform<R> {
 
     fn install_desktop_update(
         &self,
-        manifest: &str,
+        request: &gripread_core::platform::DesktopUpdate,
         progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<(), gripread_core::error::AppError> {
         use gripread_core::error::{AppError, ErrorCode};
@@ -47,22 +47,39 @@ impl<R: Runtime> gripread_core::platform::Platform for AppPlatform<R> {
         let failed = |error: tauri_plugin_updater::Error| {
             AppError::new(ErrorCode::Io, format!("更新失败：{error}"))
         };
-        let url = manifest
-            .parse()
-            .map_err(|error| AppError::new(ErrorCode::InvalidArgument, format!("{error}")))?;
-        let updater = self
+        fn invalid(error: impl std::fmt::Display) -> AppError {
+            AppError::new(ErrorCode::InvalidArgument, format!("更新地址无效：{error}"))
+        }
+        let mut builder = self
             .0
             .updater_builder()
-            .endpoints(vec![url])
-            .map_err(failed)?
-            .build()
+            .endpoints(vec![tauri::Url::parse(&request.manifest).map_err(invalid)?])
             .map_err(failed)?;
+        if let Some(authorization) = &request.authorization {
+            builder = builder
+                .header("Authorization", authorization.as_str())
+                .map_err(failed)?;
+        }
+        if let Some(proxy) = &request.proxy {
+            builder = builder.proxy(tauri::Url::parse(proxy).map_err(invalid)?);
+        }
+        let updater = builder.build().map_err(failed)?;
         tauri::async_runtime::block_on(async {
-            let update = updater
+            let mut update = updater
                 .check()
                 .await
                 .map_err(failed)?
                 .ok_or_else(|| AppError::new(ErrorCode::Io, "已经是最新版本"))?;
+            // The manifest names GitHub's archive; the chosen route has its own.
+            let name = update
+                .download_url
+                .path_segments()
+                .and_then(|mut segments| segments.next_back())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(address) = (request.archive)(&name) {
+                update.download_url = tauri::Url::parse(&address).map_err(invalid)?;
+            }
             let mut received = 0u64;
             update
                 .download_and_install(

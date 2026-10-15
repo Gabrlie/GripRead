@@ -510,7 +510,8 @@ async fn a_device_syncs_with_a_running_server_both_ways() {
     assert!(!listed[0].epub && listed[0].size > 0);
     assert!(downloaded.starts_with("第一章 开始"));
 
-    // The web version renames it; the phone hears of it without asking.
+    // The web version renames it; the phone has it after its next event
+    // (here returning to the foreground).
     app.rpc_with(
         &token,
         "update_book",
@@ -519,6 +520,7 @@ async fn a_device_syncs_with_a_running_server_both_ways() {
     .await;
     let mut title = String::new();
     for _ in 0..60 {
+        phone.sync.set_background(false);
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         title = phone
             .storage
@@ -763,6 +765,7 @@ async fn shelf_jobs_are_set_run_and_answered() {
     let status = &json_of(&body)["status"];
     assert!(status["lastRun"].is_i64());
     assert_eq!(status["running"], false);
+    assert_eq!(status["failures"], json!([]));
 
     // A chapter of a book the server does not have.
     let (status, _, _) = send(
