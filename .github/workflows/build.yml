@@ -6,9 +6,11 @@
 #   v0.2.1          release, from a commit on main; image :latest, :0.2.1, :0.2
 #
 # The tag's version must match package.json apart from the pre-release part.
-# A tag on a commit whose dev or main push already passed the checks skips
-# them (it waits for that run if it is still going): a tag cannot read the
-# branch's build cache, so checking again would compile everything anew.
+# A tag push only starts the publishing run on its branch (dev for a
+# pre-release, main for a release) with the tag as input: caches belong to a
+# branch, and a run on the tag itself could read none, so it compiled
+# everything anew. That run skips the checks when the commit's push to the
+# branch already passed them (waiting for it if it is still going).
 # The release page comes from scripts/release.mjs: the CHANGELOG.md entry,
 # the commits since the previous release of the same kind, downloads, and the
 # image.
@@ -18,25 +20,48 @@ on:
   push:
     branches: [dev, main]
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The version tag to publish (vX.Y.Z or vX.Y.Z-beta.N)
+        required: true
 
-# A newer push cancels the checks of an older one; tags each run to the end.
+# A newer push cancels the checks of an older one; publishing runs to the end.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+  group: build-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
 
 permissions:
   contents: write
   packages: write
-  # Reading the branch run of a tagged commit.
-  actions: read
+  # Starting the publishing run, and reading the branch run of its commit.
+  actions: write
 
 env:
   CARGO_TERM_COLOR: always
   IMAGE: ghcr.io/${{ github.repository_owner }}/gripread
   NDK_VERSION: 29.0.14206865
+  # The commit built: the tag being published, else the pushed commit.
+  SOURCE: ${{ inputs.tag || github.sha }}
 
 jobs:
+  # A pushed tag hands publishing to a run on its branch.
+  dispatch:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) branch=dev ;;
+            *) branch=main ;;
+          esac
+          gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f tag="$GITHUB_REF_NAME"
+          echo "Publishing $GITHUB_REF_NAME runs on $branch."
+
   version:
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -47,27 +72,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ env.SOURCE }}
           fetch-depth: 0
       - id: version
         env:
           # Set the repository variable ARM64_IMAGE=true once arm runners are free (a public repository).
           ARM64: ${{ vars.ARM64_IMAGE }}
+          TAG: ${{ inputs.tag }}
         run: |
           base=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_REF_TYPE" != tag ]; then
+          if [ -z "$TAG" ]; then
             echo "version=$base" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
-            version=${GITHUB_REF_NAME#v}
+            version=${TAG#v}
             if [ "${version%%-*}" != "$base" ]; then
-              echo "::error::tag $GITHUB_REF_NAME does not match package.json version $base"
+              echo "::error::tag $TAG does not match package.json version $base"
               exit 1
             fi
             if [ "$version" = "$base" ]; then
               git fetch --quiet origin main
-              if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-                echo "::error::release tag $GITHUB_REF_NAME must point at a commit on main"
+              if ! git merge-base --is-ancestor HEAD origin/main; then
+                echo "::error::release tag $TAG must point at a commit on main"
                 exit 1
               fi
               echo "release=true" >> "$GITHUB_OUTPUT"
@@ -83,12 +110,13 @@ jobs:
             echo 'platforms=[{"platform":"linux/amd64","runner":"ubuntu-latest"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: checked
-        if: github.ref_type == 'tag'
+        if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          sha=$(git rev-parse HEAD)
           # The Build runs of this commit pushed to dev or main.
-          query="repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=50"
+          query="repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&event=push&per_page=50"
           filter='[.workflow_runs[] | select(.name == "Build" and (.head_branch == "dev" or .head_branch == "main"))]'
           # A tag is usually pushed together with its branch, so the branch's
           # run may not exist yet: when the commit is the tip of dev or main,
@@ -96,7 +124,7 @@ jobs:
           git fetch --quiet origin dev main || true
           expected=false
           for branch in dev main; do
-            if [ "$(git rev-parse -q --verify "origin/$branch" || true)" = "$GITHUB_SHA" ]; then
+            if [ "$(git rev-parse -q --verify "origin/$branch" || true)" = "$sha" ]; then
               expected=true
             fi
           done
@@ -126,6 +154,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -153,6 +183,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE }}
       # Image names must be lowercase; the owner name may not be.
       - name: Lowercase the image name
         run: echo "IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
@@ -218,6 +250,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -229,9 +263,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
-          # A tag's cache is never read again (each tag is its own scope);
-          # saving it only crowds the branch caches out of the 10 GB limit.
-          save-if: ${{ github.ref_type != 'tag' }}
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -294,6 +325,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -305,9 +338,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-          # A tag's cache is never read again (each tag is its own scope);
-          # saving it only crowds the branch caches out of the 10 GB limit.
-          save-if: ${{ github.ref_type != 'tag' }}
       - run: pnpm install --frozen-lockfile
       - name: Version
         run: node scripts/version.mjs stamp "${{ needs.version.outputs.version }}"
@@ -346,6 +376,7 @@ jobs:
       # The full history and tags, for the commits since the previous release.
       - uses: actions/checkout@v5
         with:
+          ref: ${{ env.SOURCE }}
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:

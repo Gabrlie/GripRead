@@ -81,6 +81,34 @@ export function changelogEntry(changelog, version) {
     .trim();
 }
 
+/**
+ * The entry lines of `entry` that `before` (the same entry at the previous
+ * pre-release) did not have, under their headings; headings left with
+ * nothing are dropped. Betas share `Unreleased`, so each shows only its own.
+ */
+export function newEntries(entry, before) {
+  if (!before) return entry;
+  const known = new Set(
+    before
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#")),
+  );
+  const sections = [];
+  let current = { heading: null, lines: [] };
+  for (const line of entry.split("\n")) {
+    if (line.startsWith("### ")) {
+      sections.push(current);
+      current = { heading: line, lines: [] };
+    } else if (line.trim() && !known.has(line.trim())) current.lines.push(line);
+  }
+  sections.push(current);
+  return sections
+    .filter((section) => section.lines.length)
+    .map((section) => [section.heading, section.lines.join("\n")].filter(Boolean).join("\n\n"))
+    .join("\n\n");
+}
+
 const ANDROID = [
   ["arm64-v8a", "大多数手机（推荐）"],
   ["armeabi-v7a", "较旧的 32 位手机"],
@@ -125,12 +153,25 @@ function downloads(files, version, base) {
 }
 
 /** The release page in Markdown. */
-export function renderNotes({ version, repo, image, changelog, commits, previous, files }) {
+export function renderNotes({
+  version,
+  repo,
+  image,
+  changelog,
+  previousChangelog = null,
+  commits,
+  previous,
+  files,
+}) {
   const url = `https://github.com/${repo}`;
   const tag = `v${version}`;
   const sections = [];
 
-  const entry = changelogEntry(changelog, version);
+  // A pre-release lists only what came after the previous one.
+  const entry =
+    isPrerelease(version) && previousChangelog
+      ? newEntries(changelogEntry(changelog, version), changelogEntry(previousChangelog, version))
+      : changelogEntry(changelog, version);
   if (entry) sections.push(`## 更新内容\n\n${entry}`);
 
   const line = (commit) => {
@@ -194,6 +235,15 @@ export function updaterManifest({ version, repo, notes, date, signatures }) {
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
 
+/** CHANGELOG.md as it was at `tag`, or `null` where it did not exist. */
+function changelogAt(tag) {
+  try {
+    return git("show", `${tag}:CHANGELOG.md`);
+  } catch {
+    return null;
+  }
+}
+
 // The first release lists no commits: its changelog entry covers everything.
 function commitsSince(previous) {
   if (!previous) return [];
@@ -223,6 +273,7 @@ function main([command, version, dir]) {
         repo,
         image: (process.env.IMAGE ?? "").toLowerCase(),
         changelog: readFileSync(join(root, "CHANGELOG.md"), "utf8"),
+        previousChangelog: previous && isPrerelease(version) ? changelogAt(previous) : null,
         commits: commitsSince(previous),
         previous,
         files,

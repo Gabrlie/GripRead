@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assetOrder,
   changelogEntry,
+  newEntries,
   parseCommit,
   previousTag,
   renderNotes,
@@ -139,4 +140,23 @@ test("the release lists installers by platform, then checksums and updater files
     "updater-macos-x64.app.tar.gz",
     "updater-macos-x64.app.tar.gz.sig",
   ]);
+});
+
+test("a pre-release lists only the entries added since the previous one", () => {
+  const before = "### 新增\n\n- EPUB\n\n### 修复\n\n- 闪烁";
+  const now = "### 新增\n\n- EPUB\n- 翻译\n\n### 修复\n\n- 闪烁";
+  assert.equal(newEntries(now, before), "### 新增\n\n- 翻译");
+  assert.equal(newEntries(now, null), now);
+  const notes = renderNotes({
+    version: "0.3.0-beta.2",
+    repo: "o/r",
+    image: "i",
+    changelog: `## [Unreleased]\n\n${now}\n`,
+    previousChangelog: `## [Unreleased]\n\n${before}\n`,
+    commits: [],
+    previous: "v0.3.0-beta.1",
+    files: [],
+  });
+  assert.match(notes, /## 更新内容\n\n### 新增\n\n- 翻译\n/);
+  assert.doesNotMatch(notes, /EPUB|闪烁/);
 });
