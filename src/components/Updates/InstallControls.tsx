@@ -1,6 +1,7 @@
 import { sizeLabel } from "../../application/updates";
 import type { AvailableUpdate, UpdateKind } from "../../types/generated";
 import { Button } from "../ui/button";
+import { useT } from "../../i18n";
 import type { InstallState } from "./use-update-install";
 
 const IMAGE = "ghcr.io/gabrlie/gripread";
@@ -19,12 +20,11 @@ export function InstallControls({
   onInstall: () => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   if (kind === "server")
     return (
       <div className="space-y-1">
-        <p className="text-[11px] text-secondary">
-          网页版随服务器更新，在服务器上拉取新镜像后重启容器：
-        </p>
+        <p className="text-[11px] text-secondary">{t("update.web")}</p>
         <code className="block select-text break-all rounded-md bg-surface-container px-2 py-1.5 text-[11px]">
           docker pull {IMAGE}:{update.version}
         </code>
@@ -32,9 +32,7 @@ export function InstallControls({
     );
 
   if (kind === "android" && !update.asset)
-    return (
-      <p className="text-[11px] text-secondary">这个版本没有适合本机的安装包，请到发布页下载。</p>
-    );
+    return <p className="text-[11px] text-secondary">{t("update.noPackage")}</p>;
 
   if (state.phase === "downloading") {
     const { progress } = state;
@@ -44,7 +42,7 @@ export function InstallControls({
       <div className="space-y-2">
         <div
           role="progressbar"
-          aria-label="下载进度"
+          aria-label={t("update.progress")}
           aria-valuenow={percent === null ? undefined : Math.round(percent)}
           className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container"
         >
@@ -55,13 +53,13 @@ export function InstallControls({
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-[11px] text-secondary">
-            {kind === "desktop" ? "正在下载并安装" : "正在下载"}
+            {kind === "desktop" ? t("update.downloadingInstall") : t("update.downloading")}
             {progress ? ` ${sizeLabel(progress.received)}` : ""}
             {total ? ` / ${sizeLabel(total)}` : ""}
           </span>
           {kind === "android" && (
             <Button size="sm" variant="ghost" onClick={onCancel}>
-              取消
+              {t("common.cancel")}
             </Button>
           )}
         </div>
@@ -73,23 +71,24 @@ export function InstallControls({
     <div className="space-y-1.5">
       {state.phase === "started" && (
         <p className="text-[11px] text-secondary">
-          {kind === "desktop" ? "更新完成，正在重启…" : "已打开系统安装程序，按提示完成安装。"}
+          {kind === "desktop" ? t("update.restarting") : t("update.installerOpened")}
         </p>
       )}
       {state.phase === "permission" && (
-        <p className="text-[11px] text-secondary">
-          请在打开的设置中允许手不释卷「安装未知应用」，返回后再点一次立即更新。
-        </p>
+        <p className="text-[11px] text-secondary">{t("update.permission")}</p>
       )}
       {state.phase === "failed" && (
         <p role="alert" className="text-[11px] text-error">
-          更新失败：{state.error}
+          {t("update.failed", { error: state.error })}
         </p>
       )}
       {state.phase !== "started" && (
         <Button size="sm" onClick={onInstall}>
-          {state.phase === "failed" ? "重试" : "立即更新"}
-          {update.size && kind === "android" ? `（${sizeLabel(update.size)}）` : ""}
+          {state.phase === "failed"
+            ? t("common.retry")
+            : update.size && kind === "android"
+              ? t("update.installSize", { size: sizeLabel(update.size) })
+              : t("update.install")}
         </Button>
       )}
     </div>

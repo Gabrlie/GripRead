@@ -1,0 +1,22 @@
+/** Words shared by many screens. */
+export const common = {
+  "common.retry": "重试",
+  "common.cancel": "取消",
+  "common.save": "保存",
+  "common.delete": "删除",
+  "common.close": "关闭",
+  "common.back": "返回",
+  "common.confirm": "确定",
+  "common.loading": "正在读取…",
+  "common.none": "无",
+  "common.off": "关闭",
+  "common.on": "开启",
+  "common.edit": "编辑",
+  "common.import": "导入",
+  "common.export": "导出",
+  "common.done": "完成",
+  "common.unknownTime": "时间未知",
+  "common.days": "{count} 天",
+  "common.books": "{count} 本",
+  "common.followSystem": "跟随系统",
+} as const;

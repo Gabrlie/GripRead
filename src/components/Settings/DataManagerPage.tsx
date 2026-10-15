@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
+import { useT, type MessageKey } from "../../i18n";
 
 /** Parts chosen when the page opens: every cache except the shelf's chapters. */
 const UNCHOSEN = new Set(["shelved"]);
@@ -25,6 +26,12 @@ function partColour(part: DataPart, index: number): string {
  * chapters), and the shelf's online books with their chapter caches.
  */
 export function DataManagerPage({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  const partName = (part: DataPart) => {
+    const key = `data.part.${part.key}` as MessageKey;
+    const name = t(key);
+    return name === key ? part.label : name;
+  };
   const runtime = useRuntime();
   const service = runtime.services.sources;
   const { state: settings, store: settingsStore } = useSettings();
@@ -87,15 +94,15 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
     });
 
   return (
-    <FullPage label="数据管理" onClose={onClose}>
+    <FullPage label={t("data.title")} onClose={onClose}>
       <section className="rounded-2xl bg-surface-container-low p-4 space-y-4">
         <p className="flex items-baseline gap-2">
           <span className="text-2xl font-semibold tabular-nums">{formatSize(cached)}</span>
-          <span className="text-xs text-secondary">缓存</span>
+          <span className="text-xs text-secondary">{t("data.cache")}</span>
         </p>
         <div
           role="img"
-          aria-label="数据占用"
+          aria-label={t("data.usage")}
           className="flex h-3 w-full overflow-hidden rounded-full bg-surface-container-highest"
         >
           {total > 0 &&
@@ -112,7 +119,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
               ) : null,
             )}
         </div>
-        <ul aria-label="数据分类" className="space-y-1">
+        <ul aria-label={t("data.parts")} className="space-y-1">
           {parts.map((part, index) => {
             const on = chosen?.has(part.key) ?? false;
             const row = (
@@ -122,7 +129,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
                   className="size-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: partColour(part, index) }}
                 />
-                <span className="flex-1 min-w-0 truncate text-sm">{part.label}</span>
+                <span className="flex-1 min-w-0 truncate text-sm">{partName(part)}</span>
                 <span className="text-xs text-secondary tabular-nums">
                   {formatSize(part.bytes)}
                 </span>
@@ -135,7 +142,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
                     type="button"
                     role="checkbox"
                     aria-checked={on}
-                    aria-label={part.label}
+                    aria-label={partName(part)}
                     disabled={busy}
                     onClick={() => toggle(part.key)}
                     className="w-full flex items-center gap-2.5 rounded-lg px-1 py-2 text-left"
@@ -160,17 +167,17 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
         <Button
           className="w-full"
           disabled={busy || !chosen?.size || chosenBytes === 0}
-          onClick={() => run(() => service.clearData([...(chosen ?? [])]), "已清理")}
+          onClick={() => run(() => service.clearData([...(chosen ?? [])]), t("data.cleared"))}
         >
-          清理所选（{formatSize(chosenBytes)}）
+          {t("data.clearChosen", { size: formatSize(chosenBytes) })}
         </Button>
       </section>
 
       <PageSection>
         <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-          <span>退出时清理缓存</span>
+          <span>{t("data.clearOnExit")}</span>
           <Switch
-            aria-label="退出时清理缓存"
+            aria-label={t("data.clearOnExit")}
             checked={settings.value?.clearCacheOnExit ?? false}
             onCheckedChange={(clearCacheOnExit) => settingsStore.set({ clearCacheOnExit })}
           />
@@ -178,13 +185,17 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
       </PageSection>
 
       {usage && usage.books.length > 0 && (
-        <PageSection title="书架中的网络书籍">
+        <PageSection title={t("data.onlineBooks")}>
           {usage.books.map((book) => (
             <div key={book.bookId} className="flex items-center gap-3 px-4 py-2.5">
               <span className="flex-1 min-w-0">
                 <span className="block text-sm truncate">{book.title}</span>
                 <span className="block text-[11px] text-secondary tabular-nums">
-                  已缓存 {book.cachedChapters}/{book.totalChapters} 章 · {formatSize(book.bytes)}
+                  {t("data.cached", {
+                    cached: book.cachedChapters,
+                    total: book.totalChapters,
+                    size: formatSize(book.bytes),
+                  })}
                 </span>
               </span>
               <Button
@@ -193,10 +204,13 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
                 className="h-7"
                 disabled={busy || book.bytes === 0}
                 onClick={() =>
-                  run(() => service.clearOnlineCache(book.bookId), `已清除《${book.title}》的缓存`)
+                  run(
+                    () => service.clearOnlineCache(book.bookId),
+                    t("data.bookCleared", { title: book.title }),
+                  )
                 }
               >
-                清除
+                {t("data.clear")}
               </Button>
             </div>
           ))}

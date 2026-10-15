@@ -19,42 +19,34 @@ import { Switch } from "../ui/switch";
 import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
 import { useUpdateInstall } from "../Updates/use-update-install";
+import { formatDate, useT, type MessageKey } from "../../i18n";
 
 const REPOSITORY = "https://github.com/Gabrlie/GripRead";
 
-const LINKS: [string, string, string][] = [
-  ["code", "GitHub", REPOSITORY],
-  ["download", "发布页", `${REPOSITORY}/releases`],
-  ["bug_report", "反馈问题", `${REPOSITORY}/issues`],
+const LINKS: [string, MessageKey | null, string][] = [
+  ["code", null, REPOSITORY],
+  ["download", "about.releases", `${REPOSITORY}/releases`],
+  ["bug_report", "about.issues", `${REPOSITORY}/issues`],
 ];
 
 /** The version shown in settings and here. */
 export const APP_VERSION = version;
 
-const FEATURES = [
-  "本地 TXT、EPUB 导入，自动识别编码和章节",
-  "仿真、覆盖、平移等翻页，单页、双页和滚动阅读",
-  "兼容阅读（Legado）书源，追更与离线缓存",
-  "替换净化、简繁转换、朗读与自动翻页",
-  "WebDAV 备份，自建服务器多端实时同步",
+const FEATURES: MessageKey[] = [
+  "about.feature.import",
+  "about.feature.turn",
+  "about.feature.sources",
+  "about.feature.tools",
+  "about.feature.sync",
 ];
 
 /** 下载方式. */
-const SOURCES: [UpdateSource, string, string][] = [
-  ["auto", "自动", "连接服务器时经由服务器，否则按网络设置访问 GitHub"],
-  ["direct", "直连", "直接访问 GitHub，不使用代理"],
-  ["proxy", "代理", "通过 网络设置 中的代理访问 GitHub"],
-  ["accelerator", "加速器", "安装包经由加速地址下载"],
-  ["server", "服务器", "只经由已连接的 GripRead 服务器"],
-];
+const SOURCES: UpdateSource[] = ["auto", "direct", "proxy", "accelerator", "server"];
 
-const CHANNELS: [UpdateChannel, string][] = [
-  ["stable", "正式版"],
-  ["beta", "测试版"],
-];
+const CHANNELS: UpdateChannel[] = ["stable", "beta"];
 
 function dateLabel(at: number): string {
-  return at ? new Date(at).toLocaleDateString() : "";
+  return at ? formatDate(at) : "";
 }
 
 /**
@@ -62,6 +54,7 @@ function dateLabel(at: number): string {
  * connected server when there is one), and 更新日志.
  */
 export function AboutPage({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const service = useRuntime().services.updates;
   const [settings, setSettings] = useState<UpdateSettings | null>(null);
   const [check, setCheck] = useState<UpdateCheck | null>(null);
@@ -101,42 +94,43 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
 
   const update = check?.update ?? null;
   return (
-    <FullPage label="关于" onClose={onClose}>
+    <FullPage label={t("about.title")} onClose={onClose}>
       <div className="flex flex-col items-center text-center gap-2 py-6">
         <img src="/icon-192.png" alt="" className="h-16 w-16 rounded-2xl shadow-sm" />
         <h2 className="font-title-editorial text-xl font-semibold">手不释卷 · GripRead</h2>
-        <p className="text-xs text-secondary">版本 {APP_VERSION}</p>
+        <p className="text-xs text-secondary">{t("about.version", { version: APP_VERSION })}</p>
       </div>
-      <PageSection title="简介">
+      <PageSection title={t("about.intro")}>
         <div className="px-4 py-3 space-y-2 text-sm">
-          <p>
-            一款本地优先的小说阅读器，功能和布局参考「阅读（Legado）」，不需要账号也能完整使用。
-          </p>
+          <p>{t("about.introText")}</p>
           <ul className="space-y-1 text-xs text-secondary">
             {FEATURES.map((feature) => (
               <li key={feature} className="flex gap-2">
                 <Icon name="check" size={13} className="text-primary shrink-0 mt-0.5" />
-                {feature}
+                {t(feature)}
               </li>
             ))}
           </ul>
         </div>
       </PageSection>
-      <PageSection title="项目">
+      <PageSection title={t("about.project")}>
         {LINKS.map(([icon, label, url]) => (
           <button
-            key={label}
+            key={url}
             type="button"
             className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm"
             onClick={() =>
               void openExternal(url).catch((failure: unknown) =>
-                toast({ text: `无法打开链接：${describeError(failure)}`, error: true }),
+                toast({
+                  text: t("about.linkFailed", { error: describeError(failure) }),
+                  error: true,
+                }),
               )
             }
           >
             <Icon name={icon} size={18} className="text-secondary shrink-0" />
             <span className="flex-1">
-              {label}
+              {label ? t(label) : "GitHub"}
               <span className="block text-[11px] text-secondary break-all">
                 {url.replace("https://", "")}
               </span>
@@ -145,20 +139,24 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </PageSection>
-      <PageSection title="更新">
+      <PageSection title={t("update.section")}>
         <div className="px-4 py-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm">
-              {update ? `发现新版本 ${update.version}` : `当前版本 ${APP_VERSION}`}
+              {update
+                ? t("update.found", { version: update.version })
+                : t("update.current", { version: APP_VERSION })}
               <span className="block text-[11px] text-secondary">
                 {checking
-                  ? "正在检查…"
+                  ? t("update.checking")
                   : error
-                    ? `检查失败：${error}`
+                    ? t("update.checkFailed", { error })
                     : check
-                      ? update
-                        ? `${dateLabel(update.publishedAt)} 发布${check.viaServer ? " · 经由服务器" : ""}`
-                        : `已是最新版本${check.viaServer ? " · 经由服务器" : ""}`
+                      ? `${
+                          update
+                            ? t("update.published", { date: dateLabel(update.publishedAt) })
+                            : t("update.latest")
+                        }${check.viaServer ? t("update.viaServer") : ""}`
                       : ""}
               </span>
             </span>
@@ -168,7 +166,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
               disabled={checking || install.state.phase === "downloading"}
               onClick={runCheck}
             >
-              检查更新
+              {t("update.check")}
             </Button>
           </div>
           {update && check && (
@@ -192,15 +190,15 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
           <>
             <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
               <span>
-                更新渠道
-                <span className="block text-[11px] text-secondary">测试版更新更快，可能不稳定</span>
+                {t("update.channel")}
+                <span className="block text-[11px] text-secondary">{t("update.channel.note")}</span>
               </span>
               <div
                 role="radiogroup"
-                aria-label="更新渠道"
+                aria-label={t("update.channel")}
                 className="grid grid-cols-2 gap-1 bg-surface-container p-1 rounded-lg shrink-0"
               >
-                {CHANNELS.map(([channel, label]) => (
+                {CHANNELS.map((channel) => (
                   <button
                     key={channel}
                     type="button"
@@ -209,24 +207,24 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                     onClick={() => settings.channel !== channel && save({ channel })}
                     className={`h-7 px-3 rounded-md text-xs ${settings.channel === channel ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
                   >
-                    {label}
+                    {t(`update.channel.${channel}`)}
                   </button>
                 ))}
               </div>
             </div>
             <div className="px-4 py-3 space-y-2 text-sm">
               <span>
-                下载方式
+                {t("update.source")}
                 <span className="block text-[11px] text-secondary">
-                  {SOURCES.find(([source]) => source === settings.source)?.[2]}
+                  {t(`update.source.${settings.source}.note`)}
                 </span>
               </span>
               <div
                 role="radiogroup"
-                aria-label="下载方式"
+                aria-label={t("update.source")}
                 className="grid grid-cols-5 gap-1 bg-surface-container p-1 rounded-lg"
               >
-                {SOURCES.map(([source, label]) => (
+                {SOURCES.map((source) => (
                   <button
                     key={source}
                     type="button"
@@ -235,7 +233,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                     onClick={() => settings.source !== source && save({ source })}
                     className={`h-7 rounded-md text-xs ${settings.source === source ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
                   >
-                    {label}
+                    {t(`update.source.${source}`)}
                   </button>
                 ))}
               </div>
@@ -249,7 +247,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                 >
                   <div className="flex gap-2">
                     <Input
-                      aria-label="加速地址"
+                      aria-label={t("update.accelerator")}
                       inputMode="url"
                       autoCapitalize="none"
                       value={accelerator}
@@ -262,26 +260,22 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                       variant="outline"
                       disabled={accelerator.trim() === settings.accelerator}
                     >
-                      保存
+                      {t("common.save")}
                     </Button>
                   </div>
-                  <p className="text-[11px] text-secondary">
-                    可用 {"{url}"}（GitHub 下载地址）、{"{path}"}（去掉 https://github.com/
-                    的部分）、{"{tag}"}（版本标签）、{"{name}"}（文件名）；不含这些时作为前缀加在
-                    GitHub 地址前。
-                  </p>
+                  <p className="text-[11px] text-secondary">{t("update.accelerator.note")}</p>
                 </form>
               )}
             </div>
             <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
               <span>
-                自动检查更新
+                {t("update.autoCheck")}
                 <span className="block text-[11px] text-secondary">
-                  每天检查一次，发现新版本时提示
+                  {t("update.autoCheck.note")}
                 </span>
               </span>
               <Switch
-                aria-label="自动检查更新"
+                aria-label={t("update.autoCheck")}
                 checked={settings.autoCheck}
                 onCheckedChange={(autoCheck) => save({ autoCheck })}
               />
@@ -289,7 +283,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
           </>
         )}
       </PageSection>
-      <PageSection title="更新日志">
+      <PageSection title={t("update.notes")}>
         {check?.releases.length ? (
           <ol className="divide-y divide-outline-variant/40">
             {check.releases.map((release) => (
@@ -297,10 +291,14 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                 <p className="text-sm font-semibold">
                   {release.version}
                   {release.prerelease && (
-                    <span className="ml-2 text-[11px] font-normal text-secondary">测试版</span>
+                    <span className="ml-2 text-[11px] font-normal text-secondary">
+                      {t("update.beta")}
+                    </span>
                   )}
                   {release.version === APP_VERSION && (
-                    <span className="ml-2 text-[11px] font-normal text-primary">当前版本</span>
+                    <span className="ml-2 text-[11px] font-normal text-primary">
+                      {t("update.thisVersion")}
+                    </span>
                   )}
                   <span className="float-right text-[11px] font-normal text-secondary">
                     {dateLabel(release.publishedAt)}
@@ -309,14 +307,14 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
                 {release.notes ? (
                   <ReleaseNotes notes={release.notes} />
                 ) : (
-                  <p className="text-xs text-secondary">没有说明</p>
+                  <p className="text-xs text-secondary">{t("update.noNotes")}</p>
                 )}
               </li>
             ))}
           </ol>
         ) : (
           <p className="px-4 py-3 text-xs text-secondary">
-            {checking ? "正在获取…" : "检查更新后显示各版本的更新内容。"}
+            {checking ? t("update.fetching") : t("update.notesHint")}
           </p>
         )}
       </PageSection>

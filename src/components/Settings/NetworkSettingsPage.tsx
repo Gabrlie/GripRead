@@ -13,32 +13,28 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
+import { t, useT } from "../../i18n";
 
-const DOH_SERVERS: [string, string][] = [
-  ["ali", "阿里"],
-  ["tencent", "腾讯"],
+const dohServers = (): [string, string][] => [
+  ["ali", t("network.doh.ali")],
+  ["tencent", t("network.doh.tencent")],
   ["cloudflare", "Cloudflare"],
   ["google", "Google"],
-  ["custom", "自定义"],
+  ["custom", t("network.doh.custom")],
 ];
-const PROXIES: [ProxyKind, string][] = [
-  ["none", "不使用"],
+const proxies = (): [ProxyKind, string][] => [
+  ["none", t("network.proxy.none")],
   ["http", "HTTP"],
   ["socks5", "SOCKS5"],
 ];
-const PRESETS: [ConcurrencyPreset, string, string][] = [
-  ["relaxed", "省心", "请求少，适合慢网络和限制严格的网站"],
-  ["balanced", "均衡", "默认"],
-  ["fast", "极速", "同时请求多，网站可能限流"],
-  ["custom", "自定义", "自己设定下面的数值"],
-];
-const LIMIT_FIELDS: [keyof ConcurrencyLimits, string][] = [
-  ["requests", "同时请求数"],
-  ["perHost", "限流阈值（每个网站）"],
-  ["windowMs", "时间窗口（毫秒）"],
-  ["search", "同时搜索的书源数"],
-  ["downloadBooks", "同时下载的书数"],
-  ["downloadChapters", "每本书同时下载的章数"],
+const PRESETS: ConcurrencyPreset[] = ["relaxed", "balanced", "fast", "custom"];
+const LIMIT_FIELDS: (keyof ConcurrencyLimits)[] = [
+  "requests",
+  "perHost",
+  "windowMs",
+  "search",
+  "downloadBooks",
+  "downloadChapters",
 ];
 
 function Choice<T extends string>({
@@ -83,6 +79,7 @@ const SAVE_DELAY = 500;
  * save by themselves, like the other settings.
  */
 export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
+  useT();
   const runtime = useRuntime();
   const service = runtime.services.settings;
   const [draft, setDraft] = useState<NetworkSettings | null>(null);
@@ -130,7 +127,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
 
   if (!draft)
     return (
-      <FullPage label="网络设置" onClose={onClose}>
+      <FullPage label={t("network.title")} onClose={onClose}>
         {null}
       </FullPage>
     );
@@ -143,9 +140,9 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
   };
   const ownProxy = draft.proxyKind !== "none" && draft.proxyHost.trim() !== "";
   const dohOff = ownProxy
-    ? "使用代理时 DoH 不生效"
+    ? t("network.dohOffProxy")
     : system.systemProxy
-      ? `检测到系统代理 ${system.systemProxy}，DoH 不生效`
+      ? t("network.dohOffSystem", { proxy: system.systemProxy })
       : null;
 
   const check = (kind: "doh" | "proxy") => {
@@ -153,7 +150,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
     void service
       .checkNetwork(draft, kind)
       .then(
-        (found) => toast(`${found.detail}（${found.millis} ms）`),
+        (found) => toast(`${found.detail} (${found.millis} ms)`),
         (error: unknown) => toast({ text: describeError(error), error: true }),
       )
       .finally(() => setChecking(null));
@@ -161,7 +158,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
 
   return (
     <FullPage
-      label="网络设置"
+      label={t("network.title")}
       onClose={() => {
         flush();
         onClose();
@@ -169,32 +166,32 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
     >
       {failure && (
         <p role="alert" className="px-1 text-xs text-error">
-          未保存：{failure}
+          {t("network.unsaved", { error: failure })}
         </p>
       )}
       <PageSection title="DNS over HTTPS">
         <div className="p-4 space-y-3">
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
-              使用 DoH
-              <span className="block text-[11px] text-secondary">书源域名被污染时可以打开</span>
+              {t("network.doh")}
+              <span className="block text-[11px] text-secondary">{t("network.doh.note")}</span>
             </span>
             <Switch
-              aria-label="使用 DoH"
+              aria-label={t("network.doh")}
               checked={draft.dohEnabled}
               onCheckedChange={(dohEnabled) => set({ dohEnabled })}
             />
           </label>
           <Choice
-            label="DoH 服务器"
-            options={DOH_SERVERS}
+            label={t("network.doh.server")}
+            options={dohServers()}
             value={draft.dohServer}
             onChange={(dohServer) => set({ dohServer })}
           />
           {draft.dohEnabled && dohOff && <p className="text-[11px] text-secondary">{dohOff}</p>}
           {draft.dohServer === "custom" && (
             <Input
-              aria-label="DoH 地址"
+              aria-label={t("network.doh.address")}
               placeholder="https://…/dns-query"
               value={draft.dohCustomUrl}
               onChange={(change) => set({ dohCustomUrl: change.target.value })}
@@ -206,16 +203,16 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
             disabled={checking !== null}
             onClick={() => check("doh")}
           >
-            {checking === "doh" ? "测试中…" : "测试 DoH"}
+            {checking === "doh" ? t("network.testing") : t("network.doh.test")}
           </Button>
         </div>
       </PageSection>
 
-      <PageSection title="代理">
+      <PageSection title={t("network.proxy")}>
         <div className="p-4 space-y-3">
           <Choice
-            label="代理类型"
-            options={PROXIES}
+            label={t("network.proxy.kind")}
+            options={proxies()}
             value={draft.proxyKind}
             onChange={(proxyKind) => set({ proxyKind })}
           />
@@ -223,14 +220,14 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
             <>
               <div className="flex gap-2">
                 <Input
-                  aria-label="代理地址"
-                  placeholder="地址"
+                  aria-label={t("network.proxy.host")}
+                  placeholder={t("network.proxy.hostPlaceholder")}
                   className="flex-1"
                   value={draft.proxyHost}
                   onChange={(change) => set({ proxyHost: change.target.value.trim() })}
                 />
                 <Input
-                  aria-label="端口"
+                  aria-label={t("network.proxy.port")}
                   inputMode="numeric"
                   className="w-24"
                   value={String(draft.proxyPort)}
@@ -246,15 +243,15 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
               </div>
               <div className="flex gap-2">
                 <Input
-                  aria-label="用户名"
-                  placeholder="用户名（可留空）"
+                  aria-label={t("network.proxy.user")}
+                  placeholder={t("network.proxy.userPlaceholder")}
                   value={draft.proxyUsername}
                   onChange={(change) => set({ proxyUsername: change.target.value })}
                 />
                 <Input
-                  aria-label="密码"
+                  aria-label={t("network.proxy.password")}
                   type="password"
-                  placeholder="密码"
+                  placeholder={t("network.proxy.password")}
                   value={draft.proxyPassword}
                   onChange={(change) => set({ proxyPassword: change.target.value })}
                 />
@@ -265,35 +262,33 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
                 disabled={checking !== null}
                 onClick={() => check("proxy")}
               >
-                {checking === "proxy" ? "测试中…" : "测试代理"}
+                {checking === "proxy" ? t("network.testing") : t("network.proxy.test")}
               </Button>
             </>
           )}
           <p className="text-[11px] text-secondary">
             {!ownProxy && system.systemProxy
-              ? `未设置时使用系统代理 ${system.systemProxy}。`
-              : "只用于书源、封面和下载，不改变系统代理。"}
+              ? t("network.proxy.system", { proxy: system.systemProxy })
+              : t("network.proxy.scope")}
           </p>
         </div>
       </PageSection>
 
-      <PageSection title="并发">
+      <PageSection title={t("network.concurrency")}>
         <div className="p-4 space-y-3">
           <Choice
-            label="并发档位"
-            options={PRESETS.map(([key, name]) => [key, name] as [ConcurrencyPreset, string])}
+            label={t("network.concurrency.preset")}
+            options={PRESETS.map((key) => [key, t(`network.preset.${key}`)])}
             value={draft.preset}
             onChange={(preset) => set({ preset })}
           />
-          <p className="text-[11px] text-secondary">
-            {PRESETS.find(([key]) => key === draft.preset)?.[2]}
-          </p>
+          <p className="text-[11px] text-secondary">{t(`network.preset.${draft.preset}.note`)}</p>
           {draft.preset === "custom" &&
-            LIMIT_FIELDS.map(([key, label]) => (
+            LIMIT_FIELDS.map((key) => (
               <label key={key} className="flex items-center justify-between gap-3 text-sm">
-                <span>{label}</span>
+                <span>{t(`network.limit.${key}`)}</span>
                 <Input
-                  aria-label={label}
+                  aria-label={t(`network.limit.${key}`)}
                   inputMode="numeric"
                   className="w-24 text-right tabular-nums"
                   value={String(draft.custom[key])}

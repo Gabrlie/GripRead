@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { InstallControls } from "./InstallControls";
 import { ReleaseNotes } from "./ReleaseNotes";
 import { useUpdateInstall } from "./use-update-install";
+import { useT } from "../../i18n";
 
 /**
  * 自动检查更新: once a day, at start or on returning to the app, it checks
@@ -16,6 +17,7 @@ import { useUpdateInstall } from "./use-update-install";
  * (asked again tomorrow). Checks on 关于 do not count toward the day.
  */
 export function UpdatePrompt() {
+  const t = useT();
   const service = useRuntime().services.updates;
   const [offer, setOffer] = useState<{
     update: AvailableUpdate;
@@ -63,9 +65,9 @@ export function UpdatePrompt() {
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">
-            发现新版本 {update.version}
+            {t("update.found", { version: update.version })}
           </DialogTitle>
-          <DialogDescription>当前版本 {APP_VERSION}</DialogDescription>
+          <DialogDescription>{t("update.current", { version: APP_VERSION })}</DialogDescription>
         </DialogHeader>
         {update.notes && (
           <div className="max-h-60 overflow-y-auto rounded-lg bg-surface-container-low p-3">
@@ -89,10 +91,10 @@ export function UpdatePrompt() {
                 close();
               }}
             >
-              跳过此版本
+              {t("update.skip")}
             </Button>
             <Button variant="ghost" size="sm" onClick={close}>
-              稍后
+              {t("update.later")}
             </Button>
           </div>
         )}

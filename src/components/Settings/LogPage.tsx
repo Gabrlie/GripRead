@@ -6,13 +6,9 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
+import { formatDateTime, t, useT, type MessageKey } from "../../i18n";
 
-const LEVELS: [LogLevel, string][] = [
-  ["error", "错误"],
-  ["warn", "警告"],
-  ["info", "全部"],
-  ["detail", "详细"],
-];
+const LEVELS: LogLevel[] = ["error", "warn", "info", "detail"];
 
 const LEVEL_MARK: Record<LogLevel, string> = {
   error: "text-error",
@@ -21,26 +17,26 @@ const LEVEL_MARK: Record<LogLevel, string> = {
   detail: "text-secondary/70",
 };
 
-/** What each log area is called. */
-const AREAS: Record<string, string> = {
-  server: "服务器",
-  sync: "同步",
-  source: "书源",
-  reader: "阅读",
-  library: "书架",
-  import: "导入",
-  download: "下载",
-  network: "网络",
-  update: "更新",
-  app: "应用",
-};
+/** The log areas the interface names; others show as written. */
+const AREAS = [
+  "server",
+  "sync",
+  "source",
+  "reader",
+  "library",
+  "import",
+  "download",
+  "network",
+  "update",
+  "app",
+];
 
 function areaName(area: string): string {
-  return AREAS[area] ?? area;
+  return AREAS.includes(area) ? t(`logs.area.${area}` as MessageKey) : area;
 }
 
 function time(value: number): string {
-  return new Date(value).toLocaleString("zh-CN", {
+  return formatDateTime(value, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -55,6 +51,7 @@ function time(value: number): string {
  * source request and step for a day.
  */
 export function LogPage({ onClose, layer }: { onClose: () => void; layer?: string }) {
+  const t = useT();
   const [level, setLevel] = useState<LogLevel>("info");
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [detailUntil, setDetailUntil] = useState<number | null>(null);
@@ -78,26 +75,28 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
   const share = async (method: "copy" | "share") => {
     const text = await appLog.exportText();
     if (!text.trim()) {
-      toast("日志是空的");
+      toast(t("logs.empty"));
       return;
     }
     if (method === "copy") {
       await copyText(text);
-      toast("日志已复制");
-    } else if ((await system.share(text)) === "copied") toast("日志已复制");
+      toast(t("logs.copied"));
+    } else if ((await system.share(text)) === "copied") toast(t("logs.copied"));
   };
 
   return (
-    <FullPage label="日志" onClose={onClose} layer={layer}>
+    <FullPage label={t("logs.title")} onClose={onClose} layer={layer}>
       <section className="rounded-xl bg-surface-container-low px-4 py-3 flex items-center gap-3">
         <span className="flex-1 min-w-0">
-          <span className="block text-sm">详细日志</span>
+          <span className="block text-sm">{t("logs.detailed")}</span>
           <span className="block text-[11px] text-secondary">
-            {detailUntil ? `${time(detailUntil)} 自动关闭` : "记录每个请求和步骤，一天后自动关闭"}
+            {detailUntil
+              ? t("logs.detailedUntil", { time: time(detailUntil) })
+              : t("logs.detailed.note")}
           </span>
         </span>
         <Switch
-          aria-label="详细日志"
+          aria-label={t("logs.detailed")}
           checked={detailUntil !== null}
           onCheckedChange={(on) =>
             void appLog.setDetailed(on).then((until) => {
@@ -108,7 +107,7 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
         />
       </section>
       <div className="flex items-center gap-1.5 flex-wrap">
-        {LEVELS.map(([value, label]) => (
+        {LEVELS.map((value) => (
           <button
             key={value}
             type="button"
@@ -120,20 +119,20 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
                 : "bg-surface-container-low text-secondary"
             }`}
           >
-            {label}
+            {t(`logs.filter.${value}`)}
           </button>
         ))}
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => setRevision((value) => value + 1)}>
-          刷新
+          {t("logs.refresh")}
         </Button>
       </div>
       <div className="flex gap-2">
         <Button size="sm" variant="outline" className="flex-1" onClick={() => void share("copy")}>
-          复制全部
+          {t("logs.copyAll")}
         </Button>
         <Button size="sm" variant="outline" className="flex-1" onClick={() => void share("share")}>
-          分享
+          {t("logs.share")}
         </Button>
         <Button
           size="sm"
@@ -142,15 +141,19 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
           onClick={() =>
             void appLog.clear().then(() => {
               setEntries([]);
-              toast("日志已清空");
+              toast(t("logs.cleared"));
             })
           }
         >
-          清空
+          {t("logs.clear")}
         </Button>
       </div>
       {areas.length > 1 && (
-        <div role="group" aria-label="日志分类" className="flex items-center gap-1.5 flex-wrap">
+        <div
+          role="group"
+          aria-label={t("logs.areas")}
+          className="flex items-center gap-1.5 flex-wrap"
+        >
           {[null, ...areas].map((value) => (
             <button
               key={value ?? "all"}
@@ -163,15 +166,15 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
                   : "bg-surface-container-low text-secondary"
               }`}
             >
-              {value === null ? "所有分类" : areaName(value)}
+              {value === null ? t("logs.allAreas") : areaName(value)}
             </button>
           ))}
         </div>
       )}
       {shown.length === 0 ? (
-        <p className="py-10 text-center text-sm text-secondary">没有日志。</p>
+        <p className="py-10 text-center text-sm text-secondary">{t("logs.none")}</p>
       ) : (
-        <ul aria-label="日志" className="space-y-1.5">
+        <ul aria-label={t("logs.title")} className="space-y-1.5">
           {shown.map((entry, index) => (
             <li
               key={`${entry.time}-${index}`}
@@ -179,7 +182,7 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
             >
               <p className="flex items-center gap-2 text-[11px]">
                 <span className={`font-medium ${LEVEL_MARK[entry.level]}`}>
-                  {LEVELS.find(([value]) => value === entry.level)?.[1] ?? entry.level}
+                  {t(`logs.level.${entry.level}`)}
                 </span>
                 <span className="text-secondary">{areaName(entry.area)}</span>
                 <span className="flex-1" />
