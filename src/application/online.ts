@@ -9,6 +9,7 @@ import type {
   OnlineTocEvent,
   SearchScope,
 } from "../types/generated";
+import { t } from "../i18n";
 
 const HISTORY_KEY = "gripread.onlineSearchHistory";
 const HISTORY_LIMIT = 20;
@@ -48,10 +49,10 @@ export function clearSearchHistory(): void {
 
 /** How a search scope reads in the scope chip. */
 export function describeScope(scope: SearchScope, sourceName?: string): string {
-  if (scope.sourceUrls.length === 1) return sourceName ?? "单个书源";
-  if (scope.sourceUrls.length > 1) return `${scope.sourceUrls.length} 个书源`;
+  if (scope.sourceUrls.length === 1) return sourceName ?? t("online.oneSource");
+  if (scope.sourceUrls.length > 1) return t("online.sources", { count: scope.sourceUrls.length });
   if (scope.groups.length) return scope.groups.join("、");
-  return "全部书源";
+  return t("online.allSources");
 }
 
 export const ALL_SOURCES: SearchScope = { groups: [], sourceUrls: [] };

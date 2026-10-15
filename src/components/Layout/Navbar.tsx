@@ -1,5 +1,6 @@
 import { useApp, type NavTab } from "../../context/AppContext";
 import { Icon } from "../ui/Icon";
+import { t } from "../../i18n";
 
 interface TabItem {
   id: NavTab;
@@ -8,10 +9,34 @@ interface TabItem {
 }
 
 const TABS: TabItem[] = [
-  { id: "bookshelf", label: "书架", icon: "auto_stories" },
-  { id: "discover", label: "发现", icon: "explore" },
-  { id: "subscription", label: "订阅", icon: "collections_bookmark" },
-  { id: "settings", label: "设置", icon: "tune" },
+  {
+    id: "bookshelf",
+    get label() {
+      return t("nav.shelf");
+    },
+    icon: "auto_stories",
+  },
+  {
+    id: "discover",
+    get label() {
+      return t("nav.discover");
+    },
+    icon: "explore",
+  },
+  {
+    id: "subscription",
+    get label() {
+      return t("nav.feeds");
+    },
+    icon: "collections_bookmark",
+  },
+  {
+    id: "settings",
+    get label() {
+      return t("nav.settings");
+    },
+    icon: "tune",
+  },
 ];
 
 export function Navbar() {
@@ -74,10 +99,10 @@ export function Navbar() {
           </div>
           <div>
             <h1 className="font-title-editorial text-xl font-semibold tracking-tight text-on-surface">
-              手不释卷
+              {t("app.name")}
             </h1>
             <p className="font-label-caps text-secondary text-[11px] tracking-wider uppercase">
-              GripRead · 本地优先
+              {t("app.tagline")}
             </p>
           </div>
         </div>
@@ -105,7 +130,7 @@ export function Navbar() {
         </nav>
 
         <div className="pt-4 border-t border-surface-variant/30 px-2 text-secondary text-xs opacity-75">
-          <p className="font-title-editorial text-on-surface/90">心澄神静 · 专注字里行间</p>
+          <p className="font-title-editorial text-on-surface/90">{t("app.motto")}</p>
           <p className="mt-1 font-label-caps text-[10px] tracking-wider">
             LOCAL FIRST NOVEL SANCTUARY
           </p>

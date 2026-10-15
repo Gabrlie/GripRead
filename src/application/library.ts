@@ -10,6 +10,7 @@ import type {
   TxtEncodingInfo,
 } from "../types/generated";
 import type { LibraryService, Unsubscribe } from "../services/contracts";
+import { t } from "../i18n";
 
 export interface LibrarySnapshot {
   books: LibraryBook[];
@@ -361,7 +362,7 @@ export class LibraryStore {
       await this.importBatch(paths);
     } catch (error) {
       this.update({ importError: String(error) });
-      this.showImportNotice("failed", "导入失败", 8_000);
+      this.showImportNotice("failed", t("import.failed"), 8_000);
     }
   };
   /** Picks a folder and imports every TXT file in it. */
@@ -373,7 +374,7 @@ export class LibraryStore {
       await this.importBatch(files.map((file) => file.path));
     } catch (error) {
       this.update({ importError: String(error) });
-      this.showImportNotice("failed", "文件夹读取失败", 8_000);
+      this.showImportNotice("failed", t("import.folderFailed"), 8_000);
     }
   };
   importBatch = async (paths: string[]) => {
@@ -396,7 +397,7 @@ export class LibraryStore {
     const imported = done - failed;
     this.showImportNotice(
       failed ? "failed" : "completed",
-      failed ? `已导入 ${imported} 本，${failed} 本失败` : `已导入 ${imported} 本`,
+      failed ? t("import.someFailed", { imported, failed }) : t("import.done", { imported }),
       failed ? 8_000 : 3_000,
     );
   };
@@ -442,7 +443,7 @@ export class LibraryStore {
           retryWithEncoding,
         },
       });
-      this.showImportNotice("failed", "导入失败", 8_000);
+      this.showImportNotice("failed", t("import.failed"), 8_000);
     }
   };
   cancel = async () => {
@@ -469,7 +470,7 @@ export class LibraryStore {
   private runDecode = (
     start: () => Promise<TxtDecodeTask | null>,
   ): Promise<TxtEncodingInfo | null> => {
-    if (this.snapshot.decoding) return Promise.reject(new Error("TXT 编码转换正在进行"));
+    if (this.snapshot.decoding) return Promise.reject(new Error(t("import.decoding")));
     this.update({ decoding: true, decodeError: null, decodeJob: null });
     return new Promise<TxtEncodingInfo | null>((resolve, reject) => {
       this.decodeWaiter = { resolve, reject };
@@ -502,7 +503,7 @@ export class LibraryStore {
   private accept(status: ImportStatus) {
     if (status.operationId !== this.operationId || this.completed.has(status.operationId)) return;
     if (status.phase === "completed" && !status.result) {
-      const message = "导入服务返回了缺少结果的完成状态，请重试查询。";
+      const message = t("import.noResult");
       const failed: ImportStatus = {
         ...status,
         phase: "failed",
@@ -522,7 +523,7 @@ export class LibraryStore {
       });
       this.completed.add(status.operationId);
       clearTimeout(this.timer);
-      this.showImportNotice("failed", "导入失败", 8_000);
+      this.showImportNotice("failed", t("import.failed"), 8_000);
       this.finishSettle();
       return;
     }
@@ -538,7 +539,7 @@ export class LibraryStore {
       const message = status.error
         ? `${status.error.code}: ${status.error.message}`
         : phase === "failed"
-          ? "导入失败，请重新选择文件后重试。"
+          ? t("import.retry")
           : null;
       const retryWithEncoding = phase === "failed" && status.error?.code === "unsupported_encoding";
       this.update({
@@ -550,11 +551,11 @@ export class LibraryStore {
         },
       });
       if (phase === "completed") {
-        this.showImportNotice("completed", "导入完成", 3_000);
+        this.showImportNotice("completed", t("import.finished"), 3_000);
       } else if (phase === "failed") {
-        this.showImportNotice("failed", "导入失败", 8_000);
+        this.showImportNotice("failed", t("import.failed"), 8_000);
       } else {
-        this.showImportNotice("cancelled", "导入已取消", 2_500);
+        this.showImportNotice("cancelled", t("import.cancelled"), 2_500);
       }
       if (status.phase === "completed") {
         if (status.result && this.snapshot.lastRemoved?.id === status.result.book.id)
@@ -593,7 +594,7 @@ export class LibraryStore {
     const waiter = this.decodeWaiter;
     this.decodeWaiter = undefined;
     if (status.phase === "completed" && status.result) waiter?.resolve(status.result);
-    else waiter?.reject(new Error(status.error?.message ?? "TXT 编码转换未完成"));
+    else waiter?.reject(new Error(status.error?.message ?? t("import.decodeUnfinished")));
   }
   private async pollDecode(generation: number) {
     const id = this.decodeOperationId;

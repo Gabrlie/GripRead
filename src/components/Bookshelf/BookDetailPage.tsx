@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { currentLocale, t } from "../../i18n";
 
 const TILE_CLASS =
   "flex flex-col items-center justify-center gap-1 rounded-xl bg-surface-container-low py-2.5 text-xs text-on-surface hover:bg-surface-container disabled:opacity-60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
@@ -56,8 +57,10 @@ function formatSize(bytes: number): string {
  * progress and reading time, the introduction, the shelf group, and every
  * per-book action (read, contents, edit, cover, move, remove).
  */
-/** 总字数 as readers know it: 万字 above ten thousand. */
+/** 总字数 as readers know it: 万字 above ten thousand, or thousands in English. */
 export function formatWords(count: number): string {
+  if (currentLocale() === "en")
+    return count >= 1_000 ? `${(count / 1_000).toFixed(1)}k characters` : `${count} characters`;
   return count >= 10_000 ? `${(count / 10_000).toFixed(1)} 万字` : `${count} 字`;
 }
 
@@ -119,7 +122,7 @@ export function BookDetailPage({
   const [askCloudSync, setAskCloudSync] = useState(false);
   const syncDetails = (announce: boolean) =>
     void runtime.services.sync.uploadBooks([id]).then(
-      () => announce && toast("已同步到云书架"),
+      () => announce && toast(t("detail.cloudSynced")),
       (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
   const uploadToCloud = () =>
@@ -127,17 +130,17 @@ export function BookDetailPage({
       const report = await runtime.services.sync.uploadBooks([id]);
       if (report.failed.length) throw new Error(report.failed.join("；"));
       return report.uploaded
-        ? "已上传到云书架"
+        ? t("shelf.inCloud")
         : report.updated
-          ? "已更新云端信息"
-          : "云端信息已是最新";
+          ? t("detail.cloudUpdated")
+          : t("detail.cloudCurrent");
     });
   const removeFromCloud = () =>
     cloudAction(async () => {
       const cloud = await runtime.services.sync.listCloudBooks();
       const entry = cloud.find((item) => item.localBookId === id);
       if (entry) await runtime.services.sync.deleteCloudBook(entry.name);
-      return "已从云书架删除";
+      return t("detail.cloudRemoved");
     });
   const labels = shelf.chapters[id];
   const automatic = shelf.automatic[id] ?? (book.locator ? "reading" : "unread");
@@ -147,12 +150,12 @@ export function BookDetailPage({
   const progress = online
     ? book.locator && online.totalChapters
       ? `${Math.min(100, (((online.readChapter ?? 0) + 1) / online.totalChapters) * 100).toFixed(1)}%`
-      : "未读"
+      : t("detail.unread")
     : book.locator && book.totalLength
       ? `${Math.min(100, (book.locator.offset / book.totalLength) * 100).toFixed(1)}%`
-      : "未读";
+      : t("detail.unread");
   const placements: { key: string; label: string; placement: ShelfPlacement }[] = [
-    { key: "automatic", label: "自动", placement: { kind: "automatic" } },
+    { key: "automatic", label: t("detail.automatic"), placement: { kind: "automatic" } },
     ...READING_GROUPS.slice(1).map((group) => ({
       key: group.id,
       label: group.name,
@@ -167,43 +170,55 @@ export function BookDetailPage({
   const selectedKey = manual ? current : "automatic";
   const rows: [string, string][] = online
     ? [
-        ["作者", book.book.author || "作者未知"],
-        ["来源", online.book.sourceName],
-        ["章节", `${online.totalChapters} 章`],
+        [t("detail.author"), book.book.author || t("shelf.unknownAuthor")],
+        [t("detail.source"), online.book.sourceName],
+        [t("detail.chapterCount"), t("detail.chapters", { count: online.totalChapters })],
         [
-          "已缓存",
-          `${online.cachedChapters} 章${info?.wordCount ? ` · ${formatWords(info.wordCount)}` : ""}`,
+          t("detail.cached"),
+          `${t("detail.chapters", { count: online.cachedChapters })}${info?.wordCount ? ` · ${formatWords(info.wordCount)}` : ""}`,
         ],
-        ["读至", online.readChapterTitle || (book.locator ? "全文" : "尚未阅读")],
-        ["最新章节", online.book.latestChapterTitle || "—"],
-        ["阅读进度", progress],
-        ["阅读时长", info ? formatDuration(info.readingSeconds) : "—"],
+        [
+          t("detail.readTo"),
+          online.readChapterTitle || (book.locator ? t("shelf.wholeText") : t("shelf.notRead")),
+        ],
+        [t("detail.latest"), online.book.latestChapterTitle || "—"],
+        [t("detail.progress"), progress],
+        [t("detail.readingTime"), info ? formatDuration(info.readingSeconds) : "—"],
       ]
     : [
-        ["作者", book.book.author || "作者未知"],
-        ["来源", book.asset?.kind === "epub" ? "本地 EPUB" : "本地 TXT"],
-        ["文件大小", info ? formatSize(info.sourceByteLength) : "—"],
+        [t("detail.author"), book.book.author || t("shelf.unknownAuthor")],
         [
-          "文本编码",
+          t("detail.source"),
+          book.asset?.kind === "epub" ? t("detail.localEpub") : t("detail.localTxt"),
+        ],
+        [t("detail.fileSize"), info ? formatSize(info.sourceByteLength) : "—"],
+        [
+          t("detail.encoding"),
           book.asset?.kind === "epub"
             ? "—"
             : book.txtEncoding
               ? ENCODING_NAMES[book.txtEncoding.detected]
               : "—",
         ],
-        ["章节", info?.chapterCount != null ? `${info.chapterCount} 章` : "—"],
-        ["总字数", info?.wordCount != null ? formatWords(info.wordCount) : "—"],
-        ["读至", labels?.current ?? (book.locator ? "全文" : "尚未阅读")],
-        ["最新章节", labels?.latest ?? "全文"],
-        ["阅读进度", progress],
-        ["阅读时长", info ? formatDuration(info.readingSeconds) : "—"],
+        [
+          t("detail.chapterCount"),
+          info?.chapterCount != null ? t("detail.chapters", { count: info.chapterCount }) : "—",
+        ],
+        [t("detail.words"), info?.wordCount != null ? formatWords(info.wordCount) : "—"],
+        [
+          t("detail.readTo"),
+          labels?.current ?? (book.locator ? t("shelf.wholeText") : t("shelf.notRead")),
+        ],
+        [t("detail.latest"), labels?.latest ?? t("shelf.wholeText")],
+        [t("detail.progress"), progress],
+        [t("detail.readingTime"), info ? formatDuration(info.readingSeconds) : "—"],
       ];
   return (
     <div
       ref={page}
       role="dialog"
       aria-modal="true"
-      aria-label="书籍详情"
+      aria-label={t("detail.title")}
       data-open=""
       className="fixed inset-0 z-40 bg-surface flex flex-col overflow-hidden"
     >
@@ -214,7 +229,7 @@ export function BookDetailPage({
         </div>
         <div aria-hidden="true" className="absolute inset-0 bg-surface/55" />
         <div className="relative flex items-center h-14 px-2">
-          <Button variant="ghost" size="icon" aria-label="返回" onClick={onClose}>
+          <Button variant="ghost" size="icon" aria-label={t("common.back")} onClick={onClose}>
             <Icon name="arrow_back" size={20} />
           </Button>
           <span className="flex-1" />
@@ -227,9 +242,13 @@ export function BookDetailPage({
             <h1 className="font-title-editorial text-lg font-semibold text-on-surface break-words">
               {book.book.title}
             </h1>
-            <p className="text-sm text-secondary break-words">{book.book.author || "作者未知"}</p>
+            <p className="text-sm text-secondary break-words">
+              {book.book.author || t("shelf.unknownAuthor")}
+            </p>
             <p className="text-xs text-secondary">
-              {progress === "未读" ? "未读" : `已读 ${progress}`}
+              {progress === t("detail.unread")
+                ? t("detail.unread")
+                : t("detail.readPercent", { progress })}
               {labels?.current && book.locator ? ` · ${labels.current}` : ""}
             </p>
           </div>
@@ -258,35 +277,35 @@ export function BookDetailPage({
           )}
           <div
             role="group"
-            aria-label="书籍操作"
+            aria-label={t("detail.actions")}
             className={`grid grid-cols-3 gap-2 ${online ? "hidden" : ""}`}
           >
-            <ActionTile icon="edit" label="编辑" onClick={() => setEditing(true)} />
+            <ActionTile icon="edit" label={t("common.edit")} onClick={() => setEditing(true)} />
             {book.inCloud ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  aria-label="已在云书架"
+                  aria-label={t("detail.inCloud")}
                   disabled={cloudBusy}
                   className={TILE_CLASS}
                 >
                   <Icon name="check" size={18} className="text-primary" />
-                  <span>{cloudBusy ? "处理中…" : "已在云书架"}</span>
+                  <span>{cloudBusy ? t("detail.working") : t("detail.inCloud")}</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuItem onClick={uploadToCloud}>
                     <Icon name="refresh" size={15} />
-                    更新云端信息
+                    {t("detail.updateCloud")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={removeFromCloud}>
                     <Icon name="delete" size={15} />
-                    从云书架删除
+                    {t("detail.removeCloud")}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
               <ActionTile
                 icon="cloud"
-                label={cloudBusy ? "正在上传…" : "上传到云书架"}
+                label={cloudBusy ? t("detail.uploading") : t("detail.upload")}
                 disabled={cloudBusy}
                 onClick={uploadToCloud}
               />
@@ -294,14 +313,14 @@ export function BookDetailPage({
             {removed ? (
               <ActionTile
                 icon="restart"
-                label="移回书架"
+                label={t("detail.restore")}
                 onClick={() => run(() => store.restore(id))}
               />
             ) : (
               <DropdownMenu>
-                <DropdownMenuTrigger aria-label="移出书架" className={TILE_CLASS}>
+                <DropdownMenuTrigger aria-label={t("detail.remove")} className={TILE_CLASS}>
                   <Icon name="delete" size={18} className="text-secondary" />
-                  <span>移出书架</span>
+                  <span>{t("detail.remove")}</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuItem
@@ -313,25 +332,23 @@ export function BookDetailPage({
                     }
                   >
                     <Icon name="delete" size={15} />
-                    移到回收站
+                    {t("detail.toBin")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setConfirm("delete")}>
                     <Icon name="close" size={15} />
-                    删除（保留云端文件）
+                    {t("detail.deleteKeepCloud")}
                   </DropdownMenuItem>
                   {book.inCloud && (
                     <DropdownMenuItem onClick={() => setConfirm("delete-cloud")}>
                       <Icon name="close" size={15} />
-                      本地与云端一起删除
+                      {t("detail.deleteBoth")}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
           </div>
-          {removed && (
-            <p className="text-xs text-secondary">这本书在回收站里，移回书架后继续阅读。</p>
-          )}
+          {removed && <p className="text-xs text-secondary">{t("detail.inBin")}</p>}
           {error && (
             <p role="alert" className="text-xs text-error break-words">
               {error}
@@ -339,13 +356,13 @@ export function BookDetailPage({
           )}
           <section aria-labelledby="book-intro" className="space-y-1.5 min-w-0">
             <h2 id="book-intro" className="text-xs text-secondary font-medium">
-              简介
+              {t("detail.intro")}
             </h2>
             <p
               data-selectable="true"
               className={`text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-on-surface/90 ${expanded ? "" : "line-clamp-4"}`}
             >
-              {info ? info.intro || "这本书没有简介。" : "正在读取…"}
+              {info ? info.intro || t("detail.noIntro") : t("common.loading")}
             </p>
             {info?.intro && info.intro.length > 80 && (
               <button
@@ -353,20 +370,22 @@ export function BookDetailPage({
                 className="text-xs text-primary"
                 onClick={() => setExpanded((value) => !value)}
               >
-                {expanded ? "收起" : "展开全部"}
+                {expanded ? t("detail.collapse") : t("detail.expand")}
               </button>
             )}
           </section>
           <section aria-labelledby="book-group" className="space-y-2">
             <h2 id="book-group" className="text-xs text-secondary font-medium">
-              分组
+              {t("detail.group")}
               <span className="ml-2 font-normal">
                 {selectedKey === "automatic"
-                  ? `自动：${READING_GROUPS.find((group) => group.id === automatic)?.name}`
-                  : "已手动移动，直到再次移动"}
+                  ? t("detail.automaticGroup", {
+                      group: READING_GROUPS.find((group) => group.id === automatic)?.name ?? "",
+                    })
+                  : t("detail.manualGroup")}
               </span>
             </h2>
-            <div role="radiogroup" aria-label="书架分组" className="flex flex-wrap gap-2">
+            <div role="radiogroup" aria-label={t("shelf.groups")} className="flex flex-wrap gap-2">
               {placements.map((item) => (
                 <button
                   key={item.key}
@@ -388,7 +407,7 @@ export function BookDetailPage({
           </section>
           <section aria-labelledby="book-facts">
             <h2 id="book-facts" className="sr-only">
-              书籍信息
+              {t("detail.info")}
             </h2>
             <dl className="rounded-2xl bg-surface-container-low divide-y divide-surface-variant/40">
               {rows.map(([label, value]) => (
@@ -410,10 +429,14 @@ export function BookDetailPage({
             onClick={() => onOpen("contents")}
           >
             <Icon name="list" size={16} />
-            目录
+            {t("detail.contents")}
           </Button>
           <Button className="flex-[2]" disabled={removed} onClick={() => onOpen()}>
-            {inReader ? "返回阅读" : book.locator ? "继续阅读" : "开始阅读"}
+            {inReader
+              ? t("detail.backToReading")
+              : book.locator
+                ? t("detail.continue")
+                : t("detail.start")}
           </Button>
         </div>
       </footer>
@@ -422,19 +445,19 @@ export function BookDetailPage({
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
               <DialogTitle className="font-title-editorial text-base">
-                {online || confirm === "delete" ? "删除这本书" : "本地与云端一起删除"}
+                {online || confirm === "delete" ? t("detail.deleteBook") : t("detail.deleteBoth")}
               </DialogTitle>
             </DialogHeader>
             <p className="text-sm text-secondary">
               {online
-                ? `从书架删除《${book.book.title}》和它缓存的章节。`
+                ? t("detail.deleteOnline", { title: book.book.title })
                 : confirm === "delete"
-                  ? `删除《${book.book.title}》，云书架上的文件保留。`
-                  : `删除《${book.book.title}》和云书架上的文件。`}
+                  ? t("detail.deleteLocal", { title: book.book.title })
+                  : t("detail.deleteEverywhere", { title: book.book.title })}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -448,7 +471,7 @@ export function BookDetailPage({
                   });
                 }}
               >
-                删除
+                {t("common.delete")}
               </Button>
             </div>
           </DialogContent>
@@ -458,11 +481,13 @@ export function BookDetailPage({
         <Dialog open onOpenChange={(open) => !open && setAskCloudSync(false)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">同步到云书架？</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("detail.askSync")}
+              </DialogTitle>
             </DialogHeader>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setAskCloudSync(false)}>
-                不用
+                {t("detail.no")}
               </Button>
               <Button
                 size="sm"
@@ -471,7 +496,7 @@ export function BookDetailPage({
                   syncDetails(true);
                 }}
               >
-                同步
+                {t("detail.sync")}
               </Button>
             </div>
           </DialogContent>
@@ -533,7 +558,7 @@ function EditBookDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] overflow-y-auto p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">编辑书籍信息</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">{t("detail.edit")}</DialogTitle>
         </DialogHeader>
         <form
           className="space-y-3 min-w-0"
@@ -558,7 +583,7 @@ function EditBookDialog({
                 disabled={busy}
                 onClick={() => cover(() => runtime.services.library.pickBookCover(id))}
               >
-                更换封面
+                {t("detail.changeCover")}
               </Button>
               <Button
                 type="button"
@@ -567,7 +592,7 @@ function EditBookDialog({
                 disabled={busy}
                 onClick={() => setChoosing(true)}
               >
-                从书源选择封面
+                {t("detail.sourceCover")}
               </Button>
               {book.coverAssetId && (
                 <Button
@@ -577,7 +602,7 @@ function EditBookDialog({
                   disabled={busy}
                   onClick={() => cover(() => runtime.services.library.clearBookCover(id))}
                 >
-                  恢复默认
+                  {t("detail.resetCover")}
                 </Button>
               )}
             </div>
@@ -596,15 +621,15 @@ function EditBookDialog({
             />
           )}
           <label className="block space-y-1 text-xs text-secondary">
-            书名
+            {t("detail.bookTitle")}
             <Input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label className="block space-y-1 text-xs text-secondary">
-            作者
+            {t("detail.author")}
             <Input value={author} onChange={(event) => setAuthor(event.target.value)} />
           </label>
           <label className="block space-y-1 text-xs text-secondary">
-            简介
+            {t("detail.intro")}
             <textarea
               value={intro}
               rows={6}
@@ -619,10 +644,10 @@ function EditBookDialog({
           )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button type="submit" size="sm" disabled={busy || !title.trim()}>
-              保存
+              {t("common.save")}
             </Button>
           </div>
         </form>
@@ -688,9 +713,13 @@ function OnlineActions({
   }, [service, id]);
 
   return (
-    <div role="group" aria-label="书籍操作" className="grid grid-cols-3 gap-2">
-      <ActionTile icon="edit" label="编辑" onClick={onEdit} />
-      <ActionTile icon="swap_horiz" label="换源" onClick={() => setChanging(true)} />
+    <div role="group" aria-label={t("detail.actions")} className="grid grid-cols-3 gap-2">
+      <ActionTile icon="edit" label={t("common.edit")} onClick={onEdit} />
+      <ActionTile
+        icon="swap_horiz"
+        label={t("detail.changeSource")}
+        onClick={() => setChanging(true)}
+      />
       {changing && (
         <ChangeSourceDialog
           service={service}
@@ -705,7 +734,7 @@ function OnlineActions({
       )}
       <ActionTile
         icon="refresh"
-        label={updating ? "更新中…" : "更新目录"}
+        label={updating ? t("detail.updating") : t("shelf.menu.update")}
         disabled={updating}
         onClick={() => {
           setUpdating(true);
@@ -713,8 +742,10 @@ function OnlineActions({
             .then(([outcome]) =>
               toast(
                 outcome?.error
-                  ? { text: `目录更新失败：${outcome.error}`, error: true }
-                  : `目录已更新${outcome?.newChapters ? `，${outcome.newChapters} 个新章节` : ""}`,
+                  ? { text: t("detail.updateFailed", { error: outcome.error }), error: true }
+                  : outcome?.newChapters
+                    ? t("shelf.updated", { added: outcome.newChapters })
+                    : t("detail.updated"),
               ),
             )
             .catch((failure: unknown) => toast({ text: String(failure), error: true }))
@@ -725,42 +756,42 @@ function OnlineActions({
         }}
       />
       <DropdownMenu>
-        <DropdownMenuTrigger aria-label="离线缓存" className={TILE_CLASS}>
+        <DropdownMenuTrigger aria-label={t("detail.offline")} className={TILE_CLASS}>
           <Icon name="download" size={18} className="text-secondary" />
           <span>
             {job
               ? job.state === "queued"
-                ? "等待缓存"
-                : `缓存中 ${job.cached + job.failed}/${job.total}`
-              : "缓存"}
+                ? t("detail.cacheQueued")
+                : t("detail.caching", { done: job.cached + job.failed, total: job.total })
+              : t("detail.cache")}
           </span>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <DropdownMenuItem onClick={() => setChoosing(true)}>
             <Icon name="download" size={15} />
-            选择章节缓存
+            {t("detail.chooseCache")}
           </DropdownMenuItem>
           {job && (
             <DropdownMenuItem onClick={() => void service.pauseDownload(job.id)}>
               <Icon name="close" size={15} />
-              暂停缓存
+              {t("detail.pauseCache")}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
             onClick={() =>
               void service.clearOnlineCache(id).then(() => {
-                toast("已清除缓存");
+                toast(t("detail.cacheCleared"));
                 onChanged();
               })
             }
           >
             <Icon name="delete" size={15} />
-            清除缓存
+            {t("detail.clearCache")}
           </DropdownMenuItem>
           {complete && onConverted && (
             <DropdownMenuItem onClick={() => setConverting("ask")}>
               <Icon name="collections_bookmark" size={15} />
-              转为本地书籍
+              {t("detail.toLocal")}
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
@@ -770,11 +801,11 @@ function OnlineActions({
         <Dialog open onOpenChange={(open) => !open && converting === "ask" && setConverting(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">转为本地书籍</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("detail.toLocal")}
+              </DialogTitle>
             </DialogHeader>
-            <p className="text-sm text-secondary">
-              另存为本地 TXT，进度、书签和阅读时长一并转移，网络书籍随后删除。
-            </p>
+            <p className="text-sm text-secondary">{t("detail.toLocal.note")}</p>
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
@@ -782,7 +813,7 @@ function OnlineActions({
                 disabled={converting === "busy"}
                 onClick={() => setConverting(null)}
               >
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -791,7 +822,7 @@ function OnlineActions({
                   setConverting("busy");
                   void service.convertToLocal(id).then(
                     () => {
-                      toast("已转为本地书籍");
+                      toast(t("detail.converted"));
                       setConverting(null);
                       onConverted?.();
                     },
@@ -802,7 +833,7 @@ function OnlineActions({
                   );
                 }}
               >
-                {converting === "busy" ? "转换中…" : "转换"}
+                {converting === "busy" ? t("detail.converting") : t("detail.convert")}
               </Button>
             </div>
           </DialogContent>
@@ -810,10 +841,10 @@ function OnlineActions({
       )}
       <ActionTile
         icon={online.canUpdate ? "check_box" : "check_box_outline"}
-        label="允许更新"
+        label={t("detail.allowUpdates")}
         onClick={() => void service.setCanUpdate(id, !online.canUpdate).then(onChanged)}
       />
-      <ActionTile icon="delete" label="删除" onClick={onDelete} />
+      <ActionTile icon="delete" label={t("common.delete")} onClick={onDelete} />
     </div>
   );
 }

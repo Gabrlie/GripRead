@@ -4,6 +4,7 @@ import { useApp } from "../../context/AppContext";
 import type { ShelfSort } from "../../types/generated";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
 import { Button } from "../ui/button";
+import { t } from "../../i18n";
 
 export function LibraryManager({
   mode,
@@ -33,10 +34,10 @@ export function LibraryManager({
       <DialogContent className="bg-surface border-surface-variant/50 max-w-sm w-[calc(100%-2rem)] rounded-2xl p-5 space-y-4">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">
-            {mode === "sort" ? "书架排序" : "回收站"}
+            {mode === "sort" ? t("shelf.menu.sort") : t("shelf.menu.bin")}
           </DialogTitle>
           <DialogDescription className="text-xs text-secondary">
-            {mode === "sort" ? "排序和书架布局自动保存。" : "删除不影响云书架上的文件。"}
+            {mode === "sort" ? t("shelf.sort.note") : t("shelf.bin.note")}
           </DialogDescription>
         </DialogHeader>
         {(state.managementError || preferences.state.error) && (
@@ -52,12 +53,12 @@ export function LibraryManager({
                     : void preferences.store.load()
                 }
               >
-                重试保存
+                {t("shelf.retrySave")}
               </Button>
             )}
             {mode === "removed" && (
               <Button variant="outline" size="sm" onClick={() => void store.loadRemoved()}>
-                重新加载
+                {t("shelf.reload")}
               </Button>
             )}
           </div>
@@ -66,9 +67,9 @@ export function LibraryManager({
           <div className="space-y-2">
             {(
               [
-                ["recent_read", "最近阅读或更新"],
-                ["imported", "导入时间"],
-                ["title", "书名"],
+                ["recent_read", t("shelf.sort.recent")],
+                ["imported", t("shelf.sort.imported")],
+                ["title", t("detail.bookTitle")],
               ] as const
             ).map(([sort, label]: readonly [ShelfSort, string]) => (
               <Button
@@ -89,13 +90,15 @@ export function LibraryManager({
           <div className="space-y-2 max-h-80 overflow-auto">
             {(state.removedLoading || !state.removedLoaded) && (
               <p role="status" className="text-xs text-secondary">
-                正在读取回收站…
+                {t("shelf.bin.loading")}
               </p>
             )}
             {state.removedLoaded &&
               !state.removedLoading &&
               state.removedBooks.length === 0 &&
-              !state.managementError && <p className="text-xs text-secondary">回收站是空的。</p>}
+              !state.managementError && (
+                <p className="text-xs text-secondary">{t("shelf.bin.empty")}</p>
+              )}
             {state.removedBooks.map(({ book }) => (
               <div
                 key={book.id}
@@ -103,24 +106,26 @@ export function LibraryManager({
               >
                 <div className="min-w-0">
                   <p className="font-title-editorial text-sm truncate">{book.title}</p>
-                  <p className="text-xs text-secondary truncate">{book.author ?? "作者未知"}</p>
+                  <p className="text-xs text-secondary truncate">
+                    {book.author ?? t("shelf.unknownAuthor")}
+                  </p>
                 </div>
                 <span className="flex gap-1 shrink-0">
                   <Button
                     size="sm"
                     variant="outline"
                     className="text-xs"
-                    aria-label={`恢复 ${book.title}`}
+                    aria-label={t("shelf.bin.restoreBook", { title: book.title })}
                     disabled={state.managing}
                     onClick={() => run(() => store.restore(book.id))}
                   >
-                    恢复
+                    {t("shelf.bin.restore")}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     className={`text-xs ${confirming === book.id ? "text-on-error bg-error" : "text-error"}`}
-                    aria-label={`删除 ${book.title}`}
+                    aria-label={t("shelf.bin.deleteBook", { title: book.title })}
                     disabled={state.managing}
                     onClick={() => {
                       // A second tap confirms; deleting cannot be undone.
@@ -133,7 +138,7 @@ export function LibraryManager({
                       if (entry) run(() => store.deleteBook(entry, false));
                     }}
                   >
-                    {confirming === book.id ? "确认删除" : "删除"}
+                    {confirming === book.id ? t("shelf.bin.confirm") : t("common.delete")}
                   </Button>
                 </span>
               </div>

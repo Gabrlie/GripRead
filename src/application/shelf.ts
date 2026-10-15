@@ -6,6 +6,7 @@ import type {
   TocEntry,
 } from "../types/generated";
 import type { LibraryService, ReaderService } from "../services/contracts";
+import { t } from "../i18n";
 
 function errorCode(error: unknown): string | undefined {
   if (typeof error === "object" && error !== null && "code" in error) {
@@ -76,8 +77,12 @@ export function chapterLabels(book: LibraryBook, entries: TocEntry[]): ShelfChap
   const at = chapter ? chapters.findIndex((entry) => entry.ordinal === chapter.ordinal) : -1;
   return {
     current:
-      saved && position === null ? "待重新定位" : !saved ? "尚未阅读" : (chapter?.title ?? "全文"),
-    latest: currentEntries.at(-1)?.title ?? "全文",
+      saved && position === null
+        ? t("shelf.relocate")
+        : !saved
+          ? t("shelf.notRead")
+          : (chapter?.title ?? t("shelf.wholeText")),
+    latest: currentEntries.at(-1)?.title ?? t("shelf.wholeText"),
     remaining:
       chapters.length > 1
         ? saved
@@ -92,7 +97,7 @@ export function onlineChapterLabels(book: LibraryBook): ShelfChapterLabels | nul
   const online = book.online;
   if (!online) return null;
   return {
-    current: online.readChapterTitle || (book.locator ? "全文" : "尚未阅读"),
+    current: online.readChapterTitle || (book.locator ? t("shelf.wholeText") : t("shelf.notRead")),
     latest: online.book.latestChapterTitle || "",
     remaining:
       online.readChapter === null || !book.locator
@@ -104,10 +109,30 @@ export function onlineChapterLabels(book: LibraryBook): ShelfChapterLabels | nul
 
 /** The shelf's built-in groups: every book, then the three reading states. */
 export const READING_GROUPS: { id: "all" | ShelfState; name: string }[] = [
-  { id: "all", name: "全部" },
-  { id: "reading", name: "在读" },
-  { id: "unread", name: "未读" },
-  { id: "finished", name: "读完" },
+  {
+    id: "all",
+    get name() {
+      return t("shelf.group.all");
+    },
+  },
+  {
+    id: "reading",
+    get name() {
+      return t("shelf.group.reading");
+    },
+  },
+  {
+    id: "unread",
+    get name() {
+      return t("shelf.group.unread");
+    },
+  },
+  {
+    id: "finished",
+    get name() {
+      return t("shelf.group.finished");
+    },
+  },
 ];
 
 /** A book ends this close to its end, at most the length of a short page. */
@@ -318,7 +343,7 @@ export class ShelfStore {
         try {
           // An online book's labels need no contents listing.
           if (book.online) return { book, entries: [] as TocEntry[], error: null };
-          if (book.asset?.availability === "missing") throw new Error("文件缺失，无法读取目录");
+          if (book.asset?.availability === "missing") throw new Error(t("shelf.fileMissingToc"));
           // Unchanged text keeps its contents from the last load.
           const kept = this.chapterCache.get(book.book.id);
           if (kept?.contentVersion === book.book.contentVersion)
@@ -353,10 +378,10 @@ export class ShelfStore {
           : {
               current: book.locator
                 ? book.locator.contentVersion === book.book.contentVersion
-                  ? "目录读取失败"
-                  : "待重新定位"
-                : "尚未阅读",
-              latest: "目录读取失败",
+                  ? t("shelf.tocUnread")
+                  : t("shelf.relocate")
+                : t("shelf.notRead"),
+              latest: t("shelf.tocUnread"),
             });
     }
     this.chapterCache = cache;
@@ -369,7 +394,7 @@ export class ShelfStore {
       const groups = await this.library.listGroups();
       this.update({ groups });
       if (!groups.some((group) => group.name.trim() === trimmed)) {
-        throw new Error(`分组“${trimmed}”仍未确认，请重试或取消操作`);
+        throw new Error(t("shelf.groupPending", { name: trimmed }));
       }
     };
     return this.change(key, () => this.library.createGroup(name), reconcile);

@@ -10,6 +10,7 @@ import { usePageLayer } from "../Layout/use-page-layer";
 import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { formatDuration, localDay } from "../../application/reading-time";
+import { t } from "../../i18n";
 
 /** Legado's 阅读记录: total and daily reading time, and time per book. */
 export function ReadingRecordsPage({
@@ -51,15 +52,15 @@ export function ReadingRecordsPage({
       ref={page}
       role="dialog"
       aria-modal="true"
-      aria-label="阅读记录"
+      aria-label={t("shelf.menu.records")}
       data-open=""
       className="fixed inset-0 z-40 bg-surface flex flex-col overflow-hidden pt-safe pb-safe"
     >
       <header className="shrink-0 flex items-center h-14 px-2 gap-1">
-        <Button variant="ghost" size="icon" aria-label="返回" onClick={onClose}>
+        <Button variant="ghost" size="icon" aria-label={t("common.back")} onClick={onClose}>
           <Icon name="arrow_back" size={20} />
         </Button>
-        <h1 className="font-title-editorial text-base font-semibold">阅读记录</h1>
+        <h1 className="font-title-editorial text-base font-semibold">{t("shelf.menu.records")}</h1>
       </header>
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-5 py-2 space-y-5">
@@ -70,8 +71,8 @@ export function ReadingRecordsPage({
           )}
           <dl className="grid grid-cols-2 gap-3">
             {[
-              ["今日阅读", stats ? formatDuration(stats.todaySeconds) : "—"],
-              ["累计阅读", stats ? formatDuration(stats.totalSeconds) : "—"],
+              [t("settings.today"), stats ? formatDuration(stats.todaySeconds) : "—"],
+              [t("settings.total"), stats ? formatDuration(stats.totalSeconds) : "—"],
             ].map(([label, value]) => (
               <div key={label} className="rounded-2xl bg-surface-container-low p-4">
                 <dt className="text-xs text-secondary">{label}</dt>
@@ -82,10 +83,10 @@ export function ReadingRecordsPage({
           {stats && <ActivityMatrix days={stats.days} today={localDay()} />}
           <section aria-labelledby="records-books" className="space-y-2">
             <h2 id="records-books" className="text-xs text-secondary font-medium">
-              书籍
+              {t("records.books")}
             </h2>
             {stats && books.length === 0 && (
-              <p className="text-sm text-secondary py-6 text-center">还没有阅读记录。</p>
+              <p className="text-sm text-secondary py-6 text-center">{t("records.none")}</p>
             )}
             <ul className="space-y-2">
               {books.map(({ record, book }) => (
@@ -105,17 +106,20 @@ export function ReadingRecordsPage({
                         {book?.book.title ?? record.title}
                         {book && book.removedAt !== null && (
                           <span className="ml-2 text-[10px] font-normal text-secondary">
-                            回收站
+                            {t("shelf.menu.bin")}
                           </span>
                         )}
                         {!book && (
                           <span className="ml-2 text-[10px] font-normal text-secondary">
-                            {record.deleted ? "已删除" : "不在书架"}
+                            {record.deleted ? t("records.deleted") : t("records.offShelf")}
                           </span>
                         )}
                       </span>
                       <span className="block text-xs text-secondary">
-                        最近 {record.lastDay} · {formatDuration(record.seconds)}
+                        {t("records.last", {
+                          day: record.lastDay,
+                          time: formatDuration(record.seconds),
+                        })}
                       </span>
                     </span>
                   </RecordButton>
@@ -129,14 +133,16 @@ export function ReadingRecordsPage({
         <Dialog open onOpenChange={(open) => !open && setRemoving(null)}>
           <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3">
             <DialogHeader>
-              <DialogTitle className="font-title-editorial text-base">删除阅读记录</DialogTitle>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("records.delete")}
+              </DialogTitle>
             </DialogHeader>
             <p className="text-sm text-secondary">
-              《{removing.title}》的阅读时长将被删除，不再计入统计。
+              {t("records.deleteNote", { title: removing.title })}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setRemoving(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -150,7 +156,7 @@ export function ReadingRecordsPage({
                   );
                 }}
               >
-                删除
+                {t("common.delete")}
               </Button>
             </div>
           </DialogContent>
@@ -163,11 +169,11 @@ export function ReadingRecordsPage({
               <DialogTitle className="font-title-editorial text-base">{gone.title}</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-secondary">
-              {gone.deleted ? "这本书已删除，无法打开。" : "这本书不在书架上，可以从搜索打开。"}
+              {gone.deleted ? t("records.goneDeleted") : t("records.goneOff")}
             </p>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setGone(null)}>
-                知道了
+                {t("common.confirm")}
               </Button>
             </div>
           </DialogContent>

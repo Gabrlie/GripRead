@@ -34,6 +34,7 @@ import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 import { SLIDE_MS, useSwipePages } from "../ui/use-swipe-pages";
+import { t } from "../../i18n";
 
 /** 自动更新 runs again on returning to the app after this long. */
 const AUTO_UPDATE_GAP = 30 * 60_000;
@@ -55,9 +56,9 @@ export function BookshelfView() {
   useEffect(() => {
     if (!lastRemoved) return;
     toast({
-      text: `已移到回收站：${lastRemoved.title}`,
+      text: t("shelf.removed", { title: lastRemoved.title }),
       action: {
-        label: "撤销",
+        label: t("shelf.undo"),
         run: () => void store.restore(lastRemoved.id).catch(() => undefined),
       },
     });
@@ -109,14 +110,15 @@ export function BookshelfView() {
     )
     .map((entry) => {
       const labels: ShelfChapterLabels = groupState.chapters[entry.book.id] ?? {
-        current: entry.locator ? "全文" : "尚未阅读",
-        latest: "全文",
+        current: entry.locator ? t("shelf.wholeText") : t("shelf.notRead"),
+        latest: t("shelf.wholeText"),
       };
       return {
         entry,
         title: entry.book.title,
-        author: entry.book.author ?? "作者未知",
-        lastReadChapter: entry.asset?.availability === "missing" ? "文件缺失" : labels.current,
+        author: entry.book.author ?? t("shelf.unknownAuthor"),
+        lastReadChapter:
+          entry.asset?.availability === "missing" ? t("shelf.fileMissing") : labels.current,
         latestChapter: labels.latest,
         missing: entry.asset?.availability === "missing",
       };
@@ -154,9 +156,10 @@ export function BookshelfView() {
     }
     if (updatingRef.current) return;
     updatingRef.current = true;
-    setUpdating("正在更新目录…");
+    setUpdating(t("shelf.updating"));
     void updateOnlineToc(runtime.services.sources, [], (event) => {
-      if (!event.done) setUpdating(`正在更新目录 ${event.updated}/${event.total}`);
+      if (!event.done)
+        setUpdating(t("shelf.updatingCount", { done: event.updated, total: event.total }));
     })
       .then((outcomes) => {
         const added = outcomes.reduce((sum, item) => sum + item.newChapters, 0);
@@ -164,8 +167,8 @@ export function BookshelfView() {
         if (!quiet || added > 0)
           toast(
             outcomes.length === 0
-              ? "书架上没有可以更新的网络书籍"
-              : `目录已更新：${added} 个新章节${failed ? `，${failed} 本失败` : ""}`,
+              ? t("shelf.nothingToUpdate")
+              : `${t("shelf.updated", { added })}${failed ? t("shelf.updatedFailed", { failed }) : ""}`,
           );
         return store.refresh();
       })
@@ -341,42 +344,50 @@ export function BookshelfView() {
       >
         {/* Row 1: Header (h-14) */}
         <Header
-          title="书架"
+          title={t("shelf.title")}
           subtitle="BOOKSHELF"
           readingTime={todaySeconds === null ? undefined : formatDuration(todaySeconds)}
           standalone={false}
           onSearchClick={() => setIsSearching((prev) => !prev)}
           menuItems={[
-            { icon: "add", label: "添加本地", onSelect: handleAddLocal },
+            { icon: "add", label: t("shelf.menu.add"), onSelect: handleAddLocal },
             {
               icon: "folder_open",
-              label: "导入文件夹",
+              label: t("shelf.menu.folder"),
               onSelect: () =>
                 state.importing ? store.requestImportDetails() : void store.importFolder(),
             },
-            { icon: "sync", label: "刷新书架", onSelect: handleUpdateToc },
+            { icon: "sync", label: t("shelf.menu.refresh"), onSelect: handleUpdateToc },
             ...(state.books.some((entry) => entry.online)
               ? [
                   {
                     icon: "refresh",
-                    label: "更新目录",
+                    label: t("shelf.menu.update"),
                     detail: updating ?? undefined,
                     onSelect: () => void handleUpdateOnline(),
                   },
-                  { icon: "download", label: "下载管理", onSelect: () => setOffline(true) },
+                  {
+                    icon: "download",
+                    label: t("shelf.menu.downloads"),
+                    onSelect: () => setOffline(true),
+                  },
                 ]
               : []),
             {
               icon: layoutMode === "grid" ? "view_list" : "grid_view",
-              label: "书架布局",
-              detail: layoutMode === "grid" ? "网格" : "列表",
+              label: t("shelf.menu.layout"),
+              detail: layoutMode === "grid" ? t("shelf.layout.grid") : t("shelf.layout.list"),
               onSelect: handleToggleLayout,
             },
-            { icon: "swap_vert", label: "书架排序", onSelect: () => setManager("sort") },
-            { icon: "label", label: "分组管理", onSelect: () => setIsGroupModalOpen(true) },
-            { icon: "schedule", label: "阅读记录", onSelect: () => setRecords(true) },
-            { icon: "cloud", label: "云书架", onSelect: () => setCloud(true) },
-            { icon: "delete", label: "回收站", onSelect: () => setManager("removed") },
+            { icon: "swap_vert", label: t("shelf.menu.sort"), onSelect: () => setManager("sort") },
+            {
+              icon: "label",
+              label: t("shelf.menu.groups"),
+              onSelect: () => setIsGroupModalOpen(true),
+            },
+            { icon: "schedule", label: t("shelf.menu.records"), onSelect: () => setRecords(true) },
+            { icon: "cloud", label: t("shelf.menu.cloud"), onSelect: () => setCloud(true) },
+            { icon: "delete", label: t("shelf.menu.bin"), onSelect: () => setManager("removed") },
           ]}
         />
 
@@ -396,7 +407,7 @@ export function BookshelfView() {
               <TabsList
                 ref={tabsListRef}
                 variant="line"
-                aria-label="书架分组"
+                aria-label={t("shelf.groups")}
                 data-testid="shelf-groups"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
@@ -458,7 +469,8 @@ export function BookshelfView() {
             className={updating ? "animate-spin" : ""}
             style={updating ? undefined : { transform: `rotate(${pull.distance * 4}deg)` }}
           />
-          {updating ?? (pull.distance >= PULL_TRIGGER ? "松开更新目录" : "下拉更新目录")}
+          {updating ??
+            (pull.distance >= PULL_TRIGGER ? t("shelf.pull.release") : t("shelf.pull.hint"))}
         </span>
       </div>
 
@@ -487,15 +499,15 @@ export function BookshelfView() {
               <Input
                 autoFocus
                 value={searchQuery}
-                aria-label="搜索本地书籍"
+                aria-label={t("shelf.search")}
                 onChange={(e) => setShelf({ query: e.target.value })}
-                placeholder="搜索书名或作家..."
+                placeholder={t("shelf.search.placeholder")}
                 className="w-full bg-transparent border-0 shadow-none focus-visible:ring-0 p-0 text-xs text-on-surface placeholder:text-outline"
               />
               {searchQuery && (
                 <button
                   type="button"
-                  aria-label="清除搜索"
+                  aria-label={t("shelf.search.clear")}
                   onClick={() => setShelf({ query: "" })}
                   className="text-secondary hover:text-on-surface p-1"
                 >
@@ -508,7 +520,7 @@ export function BookshelfView() {
 
         {(state.error || groupState.error || Object.keys(groupState.chapterErrors).length > 0) && (
           <div role="alert" className="text-xs text-error rounded-xl bg-error-container p-3 mb-3">
-            {state.error || groupState.error || "部分书籍的目录读取失败，已保留可用的书架信息。"}
+            {state.error || groupState.error || t("shelf.tocFailed")}
             <Button
               size="sm"
               variant="outline"
@@ -516,18 +528,18 @@ export function BookshelfView() {
                 state.error ? void store.refresh() : void groupStore.load(state.books)
               }
             >
-              重试
+              {t("common.retry")}
             </Button>
           </div>
         )}
         {state.loading && (
           <p role="status" className="text-xs text-secondary">
-            正在读取书架…
+            {t("shelf.loading")}
           </p>
         )}
         {preferences.state.error && (
           <div role="alert" className="text-xs text-error rounded-xl bg-error-container p-3 mb-3">
-            书架偏好保存失败：{preferences.state.error}
+            {t("shelf.prefsFailed", { error: preferences.state.error })}
             <Button
               size="sm"
               variant="outline"
@@ -535,7 +547,7 @@ export function BookshelfView() {
                 preferences.state.value ? preferences.store.retry() : void preferences.store.load()
               }
             >
-              重试
+              {t("common.retry")}
             </Button>
           </div>
         )}
@@ -545,10 +557,10 @@ export function BookshelfView() {
           </p>
         )}
         {/* Book List / Grid */}
-        <section aria-label="书架书籍列表" className="mt-1 pb-6">
+        <section aria-label={t("shelf.list")} className="mt-1 pb-6">
           {state.loading ? (
             <p role="status" className="text-xs text-secondary py-10 text-center">
-              正在读取书架…
+              {t("shelf.loading")}
             </p>
           ) : state.error ? null : filteredBooks.length === 0 ? (
             <div className="bg-surface-container-low rounded-2xl p-10 text-center my-6 space-y-3 border border-surface-variant/30">
@@ -556,7 +568,7 @@ export function BookshelfView() {
                 <Icon name="auto_stories" size={24} />
               </div>
               <p className="font-title-editorial text-on-surface text-sm">
-                {state.books.length ? "书架暂无符合条件的书籍" : "从一本本地小说开始"}
+                {state.books.length ? t("shelf.noMatch") : t("shelf.empty")}
               </p>
               <Button
                 data-testid="import-button"
@@ -565,7 +577,7 @@ export function BookshelfView() {
                 onClick={handleAddLocal}
                 className="mt-2 bg-primary text-on-primary text-xs cursor-pointer"
               >
-                导入本地小说
+                {t("shelf.import")}
               </Button>
             </div>
           ) : layoutMode === "list" ? (
@@ -675,17 +687,19 @@ function BookCardList({
 
           {/* Line 3: 读至目录以及章节名 */}
           <p className="font-body-sm text-xs text-on-surface-variant truncate leading-normal">
-            读至：{book.lastReadChapter || "第一章"}
+            {t("shelf.readTo", { chapter: book.lastReadChapter || t("shelf.firstChapter") })}
           </p>
 
           {/* Line 4: 最新目录 以及 右侧的更新时间（本地书籍不显示更新时间） */}
           <div className="flex items-center justify-between gap-2 text-xs text-secondary min-w-0 leading-normal">
             <span className="truncate min-w-0 text-[11px] sm:text-xs">
-              最新：{book.latestChapter || book.lastReadChapter || "第一章"}
+              {t("shelf.latest", {
+                chapter: book.latestChapter || book.lastReadChapter || t("shelf.firstChapter"),
+              })}
             </span>
             {Boolean(book.entry.online?.newChapters) && (
               <span className="shrink-0 rounded px-1 text-[10px] leading-4 bg-primary/10 text-primary">
-                新 {book.entry.online!.newChapters}
+                {t("shelf.new", { count: book.entry.online!.newChapters })}
               </span>
             )}
             {book.entry.online?.updateError && (
@@ -693,7 +707,7 @@ function BookCardList({
                 className="shrink-0 text-[10px] text-error"
                 title={book.entry.online.updateError}
               >
-                更新失败
+                {t("shelf.updateFailed")}
               </span>
             )}
           </div>
@@ -753,7 +767,7 @@ function NewChaptersMark({ book }: { book: LibraryBook }) {
   const fresh = gainedChapters(book, labels);
   return (
     <span
-      aria-label={`还有 ${count} 章未读`}
+      aria-label={t("shelf.unread", { count })}
       data-fresh={fresh ? "true" : undefined}
       className={`absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums shadow-xs ${
         fresh ? "bg-error text-on-error" : "bg-surface-container-highest/90 text-on-surface-variant"
@@ -769,8 +783,8 @@ function CloudMark() {
   return (
     <span
       role="img"
-      aria-label="已上传到云书架"
-      title="已上传到云书架"
+      aria-label={t("shelf.inCloud")}
+      title={t("shelf.inCloud")}
       className="absolute right-1 bottom-1 h-4 w-4 rounded-full bg-surface/80 text-secondary flex items-center justify-center shadow-xs"
     >
       <Icon name="cloud" size={10} />

@@ -11,6 +11,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Icon } from "../ui/Icon";
+import { t } from "../../i18n";
 
 export function GroupManager({
   open,
@@ -33,10 +34,10 @@ export function GroupManager({
       <DialogContent className="bg-surface border-surface-variant/50 max-w-sm w-[calc(100%-2rem)] rounded-2xl p-5 space-y-4">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base font-semibold text-on-surface text-left">
-            分组管理
+            {t("shelf.menu.groups")}
           </DialogTitle>
           <DialogDescription className="text-secondary text-xs text-left">
-            在读、未读、读完会按进度自动分组；这里管理你自己的分组。
+            {t("groups.note")}
           </DialogDescription>
         </DialogHeader>
         {state.error && (
@@ -56,7 +57,7 @@ export function GroupManager({
               className="h-7 px-1"
             >
               <Icon name="arrow_back" size={14} />
-              全部分组
+              {t("groups.all")}
             </Button>
             <form
               className="flex gap-2"
@@ -68,7 +69,7 @@ export function GroupManager({
               }}
             >
               <Input
-                aria-label="分组名称"
+                aria-label={t("groups.name")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 className="h-8 text-xs bg-surface-container"
@@ -79,10 +80,10 @@ export function GroupManager({
                 disabled={state.saving || !name.trim()}
                 className="h-8 text-xs"
               >
-                保存
+                {t("common.save")}
               </Button>
             </form>
-            <p className="text-secondary">在书籍详情页可以把书移入或移出这个分组。</p>
+            <p className="text-secondary">{t("groups.moveNote")}</p>
             <Button
               variant="outline"
               size="sm"
@@ -96,7 +97,7 @@ export function GroupManager({
                 })
               }
             >
-              删除分组（书籍回到自动分组）
+              {t("groups.delete")}
             </Button>
           </div>
         ) : (
@@ -118,7 +119,7 @@ export function GroupManager({
                         library.books.some((item) => item.book.id === id),
                       ).length
                     }{" "}
-                    本 <span aria-hidden="true">›</span>
+                    {t("groups.booksSuffix")} <span aria-hidden="true">›</span>
                   </span>
                 </button>
               ))}
@@ -134,8 +135,8 @@ export function GroupManager({
               }}
             >
               <Input
-                aria-label="新分组名称"
-                placeholder="新分组名称"
+                aria-label={t("groups.newName")}
+                placeholder={t("groups.newName")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 className="h-8 text-xs bg-surface-container"
@@ -146,14 +147,14 @@ export function GroupManager({
                 disabled={state.saving || !name.trim()}
                 className="h-8 text-xs"
               >
-                添加
+                {t("downloads.add")}
               </Button>
             </form>
           </>
         )}
         <DialogFooter className="pt-2">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            完成
+            {t("common.done")}
           </Button>
         </DialogFooter>
       </DialogContent>

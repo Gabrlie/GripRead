@@ -2,6 +2,7 @@
 import React from "react";
 import { render, screen, cleanup, waitFor, act, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { setLanguage } from "../../i18n";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BookshelfView } from "./BookshelfView";
 import { ImportModal } from "./ImportModal";
@@ -494,6 +495,18 @@ describe("更新目录 on the shelf", () => {
         expect.objectContaining({ bookIds: [] }),
       ),
     );
+  });
+
+  it("shows the shelf in English", async () => {
+    setLanguage("en");
+    try {
+      await shelf(false);
+      expect(screen.getByRole("tab", { name: "Reading" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Finished" })).toBeTruthy();
+      expect(screen.getAllByText(/^Reading: /).length).toBeGreaterThan(0);
+    } finally {
+      setLanguage("system");
+    }
   });
 
   it("moves between groups by swiping sideways", async () => {

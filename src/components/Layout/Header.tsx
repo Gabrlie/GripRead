@@ -7,6 +7,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import { t } from "../../i18n";
 
 export interface HeaderMenuItem {
   icon: string;
@@ -60,7 +61,9 @@ export function Header({
         {readingTime && (
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface-container/75 text-secondary text-xs font-label-md shrink-0 border border-surface-variant/40 shadow-xs leading-none select-none">
             <Icon name="schedule" size={13} className="text-primary shrink-0" />
-            <span className="leading-none pt-[0.5px]">今日 {readingTime}</span>
+            <span className="leading-none pt-[0.5px]">
+              {t("header.today", { time: readingTime })}
+            </span>
           </div>
         )}
       </div>
@@ -74,8 +77,8 @@ export function Header({
             type="button"
             onClick={onSearchClick}
             disabled={searchDisabled}
-            title={searchDisabled ? "搜索未开放" : undefined}
-            aria-label="搜索"
+            title={searchDisabled ? t("header.searchOff") : undefined}
+            aria-label={t("header.search")}
             className="w-10 h-10 rounded-full flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container/60 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Icon name="search" size={20} />
@@ -87,7 +90,7 @@ export function Header({
           <DropdownMenu>
             <DropdownMenuTrigger
               className="w-10 h-10 rounded-full flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container/60 transition-colors cursor-pointer outline-none"
-              aria-label="更多选项"
+              aria-label={t("header.more")}
             >
               <Icon name="more_horiz" size={20} />
             </DropdownMenuTrigger>
@@ -113,7 +116,7 @@ export function Header({
           <button
             type="button"
             onClick={onMoreClick}
-            aria-label="更多选项"
+            aria-label={t("header.more")}
             className="w-10 h-10 rounded-full flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container/60 transition-colors cursor-pointer"
           >
             <Icon name="more_horiz" size={20} />

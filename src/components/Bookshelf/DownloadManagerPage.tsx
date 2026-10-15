@@ -6,14 +6,15 @@ import { presetRange } from "../Online/CacheRangeDialog";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
+import { t } from "../../i18n";
 
-const STATES: Record<DownloadJob["state"], string> = {
-  queued: "等待中",
-  running: "缓存中",
-  paused: "已暂停",
-  done: "已完成",
-  cancelled: "已取消",
-};
+const states = (): Record<DownloadJob["state"], string> => ({
+  queued: t("downloads.queued"),
+  running: t("downloads.running"),
+  paused: t("downloads.paused"),
+  done: t("downloads.done"),
+  cancelled: t("downloads.cancelled"),
+});
 
 /**
  * 下载管理: the download queue, which keeps running in the background
@@ -61,7 +62,7 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
       }),
     ).then((results) => {
       const failed = results.filter((result) => result.status === "rejected").length;
-      toast(failed ? `已加入下载，${failed} 本没有要缓存的章节` : "已加入下载");
+      toast(failed ? t("downloads.addedSome", { failed }) : t("downloads.added"));
     });
   };
 
@@ -78,20 +79,20 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
 
   return (
     <FullPage
-      label="下载管理"
+      label={t("shelf.menu.downloads")}
       onClose={onClose}
       actions={
         <Button variant="ghost" size="sm" onClick={() => setAdding((value) => !value)}>
-          {adding ? "完成" : "添加"}
+          {adding ? t("common.done") : t("downloads.add")}
         </Button>
       }
     >
       {adding ? (
         books.length === 0 ? (
-          <p className="py-10 text-center text-sm text-secondary">书架上没有网络书籍。</p>
+          <p className="py-10 text-center text-sm text-secondary">{t("downloads.noBooks")}</p>
         ) : (
           <>
-            <ul aria-label="网络书籍" className="space-y-1.5">
+            <ul aria-label={t("downloads.books")} className="space-y-1.5">
               {books.map((book) => {
                 const on = selected.has(book.book.id);
                 return (
@@ -114,7 +115,10 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm truncate">{book.book.title}</span>
                         <span className="block text-[11px] text-secondary">
-                          已缓存 {book.online.cachedChapters}/{book.online.totalChapters} 章
+                          {t("downloads.cachedOf", {
+                            cached: book.online.cachedChapters,
+                            total: book.online.totalChapters,
+                          })}
                         </span>
                       </span>
                     </button>
@@ -127,27 +131,25 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                 variant="outline"
                 onClick={() => setSelected(new Set(books.map((book) => book.book.id)))}
               >
-                全选
+                {t("downloads.selectAll")}
               </Button>
               <Button disabled={!selected.size} onClick={() => add("next50")}>
-                后面 50 章
+                {t("downloads.next50")}
               </Button>
               <Button disabled={!selected.size} onClick={() => add("rest")}>
-                后面全部
+                {t("downloads.allAfter")}
               </Button>
               <Button disabled={!selected.size} onClick={() => add("all")}>
-                全部
+                {t("downloads.all")}
               </Button>
             </div>
           </>
         )
       ) : jobs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-secondary">
-          没有下载任务。点右上角的添加，或在书籍详情和阅读菜单里选择缓存。
-        </p>
+        <p className="py-10 text-center text-sm text-secondary">{t("downloads.none")}</p>
       ) : (
         <PageSection>
-          <ul aria-label="下载任务">
+          <ul aria-label={t("downloads.jobs")}>
             {jobs.map((job) => {
               const done = job.cached + job.failed;
               const running = job.state === "running" || job.state === "queued";
@@ -162,7 +164,7 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                         className="h-7"
                         onClick={() => void service.pauseDownload(job.id)}
                       >
-                        暂停
+                        {t("downloads.pause")}
                       </Button>
                     ) : (
                       (job.state === "paused" || job.state === "cancelled") && (
@@ -172,7 +174,7 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                           className="h-7"
                           onClick={() => void service.resumeDownload(job.id)}
                         >
-                          继续
+                          {t("downloads.resume")}
                         </Button>
                       )
                     )}
@@ -181,16 +183,16 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                         size="sm"
                         variant="ghost"
                         className="h-7"
-                        aria-label={`取消《${job.title}》`}
+                        aria-label={t("downloads.cancelJob", { title: job.title })}
                         onClick={() => void service.cancelDownload(job.id)}
                       >
-                        取消
+                        {t("common.cancel")}
                       </Button>
                     )}
                   </div>
                   <div
                     role="progressbar"
-                    aria-label={`《${job.title}》的进度`}
+                    aria-label={t("downloads.progress", { title: job.title })}
                     aria-valuemin={0}
                     aria-valuemax={job.total}
                     aria-valuenow={done}
@@ -202,8 +204,14 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                   <p className="text-[11px] text-secondary tabular-nums">
-                    {STATES[job.state]} · 第 {job.start + 1}–{job.end} 章 · {job.cached}/{job.total}
-                    {job.failed ? ` · 失败 ${job.failed}` : ""}
+                    {t("downloads.jobLine", {
+                      state: states()[job.state],
+                      from: job.start + 1,
+                      to: job.end,
+                      cached: job.cached,
+                      total: job.total,
+                    })}
+                    {job.failed ? t("downloads.jobFailed", { failed: job.failed }) : ""}
                   </p>
                 </li>
               );
@@ -212,7 +220,7 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
           <div className="flex justify-end gap-2 px-4 pb-3">
             {active && (
               <Button size="sm" variant="ghost" onClick={() => void service.pauseAllDownloads()}>
-                全部暂停
+                {t("downloads.pauseAll")}
               </Button>
             )}
             {finished && (
@@ -221,7 +229,7 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
                 variant="ghost"
                 onClick={() => void service.clearFinishedDownloads()}
               >
-                清除已完成
+                {t("downloads.clearDone")}
               </Button>
             )}
           </div>

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { usePageLayer } from "./use-page-layer";
+import { t } from "../../i18n";
 
 /**
  * A full-screen page over the app (settings sub-pages, the cloud
@@ -37,7 +38,7 @@ export function FullPage({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="返回"
+            aria-label={t("common.back")}
             className="h-9 w-9 rounded-full text-secondary"
             onClick={onClose}
           >

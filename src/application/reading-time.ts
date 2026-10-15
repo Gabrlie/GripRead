@@ -1,3 +1,5 @@
+import { t } from "../i18n";
+
 /** The reader's local calendar day as `YYYY-MM-DD`. */
 export function localDay(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -6,10 +8,12 @@ export function localDay(date = new Date()): string {
 
 export function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 1) return seconds > 0 ? "不到 1 分钟" : "0 分钟";
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return seconds > 0 ? t("time.underMinute") : t("time.zero");
+  if (minutes < 60) return t("time.minutes", { minutes });
   const hours = Math.floor(minutes / 60);
-  return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分钟` : `${hours} 小时`;
+  return minutes % 60
+    ? t("time.hoursMinutes", { hours, minutes: minutes % 60 })
+    : t("time.hours", { hours });
 }
 
 export interface ActivityCell {

@@ -36,6 +36,7 @@ import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
 import { UpdatePrompt } from "./components/Updates/UpdatePrompt";
+import { useLocale } from "./i18n";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -335,6 +336,9 @@ function MainContent() {
 }
 export function App({ services = tauriServices }: { services?: AppServices }) {
   const [runtime] = useState(() => new AppRuntime(services));
+  // Changing the interface language renders the whole app again, so plain
+  // t() calls anywhere below follow it.
+  useLocale();
   return (
     <ErrorBoundary>
       <MotionConfig reducedMotion="user" transition={{ duration: 0.2, ease: "easeOut" }}>

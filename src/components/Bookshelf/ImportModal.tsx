@@ -11,16 +11,17 @@ import {
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
+import { t } from "../../i18n";
 
-const labels = {
-  staging: "等待导入",
-  reading: "读取文件",
-  normalizing: "准备正文",
-  persisting: "保存到本地",
-  completed: "导入完成",
-  failed: "导入失败",
-  cancelled: "导入已取消",
-};
+const labels = () => ({
+  staging: t("import.staging"),
+  reading: t("import.reading"),
+  normalizing: t("import.normalizing"),
+  persisting: t("import.persisting"),
+  completed: t("import.finished"),
+  failed: t("import.failed"),
+  cancelled: t("import.cancelled"),
+});
 
 const encodingOptions: { value: Exclude<TxtEncoding, "auto">; label: string }[] = [
   { value: "utf8", label: "UTF-8" },
@@ -60,10 +61,10 @@ export function ImportModal() {
   if (!state.importing && !notice && !state.importDetailsRequested && !open) return null;
 
   const statusLabel = state.job
-    ? labels[state.job.phase]
+    ? labels()[state.job.phase]
     : state.importing
-      ? "等待文件选择"
-      : labels[outcome?.phase ?? "failed"];
+      ? t("import.choosing")
+      : labels()[outcome?.phase ?? "failed"];
   const errorDetails = state.importing ? state.importError : (outcome?.error ?? state.importError);
   const importResult = (state.importing ? state.job?.result : terminalStatus?.result) ?? null;
   const retryWithEncoding =
@@ -83,7 +84,7 @@ export function ImportModal() {
           type="button"
           onClick={() => setOpen(true)}
           className="fixed bottom-[calc(6rem+var(--safe-bottom))] md:bottom-5 right-5 z-[60] flex max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-full border border-surface-variant bg-surface-container px-4 py-2 text-sm shadow-sm"
-          aria-label="查看导入进度"
+          aria-label={t("import.showProgress")}
         >
           <span>{statusLabel}</span>
           {state.job?.phase === "reading" && state.job.totalBytes ? (
@@ -114,13 +115,13 @@ export function ImportModal() {
             {notice.phase === "completed" && importResult
               ? `：${importResult.book.title}`
               : notice.phase === "failed"
-                ? " · 查看详情"
+                ? t("import.details")
                 : ""}
           </button>
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="关闭导入提示"
+            aria-label={t("import.closeNotice")}
             onClick={() => store.dismissImportNotice(notice.id)}
           >
             <span aria-hidden="true">×</span>
@@ -131,8 +132,8 @@ export function ImportModal() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-2xl border border-surface-variant/40 bg-surface p-5 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-title-editorial">导入本地书籍</DialogTitle>
-            <DialogDescription>导入在后台运行；关闭此面板不会中断任务。</DialogDescription>
+            <DialogTitle className="font-title-editorial">{t("import.title")}</DialogTitle>
+            <DialogDescription>{t("import.background")}</DialogDescription>
           </DialogHeader>
 
           <p role="status" className="text-sm text-primary">
@@ -145,17 +146,19 @@ export function ImportModal() {
                 value={
                   state.job.totalBytes ? (state.job.bytesRead / state.job.totalBytes) * 100 : 0
                 }
-                aria-label="导入进度"
+                aria-label={t("import.progress")}
               />
               <p className="text-xs text-secondary">
-                {state.job.bytesRead} / {state.job.totalBytes} 字节
+                {t("import.bytes", { read: state.job.bytesRead, total: state.job.totalBytes })}
               </p>
             </>
           )}
 
           {!state.importing && outcome?.phase === "completed" && importResult && (
             <p className="text-sm">
-              {importResult.duplicate ? "已复用已有书籍" : "书籍已保存"}：{importResult.book.title}
+              {importResult.duplicate
+                ? t("import.duplicate", { title: importResult.book.title })
+                : t("import.saved", { title: importResult.book.title })}
             </p>
           )}
 
@@ -167,7 +170,7 @@ export function ImportModal() {
 
           {retryWithEncoding && (
             <label className="flex flex-col gap-2 text-sm">
-              <span>自动识别失败，请选择编码后重新选择文件</span>
+              <span>{t("import.chooseEncoding")}</span>
               <select
                 value={encoding}
                 onChange={(event) =>
@@ -187,16 +190,16 @@ export function ImportModal() {
           <DialogFooter>
             {state.importing && (
               <Button variant="outline" disabled={!state.job} onClick={() => void store.cancel()}>
-                取消导入
+                {t("import.cancel")}
               </Button>
             )}
             {retryAvailable && (
               <Button variant="outline" onClick={retryImport}>
-                {retryWithEncoding ? "选择文件并按编码重试" : "重新选择文件"}
+                {retryWithEncoding ? t("import.retryEncoding") : t("import.chooseAgain")}
               </Button>
             )}
             <Button variant="outline" onClick={() => setOpen(false)}>
-              关闭
+              {t("common.close")}
             </Button>
           </DialogFooter>
         </DialogContent>
