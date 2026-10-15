@@ -1,4 +1,5 @@
 import type { BookSourceSummary } from "../types/generated";
+import { t } from "../i18n";
 
 /** Legado's 书源管理 filters. */
 export type SourceFilter =
@@ -14,24 +15,24 @@ export type SourceFilter =
 /** Legado's 书源管理 sort orders. */
 export type SourceSort = "manual" | "weight" | "name" | "url" | "update" | "respond" | "enabled";
 
-export const SOURCE_SORTS: [SourceSort, string][] = [
-  ["manual", "手动排序"],
-  ["weight", "智能排序"],
-  ["name", "名称排序"],
-  ["url", "网址排序"],
-  ["update", "更新时间排序"],
-  ["respond", "响应时间排序"],
-  ["enabled", "是否启用"],
+export const sourceSorts = (): [SourceSort, string][] => [
+  ["manual", t("src.sort.manual")],
+  ["weight", t("src.sort.weight")],
+  ["name", t("src.sort.name")],
+  ["url", t("src.sort.url")],
+  ["update", t("src.sort.update")],
+  ["respond", t("src.sort.respond")],
+  ["enabled", t("src.sort.enabled")],
 ];
 
-export const BASIC_FILTERS: [SourceFilter, string][] = [
-  [{ kind: "all" }, "全部"],
-  [{ kind: "enabled" }, "已启用"],
-  [{ kind: "disabled" }, "已禁用"],
-  [{ kind: "login" }, "需登录"],
-  [{ kind: "ungrouped" }, "未分组"],
-  [{ kind: "exploreOn" }, "已启用发现"],
-  [{ kind: "exploreOff" }, "已禁用发现"],
+export const basicFilters = (): [SourceFilter, string][] => [
+  [{ kind: "all" }, t("downloads.all")],
+  [{ kind: "enabled" }, t("src.filter.enabled")],
+  [{ kind: "disabled" }, t("src.filter.disabled")],
+  [{ kind: "login" }, t("src.needsLogin")],
+  [{ kind: "ungrouped" }, t("src.filter.ungrouped")],
+  [{ kind: "exploreOn" }, t("src.filter.exploreOn")],
+  [{ kind: "exploreOff" }, t("src.exploreOff")],
 ];
 
 /** Splits Legado's group text (`,` `;` separated) into names. */
@@ -158,7 +159,7 @@ export function sourceError(source: BookSourceSummary): string | null {
 
 /** Response time as Legado shows it in the list. */
 export function formatRespondTime(ms: number): string {
-  if (ms >= 180000) return "超时";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)} 秒`;
-  return `${ms} 毫秒`;
+  if (ms >= 180000) return t("src.timeout");
+  if (ms >= 1000) return t("src.seconds", { seconds: (ms / 1000).toFixed(1) });
+  return t("src.ms", { ms });
 }

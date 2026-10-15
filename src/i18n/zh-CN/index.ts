@@ -1,4 +1,5 @@
 import { common } from "./common";
+import { sources } from "./sources";
 import { reader } from "./reader";
 import { shelf } from "./shelf";
 import { errors } from "./errors";
@@ -9,6 +10,7 @@ import { update } from "./update";
 /** The interface texts in 简体中文, which define the keys. */
 export const zhCN = {
   ...common,
+  ...sources,
   ...reader,
   ...shelf,
   ...errors,

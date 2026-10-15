@@ -10,6 +10,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { RuleTextLoader, type RuleTextService } from "./RuleTextLoader";
+import { t } from "../../i18n";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
@@ -77,7 +78,7 @@ export function ReplaceRulesPage({
       ref={backCloses ? layer : undefined}
       role="dialog"
       aria-modal="true"
-      aria-label="替换净化"
+      aria-label={t("settings.replace")}
       data-open=""
       className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
     >
@@ -85,24 +86,26 @@ export function ReplaceRulesPage({
         <Button
           variant="ghost"
           size="icon"
-          aria-label="返回"
+          aria-label={t("common.back")}
           className="h-9 w-9 rounded-full text-secondary"
           onClick={onClose}
         >
           <Icon name="arrow_back" size={20} />
         </Button>
-        <h1 className="flex-1 font-title-editorial text-base font-semibold">替换净化</h1>
+        <h1 className="flex-1 font-title-editorial text-base font-semibold">
+          {t("settings.replace")}
+        </h1>
         <Button
           variant="ghost"
           size="icon"
-          aria-label="添加规则"
+          aria-label={t("rules.add")}
           className="h-9 w-9 rounded-full text-secondary"
           onClick={() => setEditing(EMPTY_REPLACE_RULE)}
         >
           <Icon name="add" size={20} />
         </Button>
         <Button variant="ghost" size="sm" onClick={() => setImporting(true)}>
-          导入
+          {t("common.import")}
         </Button>
         <Button
           variant="ghost"
@@ -113,12 +116,12 @@ export function ReplaceRulesPage({
               .exportReplaceRules()
               .then(copyText)
               .then(
-                () => toast("全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。"),
+                () => toast(t("tocRule.exported")),
                 (failure: unknown) => setError(String(failure)),
               )
           }
         >
-          导出
+          {t("common.export")}
         </Button>
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -126,13 +129,11 @@ export function ReplaceRulesPage({
           {book && (
             <label className="flex items-center justify-between gap-3 rounded-xl bg-surface-container-low px-4 py-3 text-sm">
               <span>
-                本书使用替换规则
-                <span className="block text-[11px] text-secondary">
-                  规则作用于每一行正文，修改后重新生成本书文本，阅读位置和书签会随之调整。
-                </span>
+                {t("rules.bookSwitch")}
+                <span className="block text-[11px] text-secondary">{t("rules.bookNote")}</span>
               </span>
               <Switch
-                aria-label="本书使用替换规则"
+                aria-label={t("rules.bookSwitch")}
                 checked={book.enabled}
                 onCheckedChange={book.onToggle}
               />
@@ -144,9 +145,7 @@ export function ReplaceRulesPage({
             </p>
           )}
           {rules.length === 0 && (
-            <p className="text-sm text-secondary px-1 py-6 text-center">
-              还没有替换规则。可以添加，或导入阅读（Legado）导出的规则。
-            </p>
+            <p className="text-sm text-secondary px-1 py-6 text-center">{t("rules.none")}</p>
           )}
           {rules.map((rule, index) => (
             <div
@@ -154,7 +153,7 @@ export function ReplaceRulesPage({
               className="flex items-center gap-2 rounded-xl bg-surface-container-low pl-3 pr-1 py-2"
             >
               <Switch
-                aria-label={`启用 ${rule.name}`}
+                aria-label={t("src.enableOne", { name: rule.name })}
                 checked={rule.enabled}
                 onCheckedChange={(enabled) =>
                   change(() => service.saveReplaceRule({ ...rule, enabled }))
@@ -172,13 +171,13 @@ export function ReplaceRulesPage({
                   )}
                 </span>
                 <span className="block text-[11px] text-secondary truncate font-mono">
-                  {rule.pattern} → {rule.replacement || "（删除）"}
+                  {rule.pattern} → {rule.replacement || t("rules.removed")}
                 </span>
               </button>
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={`上移 ${rule.name}`}
+                aria-label={t("tools.up", { name: rule.name })}
                 className="h-8 w-8 text-secondary"
                 disabled={index === 0}
                 onClick={() => move(index, -1)}
@@ -188,7 +187,7 @@ export function ReplaceRulesPage({
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={`下移 ${rule.name}`}
+                aria-label={t("tools.down", { name: rule.name })}
                 className="h-8 w-8 text-secondary"
                 disabled={index === rules.length - 1}
                 onClick={() => move(index, 1)}
@@ -229,7 +228,9 @@ export function ReplaceRulesPage({
               setImporting(false);
               change(
                 async () => undefined,
-                added.length ? `已导入 ${added.length} 条规则。` : "没有新的规则。",
+                added.length
+                  ? t("tocRule.imported", { count: added.length })
+                  : t("tocRule.noneNew"),
               );
             })
           }
@@ -279,30 +280,34 @@ export function ReplaceRuleEditor({
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] overflow-y-auto p-5 gap-3">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">
-            {initial.id ? "编辑替换规则" : "添加替换规则"}
+            {initial.id ? t("rules.edit") : t("rules.addTitle")}
           </DialogTitle>
         </DialogHeader>
-        {field("名称", "name")}
-        {field("分组", "group", "可选")}
-        {field("替换内容", "pattern", rule.isRegex ? "正则表达式" : "要替换的文字")}
+        {field(t("style.name"), "name")}
+        {field(t("detail.group"), "group", t("rules.optional"))}
         {field(
-          "替换为",
+          t("rules.pattern"),
+          "pattern",
+          rule.isRegex ? t("search.regex") : t("rules.patternText"),
+        )}
+        {field(
+          t("rules.replacement"),
           "replacement",
-          rule.isRegex ? "可用 $1 引用分组，留空即删除" : "留空即删除",
+          rule.isRegex ? t("rules.replacementRegex") : t("rules.replacementText"),
         )}
         <label className="flex items-center justify-between text-xs">
-          使用正则表达式
+          {t("rules.useRegex")}
           <Switch
-            aria-label="使用正则表达式"
+            aria-label={t("rules.useRegex")}
             checked={rule.isRegex}
             onCheckedChange={(isRegex) => setRule({ ...rule, isRegex })}
           />
         </label>
-        {field("作用范围", "scope", "书名，多个用分号隔开；留空作用于所有书")}
+        {field(t("rules.scope"), "scope", t("rules.scopeNote"))}
         <div className="space-y-1.5 rounded-xl bg-surface-container-low p-3">
           <textarea
-            aria-label="测试文字"
-            placeholder="输入一段文字测试规则"
+            aria-label={t("rules.sample")}
+            placeholder={t("rules.samplePlaceholder")}
             rows={3}
             value={sample}
             onChange={(event) => setSample(event.target.value)}
@@ -319,11 +324,11 @@ export function ReplaceRuleEditor({
               }, fail)
             }
           >
-            测试
+            {t("tocRule.test")}
           </Button>
           {result !== null && (
-            <p className="text-sm whitespace-pre-wrap break-words" aria-label="测试结果">
-              {result || "（结果为空）"}
+            <p className="text-sm whitespace-pre-wrap break-words" aria-label={t("rules.result")}>
+              {result || t("rules.emptyResult")}
             </p>
           )}
         </div>
@@ -340,21 +345,21 @@ export function ReplaceRuleEditor({
               className="text-error"
               onClick={() => void onDelete().catch(fail)}
             >
-              删除
+              {t("common.delete")}
             </Button>
           ) : (
             <span />
           )}
           <span className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={onClose}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               size="sm"
               disabled={!rule.name.trim() || !rule.pattern}
               onClick={() => void onSave(rule).catch(fail)}
             >
-              保存
+              {t("common.save")}
             </Button>
           </span>
         </div>
@@ -378,19 +383,18 @@ function ImportDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md p-5 gap-3">
         <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">导入替换规则</DialogTitle>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("rules.importTitle")}
+          </DialogTitle>
         </DialogHeader>
-        <p className="text-xs text-secondary">
-          从网络地址、文件或剪贴板读取，也可以直接粘贴阅读（Legado）或本应用导出的规则
-          JSON。只替换标题的规则不会导入。
-        </p>
+        <p className="text-xs text-secondary">{t("rules.importNote")}</p>
         <RuleTextLoader
           service={service}
           historyKey="gripread.replaceRuleImportHistory"
           onText={setJson}
         />
         <textarea
-          aria-label="规则 JSON"
+          aria-label={t("tocRule.json")}
           rows={8}
           value={json}
           onChange={(event) => setJson(event.target.value)}
@@ -403,7 +407,7 @@ function ImportDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             size="sm"
@@ -412,7 +416,7 @@ function ImportDialog({
               void onImport(json).catch((failure: unknown) => setError(String(failure)))
             }
           >
-            导入
+            {t("common.import")}
           </Button>
         </div>
       </DialogContent>

@@ -3,6 +3,7 @@ import type { ReaderService } from "../../services/contracts";
 import { describeError } from "../Cloud/format";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { t } from "../../i18n";
 
 export type RuleTextService = Pick<ReaderService, "fetchRuleText" | "pickRuleFile">;
 
@@ -73,7 +74,7 @@ export function RuleTextLoader({
           disabled={busy}
           onClick={() => setNetwork((value) => !value)}
         >
-          网络导入
+          {t("src.importNetwork")}
         </Button>
         <Button
           size="sm"
@@ -81,7 +82,7 @@ export function RuleTextLoader({
           disabled={busy}
           onClick={() => load(service.pickRuleFile)}
         >
-          本地导入
+          {t("src.importFile")}
         </Button>
         <Button
           size="sm"
@@ -89,7 +90,7 @@ export function RuleTextLoader({
           disabled={busy}
           onClick={() => load(() => navigator.clipboard.readText())}
         >
-          从剪贴板粘贴
+          {t("rules.paste")}
         </Button>
       </div>
       {network && (
@@ -102,7 +103,7 @@ export function RuleTextLoader({
         >
           <div className="flex gap-2">
             <Input
-              aria-label="规则地址"
+              aria-label={t("rules.address")}
               inputMode="url"
               autoCapitalize="none"
               placeholder="https://…/rules.json"
@@ -110,11 +111,11 @@ export function RuleTextLoader({
               onChange={(event) => setUrl(event.target.value)}
             />
             <Button type="submit" size="sm" disabled={busy || !url.trim()}>
-              {busy ? "获取中…" : "获取"}
+              {busy ? t("rules.fetching") : t("rules.fetch")}
             </Button>
           </div>
           {history.length > 0 && (
-            <ul aria-label="最近的地址" className="space-y-0.5">
+            <ul aria-label={t("rules.recent")} className="space-y-0.5">
               {history.map((item) => (
                 <li key={item}>
                   <button

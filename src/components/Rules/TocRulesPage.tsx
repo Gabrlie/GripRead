@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { t } from "../../i18n";
 
 /**
  * Legado's TXT目录规则 management outside a book: the shared rules that
@@ -54,7 +55,7 @@ export function TocRulesPage({
   };
   return (
     <FullPage
-      label="TXT目录规则"
+      label={t("settings.toc")}
       onClose={onClose}
       layer="z-[45]"
       actions={
@@ -62,14 +63,14 @@ export function TocRulesPage({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="新建规则"
+            aria-label={t("tocRule.new")}
             className="h-9 w-9 rounded-full text-secondary"
             onClick={() => setEditing(NEW_TOC_RULE)}
           >
             <Icon name="add" size={20} />
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setImporting(true)}>
-            导入
+            {t("common.import")}
           </Button>
           <Button
             variant="ghost"
@@ -78,18 +79,18 @@ export function TocRulesPage({
             onClick={() =>
               void change(async () => {
                 await copyText(await service.exportTxtTocRules());
-                return "全部规则已复制到剪贴板，可粘贴到阅读（Legado）导入。";
+                return t("tocRule.exported");
               })
             }
           >
-            导出
+            {t("common.export")}
           </Button>
         </>
       }
     >
-      <p className="px-1 text-[11px] text-secondary">开启的规则参与自动识别，越靠前越优先。</p>
+      <p className="px-1 text-[11px] text-secondary">{t("tocRule.pageNote")}</p>
       <ul
-        aria-label="目录规则"
+        aria-label={t("reader.tool.tocRules")}
         className="rounded-xl bg-surface-container-low divide-y divide-surface-variant/30"
       >
         {rules.map((rule, index) => (
@@ -101,15 +102,17 @@ export function TocRulesPage({
             >
               <span className="block text-sm truncate">
                 {rule.name}
-                {rule.builtin && <span className="ml-2 text-[10px] text-secondary">内置</span>}
+                {rule.builtin && (
+                  <span className="ml-2 text-[10px] text-secondary">{t("tocRule.builtin")}</span>
+                )}
               </span>
               <span className="block text-[11px] text-secondary truncate">
-                {rule.example.split("\n")[0] || rule.pattern || "按字数分章"}
+                {rule.example.split("\n")[0] || rule.pattern || t("tocRule.byLength")}
               </span>
             </button>
             <Switch
               size="sm"
-              aria-label={`${rule.name} 参与自动识别`}
+              aria-label={t("tocRule.enabled", { name: rule.name })}
               checked={rule.enabled}
               disabled={busy}
               onCheckedChange={(enabled) =>
@@ -119,7 +122,7 @@ export function TocRulesPage({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`上移 ${rule.name}`}
+              aria-label={t("tools.up", { name: rule.name })}
               className="h-7 w-7 text-secondary"
               disabled={busy || index === 0}
               onClick={() => move(index, -1)}
@@ -129,7 +132,7 @@ export function TocRulesPage({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`下移 ${rule.name}`}
+              aria-label={t("tools.down", { name: rule.name })}
               className="h-7 w-7 text-secondary"
               disabled={busy || index === rules.length - 1}
               onClick={() => move(index, 1)}
@@ -140,10 +143,12 @@ export function TocRulesPage({
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={`删除 ${rule.name}`}
+                aria-label={t("shelf.bin.deleteBook", { title: rule.name })}
                 className="h-7 w-7 text-secondary"
                 disabled={busy}
-                onClick={() => void change(() => service.deleteTxtTocRule(rule.id), "规则已删除。")}
+                onClick={() =>
+                  void change(() => service.deleteTxtTocRule(rule.id), t("tocRule.deleted"))
+                }
               >
                 <Icon name="delete" size={14} />
               </Button>
@@ -163,7 +168,11 @@ export function TocRulesPage({
           <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[80dvh] flex flex-col gap-2.5 p-4">
             <DialogHeader>
               <DialogTitle>
-                {importing ? "导入规则" : editing?.id ? "编辑规则" : "新建规则"}
+                {importing
+                  ? t("tocRule.import")
+                  : editing?.id
+                    ? t("tocRule.edit")
+                    : t("tocRule.new")}
               </DialogTitle>
             </DialogHeader>
             {editing && (
@@ -175,7 +184,7 @@ export function TocRulesPage({
                 onSave={(rule) =>
                   void change(
                     () => service.saveTxtTocRule(rule),
-                    rule.id ? "规则已保存。" : "规则已添加。",
+                    rule.id ? t("tocRule.saved") : t("tocRule.added"),
                   ).then((saved) => saved && setEditing(null))
                 }
               />
@@ -188,7 +197,9 @@ export function TocRulesPage({
                 onImport={(json) =>
                   void change(async () => {
                     const added = await service.importTxtTocRules(json);
-                    return added.length ? `已导入 ${added.length} 条规则。` : "没有新的规则。";
+                    return added.length
+                      ? t("tocRule.imported", { count: added.length })
+                      : t("tocRule.noneNew");
                   }).then((saved) => saved && setImporting(false))
                 }
               />

@@ -5,6 +5,11 @@ import { en } from "./en";
 import { format, setLanguage, t, useT } from "./index";
 import { zhCN } from "./zh-CN";
 
+/** Every area of the Chinese texts, which define the keys. */
+const AREAS = import.meta.glob<Record<string, Record<string, string>>>("./zh-CN/*.ts", {
+  eager: true,
+});
+
 afterEach(() => {
   cleanup();
   setLanguage("system");
@@ -33,6 +38,19 @@ describe("interface languages", () => {
     act(() => setLanguage("system"));
     expect(screen.getByRole("heading").textContent).toBe("设置");
     expect(document.documentElement.lang).toBe("zh-Hans");
+  });
+
+  it("defines each key in one area only", () => {
+    const owners = new Map<string, string>();
+    for (const [file, module] of Object.entries(AREAS)) {
+      if (file.endsWith("index.ts")) continue;
+      for (const area of Object.values(module))
+        for (const key of Object.keys(area)) {
+          expect(owners.get(key), `${key} in ${file}`).toBeUndefined();
+          owners.set(key, file);
+        }
+    }
+    expect(owners.size).toBe(Object.keys(zhCN).length);
   });
 
   it("has every key in English, with the same placeholders", () => {
