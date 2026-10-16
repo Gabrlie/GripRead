@@ -22,7 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineBookPage } from "./OnlineBookPage";
-import { TitleTranslationChip } from "./TitleTranslationChip";
+import { TitleTranslationChip, TranslatedMark } from "./TitleTranslationChip";
 import { useTitleTranslation } from "./use-title-translation";
 import { t } from "../../i18n";
 
@@ -304,7 +304,7 @@ export function SearchResultRow({
 }: {
   service: SourceService;
   result: OnlineSearchResult;
-  /** The title translated (列表 翻译), shown with the original below it. */
+  /** The title translated (列表 翻译), shown in place of the original with 译. */
   translatedName?: string;
   onOpen: () => void;
 }) {
@@ -330,15 +330,13 @@ export function SearchResultRow({
         <span className="flex-1 min-w-0 space-y-0.5">
           <span className="flex items-center gap-1.5">
             <span className="text-sm font-medium truncate">{translatedName ?? result.name}</span>
+            {translatedName && <TranslatedMark />}
             {result.origins.length > 1 && (
               <span className="shrink-0 rounded-full bg-primary/10 text-primary text-[10px] px-1.5 leading-4">
                 {t("onlineSearch.origins", { count: result.origins.length })}
               </span>
             )}
           </span>
-          {translatedName && (
-            <span className="block text-[11px] text-secondary truncate">{result.name}</span>
-          )}
           <span className="block text-[11px] text-secondary truncate">
             {[result.author, result.kind, result.wordCount].filter(Boolean).join(" · ")}
           </span>

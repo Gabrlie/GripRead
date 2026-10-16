@@ -181,9 +181,10 @@ describe("发现", () => {
     expect(await screen.findByRole("dialog", { name: "甲站小说 · 都市" })).toBeTruthy();
     const books = await screen.findByRole("list", { name: "书籍" });
     expect((await within(books).findAllByText("剑来外传")).length).toBeGreaterThan(0);
-    // 翻译 shows each title translated, the original under it, until 显示原文.
+    // 翻译 shows each title translated in place, marked 译, until 显示原文.
     await userEvent.click(screen.getByRole("button", { name: "翻译" }));
     expect((await within(books).findAllByText("【剑来外传】")).length).toBeGreaterThan(0);
+    expect(within(books).getAllByLabelText(/已翻译/).length).toBeGreaterThan(0);
     expect(translation.translateTexts).toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "显示原文" }));
     expect(within(books).queryByText("【剑来外传】")).toBeNull();

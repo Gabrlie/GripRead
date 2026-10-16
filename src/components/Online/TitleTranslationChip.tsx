@@ -26,3 +26,16 @@ export function TitleTranslationChip({
     </button>
   );
 }
+
+/** The small 译 that marks a title or introduction shown translated. */
+export function TranslatedMark() {
+  return (
+    <span
+      title={t("translation.mark.title")}
+      aria-label={t("translation.mark.title")}
+      className="shrink-0 rounded px-1 text-[10px] leading-4 bg-primary/10 text-primary"
+    >
+      {t("translation.mark")}
+    </span>
+  );
+}

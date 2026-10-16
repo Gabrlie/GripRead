@@ -82,6 +82,8 @@ export const translation = {
   "translation.titles.translate": "翻译",
   "translation.titles.original": "显示原文",
   "translation.titles.busy": "翻译中…",
+  "translation.mark": "译",
+  "translation.mark.title": "已翻译，点 显示原文 可还原",
   "translation.intro.translate": "翻译简介",
   "translation.intro.same": "简介已经是目标语言，不需要翻译。",
   "translation.book.done": "这一段已经翻译完",

@@ -25,6 +25,7 @@ import {
 } from "../ui/dropdown-menu";
 import { currentLocale, t } from "../../i18n";
 import { introLabel, useIntroTranslation } from "../Online/use-title-translation";
+import { TranslatedMark } from "../Online/TitleTranslationChip";
 
 const TILE_CLASS =
   "flex flex-col items-center justify-center gap-1 rounded-xl bg-surface-container-low py-2.5 text-xs text-on-surface hover:bg-surface-container disabled:opacity-60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
@@ -358,8 +359,12 @@ export function BookDetailPage({
           )}
           <section aria-labelledby="book-intro" className="space-y-1.5 min-w-0">
             <div className="flex items-center justify-between">
-              <h2 id="book-intro" className="text-xs text-secondary font-medium">
+              <h2
+                id="book-intro"
+                className="text-xs text-secondary font-medium flex items-center gap-1.5"
+              >
                 {t("detail.intro")}
+                {intro.on && <TranslatedMark />}
               </h2>
               {intro.available && (
                 <button

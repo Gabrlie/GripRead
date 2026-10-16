@@ -85,6 +85,8 @@ export const translation = {
   "translation.titles.translate": "Translate",
   "translation.titles.original": "Original",
   "translation.titles.busy": "Translating…",
+  "translation.mark": "Tr",
+  "translation.mark.title": "Translated; Original shows it as written",
   "translation.intro.translate": "Translate intro",
   "translation.intro.same": "The introduction is already in the target language.",
   "translation.book.done": "This stretch is translated",

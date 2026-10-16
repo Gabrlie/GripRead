@@ -23,6 +23,7 @@ import { OnlineTocPage } from "./OnlineTocPage";
 import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
 import { t } from "../../i18n";
 import { introLabel, useIntroTranslation } from "./use-title-translation";
+import { TranslatedMark } from "./TitleTranslationChip";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -270,7 +271,10 @@ export function OnlineBookPage({
       {shown.intro && (
         <section className="rounded-xl bg-surface-container-low p-3">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-[11px] text-secondary">{t("detail.intro")}</h3>
+            <h3 className="text-[11px] text-secondary flex items-center gap-1.5">
+              {t("detail.intro")}
+              {intro.on && <TranslatedMark />}
+            </h3>
             {intro.available && (
               <button
                 type="button"
