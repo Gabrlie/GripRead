@@ -25,10 +25,25 @@ import { SourceEditPage } from "../Sources/SourceEditPage";
 import { toast } from "../ui/toast";
 import { t } from "../../i18n";
 
-/** A kind's width from Legado's `layout_flexBasisPercent`, as a CSS basis. */
-function kindBasis(kind: ExploreKind): string | undefined {
-  const percent = kind.style?.layout_flexBasisPercent;
-  return typeof percent === "number" && percent > 0 ? `${Math.min(percent, 1) * 100}%` : undefined;
+/** The gap between kinds, in pixels (`gap-1.5`). */
+const KIND_GAP = 6;
+
+/**
+ * A kind's flex sizing from Legado's `layout_flexBasisPercent` and
+ * `layout_flexGrow`. The basis leaves room for the gaps, so four kinds of
+ * 25% share a row.
+ */
+export function kindFlex(kind: ExploreKind): { flexBasis?: string; flexGrow?: number } {
+  const percent = Number(kind.style?.layout_flexBasisPercent);
+  const grow = Number(kind.style?.layout_flexGrow);
+  const flex: { flexBasis?: string; flexGrow?: number } = {};
+  if (percent > 0) {
+    const share = Math.min(percent, 1);
+    flex.flexBasis =
+      share >= 1 ? "100%" : `calc(${share * 100}% - ${(KIND_GAP * (1 - share)).toFixed(2)}px)`;
+  }
+  if (grow > 0) flex.flexGrow = grow;
+  return flex;
 }
 
 /**
@@ -258,7 +273,7 @@ export function DiscoverView() {
                               type="button"
                               disabled={!kind.url}
                               onClick={() => kind.url && setOpened({ source, kind })}
-                              style={{ flexBasis: kindBasis(kind) }}
+                              style={kindFlex(kind)}
                               className={`h-8 px-3 rounded-lg text-xs truncate ${
                                 kind.url
                                   ? "bg-surface text-on-surface hover:bg-surface-container"

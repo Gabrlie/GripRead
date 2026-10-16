@@ -671,6 +671,7 @@ function BookCardList({
           <LibraryCover book={book.entry} title={book.title} />
           {book.entry.inCloud && <CloudMark />}
           <NewChaptersMark book={book.entry} />
+          <PausedMark book={book.entry} />
         </div>
 
         {/* Right Content: Strictly 4 lines with identical, uniform spacing */}
@@ -746,6 +747,7 @@ function BookCardGrid({
         <LibraryCover book={book.entry} title={book.title} />
         {book.entry.inCloud && <CloudMark />}
         <NewChaptersMark book={book.entry} />
+        <PausedMark book={book.entry} />
       </div>
       <h3 className="font-title-editorial text-xs font-semibold text-on-surface truncate">
         {book.title}
@@ -774,6 +776,21 @@ function NewChaptersMark({ book }: { book: LibraryBook }) {
       }`}
     >
       {count}
+    </span>
+  );
+}
+
+/** A quiet corner mark on an online book whose 允许更新 is off. */
+function PausedMark({ book }: { book: LibraryBook }) {
+  if (!book.online || book.online.canUpdate) return null;
+  return (
+    <span
+      role="img"
+      aria-label={t("shelf.paused")}
+      title={t("shelf.paused")}
+      className="absolute left-1 bottom-1 h-4 w-4 rounded-full bg-surface/80 text-secondary flex items-center justify-center shadow-xs"
+    >
+      <Icon name="pause" size={10} />
     </span>
   );
 }

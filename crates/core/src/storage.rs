@@ -2757,7 +2757,9 @@ impl Storage {
     /// Imports Legado replace rules (one object or an array); skips rules that
     /// already exist with the same pattern and replacement, and rules whose
     /// expressions do not compile.
-    pub fn import_replace_rules(&mut self, json: &str) -> Result<Vec<ReplaceRule>, AppError> {
+    /// The rules a Legado replace-rule JSON holds, in order, and how many
+    /// title-only rules (nothing to change in the stored text) it skips.
+    fn replace_rule_candidates(json: &str) -> Result<(Vec<ReplaceRule>, u32), AppError> {
         let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
             AppError::invalid_argument(format!("not a replace rule JSON file: {error}"))
         })?;
@@ -2766,8 +2768,8 @@ impl Storage {
             item @ serde_json::Value::Object(_) => vec![item],
             _ => return Err(AppError::invalid_argument("not a replace rule JSON file")),
         };
-        let existing = self.list_replace_rules()?;
-        let mut imported: Vec<ReplaceRule> = Vec::new();
+        let mut skipped = 0;
+        let mut rules = Vec::new();
         for item in items.iter().take(1000) {
             let text = |key: &str| item.get(key).and_then(|value| value.as_str()).unwrap_or("");
             let flag = |key: &str, default: bool| {
@@ -2776,16 +2778,9 @@ impl Storage {
                     .unwrap_or(default)
             };
             let pattern = text("pattern");
-            let replacement = text("replacement");
             // Title-only rules have nothing to change in the stored text.
             if pattern.is_empty() || !flag("scopeContent", true) {
-                continue;
-            }
-            if existing
-                .iter()
-                .chain(imported.iter())
-                .any(|rule| rule.pattern == pattern && rule.replacement == replacement)
-            {
+                skipped += 1;
                 continue;
             }
             let name = if text("name").trim().is_empty() {
@@ -2793,17 +2788,63 @@ impl Storage {
             } else {
                 text("name").to_string()
             };
-            let rule = ReplaceRule {
+            rules.push(ReplaceRule {
                 id: String::new(),
                 name,
                 group: text("group").to_string(),
                 pattern: pattern.to_string(),
-                replacement: replacement.to_string(),
+                replacement: text("replacement").to_string(),
                 is_regex: flag("isRegex", true),
                 scope: text("scope").to_string(),
                 enabled: flag("isEnabled", true),
                 serial: 0,
-            };
+            });
+        }
+        Ok((rules, skipped))
+    }
+
+    /// What importing `json` would do: each rule, and whether the same
+    /// pattern and replacement is already here.
+    pub fn preview_replace_rules(
+        &self,
+        json: &str,
+    ) -> Result<crate::models::ReplaceRuleImportPreview, AppError> {
+        let (rules, skipped) = Self::replace_rule_candidates(json)?;
+        let existing = self.list_replace_rules()?;
+        let items = rules
+            .into_iter()
+            .map(|rule| crate::models::ReplaceRuleImportItem {
+                existing: existing.iter().any(|known| {
+                    known.pattern == rule.pattern && known.replacement == rule.replacement
+                }),
+                rule,
+            })
+            .collect();
+        Ok(crate::models::ReplaceRuleImportPreview { items, skipped })
+    }
+
+    /// Imports the rules of a Legado replace-rule JSON, only those at
+    /// `chosen` (positions in the preview) when given. Rules already here
+    /// and invalid expressions are left out.
+    pub fn import_replace_rules(
+        &mut self,
+        json: &str,
+        chosen: Option<&[u32]>,
+    ) -> Result<Vec<ReplaceRule>, AppError> {
+        let (rules, _) = Self::replace_rule_candidates(json)?;
+        let existing = self.list_replace_rules()?;
+        let mut imported: Vec<ReplaceRule> = Vec::new();
+        for (index, rule) in rules.into_iter().enumerate() {
+            if chosen.is_some_and(|chosen| !chosen.contains(&(index as u32))) {
+                continue;
+            }
+            if existing
+                .iter()
+                .chain(imported.iter())
+                .any(|known| known.pattern == rule.pattern && known.replacement == rule.replacement)
+            {
+                continue;
+            }
             match self.save_replace_rule(&rule) {
                 Ok(saved) => imported.push(saved),
                 Err(error) if error.code == ErrorCode::InvalidArgument => continue,
@@ -9334,8 +9375,30 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
             .unwrap();
-        assert_eq!(storage.import_replace_rules(&exported).unwrap().len(), 2);
-        assert!(storage.import_replace_rules(&exported).unwrap().is_empty());
+        // The preview lists both as new; importing only the second saves one.
+        let preview = storage.preview_replace_rules(&exported).unwrap();
+        assert_eq!(preview.items.len(), 2);
+        assert!(preview.items.iter().all(|item| !item.existing));
+        let second = storage.import_replace_rules(&exported, Some(&[1])).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].pattern, preview.items[1].rule.pattern);
+        let preview = storage.preview_replace_rules(&exported).unwrap();
+        assert_eq!(
+            preview
+                .items
+                .iter()
+                .map(|item| item.existing)
+                .collect::<Vec<_>>(),
+            vec![false, true]
+        );
+        assert_eq!(
+            storage.import_replace_rules(&exported, None).unwrap().len(),
+            1
+        );
+        assert!(storage
+            .import_replace_rules(&exported, None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -44,6 +44,7 @@ import type {
   ReadingStats,
   PickedFile,
   ReplaceRule,
+  ReplaceRuleImportPreview,
   WebDavSettings,
   SaveWebDavRequest,
   RemoteBackup,
@@ -168,7 +169,10 @@ export interface ReaderService {
   saveReplaceRule(rule: ReplaceRule): Promise<ReplaceRule>;
   deleteReplaceRules(ids: string[]): Promise<void>;
   orderReplaceRules(ids: string[]): Promise<ReplaceRule[]>;
-  importReplaceRules(json: string): Promise<ReplaceRule[]>;
+  /** What importing `json` would do, rule by rule. */
+  previewReplaceRules(json: string): Promise<ReplaceRuleImportPreview>;
+  /** `chosen` lists positions in the preview; all rules when absent. */
+  importReplaceRules(json: string, chosen?: number[]): Promise<ReplaceRule[]>;
   exportReplaceRules(): Promise<string>;
   /** 网络导入 for rules (replace or chapter rules): the text at an address. */
   fetchRuleText(url: string): Promise<string>;

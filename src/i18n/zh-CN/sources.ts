@@ -153,6 +153,7 @@ export const sources = {
   "rules.importTitle": "导入替换规则",
   "rules.importNote":
     "从网络地址、文件或剪贴板读取，也可以直接粘贴阅读（Legado）或本应用导出的规则 JSON。只替换标题的规则不会导入。",
+  "rules.importSkipped": "，跳过 {count} 条只作用于标题的规则",
   "tocRule.pageNote": "开启的规则参与自动识别，越靠前越优先。",
   "tocRule.builtin": "内置",
   "rules.address": "规则地址",

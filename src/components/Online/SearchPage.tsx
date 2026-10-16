@@ -309,7 +309,8 @@ export function SearchResultRow({
         onClick={onOpen}
         className="w-full flex gap-3 rounded-xl bg-surface-container-low p-2 text-left"
       >
-        <span className="w-12 h-16 shrink-0 rounded overflow-hidden bg-surface-container">
+        {/* The cover fills the row, so the margins above and below match. */}
+        <span className="w-12 min-h-16 self-stretch shrink-0 rounded overflow-hidden bg-surface-container">
           <OnlineCover
             service={service}
             sourceUrl={covered?.sourceUrl ?? ""}

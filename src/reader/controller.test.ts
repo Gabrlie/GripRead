@@ -99,6 +99,9 @@ function serviceFor(
     async orderReplaceRules() {
       return [];
     },
+    async previewReplaceRules() {
+      return { items: [], skipped: 0 };
+    },
     async importReplaceRules() {
       return [];
     },

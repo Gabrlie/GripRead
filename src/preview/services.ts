@@ -390,6 +390,7 @@ export function previewServices(): AppServices {
       },
       orderReplaceRules: async (ids) =>
         (replaceRules = ids.map((id) => replaceRules.find((rule) => rule.id === id)!)),
+      previewReplaceRules: async () => ({ items: [], skipped: 0 }),
       importReplaceRules: async () => [],
       exportReplaceRules: async () => JSON.stringify(replaceRules),
       fetchRuleText: () => unsupported(),

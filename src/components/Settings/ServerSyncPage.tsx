@@ -5,6 +5,7 @@ import { restoreCategories, switchRequest } from "../Cloud/BackupPage";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ServerAccountSections } from "./ServerAccountPage";
@@ -20,14 +21,15 @@ function when(at: number | null | undefined): string {
 }
 
 /**
- * 同步内容: what syncs with the server, one switch per category. It is the
- * 同步排除 list of 备份与恢复 seen the other way round (on = synced), so
- * either page changes both.
+ * 同步内容: what syncs with the server, one row opening a dialog with a
+ * switch per category. It is the 同步排除 list of 备份与恢复 seen the other
+ * way round (on = synced), so either page changes both.
  */
 function SyncContentSection() {
   const sync = useRuntime().services.sync;
   const [settings, setSettings] = useState<WebDavSettings | null>(null);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     let active = true;
     void sync.getWebDav().then(
@@ -39,8 +41,10 @@ function SyncContentSection() {
     };
   }, [sync]);
   if (!settings) return null;
-  const toggle = (category: RestoreCategory, synced: boolean) => {
-    const restoreIgnore = synced
+  const categories = restoreCategories();
+  const synced = categories.filter(([category]) => !settings.restoreIgnore.includes(category));
+  const toggle = (category: RestoreCategory, on: boolean) => {
+    const restoreIgnore = on
       ? settings.restoreIgnore.filter((item) => item !== category)
       : [...settings.restoreIgnore, category];
     setBusy(true);
@@ -51,24 +55,47 @@ function SyncContentSection() {
   };
   return (
     <PageSection title={t("server.content")}>
-      {restoreCategories().map(([category, label, note]) => (
-        <label
-          key={category}
-          className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
-        >
-          <span>
-            {label}
-            {note && <span className="block text-[11px] text-secondary">{note}</span>}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm text-left"
+      >
+        <span className="min-w-0">
+          {t("server.content")}
+          <span className="block text-[11px] text-secondary truncate">
+            {synced.length === categories.length
+              ? t("server.content.all")
+              : synced.map(([, label]) => label).join("、") || t("server.content.none")}
           </span>
-          <Switch
-            aria-label={t("server.syncOne", { label })}
-            checked={!settings.restoreIgnore.includes(category)}
-            disabled={busy}
-            onCheckedChange={(on) => toggle(category, on)}
-          />
-        </label>
-      ))}
-      <p className="px-4 pb-3 text-[11px] text-secondary">{t("server.content.note")}</p>
+        </span>
+        <span className="shrink-0 text-xs text-secondary tabular-nums">
+          {t("server.content.count", { count: synced.length, total: categories.length })}
+        </span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm max-h-[86dvh] overflow-y-auto p-5 gap-1">
+          <DialogHeader>
+            <DialogTitle className="font-title-editorial text-base">
+              {t("server.content")}
+            </DialogTitle>
+            <DialogDescription>{t("server.content.note")}</DialogDescription>
+          </DialogHeader>
+          {categories.map(([category, label, note]) => (
+            <label key={category} className="flex items-center justify-between gap-3 py-2 text-sm">
+              <span className="min-w-0">
+                {label}
+                {note && <span className="block text-[11px] text-secondary">{note}</span>}
+              </span>
+              <Switch
+                aria-label={t("server.syncOne", { label })}
+                checked={!settings.restoreIgnore.includes(category)}
+                disabled={busy}
+                onCheckedChange={(on) => toggle(category, on)}
+              />
+            </label>
+          ))}
+        </DialogContent>
+      </Dialog>
     </PageSection>
   );
 }

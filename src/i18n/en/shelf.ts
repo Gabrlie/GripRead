@@ -45,6 +45,7 @@ export const shelf = {
   "shelf.firstChapter": "Chapter 1",
   "shelf.new": "{count} new",
   "shelf.updateFailed": "Update failed",
+  "shelf.paused": "Updates off",
   "shelf.unread": "{count} {count|chapter|chapters} unread",
   "shelf.inCloud": "Uploaded to the cloud bookshelf",
   "detail.cloudSynced": "Synced to the cloud bookshelf",

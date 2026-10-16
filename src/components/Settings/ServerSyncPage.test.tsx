@@ -51,13 +51,16 @@ describe("服务器", () => {
       ...unconfiguredWebDav(),
       restoreIgnore: request.restoreIgnore,
     }));
-    const sources = await screen.findByRole("switch", { name: /^书源/ });
+    await userEvent.click(await screen.findByRole("button", { name: /同步内容/ }));
+    const sources = await screen.findByRole("switch", { name: /书源/ });
     expect(sources.getAttribute("aria-checked")).toBe("true");
     await userEvent.click(sources);
     expect(sync.saveWebDav).toHaveBeenCalledWith(
       expect.objectContaining({ restoreIgnore: ["sources"] }),
     );
     await waitFor(() => expect(sources.getAttribute("aria-checked")).toBe("false"));
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByText(/\d+\/\d+ 类/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "断开" }));
     expect(sync.disconnectServer).toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "连接" })).toBeTruthy();

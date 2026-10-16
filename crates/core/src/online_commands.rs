@@ -871,7 +871,11 @@ pub async fn update_online_toc(
     request: UpdateOnlineTocRequest,
 ) -> Result<(), AppError> {
     let ids = if request.book_ids.is_empty() {
-        with_storage(state, |storage| storage.updatable_online_books()).await?
+        with_storage(state, |storage| {
+            storage.clear_skipped_update_errors()?;
+            storage.updatable_online_books()
+        })
+        .await?
     } else {
         request.book_ids.clone()
     };

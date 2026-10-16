@@ -87,6 +87,9 @@ export const cloud = {
   "server.syncOne": "同步{label}",
   "server.content.note":
     "关闭的内容保留本机的：既不上传，也不被服务器覆盖。与 备份与恢复 › 同步排除 是同一份设置。",
+  "server.content.all": "全部同步",
+  "server.content.none": "都不同步",
+  "server.content.count": "{count}/{total} 类",
   "server.connectTitle": "连接服务器",
   "server.connected": "已连接，正在同步",
   "server.savedPassword": "使用保存的密码",

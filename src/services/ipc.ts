@@ -93,6 +93,7 @@ import type {
   ReadingStatsRequest,
   BookmarkNoteRequest,
   ReplaceRule,
+  ReplaceRuleImportPreview,
   BookReplaceRequest,
   ReaderPreferences,
   ReadContentRequest,
@@ -430,8 +431,10 @@ export const tauriServices: AppServices = {
     deleteReplaceRules: (ids) => invokeCommand<void>("delete_replace_rules", { request: { ids } }),
     orderReplaceRules: (ids) =>
       invokeCommand<ReplaceRule[]>("order_replace_rules", { request: { ids } }),
-    importReplaceRules: (json) =>
-      invokeCommand<ReplaceRule[]>("import_replace_rules", { request: { json } }),
+    previewReplaceRules: (json) =>
+      invokeCommand<ReplaceRuleImportPreview>("preview_replace_rules", { request: { json } }),
+    importReplaceRules: (json, chosen) =>
+      invokeCommand<ReplaceRule[]>("import_replace_rules", { request: { json, chosen } }),
     exportReplaceRules: () => invokeCommand<string>("export_replace_rules"),
     fetchRuleText: (url) =>
       invokeCommand<string>("fetch_source_text", { request: { url } satisfies FetchTextRequest }),

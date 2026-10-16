@@ -1829,10 +1829,20 @@ pub async fn order_replace_rules(
 
 pub async fn import_replace_rules(
     state: &Arc<AppState>,
-    request: ImportTxtTocRulesRequest,
+    request: crate::models::ImportReplaceRulesRequest,
 ) -> Result<Vec<crate::models::ReplaceRule>, AppError> {
     with_storage(state, move |storage| {
-        storage.import_replace_rules(&request.json)
+        storage.import_replace_rules(&request.json, request.chosen.as_deref())
+    })
+    .await
+}
+
+pub async fn preview_replace_rules(
+    state: &Arc<AppState>,
+    request: ImportTxtTocRulesRequest,
+) -> Result<crate::models::ReplaceRuleImportPreview, AppError> {
+    with_storage(state, move |storage| {
+        storage.preview_replace_rules(&request.json)
     })
     .await
 }

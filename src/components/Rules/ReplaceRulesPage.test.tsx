@@ -16,6 +16,7 @@ function service() {
   return {
     listReplaceRules: vi.fn(async () => []),
     importReplaceRules: vi.fn(async () => []),
+    previewReplaceRules: vi.fn(async () => ({ items: [], skipped: 0 })),
     exportReplaceRules: vi.fn(async () => "[]"),
     fetchRuleText: vi.fn(async () => RULES),
     pickRuleFile: vi.fn(async () => RULES),
@@ -23,27 +24,38 @@ function service() {
 }
 
 describe("替换净化 import", () => {
-  it("reads rules from an address or a file into the import box", async () => {
+  it("lists the rules of an address first and imports the chosen ones", async () => {
     const reader = service();
+    const rule = {
+      id: "",
+      name: "去广告",
+      group: "",
+      pattern: "广告",
+      replacement: "",
+      isRegex: false,
+      scope: "",
+      enabled: true,
+      serial: 0,
+    };
+    reader.previewReplaceRules = vi.fn(async () => ({
+      items: [
+        { rule, existing: false },
+        { rule: { ...rule, name: "已有", pattern: "旧" }, existing: true },
+      ],
+      skipped: 1,
+    }));
+    reader.importReplaceRules = vi.fn(async () => [rule]);
     render(<ReplaceRulesPage service={reader} onClose={() => undefined} />);
-    await userEvent.click(await screen.findByRole("button", { name: "导入" }));
-    await userEvent.click(screen.getByRole("button", { name: "网络导入" }));
+    await userEvent.click(await screen.findByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /网络导入/ }));
     await userEvent.type(screen.getByLabelText("规则地址"), "https://example.com/rules.json");
-    await userEvent.click(screen.getByRole("button", { name: "获取" }));
+    await userEvent.click(screen.getByRole("button", { name: "下一步" }));
     expect(reader.fetchRuleText).toHaveBeenCalledWith("https://example.com/rules.json");
-    await waitFor(() =>
-      expect((screen.getByLabelText("规则 JSON") as HTMLTextAreaElement).value).toBe(RULES),
-    );
-    // The address is remembered for next time.
-    await userEvent.click(screen.getByRole("button", { name: "网络导入" }));
-    expect(screen.getByRole("button", { name: "https://example.com/rules.json" })).toBeTruthy();
-
-    await userEvent.click(screen.getByRole("button", { name: "本地导入" }));
-    expect(reader.pickRuleFile).toHaveBeenCalled();
-    const [importButton] = screen
-      .getAllByRole("button", { name: "导入" })
-      .filter((button) => button.closest("[role=dialog]"));
-    await userEvent.click(importButton);
-    expect(reader.importReplaceRules).toHaveBeenCalledWith(RULES);
+    expect(reader.previewReplaceRules).toHaveBeenCalledWith(RULES);
+    // A rule already here starts unchosen.
+    expect(((await screen.findByLabelText("导入 去广告")) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("导入 已有") as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: /导入 1/ }));
+    await waitFor(() => expect(reader.importReplaceRules).toHaveBeenCalledWith(RULES, [0]));
   });
 });

@@ -157,6 +157,7 @@ export const sources = {
   "rules.importTitle": "Import replace rules",
   "rules.importNote":
     "Read rules from a URL, a file, or the clipboard, or paste rule JSON exported from Legado or this app. Title-only rules are not imported.",
+  "rules.importSkipped": "; {count} title-only rules skipped",
   "tocRule.pageNote": "Enabled rules take part in detection, earlier ones first.",
   "tocRule.builtin": "Built in",
   "rules.address": "Rule address",

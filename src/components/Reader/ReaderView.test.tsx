@@ -211,6 +211,7 @@ function runtime() {
       deleteReplaceRules: vi.fn(async () => undefined),
       orderReplaceRules: vi.fn(async () => []),
       importReplaceRules: vi.fn(async () => []),
+      previewReplaceRules: vi.fn(async () => ({ items: [], skipped: 0 })),
       exportReplaceRules: vi.fn(async () => "[]"),
       fetchRuleText: vi.fn(async () => ""),
       pickRuleFile: vi.fn(async () => null),

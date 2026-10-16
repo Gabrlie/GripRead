@@ -43,6 +43,7 @@ export const shelf = {
   "shelf.firstChapter": "第一章",
   "shelf.new": "新 {count}",
   "shelf.updateFailed": "更新失败",
+  "shelf.paused": "已关闭更新",
   "shelf.unread": "还有 {count} 章未读",
   "shelf.inCloud": "已上传到云书架",
   "detail.cloudSynced": "已同步到云书架",

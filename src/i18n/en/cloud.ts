@@ -95,6 +95,9 @@ export const cloud = {
   "server.syncOne": "Sync {label}",
   "server.content.note":
     "What is off stays this device's own: never sent, never overwritten by the server. It is the same setting as Backup and restore › Sync exclusions.",
+  "server.content.all": "Everything syncs",
+  "server.content.none": "Nothing syncs",
+  "server.content.count": "{count}/{total}",
   "server.connectTitle": "Connect to a server",
   "server.connected": "Connected; syncing",
   "server.savedPassword": "Use the saved password",

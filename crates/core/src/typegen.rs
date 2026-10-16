@@ -57,6 +57,9 @@ const IPC_TYPES: &[&str] = &[
     "PathRequest",
     "ChineseConversion",
     "ReplaceRule",
+    "ReplaceRuleImportPreview",
+    "ReplaceRuleImportItem",
+    "ImportReplaceRulesRequest",
     "SaveReplaceRuleRequest",
     "ReplaceRuleIdsRequest",
     "TestReplaceRuleRequest",
@@ -288,6 +291,9 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<PathRequest>(&config)?;
     export_all::<ChineseConversion>(&config)?;
     export_all::<ReplaceRule>(&config)?;
+    export_all::<crate::models::ReplaceRuleImportPreview>(&config)?;
+    export_all::<crate::models::ReplaceRuleImportItem>(&config)?;
+    export_all::<crate::models::ImportReplaceRulesRequest>(&config)?;
     export_all::<SaveReplaceRuleRequest>(&config)?;
     export_all::<ReplaceRuleIdsRequest>(&config)?;
     export_all::<TestReplaceRuleRequest>(&config)?;

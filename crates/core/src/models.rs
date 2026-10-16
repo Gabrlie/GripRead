@@ -2444,3 +2444,31 @@ pub struct BookTranslationEvent {
     /// Why the run stopped early; translations made so far are kept.
     pub error: Option<crate::error::AppError>,
 }
+
+/// What importing a replace-rule JSON would do.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRuleImportPreview {
+    /// The rules in order; `chosen` in [`ImportReplaceRulesRequest`] counts
+    /// positions in this list.
+    pub items: Vec<ReplaceRuleImportItem>,
+    /// Title-only and empty rules, which have nothing to change in text.
+    pub skipped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRuleImportItem {
+    pub rule: ReplaceRule,
+    /// The same pattern and replacement is already here.
+    pub existing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReplaceRulesRequest {
+    pub json: String,
+    /// Positions in the preview to import; all when absent.
+    #[ts(optional)]
+    pub chosen: Option<Vec<u32>>,
+}

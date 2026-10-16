@@ -200,6 +200,7 @@ pub const COMMANDS: &[&str] = &[
     "import_reader_background",
     "import_reader_font",
     "import_replace_rules",
+    "preview_replace_rules",
     "import_txt_toc_rules",
     "leave_online_book",
     "list_book_sources",
@@ -475,6 +476,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "import_replace_rules" => {
             reply(crate::commands::import_replace_rules(state, request(args)?).await)
+        }
+        "preview_replace_rules" => {
+            reply(crate::commands::preview_replace_rules(state, request(args)?).await)
         }
         "import_txt_toc_rules" => {
             reply(crate::commands::import_txt_toc_rules(state, request(args)?).await)

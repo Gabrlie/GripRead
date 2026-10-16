@@ -783,7 +783,21 @@ impl Storage {
             "UPDATE online_books SET can_update = ?2 WHERE book_id = ?1",
             params![book_id, on],
         )?;
+        // A book that no longer updates is no longer failing to.
+        if !on {
+            self.clear_skipped_update_errors()?;
+        }
         Ok(())
+    }
+
+    /// Drops 更新失败 from books 更新目录 does not cover (off the shelf, or
+    /// with 允许更新 off), so the mark reflects the books that update.
+    pub fn clear_skipped_update_errors(&self) -> Result<usize, AppError> {
+        Ok(self.conn.execute(
+            "UPDATE online_books SET update_error = NULL
+             WHERE update_error IS NOT NULL AND (can_update = 0 OR on_shelf = 0)",
+            [],
+        )?)
     }
 
     /// Shelf books 更新目录 covers: on the shelf, allowed to update.
@@ -1111,6 +1125,42 @@ mod tests {
         assert_eq!(map_chapter(3, "第4章 下山", 5, &other), (4, true));
         // Nothing alike: keep the place, uncertain.
         assert_eq!(map_chapter(2, "番外 一", 5, &other), (2, false));
+    }
+
+    #[test]
+    fn books_that_do_not_update_lose_their_failed_mark() {
+        let (_dir, mut storage) = storage();
+        let chapters = chapters(&["第1章 惊蛰"], "a");
+        let kept = storage
+            .add_online_book(&book("a"), &chapters, true)
+            .unwrap();
+        let paused = storage
+            .add_online_book(&book("b"), &chapters, true)
+            .unwrap();
+        storage
+            .record_online_update_error(&kept, "网站返回 500")
+            .unwrap();
+        storage
+            .record_online_update_error(&paused, "网站返回 500")
+            .unwrap();
+        let error = |storage: &Storage, id: &str| -> Option<String> {
+            storage
+                .conn
+                .query_row(
+                    "SELECT update_error FROM online_books WHERE book_id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        storage.set_online_can_update(&paused, false).unwrap();
+        assert_eq!(error(&storage, &paused), None);
+        // A book that still updates keeps its mark until it updates.
+        assert_eq!(error(&storage, &kept).as_deref(), Some("网站返回 500"));
+        assert_eq!(
+            storage.updatable_online_books().unwrap(),
+            vec![kept.clone()]
+        );
     }
 
     #[test]

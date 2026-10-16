@@ -9,7 +9,14 @@ import { toast } from "../ui/toast";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
-import { RuleTextLoader, type RuleTextService } from "./RuleTextLoader";
+import { ReplaceRuleImportDialog } from "./ReplaceRuleImportDialog";
+import type { ImportMethod } from "../Sources/SourceImportDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { t } from "../../i18n";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
@@ -48,7 +55,7 @@ export function ReplaceRulesPage({
   const [rules, setRules] = useState<ReplaceRule[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ReplaceRule | null>(null);
-  const [importing, setImporting] = useState(false);
+  const [importing, setImporting] = useState<ImportMethod | null>(null);
   const layer = usePageLayer(backCloses ? onClose : () => undefined);
   const load = () =>
     service.listReplaceRules().then(setRules, (failure: unknown) => setError(String(failure)));
@@ -104,25 +111,43 @@ export function ReplaceRulesPage({
         >
           <Icon name="add" size={20} />
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setImporting(true)}>
-          {t("common.import")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!rules.length}
-          onClick={() =>
-            void service
-              .exportReplaceRules()
-              .then(copyText)
-              .then(
-                () => toast(t("tocRule.exported")),
-                (failure: unknown) => setError(String(failure)),
-              )
-          }
-        >
-          {t("common.export")}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={t("reader.more")}
+            className="h-9 w-9 rounded-full inline-flex items-center justify-center text-secondary hover:bg-surface-container"
+          >
+            <Icon name="more_vert" size={19} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => setImporting("network")}>
+              <Icon name="public" size={15} />
+              {t("src.importNetwork")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setImporting("file")}>
+              <Icon name="description" size={15} />
+              {t("src.importFile")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setImporting("paste")}>
+              <Icon name="content_paste" size={15} />
+              {t("src.importPaste")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!rules.length}
+              onClick={() =>
+                void service
+                  .exportReplaceRules()
+                  .then(copyText)
+                  .then(
+                    () => toast(t("tocRule.exported")),
+                    (failure: unknown) => setError(String(failure)),
+                  )
+              }
+            >
+              <Icon name="share" size={15} />
+              {t("common.export")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-3xl mx-auto w-full p-3 space-y-2">
@@ -221,20 +246,17 @@ export function ReplaceRulesPage({
         />
       )}
       {importing && (
-        <ImportDialog
+        <ReplaceRuleImportDialog
           service={service}
-          onImport={(json) =>
-            service.importReplaceRules(json).then((added) => {
-              setImporting(false);
-              change(
-                async () => undefined,
-                added.length
-                  ? t("tocRule.imported", { count: added.length })
-                  : t("tocRule.noneNew"),
-              );
-            })
-          }
-          onClose={() => setImporting(false)}
+          method={importing}
+          onDone={(count) => {
+            setImporting(null);
+            change(
+              async () => undefined,
+              count ? t("tocRule.imported", { count }) : t("tocRule.noneNew"),
+            );
+          }}
+          onClose={() => setImporting(null)}
         />
       )}
     </div>
@@ -362,62 +384,6 @@ export function ReplaceRuleEditor({
               {t("common.save")}
             </Button>
           </span>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ImportDialog({
-  service,
-  onImport,
-  onClose,
-}: {
-  service: RuleTextService;
-  onImport: (json: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [json, setJson] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md p-5 gap-3">
-        <DialogHeader>
-          <DialogTitle className="font-title-editorial text-base">
-            {t("rules.importTitle")}
-          </DialogTitle>
-        </DialogHeader>
-        <p className="text-xs text-secondary">{t("rules.importNote")}</p>
-        <RuleTextLoader
-          service={service}
-          historyKey="gripread.replaceRuleImportHistory"
-          onText={setJson}
-        />
-        <textarea
-          aria-label={t("tocRule.json")}
-          rows={8}
-          value={json}
-          onChange={(event) => setJson(event.target.value)}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"
-        />
-        {error && (
-          <p role="alert" className="text-xs text-error break-words">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={!json.trim()}
-            onClick={() =>
-              void onImport(json).catch((failure: unknown) => setError(String(failure)))
-            }
-          >
-            {t("common.import")}
-          </Button>
         </div>
       </DialogContent>
     </Dialog>
