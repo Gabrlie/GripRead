@@ -39,6 +39,13 @@ class NetworkPlugin(private val activity: Activity) : Plugin(activity) {
     trigger("changed", JSObject())
   }
 
+  /** Mobile data and other metered networks, for 仅在 Wi‑Fi 下加载网络封面. */
+  @Command
+  fun metered(invoke: Invoke) {
+    val manager = activity.getSystemService(ConnectivityManager::class.java)
+    invoke.resolve(JSObject().put("metered", manager?.isActiveNetworkMetered ?: false))
+  }
+
   @Command
   fun systemProxy(invoke: Invoke) {
     val result = JSObject()

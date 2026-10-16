@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useImage } from "../../application/runtime";
+import { useImage, useOptionalImage, useOptionalPreferences } from "../../application/runtime";
+import type { ReaderPreferences } from "../../types/generated";
 
 /** Muted paper tones with a matching ink, like a plain cloth-bound book. */
 const LOCAL_COVER_PALETTES = [
@@ -20,7 +21,15 @@ function getCoverTheme(title: string) {
 }
 
 /** The book's own cover image, or a generated cover from its title. */
-export function BookCover({ title, assetId }: { title: string; assetId?: string | null }) {
+export function BookCover({
+  title,
+  author,
+  assetId,
+}: {
+  title: string;
+  author?: string | null;
+  assetId?: string | null;
+}) {
   const coverUrl = useImage(assetId);
   const [hasError, setHasError] = useState(false);
   if (coverUrl && !hasError) {
@@ -34,13 +43,71 @@ export function BookCover({ title, assetId }: { title: string; assetId?: string 
       />
     );
   }
-  return <GeneratedCover title={title} />;
+  return <GeneratedCover title={title} author={author} />;
 }
 
-/** The cover drawn from a book's title when it has no image. */
-export function GeneratedCover({ title }: { title: string }) {
+/** Whether the night colours are in use now. */
+function nightNow(preferences: ReaderPreferences | null): boolean {
+  if (!preferences) return false;
+  if (preferences.theme === "dark") return true;
+  if (preferences.theme === "light") return false;
+  return (
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches
+  );
+}
+
+/**
+ * The cover drawn for a book without one: 默认封面's image for day or night
+ * when one is chosen (外观), else one made from the title, with the title
+ * and author shown as 外观 says.
+ */
+export function GeneratedCover({ title, author }: { title: string; author?: string | null }) {
+  const preferences = useOptionalPreferences();
+  const night = nightNow(preferences);
+  const image = useOptionalImage(
+    night
+      ? (preferences?.nightDefaultCover ?? preferences?.defaultCover)
+      : preferences?.defaultCover,
+  );
+  const showName = preferences?.coverShowName ?? true;
+  const showAuthor = preferences?.coverShowAuthor ?? true;
   const theme = getCoverTheme(title);
   const cleanTitle = title.replace(/^《|》$/g, "").trim();
+  const words = (
+    <>
+      {showName && (
+        <span
+          className="font-title-editorial font-semibold leading-snug line-clamp-5 break-all"
+          style={{ fontSize: "clamp(6px, 14cqw, 15px)" }}
+        >
+          {cleanTitle}
+        </span>
+      )}
+      {showAuthor && author && (
+        <span
+          className="leading-snug line-clamp-2 break-all opacity-80"
+          style={{ fontSize: "clamp(5px, 9cqw, 11px)" }}
+        >
+          {author}
+        </span>
+      )}
+    </>
+  );
+  if (image)
+    return (
+      <div
+        aria-hidden="true"
+        className="w-full h-full relative overflow-hidden select-none"
+        style={{ containerType: "inline-size" }}
+      >
+        <img src={image} alt="" className="w-full h-full object-cover" />
+        {(showName || (showAuthor && author)) && (
+          <div className="absolute inset-x-0 top-[18%] flex flex-col items-center gap-[6%] px-[10%] text-center text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.6)]">
+            {words}
+          </div>
+        )}
+      </div>
+    );
   return (
     <div
       aria-hidden="true"
@@ -54,12 +121,7 @@ export function GeneratedCover({ title }: { title: string }) {
         className="w-full h-full rounded-[2px] border flex flex-col items-center justify-center gap-[8%] px-[8%] text-center"
         style={{ borderColor: `${theme.ink}40` }}
       >
-        <span
-          className="font-title-editorial font-semibold leading-snug line-clamp-5 break-all"
-          style={{ fontSize: "clamp(6px, 14cqw, 15px)" }}
-        >
-          {cleanTitle}
-        </span>
+        {words}
         <span className="block h-px w-1/4" style={{ background: `${theme.ink}66` }} />
       </div>
     </div>

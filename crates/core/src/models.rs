@@ -718,6 +718,41 @@ pub struct ReaderPreferences {
     /// (`warm-tea`, …) or custom style ids. Empty shows the four tones.
     #[serde(default)]
     pub pinned_styles: Vec<String>,
+    /// 默认封面: managed images drawn for books without a cover, by day and
+    /// night (files on this device, like reading backgrounds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_cover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub night_default_cover: Option<String>,
+    /// The default cover shows the title / the author; `None` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cover_show_name: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cover_show_author: Option<bool>,
+    /// 仅在 Wi‑Fi 下加载网络封面; `None` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub covers_wifi_only: Option<bool>,
+    /// The page the app opens on: `bookshelf`, `discover`, or `settings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub home_tab: Option<String>,
+    /// The 发现 tab shows; `None` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub show_discover: Option<bool>,
+    /// The bottom navigation shows its labels; `None` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub nav_labels: Option<bool>,
+    /// The bottom navigation hides while the shelf scrolls down; `None` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub nav_autohide: Option<bool>,
 }
 
 /// A 界面样式 made from a main colour; the others, when empty, are derived
@@ -1146,6 +1181,15 @@ impl Default for ReaderPreferences {
             custom_styles: Vec::new(),
             custom_style: None,
             pinned_styles: Vec::new(),
+            default_cover: None,
+            night_default_cover: None,
+            cover_show_name: None,
+            cover_show_author: None,
+            covers_wifi_only: None,
+            home_tab: None,
+            show_discover: None,
+            nav_labels: None,
+            nav_autohide: None,
         }
     }
 }

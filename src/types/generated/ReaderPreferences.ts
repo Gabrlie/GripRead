@@ -42,4 +42,33 @@ customStyle?: string,
  * The 界面样式 shown in 外观, at most four: paper tone ids
  * (`warm-tea`, …) or custom style ids. Empty shows the four tones.
  */
-pinnedStyles: Array<string>, };
+pinnedStyles: Array<string>, 
+/**
+ * 默认封面: managed images drawn for books without a cover, by day and
+ * night (files on this device, like reading backgrounds).
+ */
+defaultCover?: string, nightDefaultCover?: string, 
+/**
+ * The default cover shows the title / the author; `None` is on.
+ */
+coverShowName?: boolean, coverShowAuthor?: boolean, 
+/**
+ * 仅在 Wi‑Fi 下加载网络封面; `None` is off.
+ */
+coversWifiOnly?: boolean, 
+/**
+ * The page the app opens on: `bookshelf`, `discover`, or `settings`.
+ */
+homeTab?: string, 
+/**
+ * The 发现 tab shows; `None` is on.
+ */
+showDiscover?: boolean, 
+/**
+ * The bottom navigation shows its labels; `None` is on.
+ */
+navLabels?: boolean, 
+/**
+ * The bottom navigation hides while the shelf scrolls down; `None` is off.
+ */
+navAutohide?: boolean, };

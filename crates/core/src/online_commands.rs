@@ -591,6 +591,19 @@ fn cover_bytes(
         }
         CachedCover::Unknown => {}
     }
+    // 仅在 Wi‑Fi 下加载网络封面: kept covers still show, new ones wait.
+    let wifi_only = lock()?
+        .get_settings()
+        .ok()
+        .and_then(|settings| settings.covers_wifi_only)
+        .unwrap_or(false);
+    if wifi_only && crate::network::metered() {
+        return Err(AppError::keyed(
+            ErrorCode::Io,
+            "coverWifiOnly",
+            "移动网络下不加载网络封面",
+        ));
+    }
     let _slot = CoverSlot::take();
     let source = load_source(storage, source_url)?;
     let decode = source.cover_decode_js().filter(|js| !js.trim().is_empty());

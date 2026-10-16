@@ -18,7 +18,8 @@ export function LibraryCover({ book, title }: { book: LibraryBook; title?: strin
         sourceUrl={online.book.sourceUrl}
         url={online.book.coverUrl}
         title={name}
+        author={book.book.author}
       />
     );
-  return <BookCover title={name} assetId={book.coverAssetId} />;
+  return <BookCover title={name} author={book.book.author} assetId={book.coverAssetId} />;
 }

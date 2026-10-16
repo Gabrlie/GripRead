@@ -1,23 +1,29 @@
 import { useState } from "react";
-import { useSettings } from "../../application/runtime";
+import { useOptionalImage, useRuntime, useSettings } from "../../application/runtime";
 import { parseHex, stylePalette } from "../../application/theme-colors";
-import { languageChoice, setLanguage, t, type LanguageChoice } from "../../i18n";
+import { languageChoice, setLanguage, t, type LanguageChoice, type MessageKey } from "../../i18n";
 import type { InterfaceStyle, ReaderPreferences } from "../../types/generated";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import {
   PINNED_MAX,
-  StyleSwatch,
   choose,
   chosenStyle,
   pinnedChoices,
   styleChoices,
   type StyleChoice,
 } from "./interface-styles";
+
+const HOME_TABS: ["bookshelf" | "discover" | "settings", MessageKey][] = [
+  ["bookshelf", "nav.shelf"],
+  ["discover", "nav.discover"],
+  ["settings", "nav.settings"],
+];
 
 const LANGUAGES: [LanguageChoice, string][] = [
   ["system", ""],
@@ -105,61 +111,149 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
         <p className="px-4 pt-3 text-[11px] text-secondary">
           {t("appearance.pinNote", { count: PINNED_MAX })}
         </p>
-        <div
-          role="radiogroup"
-          aria-label={t("settings.interfaceStyle")}
-          className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-4"
-        >
-          {all.map((choice) => (
-            <div key={choice.id} className="relative">
-              <StyleSwatch
-                choice={choice}
-                selected={chosen === choice.id}
-                onChoose={() => store.set(choose(choice))}
-              />
-              <div className="mt-1 flex justify-center gap-1">
+        <ul role="radiogroup" aria-label={t("settings.interfaceStyle")} className="py-1">
+          {all.map((choice) => {
+            const selected = chosen === choice.id;
+            const isPinned = pinned.includes(choice.id);
+            return (
+              <li key={choice.id} className="flex items-center gap-3 px-4 py-2 min-h-12">
                 <button
                   type="button"
-                  aria-pressed={pinned.includes(choice.id)}
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => store.set(choose(choice))}
+                  className="flex-1 min-w-0 flex items-center gap-3 text-left"
+                >
+                  <StyleChip choice={choice} />
+                  <span className="min-w-0 flex-1 truncate text-sm">{choice.name}</span>
+                  {selected && (
+                    <span className="shrink-0 rounded px-1.5 text-[10px] leading-4 bg-primary/10 text-primary">
+                      {t("appearance.inUse")}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={isPinned}
                   aria-label={t("appearance.pin", { name: choice.name })}
                   onClick={() => togglePin(choice)}
-                  className={`h-6 w-6 rounded-full inline-flex items-center justify-center ${pinned.includes(choice.id) ? "text-primary" : "text-secondary"}`}
+                  className={`h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center ${isPinned ? "text-primary" : "text-secondary/50"}`}
                 >
-                  <Icon name="push_pin" size={13} />
+                  <Icon name="push_pin" size={15} fill={isPinned} />
                 </button>
-                {choice.custom && (
-                  <button
-                    type="button"
-                    aria-label={t("appearance.edit", { name: choice.name })}
-                    onClick={() => setEditing(choice.custom!)}
-                    className="h-6 w-6 rounded-full inline-flex items-center justify-center text-secondary"
-                  >
-                    <Icon name="edit" size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="px-4 pb-4">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              setEditing({
-                id: `style-${Date.now().toString(36)}`,
-                name: t("appearance.newName"),
-                primary: "#4a6fa5",
-                paper: null,
-                text: null,
-                secondary: null,
-              })
-            }
+                <span className="h-8 w-8 shrink-0 inline-flex">
+                  {choice.custom && (
+                    <button
+                      type="button"
+                      aria-label={t("appearance.edit", { name: choice.name })}
+                      onClick={() => setEditing(choice.custom!)}
+                      className="h-8 w-8 rounded-full inline-flex items-center justify-center text-secondary"
+                    >
+                      <Icon name="edit" size={15} />
+                    </button>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+          <li>
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 px-4 py-2 min-h-12 text-sm text-primary"
+              onClick={() =>
+                setEditing({
+                  id: `style-${Date.now().toString(36)}`,
+                  name: t("appearance.newName"),
+                  primary: "#4a6fa5",
+                  paper: null,
+                  text: null,
+                  secondary: null,
+                })
+              }
+            >
+              <span className="h-8 w-8 rounded-lg border border-dashed border-current inline-flex items-center justify-center">
+                <Icon name="add" size={15} />
+              </span>
+              {t("appearance.new")}
+            </button>
+          </li>
+        </ul>
+      </PageSection>
+
+      <PageSection title={t("appearance.cover")}>
+        <CoverImages value={value} onChange={(patch) => store.set(patch)} />
+        <Toggle
+          label={t("appearance.coverName")}
+          checked={value.coverShowName ?? true}
+          onChange={(coverShowName) => store.set({ coverShowName })}
+        />
+        <Toggle
+          label={t("appearance.coverAuthor")}
+          checked={value.coverShowAuthor ?? true}
+          onChange={(coverShowAuthor) => store.set({ coverShowAuthor })}
+        />
+        <Toggle
+          label={t("appearance.coverWifi")}
+          note={t("appearance.coverWifi.note")}
+          checked={value.coversWifiOnly ?? false}
+          onChange={(coversWifiOnly) => store.set({ coversWifiOnly })}
+        />
+      </PageSection>
+
+      <PageSection title={t("appearance.main")}>
+        <div className="px-4 py-3 space-y-2 text-sm">
+          <span>{t("appearance.home")}</span>
+          <div
+            role="radiogroup"
+            aria-label={t("appearance.home")}
+            className="grid grid-cols-3 gap-1.5 bg-surface-container p-1 rounded-lg"
           >
-            <Icon name="add" size={14} />
-            {t("appearance.new")}
-          </Button>
+            {HOME_TABS.map(([tab, label]) => {
+              const current = (value.homeTab ?? "bookshelf") === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  role="radio"
+                  aria-checked={current}
+                  onClick={() =>
+                    store.set(
+                      tab === "discover" ? { homeTab: tab, showDiscover: true } : { homeTab: tab },
+                    )
+                  }
+                  className={`h-8 rounded-md text-xs ${current ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
+                >
+                  {t(label)}
+                </button>
+              );
+            })}
+          </div>
         </div>
+        <Toggle
+          label={t("appearance.showDiscover")}
+          checked={value.showDiscover ?? true}
+          onChange={(showDiscover) =>
+            store.set(
+              showDiscover || value.homeTab !== "discover"
+                ? { showDiscover }
+                : { showDiscover, homeTab: "bookshelf" },
+            )
+          }
+        />
+      </PageSection>
+
+      <PageSection title={t("appearance.nav")}>
+        <Toggle
+          label={t("appearance.navLabels")}
+          checked={value.navLabels ?? true}
+          onChange={(navLabels) => store.set({ navLabels })}
+        />
+        <Toggle
+          label={t("appearance.navAutohide")}
+          note={t("appearance.navAutohide.note")}
+          checked={value.navAutohide ?? false}
+          onChange={(navAutohide) => store.set({ navAutohide })}
+        />
       </PageSection>
 
       {editing && (
@@ -331,5 +425,105 @@ function StyleEditor({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A style's colours in small: its page, with its main colour. */
+function StyleChip({ choice }: { choice: StyleChoice }) {
+  const [paper, swatch, accent] = choice.light;
+  const [nightPaper, , nightAccent] = choice.dark;
+  return (
+    <span
+      aria-hidden="true"
+      className="h-8 w-8 shrink-0 rounded-lg border border-black/5 dark:border-white/10 overflow-hidden grid grid-cols-2"
+    >
+      <span className="flex items-end justify-center pb-1" style={{ background: paper }}>
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: accent }} />
+      </span>
+      <span className="flex items-end justify-center pb-1" style={{ background: nightPaper }}>
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: nightAccent }} />
+      </span>
+      <span className="hidden" style={{ background: swatch }} />
+    </span>
+  );
+}
+
+function Toggle({
+  label,
+  note,
+  checked,
+  onChange,
+}: {
+  label: string;
+  note?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+      <span className="min-w-0">
+        {label}
+        {note && <span className="block text-[11px] text-secondary">{note}</span>}
+      </span>
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
+    </label>
+  );
+}
+
+/** 默认封面 by day and night: a picked image, or the generated cover. */
+function CoverImages({
+  value,
+  onChange,
+}: {
+  value: ReaderPreferences;
+  onChange: (patch: Partial<ReaderPreferences>) => void;
+}) {
+  const runtime = useRuntime();
+  const day = useOptionalImage(value.defaultCover);
+  const night = useOptionalImage(value.nightDefaultCover);
+  const pick = (key: "defaultCover" | "nightDefaultCover") =>
+    void runtime.services.settings.pickBackgroundImage().then(
+      (asset) => asset && onChange({ [key]: asset.id }),
+      (failure: unknown) => toast({ text: String(failure), error: true }),
+    );
+  const slot = (
+    label: string,
+    key: "defaultCover" | "nightDefaultCover",
+    image: string | undefined,
+  ) => (
+    <div className="flex flex-col items-center gap-1.5">
+      <button
+        type="button"
+        aria-label={t("appearance.coverPick", { which: label })}
+        onClick={() => pick(key)}
+        className="w-16 aspect-[3/4] rounded-md overflow-hidden border border-surface-variant bg-surface-container flex items-center justify-center text-secondary"
+      >
+        {image ? (
+          <img src={image} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Icon name="add" size={16} />
+        )}
+      </button>
+      <span className="text-[11px] text-secondary">{label}</span>
+      {value[key] && (
+        <button
+          type="button"
+          className="text-[11px] text-primary"
+          onClick={() => onChange({ [key]: undefined })}
+        >
+          {t("appearance.coverReset")}
+        </button>
+      )}
+    </div>
+  );
+  return (
+    <div className="px-4 py-3 space-y-2">
+      <span className="text-sm">{t("appearance.coverDefault")}</span>
+      <p className="text-[11px] text-secondary">{t("appearance.coverDefault.note")}</p>
+      <div className="flex gap-6">
+        {slot(t("settings.theme.light"), "defaultCover", day)}
+        {slot(t("settings.theme.dark"), "nightDefaultCover", night)}
+      </div>
+    </div>
   );
 }

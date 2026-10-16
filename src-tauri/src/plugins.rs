@@ -335,8 +335,19 @@ pub fn network<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     host: Option<String>,
                     port: Option<u16>,
                 }
+                #[derive(serde::Deserialize)]
+                struct Metered {
+                    metered: bool,
+                }
                 let handle =
                     _api.register_android_plugin("com.gripread.reader", "NetworkPlugin")?;
+                let asking = handle.clone();
+                gripread_core::network::set_metered_detector(Box::new(move || {
+                    asking
+                        .run_mobile_plugin::<Metered>("metered", serde_json::json!({}))
+                        .map(|answer| answer.metered)
+                        .unwrap_or(false)
+                }));
                 gripread_core::network::set_detector(Box::new(move || {
                     let found: Found = handle
                         .run_mobile_plugin("systemProxy", serde_json::json!({}))

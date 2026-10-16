@@ -187,6 +187,20 @@ pub fn set_detector(detector: Detector) {
     let _ = DETECTOR.set(detector);
 }
 
+/// How the platform tells a metered network (mobile data) from Wi‑Fi; the
+/// Android plugin installs one, and without it every network counts as
+/// unmetered.
+static METERED: OnceLock<Box<dyn Fn() -> bool + Send + Sync>> = OnceLock::new();
+
+pub fn set_metered_detector(detector: Box<dyn Fn() -> bool + Send + Sync>) {
+    let _ = METERED.set(detector);
+}
+
+/// Whether the device is on a metered network now (仅在 Wi‑Fi 下加载网络封面).
+pub fn metered() -> bool {
+    METERED.get().is_some_and(|detector| detector())
+}
+
 fn path(root: &Path) -> PathBuf {
     root.join(FILE)
 }

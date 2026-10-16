@@ -13,11 +13,13 @@ export function OnlineCover({
   sourceUrl,
   url,
   title,
+  author,
 }: {
   service: SourceService;
   sourceUrl: string;
   url: string;
   title: string;
+  author?: string | null;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
@@ -48,7 +50,7 @@ export function OnlineCover({
           onError={() => setBroken(image)}
         />
       ) : (
-        <GeneratedCover title={title} />
+        <GeneratedCover title={title} author={author} />
       )}
     </div>
   );

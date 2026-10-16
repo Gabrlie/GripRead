@@ -203,6 +203,19 @@ function MainContent() {
     void runtime.services.sync.runAutomaticBackup().catch(() => undefined);
   }, [runtime]);
   useEffect(() => (settings.value ? applyTheme(settings.value) : undefined), [settings.value]);
+  // 外观 › 主界面: the page the app opens on, once the preferences arrive;
+  // a hidden 发现 tab sends its page back to the shelf.
+  const opened = useRef(false);
+  useEffect(() => {
+    const value = settings.value;
+    if (!value) return;
+    if (!opened.current) {
+      opened.current = true;
+      const home = value.homeTab;
+      if (home === "discover" || home === "settings") setActiveTab(home);
+    }
+    if (value.showDiscover === false && activeTab === "discover") setActiveTab("bookshelf");
+  }, [settings.value, activeTab, setActiveTab]);
   const backState = useRef({ activeTab, activeBook, closePending });
   backState.current = { activeTab, activeBook, closePending };
   useEffect(() => {

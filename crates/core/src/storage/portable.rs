@@ -1677,15 +1677,25 @@ pub(super) fn merge_preferences(
     restored.custom_styles = source.custom_styles.clone();
     restored.custom_style = source.custom_style.clone();
     restored.pinned_styles = source.pinned_styles.clone();
+    restored.cover_show_name = source.cover_show_name;
+    restored.cover_show_author = source.cover_show_author;
+    restored.covers_wifi_only = source.covers_wifi_only;
+    restored.home_tab = source.home_tab.clone();
+    restored.show_discover = source.show_discover;
+    restored.nav_labels = source.nav_labels;
+    restored.nav_autohide = source.nav_autohide;
     if reading {
         keep_device_assets(&mut restored, current);
     }
     restored
 }
 
-/// Fonts and background images are files on one device; a backup names none.
+/// Fonts, background images, and default covers are files on one device; a
+/// backup names none.
 pub(super) fn strip_device_assets(preferences: &mut ReaderPreferences) {
     preferences.style.font_asset_id = None;
+    preferences.default_cover = None;
+    preferences.night_default_cover = None;
     for preset in &mut preferences.style.presets {
         preset.background_image = None;
         preset.night_background_image = None;
@@ -1696,6 +1706,8 @@ pub(super) fn strip_device_assets(preferences: &mut ReaderPreferences) {
 /// of presets that are still in the same place.
 fn keep_device_assets(restored: &mut ReaderPreferences, current: &ReaderPreferences) {
     restored.style.font_asset_id = current.style.font_asset_id.clone();
+    restored.default_cover = current.default_cover.clone();
+    restored.night_default_cover = current.night_default_cover.clone();
     for (index, preset) in restored.style.presets.iter_mut().enumerate() {
         let local = current.style.presets.get(index);
         preset.background_image = local.and_then(|preset| preset.background_image.clone());

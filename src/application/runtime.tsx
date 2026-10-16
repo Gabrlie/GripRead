@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
-import type { ShelfPreferences } from "../types/generated";
+import type { ReaderPreferences, ShelfPreferences } from "../types/generated";
 import type { AppServices } from "../services/contracts";
 import { LibraryStore } from "./library";
 import { ShelfStore } from "./shelf";
@@ -122,6 +122,40 @@ export function useShelfPreferences() {
 }
 
 /** The object URL of a managed image, or `undefined` while it loads or fails. */
+const NO_SETTINGS = () => () => undefined;
+
+/**
+ * The reading preferences where the app's runtime is present, `null`
+ * elsewhere (parts shown on their own, as in some tests).
+ */
+export function useOptionalPreferences(): ReaderPreferences | null {
+  const store = useContext(RuntimeContext)?.settings;
+  const state = useSyncExternalStore(
+    store?.subscribe ?? NO_SETTINGS,
+    () => store?.getSnapshot().value ?? null,
+    () => null,
+  );
+  return state;
+}
+
+/** `useImage` where the runtime may be absent: no image then. */
+export function useOptionalImage(id: string | null | undefined): string | undefined {
+  const runtime = useContext(RuntimeContext);
+  const [loaded, setLoaded] = useState<{ id: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!id || !runtime) return;
+    let cancelled = false;
+    runtime.images.load(id).then(
+      (url) => !cancelled && setLoaded({ id, url }),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [id, runtime]);
+  return id && loaded?.id === id ? loaded.url : undefined;
+}
+
 export function useImage(id: string | null | undefined): string | undefined {
   const runtime = useRuntime();
   const [loaded, setLoaded] = useState<{ id: string; url: string } | null>(null);

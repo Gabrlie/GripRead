@@ -1,5 +1,7 @@
 import { useApp, type NavTab } from "../../context/AppContext";
 import { Icon } from "../ui/Icon";
+import { useEffect, useState } from "react";
+import { useOptionalPreferences } from "../../application/runtime";
 import { t } from "../../i18n";
 
 interface TabItem {
@@ -39,8 +41,19 @@ const TABS: TabItem[] = [
   },
 ];
 
+/** The tabs 外观 › 主界面 shows: 发现 can be hidden. */
+export function shownTabs(showDiscover: boolean): TabItem[] {
+  return TABS.filter((tab) => showDiscover || tab.id !== "discover");
+}
+
 export function Navbar() {
   const { activeTab, setActiveTab, activeBook } = useApp();
+  const preferences = useOptionalPreferences();
+  const tabs = shownTabs(preferences?.showDiscover ?? true);
+  const labels = preferences?.navLabels ?? true;
+  const hidden = useHiddenOnScroll(
+    Boolean(preferences?.navAutohide) && activeTab === "bookshelf" && !activeBook,
+  );
 
   // If reader is open, navigation is hidden
   if (activeBook) return null;
@@ -55,17 +68,18 @@ export function Navbar() {
       />
       {/* Mobile Apple-style Floating Island Dock */}
       <nav
-        className="glass-dock fixed bottom-[calc(1rem+var(--safe-bottom))] inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none"
+        className={`glass-dock fixed bottom-[calc(1rem+var(--safe-bottom))] inset-x-4 max-w-sm mx-auto z-40 rounded-full md:hidden transition-all duration-200 pointer-events-auto select-none ${hidden ? "translate-y-[calc(100%+2rem)] opacity-0 pointer-events-none" : ""}`}
         aria-label="Mobile Navigation Dock"
       >
         <div className="flex items-center justify-around h-[60px] px-2 py-1">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
+                aria-label={labels ? undefined : tab.label}
                 aria-current={isActive ? "page" : undefined}
                 className={`relative flex flex-col items-center justify-center min-w-[58px] py-1 rounded-full transition-all duration-200 active:scale-95 ${
                   isActive ? "text-primary font-medium" : "text-secondary hover:text-on-surface"
@@ -78,7 +92,11 @@ export function Navbar() {
                 >
                   <Icon name={tab.icon} size={22} fill={isActive} />
                 </div>
-                <span className="font-label-md text-[11px] mt-0.5 tracking-tight">{tab.label}</span>
+                {labels && (
+                  <span className="font-label-md text-[11px] mt-0.5 tracking-tight">
+                    {tab.label}
+                  </span>
+                )}
                 {isActive && (
                   <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-primary" />
                 )}
@@ -108,7 +126,7 @@ export function Navbar() {
         </div>
 
         <nav className="flex-1 space-y-1.5">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
@@ -138,4 +156,29 @@ export function Navbar() {
       </aside>
     </>
   );
+}
+
+/**
+ * 滑动书架时隐藏底栏: hidden while the page scrolls down, shown again on
+ * scrolling up or near the top.
+ */
+function useHiddenOnScroll(enabled: boolean): boolean {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    if (!enabled) {
+      setHidden(false);
+      return;
+    }
+    let last = window.scrollY;
+    const onScroll = () => {
+      const now = window.scrollY;
+      if (now < 48) setHidden(false);
+      else if (now > last + 6) setHidden(true);
+      else if (now < last - 6) setHidden(false);
+      last = now;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [enabled]);
+  return hidden;
 }
