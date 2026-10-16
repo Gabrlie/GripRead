@@ -283,6 +283,8 @@ export interface SourceService {
   getVariable(url: string): Promise<string | null>;
   setVariable(url: string, value: string | null): Promise<void>;
   clearCookies(url: string): Promise<void>;
+  /** 通过服务器访问 for sources, on this device; used while connected to a server. */
+  setViaServer(urls: string[], on: boolean): Promise<void>;
   /** Starts a debug run; lines arrive through `onDebug`. */
   debug(request: DebugSourceRequest): Promise<void>;
   onDebug(listener: (event: SourceDebugEvent) => void): Promise<Unsubscribe>;

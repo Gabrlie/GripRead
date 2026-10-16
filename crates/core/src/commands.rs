@@ -206,6 +206,13 @@ impl AppState {
         };
         let sync =
             crate::sync_client::SyncClient::start(&data_root, storage.clone(), events.clone());
+        // 通过服务器访问 sends a chosen source's requests through the server.
+        {
+            let client = sync.clone();
+            crate::sources::http::set_relay(Some(Arc::new(
+                move |hop: &crate::sources::http::Hop| client.relay_hop(hop),
+            )));
+        }
         // Online chapters come through the server while connected.
         if let Ok(mut guard) = storage.lock() {
             let client = sync.clone();

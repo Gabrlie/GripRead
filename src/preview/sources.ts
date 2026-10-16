@@ -33,6 +33,7 @@ function summaryOf(raw: Raw): BookSourceSummary {
     lastUpdateTime: Number(raw.lastUpdateTime ?? 0),
     respondTime: Number(raw.respondTime ?? 180000),
     comment: text(raw.bookSourceComment),
+    viaServer: raw.__viaServer === true,
   };
 }
 
@@ -227,6 +228,10 @@ export function createMemorySourceService(
         raw.__variable = value ?? "";
       }),
     clearCookies: async () => undefined,
+    setViaServer: (urls, on) =>
+      update(urls, (raw) => {
+        raw.__viaServer = on;
+      }),
     debug: async (request) => {
       const lines = [
         `︽ 搜索「${request.key}」`,

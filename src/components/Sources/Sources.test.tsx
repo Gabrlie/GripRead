@@ -78,6 +78,17 @@ describe("书源管理", () => {
     expect(service.deleteSources).toHaveBeenCalledWith(["https://a.com"]);
   });
 
+  it("sends a source's requests through the server when asked", async () => {
+    const service = sourceServiceMocks(SOURCES);
+    render(<SourceManagePage service={service} onClose={() => undefined} />);
+    await screen.findByText("甲站");
+    expect(screen.queryByText("服务器")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "甲站 的更多操作" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /通过服务器访问/ }));
+    expect(service.setViaServer).toHaveBeenCalledWith(["https://a.com"], true);
+    expect(await screen.findByText("服务器")).toBeTruthy();
+  });
+
   it("checks sources and reports progress until done", async () => {
     const service = sourceServiceMocks(SOURCES);
     render(<SourceManagePage service={service} onClose={() => undefined} />);

@@ -15,4 +15,8 @@ group: string, enabled: boolean, enabledExplore: boolean, hasExplore: boolean, h
 /**
  * The source has a login form or script.
  */
-hasLogin: boolean, customOrder: number, weight: number, lastUpdateTime: number, respondTime: number, comment: string, };
+hasLogin: boolean, customOrder: number, weight: number, lastUpdateTime: number, respondTime: number, comment: string, 
+/**
+ * 通过服务器访问 is on for it on this device.
+ */
+viaServer: boolean, };

@@ -44,6 +44,7 @@ import type {
   ImportSourcesRequest,
   PreviewSourceImportRequest,
   SourceUrlRequest,
+  SourceViaServerRequest,
   SourceUrlsRequest,
   SetSourcesSwitchRequest,
   SourceGroupRequest,
@@ -706,6 +707,10 @@ export const tauriServices: AppServices = {
       }),
     clearCookies: (url) =>
       invokeCommand<void>("clear_source_cookies", { request: { url } satisfies SourceUrlRequest }),
+    setViaServer: (urls, on) =>
+      invokeCommand<void>("set_sources_via_server", {
+        request: { urls, on } satisfies SourceViaServerRequest,
+      }),
     debug: (request) =>
       invokeCommand<void>("debug_book_source", { request: request satisfies DebugSourceRequest }),
     onDebug: (listener) => listen<SourceDebugEvent>("source-debug", listener),

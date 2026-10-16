@@ -52,6 +52,7 @@ pub fn summary_of(source: &BookSource) -> BookSourceSummary {
         last_update_time: source.last_update_time(),
         respond_time: source.respond_time(),
         comment: source.comment().unwrap_or_default(),
+        via_server: false,
     }
 }
 
@@ -116,13 +117,45 @@ impl Storage {
     }
 
     pub fn list_book_sources(&self) -> Result<Vec<BookSourceSummary>, AppError> {
-        Ok(self.book_sources()?.iter().map(summary_of).collect())
+        self.book_sources()?
+            .iter()
+            .map(|source| self.with_device_switches(summary_of(source)))
+            .collect()
+    }
+
+    /// A summary with this device's own switches for the source.
+    fn with_device_switches(
+        &self,
+        mut summary: BookSourceSummary,
+    ) -> Result<BookSourceSummary, AppError> {
+        summary.via_server = self.source_via_server(&summary.url)?;
+        Ok(summary)
+    }
+
+    /// 通过服务器访问 for a source: kept in the source cache, which never
+    /// leaves the device (crate::sources::http reads it per request).
+    pub fn source_via_server(&self, url: &str) -> Result<bool, AppError> {
+        Ok(self
+            .source_cache_get(&crate::sources::http::via_server_key(url))?
+            .is_some_and(|value| value == "1"))
+    }
+
+    pub fn set_sources_via_server(&self, urls: &[String], on: bool) -> Result<(), AppError> {
+        for url in urls {
+            let key = crate::sources::http::via_server_key(url);
+            if on {
+                self.source_cache_put(&key, "1", 0)?;
+            } else {
+                self.source_cache_delete(&key)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn book_source_detail(&self, url: &str) -> Result<BookSourceDetail, AppError> {
         let source = self.required_source(url)?;
         Ok(BookSourceDetail {
-            summary: summary_of(&source),
+            summary: self.with_device_switches(summary_of(&source))?,
             json: serde_json::to_string_pretty(&source.raw)?,
         })
     }

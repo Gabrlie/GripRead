@@ -776,4 +776,32 @@ async fn shelf_jobs_are_set_run_and_answered() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // 通过服务器访问 never reaches the server's own network.
+    let hop = json!({
+        "method": "GET",
+        "url": "http://127.0.0.1:9/",
+        "headers": [["User-Agent", "x"]],
+        "body": null,
+        "timeoutMs": 2000
+    });
+    let (status, _, body) = send(
+        &app,
+        authorized(Request::post("/api/source/fetch"))
+            .header("content-type", "application/json")
+            .body(Body::from(hop.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(json_of(&body)["message"].as_str().unwrap().contains("内网"));
+    let (status, _, _) = send(
+        &app,
+        Request::post("/api/source/fetch")
+            .header("content-type", "application/json")
+            .body(Body::from(hop.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

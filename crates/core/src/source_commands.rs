@@ -501,6 +501,17 @@ fn remember_login(
         .source_cache_put(&login_result_key(url), &stored, 0)
 }
 
+/// 通过服务器访问 on or off for sources, on this device.
+pub async fn set_sources_via_server(
+    state: &Arc<AppState>,
+    request: crate::models::SourceViaServerRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.set_sources_via_server(&request.urls, request.on)
+    })
+    .await
+}
+
 pub async fn get_source_variable(
     state: &Arc<AppState>,
     request: SourceUrlRequest,

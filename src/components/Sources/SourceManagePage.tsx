@@ -372,6 +372,14 @@ export function SourceManagePage({
                       aria-label={source.enabledExplore ? t("src.hasExplore") : t("src.exploreOff")}
                     />
                   )}
+                  {source.viaServer && (
+                    <span
+                      className="shrink-0 rounded px-1 text-[10px] leading-4 bg-surface-container text-secondary"
+                      title={t("src.viaServer")}
+                    >
+                      {t("src.viaServerMark")}
+                    </span>
+                  )}
                   {source.hasLogin && (
                     <Icon
                       name="login"
@@ -434,6 +442,18 @@ export function SourceManagePage({
                       >
                         <Icon name="vertical_align_bottom" size={15} />
                         {t("src.bottom")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          run(
+                            () => service.setViaServer([source.url], !source.viaServer),
+                            source.viaServer ? t("src.viaServerOff") : t("src.viaServerOn"),
+                          )
+                        }
+                      >
+                        <Icon name="cloud" size={15} />
+                        {t("src.viaServer")}
+                        {source.viaServer && <Icon name="check" size={14} className="ml-auto" />}
                       </DropdownMenuItem>
                       {source.hasLogin && (
                         <DropdownMenuItem onClick={() => setLoggingIn(source.url)}>

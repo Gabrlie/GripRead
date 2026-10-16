@@ -20,6 +20,7 @@ function source(overrides: Partial<BookSourceSummary>): BookSourceSummary {
     hasExplore: false,
     hasSearch: true,
     hasLogin: false,
+    viaServer: false,
     customOrder: 0,
     weight: 0,
     lastUpdateTime: 0,

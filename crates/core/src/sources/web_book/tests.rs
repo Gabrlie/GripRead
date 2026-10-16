@@ -474,3 +474,58 @@ fn a_web_login_closes_once_the_source_login_succeeds() {
         assert_eq!(answer, None);
     });
 }
+
+#[test]
+fn a_source_set_to_go_through_the_server_sends_its_requests_there() {
+    use crate::sources::http::{testing, via_server_key, HopAnswer};
+    // The site itself is unreachable: only the relay answers.
+    let base = "http://127.0.0.1:9";
+    let mut raw = html_source(base);
+    raw["enabledCookieJar"] = serde_json::json!(true);
+    let source = BookSource::from_value(raw.clone()).unwrap();
+    let store = Arc::new(MemoryStore::default());
+    store.cache_put(&via_server_key(base), "1", 0);
+    let session = SourceSession::new(source, store.clone(), Control::unlimited()).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let relayed = seen.clone();
+    let found = testing::with_relay(
+        move |hop| {
+            relayed.lock().unwrap().push(hop.clone());
+            Ok(HopAnswer {
+                code: 200,
+                message: "OK".into(),
+                headers: vec![
+                    ("Content-Type".into(), "text/html; charset=utf-8".into()),
+                    ("Set-Cookie".into(), "sid=relay; Path=/".into()),
+                ],
+                bytes: r#"<div class="item"><a class="name" href="/book/7/">剑来</a></div>"#
+                    .as_bytes()
+                    .to_vec(),
+            })
+        },
+        || session.search("剑来", 1).unwrap(),
+    );
+    assert_eq!(found[0].name, "剑来");
+    let hops = seen.lock().unwrap().clone();
+    assert_eq!(hops.len(), 1);
+    assert!(hops[0].url.starts_with("http://127.0.0.1:9/search?q="));
+    assert!(hops[0].headers.iter().any(|(key, _)| key == "User-Agent"));
+    // The cookie the relayed answer set is kept on the device.
+    assert!(store.cookie_get("127.0.0.1").unwrap().contains("sid=relay"));
+
+    // A relay that fails sends the request directly instead.
+    let site = html_site();
+    let store = Arc::new(MemoryStore::default());
+    store.cache_put(&via_server_key(&site), "1", 0);
+    let session = SourceSession::new(
+        BookSource::from_value(html_source(&site)).unwrap(),
+        store,
+        Control::unlimited(),
+    )
+    .unwrap();
+    let found = testing::with_relay(
+        |_| Err("服务器不可达".into()),
+        || session.search("剑来", 1).unwrap(),
+    );
+    assert_eq!(found[0].name, "剑来");
+}

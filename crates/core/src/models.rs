@@ -1518,6 +1518,16 @@ pub struct BookSourceSummary {
     pub last_update_time: i64,
     pub respond_time: i64,
     pub comment: String,
+    /// 通过服务器访问 is on for it on this device.
+    #[serde(default)]
+    pub via_server: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceViaServerRequest {
+    pub urls: Vec<String>,
+    pub on: bool,
 }
 
 /// A source with its full JSON, for the editor.

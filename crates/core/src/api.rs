@@ -106,6 +106,7 @@ pub fn mutates(name: &str) -> bool {
         "save_translation_settings",
         "set_book_translation",
         "set_book_language",
+        "set_sources_via_server",
         "translate_book",
         "translate_texts",
         "install_update",
@@ -219,6 +220,7 @@ pub const COMMANDS: &[&str] = &[
     "get_book_translation",
     "set_book_translation",
     "set_book_language",
+    "set_sources_via_server",
     "translate_book",
     "translate_texts",
     "delete_recovery_point",
@@ -317,6 +319,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "cancel_import" => reply(crate::commands::cancel_import(state, request(args)?).await),
         "cancel_search" => reply(crate::commands::cancel_search(state, request(args)?).await),
+        "set_sources_via_server" => {
+            reply(crate::source_commands::set_sources_via_server(state, request(args)?).await)
+        }
         "cancel_source_operation" => {
             reply(crate::source_commands::cancel_source_operation(state, request(args)?).await)
         }

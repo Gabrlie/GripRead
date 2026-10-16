@@ -89,6 +89,7 @@ pub fn routes() -> Router<Arc<Server>> {
         .route("/api/jobs", get(get_jobs).put(save_jobs))
         .route("/api/jobs/update", post(update_now))
         .route("/api/sync/chapter", get(chapter))
+        .route("/api/source/fetch", post(source_fetch))
 }
 
 /// Runs the scheduled updates for as long as the server runs.
@@ -336,6 +337,45 @@ async fn update_now(
     }
     let keys = body.map(|Json(request)| request.keys).unwrap_or_default();
     Json(run_update(&server, keys).await).into_response()
+}
+
+/// 通过服务器访问: one request a device's book source sends through the
+/// server, to a public address only; cookies and redirects stay with the
+/// device, which sends each hop.
+async fn source_fetch(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    Json(hop): Json<gripread_core::sources::http::RelayHop>,
+) -> Response {
+    if server.signed_in(&headers, None).is_none() {
+        return unauthorized();
+    }
+    let hop = match hop.to_hop() {
+        Ok(hop) => hop,
+        Err(message) => {
+            return failure_keyed(
+                StatusCode::BAD_REQUEST,
+                "invalid_argument",
+                "badRequest",
+                &message,
+            )
+        }
+    };
+    let answer =
+        tokio::task::spawn_blocking(move || gripread_core::sources::http::relay_hop(&hop)).await;
+    match answer {
+        Ok(Ok(answer)) => Json(gripread_core::sources::http::RelayAnswer::from_answer(
+            &answer,
+        ))
+        .into_response(),
+        Ok(Err(message)) => failure_keyed(StatusCode::BAD_GATEWAY, "io", "sourceRelay", &message),
+        Err(error) => failure_keyed(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "io",
+            "sourceRelay",
+            &error.to_string(),
+        ),
+    }
 }
 
 /// A chapter of the server's copy of an online book, matched by its address

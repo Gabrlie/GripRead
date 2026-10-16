@@ -322,9 +322,7 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
     let mut body = request.body.clone();
     for _ in 0..=MAX_REDIRECTS {
         env.control.check()?;
-        let mut builder = Request::builder()
-            .method(method_of(method))
-            .uri(url.as_str());
+        let mut wire: Vec<(String, String)> = Vec::new();
         let mut has_agent = false;
         let mut cookie_header: Option<String> = None;
         for (key, value) in &request.headers {
@@ -338,10 +336,10 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
             if key.eq_ignore_ascii_case("proxy") || key.eq_ignore_ascii_case("keep-alive") {
                 continue;
             }
-            builder = builder.header(key.as_str(), value.as_str());
+            wire.push((key.clone(), value.clone()));
         }
         if !has_agent {
-            builder = builder.header("User-Agent", DEFAULT_USER_AGENT);
+            wire.push(("User-Agent".into(), DEFAULT_USER_AGENT.into()));
         }
         let stored = if env.source.enabled_cookie_jar() {
             env.store.cookie_get(&cookie_domain(&url))
@@ -353,33 +351,29 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
             (stored, header) => header.or(stored),
         };
         if let Some(cookie) = cookie.filter(|cookie| !cookie.is_empty()) {
-            builder = builder.header("Cookie", cookie);
+            wire.push(("Cookie".into(), cookie));
         }
-        let deadline = request.timeout;
-        // 网络设置's limits: a place among all requests and in the site's window.
-        let _permit = super::network::acquire(&host_of(&url), &env.control)?;
-        let result = match &body {
-            Some(bytes) => builder
-                .body(bytes.clone())
-                .map_err(|error| SourceError::network(format!("请求无效：{error}")))
-                .and_then(|request| run(request, deadline)),
-            None => builder
-                .body(())
-                .map_err(|error| SourceError::network(format!("请求无效：{error}")))
-                .and_then(|request| run(request, deadline)),
+        let hop_request = Hop {
+            method: method_of(method).as_str().to_string(),
+            url: url.clone(),
+            headers: wire,
+            body: body.clone(),
+            timeout: request.timeout,
         };
-        let mut response = result?;
-        let code = response.status().as_u16();
-        let headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .map(|(key, value)| {
-                (
-                    key.to_string(),
-                    String::from_utf8_lossy(value.as_bytes()).to_string(),
-                )
-            })
-            .collect();
+        let hop = match relay_for(env) {
+            // 通过服务器访问: the server sends this hop; cookies and
+            // redirects are still handled here.
+            Some(relay) => match relay(&hop_request) {
+                Ok(answer) => answer,
+                Err(message) => {
+                    relay_failed(env, &message);
+                    direct(env, &hop_request)?
+                }
+            },
+            None => direct(env, &hop_request)?,
+        };
+        let code = hop.code;
+        let headers = hop.headers;
         store_set_cookies(env, &url, &headers);
         let location = headers
             .iter()
@@ -395,20 +389,7 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
                 continue;
             }
         }
-        let mut bytes = Vec::new();
-        match response
-            .body_mut()
-            .as_reader()
-            .take(MAX_BODY)
-            .read_to_end(&mut bytes)
-        {
-            Ok(_) => {}
-            // A server that hangs up without TLS close_notify still sent its
-            // page; OkHttp keeps what arrived, and so does this.
-            Err(error)
-                if !bytes.is_empty() && error.kind() == std::io::ErrorKind::UnexpectedEof => {}
-            Err(error) => return Err(SourceError::network(format!("读取响应失败：{error}"))),
-        }
+        let bytes = hop.bytes;
         let content_type = headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case("content-type"))
@@ -417,11 +398,7 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
         return Ok(HttpResponse {
             url,
             code,
-            message: response
-                .status()
-                .canonical_reason()
-                .unwrap_or("")
-                .to_string(),
+            message: hop.message,
             headers,
             bytes,
             body: text,
@@ -432,6 +409,272 @@ pub fn execute(env: &Env, request: &HttpRequest) -> SourceResult<HttpResponse> {
         "重定向次数过多：{}",
         request.url
     )))
+}
+
+/// One request on the wire, as sent: what a relay is asked to send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hop {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+    pub timeout: Duration,
+}
+
+/// The answer to one hop, redirects not followed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HopAnswer {
+    pub code: u16,
+    pub message: String,
+    pub headers: Vec<(String, String)>,
+    pub bytes: Vec<u8>,
+}
+
+type RelayFn = dyn Fn(&Hop) -> Result<HopAnswer, String> + Send + Sync;
+
+/// 通过服务器访问: sends a hop through the server; installed while the
+/// device is connected to one.
+static RELAY: std::sync::RwLock<Option<std::sync::Arc<RelayFn>>> = std::sync::RwLock::new(None);
+
+pub fn set_relay(relay: Option<std::sync::Arc<RelayFn>>) {
+    if let Ok(mut slot) = RELAY.write() {
+        *slot = relay;
+    }
+}
+
+/// The source-cache key of a source's 通过服务器访问 switch (local only).
+pub fn via_server_key(source_url: &str) -> String {
+    format!("viaServer_{source_url}")
+}
+
+fn relay_for(env: &Env) -> Option<std::sync::Arc<RelayFn>> {
+    #[cfg(test)]
+    if let Some(relay) = testing::RELAY.with(|relay| relay.borrow().clone()) {
+        return env
+            .store
+            .cache_get(&via_server_key(&env.source.url()))
+            .filter(|value| value == "1")
+            .map(|_| relay);
+    }
+    env.store
+        .cache_get(&via_server_key(&env.source.url()))
+        .filter(|value| value == "1")?;
+    RELAY.read().ok()?.clone()
+}
+
+/// A relay that failed: the request goes out directly, said once per source.
+fn relay_failed(env: &Env, message: &str) {
+    static SAID: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    let source = env.source.url();
+    let first = SAID
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut said| said.insert(source.clone()))
+        .unwrap_or(false);
+    env.log(format!("通过服务器访问失败，改为直接访问：{message}"));
+    if first {
+        crate::app_log::warn(
+            "source",
+            format!("{source} 通过服务器访问失败，改为直接访问：{message}"),
+        );
+    }
+}
+
+/// Sends one hop from this device (rate-limited by 网络设置).
+pub fn direct(env: &Env, hop: &Hop) -> SourceResult<HopAnswer> {
+    let _permit = super::network::acquire(&host_of(&hop.url), &env.control)?;
+    send(hop)
+}
+
+/// A hop as it travels to the server (`POST /api/source/fetch`): bodies in
+/// base64, since sources send and receive bytes in any charset.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayHop {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayAnswer {
+    pub code: u16,
+    pub message: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+impl RelayHop {
+    pub fn from_hop(hop: &Hop) -> Self {
+        use base64::Engine as _;
+        Self {
+            method: hop.method.clone(),
+            url: hop.url.clone(),
+            headers: hop.headers.clone(),
+            body: hop
+                .body
+                .as_ref()
+                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)),
+            timeout_ms: hop.timeout.as_millis() as u64,
+        }
+    }
+
+    pub fn to_hop(&self) -> Result<Hop, String> {
+        use base64::Engine as _;
+        Ok(Hop {
+            method: self.method.clone(),
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            body: match &self.body {
+                Some(text) => Some(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(text)
+                        .map_err(|error| error.to_string())?,
+                ),
+                None => None,
+            },
+            timeout: Duration::from_millis(self.timeout_ms.clamp(1_000, 120_000)),
+        })
+    }
+}
+
+impl RelayAnswer {
+    pub fn from_answer(answer: &HopAnswer) -> Self {
+        use base64::Engine as _;
+        Self {
+            code: answer.code,
+            message: answer.message.clone(),
+            headers: answer.headers.clone(),
+            body: base64::engine::general_purpose::STANDARD.encode(&answer.bytes),
+        }
+    }
+
+    pub fn to_answer(&self) -> Result<HopAnswer, String> {
+        use base64::Engine as _;
+        Ok(HopAnswer {
+            code: self.code,
+            message: self.message.clone(),
+            headers: self.headers.clone(),
+            bytes: base64::engine::general_purpose::STANDARD
+                .decode(&self.body)
+                .map_err(|error| error.to_string())?,
+        })
+    }
+}
+
+/// The server's side of 通过服务器访问: sends a device's hop when its
+/// address is a public one. Loopback, private, link-local, and other local
+/// addresses are refused, so a device cannot reach the server's network.
+pub fn relay_hop(hop: &Hop) -> Result<HopAnswer, String> {
+    public_address(&hop.url)?;
+    send(hop).map_err(|error| error.message)
+}
+
+/// Whether `url` is http(s) to a host whose every address is public.
+pub fn public_address(url: &str) -> Result<(), String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+    let lower = url.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err("只能访问 http 和 https 地址".into());
+    }
+    let host = host_of(url);
+    let port = if lower.starts_with("https://") {
+        443
+    } else {
+        80
+    };
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    let addresses: Vec<IpAddr> = match bare.parse::<IpAddr>() {
+        Ok(address) => vec![address],
+        Err(_) => (bare, port)
+            .to_socket_addrs()
+            .map_err(|error| format!("无法解析 {host}：{error}"))?
+            .map(|address| address.ip())
+            .collect(),
+    };
+    let local = |address: &IpAddr| match address {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1]))
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| v4.is_loopback() || v4.is_private() || v4.is_link_local())
+        }
+    };
+    if addresses.is_empty() || addresses.iter().any(local) {
+        return Err(format!("不能通过服务器访问本地或内网地址：{host}"));
+    }
+    Ok(())
+}
+
+fn send(hop: &Hop) -> SourceResult<HopAnswer> {
+    let mut builder = Request::builder()
+        .method(Method::from_bytes(hop.method.as_bytes()).unwrap_or(Method::GET))
+        .uri(hop.url.as_str());
+    for (key, value) in &hop.headers {
+        builder = builder.header(key.as_str(), value.as_str());
+    }
+    let result = match &hop.body {
+        Some(bytes) => builder
+            .body(bytes.clone())
+            .map_err(|error| SourceError::network(format!("请求无效：{error}")))
+            .and_then(|request| run(request, hop.timeout)),
+        None => builder
+            .body(())
+            .map_err(|error| SourceError::network(format!("请求无效：{error}")))
+            .and_then(|request| run(request, hop.timeout)),
+    };
+    let mut response = result?;
+    let code = response.status().as_u16();
+    let message = response
+        .status()
+        .canonical_reason()
+        .unwrap_or("")
+        .to_string();
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.to_string(),
+                String::from_utf8_lossy(value.as_bytes()).to_string(),
+            )
+        })
+        .collect();
+    let mut bytes = Vec::new();
+    match response
+        .body_mut()
+        .as_reader()
+        .take(MAX_BODY)
+        .read_to_end(&mut bytes)
+    {
+        Ok(_) => {}
+        // A server that hangs up without TLS close_notify still sent its
+        // page; OkHttp keeps what arrived, and so does this.
+        Err(error) if !bytes.is_empty() && error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+        Err(error) => return Err(SourceError::network(format!("读取响应失败：{error}"))),
+    }
+    Ok(HopAnswer {
+        code,
+        message,
+        headers,
+        bytes,
+    })
 }
 
 fn run<B: ureq::AsSendBody>(
@@ -449,8 +692,56 @@ fn run<B: ureq::AsSendBody>(
 }
 
 #[cfg(test)]
+pub mod testing {
+    //! A relay for this thread only, for engine tests.
+    use super::*;
+
+    thread_local! {
+        pub static RELAY: std::cell::RefCell<Option<std::sync::Arc<RelayFn>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub fn with_relay<R>(
+        relay: impl Fn(&Hop) -> Result<HopAnswer, String> + Send + Sync + 'static,
+        work: impl FnOnce() -> R,
+    ) -> R {
+        RELAY.with(|slot| *slot.borrow_mut() = Some(std::sync::Arc::new(relay)));
+        let result = work();
+        RELAY.with(|slot| *slot.borrow_mut() = None);
+        result
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_server_relays_only_to_public_addresses() {
+        for local in [
+            "http://127.0.0.1:8080/a",
+            "http://10.1.2.3/",
+            "http://192.168.1.1/",
+            "http://169.254.1.1/",
+            "http://100.64.0.1/",
+            "http://[::1]/",
+            "http://[fd00::1]/",
+            "http://localhost/",
+        ] {
+            assert!(public_address(local).is_err(), "{local}");
+        }
+        assert!(public_address("ftp://93.184.216.34/").is_err());
+        assert!(public_address("https://93.184.216.34/page").is_ok());
+        // The wire format carries bodies in any charset.
+        let hop = Hop {
+            method: "POST".into(),
+            url: "https://93.184.216.34/s".into(),
+            headers: vec![("Cookie".into(), "a=1".into())],
+            body: Some(vec![0xd6, 0xd0]),
+            timeout: Duration::from_secs(15),
+        };
+        assert_eq!(RelayHop::from_hop(&hop).to_hop().unwrap(), hop);
+    }
 
     #[test]
     fn addresses_go_out_encoded_like_okhttp() {

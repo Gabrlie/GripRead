@@ -428,6 +428,49 @@ impl SyncClient {
         response.body_mut().read_to_string().ok()
     }
 
+    /// 通过服务器访问: sends a book source's hop through the server; an
+    /// error when not connected or the server could not send it.
+    pub fn relay_hop(
+        &self,
+        hop: &crate::sources::http::Hop,
+    ) -> Result<crate::sources::http::HopAnswer, String> {
+        let config = self.config();
+        if !config.connected() {
+            return Err("未连接服务器".into());
+        }
+        let body = serde_json::to_string(&crate::sources::http::RelayHop::from_hop(hop))
+            .map_err(|error| error.to_string())?;
+        let mut response = self
+            .inner
+            .agent
+            .post(format!("{}/api/source/fetch", config.address))
+            .config()
+            .timeout_recv_response(Some(hop.timeout + Duration::from_secs(10)))
+            .http_status_as_error(false)
+            .build()
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|error| error.to_string())?;
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024 * 1024)
+            .read_to_string()
+            .map_err(|error| error.to_string())?;
+        if status != 200 {
+            let message = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|value| value["message"].as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("服务器返回 {status}"));
+            return Err(message);
+        }
+        serde_json::from_str::<crate::sources::http::RelayAnswer>(&text)
+            .map_err(|error| error.to_string())?
+            .to_answer()
+    }
+
     /// 更新书架 on the server, which then syncs the new chapters here;
     /// `None` when the server is too old to do it.
     pub fn update_shelf(&self, keys: Vec<String>) -> Result<Option<ShelfUpdateReply>, AppError> {
