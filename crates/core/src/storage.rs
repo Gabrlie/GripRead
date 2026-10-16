@@ -55,7 +55,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 23;
+const CURRENT_SCHEMA_VERSION: i64 = 24;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1137,6 +1137,20 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (23, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 24 {
+            // When an online book joined the shelf, which the shelf sorts by;
+            // books already there joined when they were added.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE online_books ADD COLUMN shelved_at INTEGER;
+                 UPDATE online_books SET shelved_at = created_at WHERE on_shelf = 1;",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (24, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7028,7 +7042,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 24);
     }
 
     #[test]

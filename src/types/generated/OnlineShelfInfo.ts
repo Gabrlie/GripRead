@@ -40,4 +40,8 @@ serial?: boolean,
 /**
  * When an update last found new chapters; the shelf sorts by it too.
  */
-grownAt?: number, };
+grownAt?: number, 
+/**
+ * When it joined the shelf; the shelf sorts by it too.
+ */
+shelvedAt?: number, };

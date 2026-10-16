@@ -332,8 +332,10 @@ impl Storage {
                 )?;
                 if on_shelf {
                     tx.execute(
-                        "UPDATE online_books SET on_shelf = 1 WHERE book_id = ?1",
-                        params![id],
+                        "UPDATE online_books SET on_shelf = 1,
+                            shelved_at = CASE WHEN on_shelf = 1 THEN shelved_at ELSE ?2 END
+                         WHERE book_id = ?1",
+                        params![id, now],
                     )?;
                 }
                 id
@@ -347,8 +349,8 @@ impl Storage {
                 )?;
                 tx.execute(
                     "INSERT INTO online_books(book_id, source_url, book_json, on_shelf,
-                        can_update, total_chapters, new_chapters, created_at)
-                     VALUES (?1, ?2, ?3, ?4, 1, 0, 0, ?5)",
+                        can_update, total_chapters, new_chapters, created_at, shelved_at)
+                     VALUES (?1, ?2, ?3, ?4, 1, 0, 0, ?5, CASE WHEN ?4 THEN ?5 END)",
                     params![
                         id,
                         book.source_url,
@@ -771,8 +773,10 @@ impl Storage {
     pub fn set_online_on_shelf(&self, book_id: &str, on: bool) -> Result<(), AppError> {
         self.online_record(book_id)?;
         self.conn.execute(
-            "UPDATE online_books SET on_shelf = ?2 WHERE book_id = ?1",
-            params![book_id, on],
+            "UPDATE online_books SET on_shelf = ?2,
+                shelved_at = CASE WHEN ?2 AND on_shelf = 0 THEN ?3 ELSE shelved_at END
+             WHERE book_id = ?1",
+            params![book_id, on, now_millis()],
         )?;
         Ok(())
     }
@@ -910,7 +914,7 @@ impl Storage {
             .conn
             .query_row(
                 "SELECT book_json, new_chapters, last_check_time, update_error, can_update,
-                        on_shelf, last_grown_at FROM online_books WHERE book_id = ?1",
+                        on_shelf, last_grown_at, shelved_at FROM online_books WHERE book_id = ?1",
                 params![book_id],
                 |row| {
                     Ok((
@@ -921,6 +925,7 @@ impl Storage {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -933,6 +938,7 @@ impl Storage {
             can_update,
             on_shelf,
             last_grown_at,
+            shelved_at,
         )) = row
         else {
             return Ok(None);
@@ -963,12 +969,14 @@ impl Storage {
             cached_chapters: self.cached_online_chapters(book_id)?.len() as u32,
             serial: serial.then_some(true),
             grown_at: last_grown_at,
+            shelved_at,
         }))
     }
 }
 
 /// `online_books` columns the shelf shows: details JSON, new chapters, last
-/// check, update error, 允许更新, on the shelf, and when the contents grew.
+/// check, update error, 允许更新, on the shelf, when the contents grew, and
+/// when it joined the shelf.
 type ShelfRow = (
     String,
     u32,
@@ -976,6 +984,7 @@ type ShelfRow = (
     Option<String>,
     bool,
     bool,
+    Option<i64>,
     Option<i64>,
 );
 
@@ -1125,6 +1134,33 @@ mod tests {
         assert_eq!(map_chapter(3, "第4章 下山", 5, &other), (4, true));
         // Nothing alike: keep the place, uncertain.
         assert_eq!(map_chapter(2, "番外 一", 5, &other), (2, false));
+    }
+
+    #[test]
+    fn a_book_remembers_when_it_joined_the_shelf() {
+        let (_dir, mut storage) = storage();
+        let chapters = chapters(&["第1章 惊蛰"], "a");
+        let read = storage
+            .add_online_book(&book("a"), &chapters, false)
+            .unwrap();
+        let shelved = |storage: &Storage, id: &str| {
+            storage
+                .online_shelf_info(id, None)
+                .unwrap()
+                .unwrap()
+                .shelved_at
+        };
+        // Read from search: not on the shelf yet.
+        assert_eq!(shelved(&storage, &read), None);
+        storage.set_online_on_shelf(&read, true).unwrap();
+        let joined = shelved(&storage, &read).expect("joined the shelf");
+        // Going on the shelf again keeps the first time.
+        storage.set_online_on_shelf(&read, true).unwrap();
+        assert_eq!(shelved(&storage, &read), Some(joined));
+        let added = storage
+            .add_online_book(&book("b"), &chapters, true)
+            .unwrap();
+        assert!(shelved(&storage, &added).is_some());
     }
 
     #[test]

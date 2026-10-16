@@ -528,6 +528,10 @@ pub struct OnlineShelfInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub grown_at: Option<i64>,
+    /// When it joined the shelf; the shelf sorts by it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shelved_at: Option<i64>,
 }
 
 /// The shelf's automatic groups, which a book can also be moved into by hand.
@@ -2594,4 +2598,21 @@ pub struct ChapterTranslationEvent {
 pub struct TranslateTextsRequest {
     /// Titles or introductions; each may hold several lines.
     pub texts: Vec<String>,
+}
+
+/// Something about a book source the reader should hear of (`source-notice`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceNotice {
+    /// The source's name.
+    pub source: String,
+    pub kind: SourceNoticeKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceNoticeKind {
+    /// 通过服务器访问 failed; the source was reached directly.
+    RelayFallback,
 }

@@ -207,7 +207,7 @@ export const shelf = {
   "shelf.bin.note": "删除不影响云书架上的文件。",
   "shelf.retrySave": "重试保存",
   "shelf.reload": "重新加载",
-  "shelf.sort.recent": "最近阅读或更新",
+  "shelf.sort.recent": "最近阅读、更新或加入",
   "shelf.sort.imported": "导入时间",
   "shelf.bin.loading": "正在读取回收站…",
   "shelf.bin.empty": "回收站是空的。",

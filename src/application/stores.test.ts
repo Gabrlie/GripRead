@@ -460,6 +460,15 @@ describe("shelf ordering", () => {
       "old",
     ]);
   });
+  it("puts a book that just joined the shelf first in recent order", () => {
+    const added = book("added", "新书", 50, null);
+    expect(orderBooks([...entries, added], "recent_read").map((entry) => entry.book.id)).toEqual([
+      "added",
+      "recent",
+      "middle",
+      "old",
+    ]);
+  });
 });
 describe("durable settings", () => {
   it("serializes saves and keeps the newest preference update", async () => {

@@ -124,6 +124,8 @@ const IPC_TYPES: &[&str] = &[
     "SaveShelfPreferencesRequest",
     "BookSourceSummary",
     "SourceViaServerRequest",
+    "SourceNotice",
+    "SourceNoticeKind",
     "BookSourceDetail",
     "SourceImportStatus",
     "SourceImportItem",
@@ -348,6 +350,8 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<CreateGroupRequest>(&config)?;
     export_all::<BookSourceSummary>(&config)?;
     export_all::<SourceViaServerRequest>(&config)?;
+    export_all::<SourceNotice>(&config)?;
+    export_all::<SourceNoticeKind>(&config)?;
     export_all::<BookSourceDetail>(&config)?;
     export_all::<SourceImportStatus>(&config)?;
     export_all::<SourceImportItem>(&config)?;

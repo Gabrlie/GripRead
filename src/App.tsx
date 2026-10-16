@@ -11,7 +11,7 @@ import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
-import { Toaster, setLogViewer } from "./components/ui/toast";
+import { Toaster, setLogViewer, toast } from "./components/ui/toast";
 import { LogPage } from "./components/Settings/LogPage";
 import {
   dismissWithEscape,
@@ -136,6 +136,26 @@ function MainContent() {
     return () => {
       active = false;
       clearTimeout(timer);
+      stop?.();
+    };
+  }, [runtime]);
+  // A source set to 通过服务器访问 that had to go direct says so, once.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    void runtime.services.sources
+      .onNotice?.((notice) =>
+        toast({
+          text: t("src.relayFallback", { source: notice.source, message: notice.message }),
+          error: true,
+        }),
+      )
+      .then((unsubscribe) => {
+        if (active) stop = unsubscribe;
+        else unsubscribe();
+      });
+    return () => {
+      active = false;
       stop?.();
     };
   }, [runtime]);

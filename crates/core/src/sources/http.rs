@@ -473,6 +473,15 @@ fn relay_failed(env: &Env, message: &str) {
         .unwrap_or(false);
     env.log(format!("通过服务器访问失败，改为直接访问：{message}"));
     if first {
+        // The reader hears of it once per source while the app runs.
+        crate::notify::emit(
+            "source-notice",
+            crate::models::SourceNotice {
+                source: env.source.name(),
+                kind: crate::models::SourceNoticeKind::RelayFallback,
+                message: message.to_string(),
+            },
+        );
         crate::app_log::warn(
             "source",
             format!("{source} 通过服务器访问失败，改为直接访问：{message}"),

@@ -122,6 +122,8 @@ export type { ShelfPreferences } from "./generated/ShelfPreferences";
 export type { SaveShelfPreferencesRequest } from "./generated/SaveShelfPreferencesRequest";
 export type { BookSourceSummary } from "./generated/BookSourceSummary";
 export type { SourceViaServerRequest } from "./generated/SourceViaServerRequest";
+export type { SourceNotice } from "./generated/SourceNotice";
+export type { SourceNoticeKind } from "./generated/SourceNoticeKind";
 export type { BookSourceDetail } from "./generated/BookSourceDetail";
 export type { SourceImportStatus } from "./generated/SourceImportStatus";
 export type { SourceImportItem } from "./generated/SourceImportItem";

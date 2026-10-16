@@ -95,6 +95,7 @@ export const sources = {
   "src.viaServerMark": "服务器",
   "src.viaServerOn": "已开启 通过服务器访问，连接服务器时生效",
   "src.viaServerOff": "已关闭 通过服务器访问",
+  "src.relayFallback": "「{source}」通过服务器访问失败，已改为直接访问：{message}",
   "src.debug": "调试",
   "src.exploreDisable": "禁用发现",
   "src.exploreEnable": "启用发现",

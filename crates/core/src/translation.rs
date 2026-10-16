@@ -687,24 +687,9 @@ pub fn compose(
     out
 }
 
-/// Where `chapter-translation` progress goes; installed by the app.
-static EVENTS: std::sync::RwLock<Option<std::sync::Arc<dyn crate::api::Events>>> =
-    std::sync::RwLock::new(None);
-
-pub fn set_events(events: std::sync::Arc<dyn crate::api::Events>) {
-    if let Ok(mut slot) = EVENTS.write() {
-        *slot = Some(events);
-    }
-}
-
 /// Reports an online chapter's translation (`chapter-translation`).
 pub fn report_chapter(event: &crate::models::ChapterTranslationEvent) {
-    if let Some(events) = EVENTS.read().ok().and_then(|slot| slot.clone()) {
-        events.emit(
-            "chapter-translation",
-            serde_json::to_value(event).unwrap_or_default(),
-        );
-    }
+    crate::notify::emit("chapter-translation", event);
 }
 
 // --- Snapshots: the fixed translations a local book's text is made from ---

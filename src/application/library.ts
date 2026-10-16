@@ -614,9 +614,14 @@ export class LibraryStore {
   }
 }
 
-/** 最近阅读或更新: the later of the last read and the last update that found new chapters. */
+/**
+ * 最近阅读、更新或加入: the latest of the last read, the last update that
+ * found new chapters, and when the book joined the shelf (an online book's
+ * shelving, a local book's import).
+ */
 function recentAt(entry: LibraryBook): number {
-  return Math.max(entry.lastReadAt ?? -1, entry.online?.grownAt ?? -1);
+  const joined = entry.online ? (entry.online.shelvedAt ?? -1) : entry.book.createdAt;
+  return Math.max(entry.lastReadAt ?? -1, entry.online?.grownAt ?? -1, joined);
 }
 
 const titleOrder = new Intl.Collator("zh-Hans", { numeric: true, sensitivity: "base" });

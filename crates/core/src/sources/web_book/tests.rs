@@ -523,9 +523,22 @@ fn a_source_set_to_go_through_the_server_sends_its_requests_there() {
         Control::unlimited(),
     )
     .unwrap();
-    let found = testing::with_relay(
-        |_| Err("服务器不可达".into()),
-        || session.search("剑来", 1).unwrap(),
-    );
+    let (found, sent) = crate::notify::testing::capture(|| {
+        testing::with_relay(
+            |_| Err("服务器不可达".into()),
+            || {
+                session.search("剑来", 1).unwrap();
+                session.search("剑来", 1).unwrap()
+            },
+        )
+    });
     assert_eq!(found[0].name, "剑来");
+    // The reader is told once that the source went direct.
+    let notices: Vec<_> = sent
+        .iter()
+        .filter(|(event, _)| event == "source-notice")
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].1["kind"], "relayFallback");
+    assert_eq!(notices[0].1["source"], "甲站");
 }

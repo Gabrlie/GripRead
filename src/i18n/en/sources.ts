@@ -97,6 +97,7 @@ export const sources = {
   "src.viaServerMark": "Server",
   "src.viaServerOn": "Requests go through the server while connected to one",
   "src.viaServerOff": "Requests go directly again",
+  "src.relayFallback": '"{source}" could not go through the server and went direct: {message}',
   "src.debug": "Debug",
   "src.exploreDisable": "Disable discovery",
   "src.exploreEnable": "Enable discovery",

@@ -212,7 +212,7 @@ export const shelf = {
   "shelf.bin.note": "Deleting leaves files in the cloud bookshelf alone.",
   "shelf.retrySave": "Retry saving",
   "shelf.reload": "Reload",
-  "shelf.sort.recent": "Recently read or updated",
+  "shelf.sort.recent": "Recently read, updated, or added",
   "shelf.sort.imported": "Date added",
   "shelf.bin.loading": "Reading the recycle bin…",
   "shelf.bin.empty": "The recycle bin is empty.",

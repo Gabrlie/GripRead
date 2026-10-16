@@ -54,6 +54,7 @@ import type {
   ExportSourcesFileRequest,
   SourceLoginForm,
   SourceLoginRequest,
+  SourceNotice,
   SourceScriptReport,
   SourceVariableRequest,
   DebugSourceRequest,
@@ -714,6 +715,7 @@ export const tauriServices: AppServices = {
     debug: (request) =>
       invokeCommand<void>("debug_book_source", { request: request satisfies DebugSourceRequest }),
     onDebug: (listener) => listen<SourceDebugEvent>("source-debug", listener),
+    onNotice: (listener) => listen<SourceNotice>("source-notice", listener),
     check: (request) =>
       invokeCommand<void>("check_book_sources", {
         request: request satisfies CheckSourcesRequest,

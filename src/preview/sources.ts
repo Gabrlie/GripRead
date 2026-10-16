@@ -256,6 +256,7 @@ export function createMemorySourceService(
         }, index * 120),
       );
     },
+    onNotice: async () => () => undefined,
     onDebug: async (listener) => {
       debugListeners.add(listener);
       return () => debugListeners.delete(listener);

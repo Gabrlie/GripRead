@@ -63,6 +63,7 @@ import type {
   SourceSwitch,
   SourceLoginForm,
   SourceLoginRequest,
+  SourceNotice,
   SourceScriptReport,
   DebugSourceRequest,
   SourceDebugEvent,
@@ -288,6 +289,8 @@ export interface SourceService {
   /** Starts a debug run; lines arrive through `onDebug`. */
   debug(request: DebugSourceRequest): Promise<void>;
   onDebug(listener: (event: SourceDebugEvent) => void): Promise<Unsubscribe>;
+  /** Notices about sources the reader should hear of (a relay that fell back). */
+  onNotice(listener: (event: SourceNotice) => void): Promise<Unsubscribe>;
   /** Starts checking sources; progress arrives through `onCheck`. */
   check(request: CheckSourcesRequest): Promise<void>;
   onCheck(listener: (event: SourceCheckEvent) => void): Promise<Unsubscribe>;

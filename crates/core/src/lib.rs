@@ -15,6 +15,7 @@ pub mod error;
 pub mod m1_txt;
 pub mod models;
 pub mod network;
+pub mod notify;
 pub mod online_commands;
 pub mod online_reader;
 pub mod platform;
