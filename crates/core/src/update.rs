@@ -405,8 +405,10 @@ fn desktop_update(root: &Path, upstream: &Upstream, release: &Release) -> Deskto
 }
 
 /// Downloads `name` of `release` into `folder`, verified against the
-/// release's `SHA256SUMS`, and returns its path. Older downloads in the
-/// folder are removed. `progress` gets the bytes received and the total.
+/// release's `SHA256SUMS`, and returns its path. A copy already there that
+/// matches the checksum (an install that was not finished) is used again
+/// instead. Older downloads in the folder are removed. `progress` gets the
+/// bytes received and the total.
 pub fn download(
     root: &Path,
     upstream: &Upstream,
@@ -433,6 +435,11 @@ pub fn download(
 
     fs::create_dir_all(folder)?;
     let target = folder.join(name);
+    if let Some(size) = verified_copy(&target, &expected) {
+        crate::app_log::info("update", format!("使用已下载的安装包 {name}"));
+        progress(size, Some(size));
+        return Ok(target);
+    }
     let partial = folder.join(format!("{name}.part"));
     let mut response = get(&agent, upstream, &asset_url(upstream, release, name)?)?;
     let total = response
@@ -486,6 +493,14 @@ pub fn download(
     }
     keep_download(folder, name)?;
     Ok(target)
+}
+
+/// The size of `path` when it is a file whose SHA-256 is `expected`.
+fn verified_copy(path: &Path, expected: &str) -> Option<u64> {
+    let mut file = File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let size = std::io::copy(&mut file, &mut hasher).ok()?;
+    (hex::encode(hasher.finalize()) == expected).then_some(size)
 }
 
 /// Gives the verified `<name>.part` its name, then removes older downloads
@@ -545,7 +560,11 @@ pub fn cached_asset(root: &Path, tag: &str, name: &str) -> Result<PathBuf, AppEr
     let assets = root.join("updates").join("assets");
     let folder = assets.join(tag);
     let path = folder.join(&asset.name);
-    if !path.is_file() {
+    // A copy cut short (a download the server did not finish) is fetched again.
+    let kept = fs::metadata(&path)
+        .map(|meta| meta.is_file() && (asset.size == 0 || meta.len() == asset.size))
+        .unwrap_or(false);
+    if !kept {
         fs::create_dir_all(&folder)?;
         let agent = agent(root, Duration::from_secs(60), true)?;
         let mut response = get(&agent, &Upstream::GITHUB, &asset.browser_download_url)?;
@@ -903,6 +922,21 @@ mod tests {
             .collect();
         assert_eq!(left, vec![name.to_string()]);
         assert_eq!(fs::read(folder.join(name)).unwrap(), b"new");
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_kept_package_is_used_again_only_when_its_checksum_matches() {
+        let folder = std::env::temp_dir().join(format!("gripread-update-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("GripRead-0.2.2-Android-arm64-v8a.apk");
+        fs::write(&path, b"package").unwrap();
+        let sum = hex::encode(Sha256::digest(b"package"));
+        assert_eq!(verified_copy(&path, &sum), Some(7));
+        // Changed or cut short: downloaded again.
+        fs::write(&path, b"packag").unwrap();
+        assert_eq!(verified_copy(&path, &sum), None);
+        assert_eq!(verified_copy(&folder.join("missing.apk"), &sum), None);
         fs::remove_dir_all(&folder).unwrap();
     }
 

@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-The next unfinished batch of [0.2.2](plans/2026-10-15-i18n-translation.md). RSS waits on a local branch for its release as 0.3.0.
+The next unfinished batch of [0.2.2](plans/2026-10-15-i18n-translation.md). RSS waits on a local branch for its release as 0.3.1.
