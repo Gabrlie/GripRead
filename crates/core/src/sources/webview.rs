@@ -55,6 +55,16 @@ pub trait WebViewHost: Send + Sync {
     fn render(&self, request: &WebRequest) -> Result<WebResult, String>;
     /// Blocks until the reader closes the page.
     fn browse(&self, request: &BrowseRequest) -> Result<WebResult, String>;
+    /// As `browse`, and while the page is open calls `check` with its state
+    /// whenever its address or cookies change; the page closes as soon as
+    /// `check` answers true. Hosts that cannot watch a page just browse.
+    fn browse_watch(
+        &self,
+        request: &BrowseRequest,
+        _check: &mut dyn FnMut(&WebResult) -> bool,
+    ) -> Result<WebResult, String> {
+        self.browse(request)
+    }
 }
 
 static HOST: RwLock<Option<Arc<dyn WebViewHost>>> = RwLock::new(None);
@@ -139,6 +149,29 @@ pub fn render(env: &Env, mut request: WebRequest) -> SourceResult<WebResult> {
     Ok(result)
 }
 
+/// Shows a login page and closes it once `check` (run after keeping the
+/// page's cookies) answers true; answers the last state and whether the
+/// check passed while the page was open.
+pub fn browse_until(
+    env: &Env,
+    mut request: BrowseRequest,
+    mut check: impl FnMut(&WebResult) -> bool,
+) -> SourceResult<(WebResult, bool)> {
+    let host = host().ok_or_else(missing)?;
+    with_cookies(env, &request.url, &mut request.headers);
+    env.log(format!("打开网页 {}", request.url));
+    let mut passed = false;
+    let result = host
+        .browse_watch(&request, &mut |state| {
+            keep_cookies(env, state);
+            passed = check(state);
+            passed
+        })
+        .map_err(|message| SourceError::network(format!("网页：{message}")))?;
+    keep_cookies(env, &result);
+    Ok((result, passed))
+}
+
 /// Shows a page to the reader (登录, 验证) and waits until they close it.
 pub fn browse(env: &Env, mut request: BrowseRequest) -> SourceResult<WebResult> {
     let host = host().ok_or_else(missing)?;
@@ -162,6 +195,10 @@ pub mod testing {
     pub struct FakeHost {
         pub answer: Answer,
         pub seen: Mutex<Vec<WebRequest>>,
+        /// States a watched page goes through before the reader closes it.
+        pub pages: Mutex<Vec<WebResult>>,
+        /// How many of them the check saw.
+        pub checked: Mutex<usize>,
     }
 
     impl WebViewHost for FakeHost {
@@ -176,6 +213,20 @@ pub mod testing {
                 body: "<html>done</html>".into(),
                 cookies: Some("token=abc".into()),
             })
+        }
+
+        fn browse_watch(
+            &self,
+            request: &BrowseRequest,
+            check: &mut dyn FnMut(&WebResult) -> bool,
+        ) -> Result<WebResult, String> {
+            for page in self.pages.lock().unwrap().iter() {
+                *self.checked.lock().unwrap() += 1;
+                if check(page) {
+                    return Ok(page.clone());
+                }
+            }
+            self.browse(request)
         }
     }
 
@@ -198,6 +249,8 @@ pub mod testing {
         Arc::new(FakeHost {
             answer: Box::new(answer),
             seen: Mutex::new(Vec::new()),
+            pages: Mutex::new(Vec::new()),
+            checked: Mutex::new(0),
         })
     }
 }

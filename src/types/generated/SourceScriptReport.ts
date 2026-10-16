@@ -3,4 +3,9 @@
 /**
  * What a source script did, for login buttons and source actions.
  */
-export type SourceScriptReport = { result: string, logs: Array<string>, };
+export type SourceScriptReport = { result: string, logs: Array<string>, 
+/**
+ * A login that succeeded (a script that ran, or a web login the
+ * source's `login()` confirmed).
+ */
+loggedIn: boolean, };

@@ -434,3 +434,43 @@ fn web_view_pages_render_through_the_host_with_cookies() {
             .contains("token=abc"));
     });
 }
+
+#[test]
+fn a_web_login_closes_once_the_source_login_succeeds() {
+    use crate::sources::webview::{testing, WebResult};
+    let store = Arc::new(MemoryStore::default());
+    let source = BookSource::from_value(serde_json::json!({
+        "bookSourceUrl": "https://example.invalid",
+        "bookSourceName": "登录",
+        "enabledCookieJar": true
+    }))
+    .unwrap();
+    let session = SourceSession::new(source, store.clone(), Control::unlimited()).unwrap();
+    let page = |url: &str, cookies: &str| WebResult {
+        url: url.into(),
+        body: String::new(),
+        cookies: Some(cookies.into()),
+    };
+    let host = testing::fake(|_| Err("unused".into()));
+    *host.pages.lock().unwrap() = vec![
+        page("https://example.invalid/login", "visit=1"),
+        page("https://example.invalid/home", "visit=1; sid=42_x"),
+        page("https://example.invalid/after", "visit=1; sid=42_x"),
+    ];
+    let login = "function login() { var sid = String(cookie.getKey('https://example.invalid', 'sid') || ''); if (!sid) throw new Error('not yet'); return '已登录 ' + sid }";
+    testing::with_host(host.clone(), || {
+        let (result, answer) = session
+            .login_in_page("https://example.invalid/login", "登录", Some(login))
+            .unwrap();
+        // The first page had no session; the second closed the page.
+        assert_eq!(*host.checked.lock().unwrap(), 2);
+        assert_eq!(result.url, "https://example.invalid/home");
+        assert_eq!(answer.as_deref(), Some("已登录 42_x"));
+        // Without a login(), the reader closes the page and nothing is confirmed.
+        *host.pages.lock().unwrap() = vec![page("https://example.invalid/a", "x=1")];
+        let (_, answer) = session
+            .login_in_page("https://example.invalid/login", "登录", None)
+            .unwrap();
+        assert_eq!(answer, None);
+    });
+}

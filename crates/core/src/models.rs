@@ -1601,6 +1601,10 @@ pub struct SourceLoginForm {
     /// The source logs in only through a web page, which needs WebView.
     pub browser_only: bool,
     pub login_url: Option<String>,
+    /// What the source's last successful login answered, and when (ms).
+    pub last_login: Option<String>,
+    #[ts(type = "number | null")]
+    pub last_login_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1619,6 +1623,10 @@ pub struct SourceLoginRequest {
 pub struct SourceScriptReport {
     pub result: String,
     pub logs: Vec<String>,
+    /// A login that succeeded (a script that ran, or a web login the
+    /// source's `login()` confirmed).
+    #[serde(default)]
+    pub logged_in: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

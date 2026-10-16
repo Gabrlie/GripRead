@@ -4,12 +4,15 @@ import type { SourceLoginForm } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { t } from "../../i18n";
+import { formatDateTime, t } from "../../i18n";
+import { describeError } from "../Cloud/format";
+import { toast } from "../ui/toast";
 
 /**
  * A source's `loginUi` form. 登录 saves the values and runs the source's
- * `login()`; a button row runs its own action. Sources that log in only on a
- * web page need WebView, which GripRead does not have yet.
+ * `login()`; a button row runs its own action. A web login (Android's
+ * WebView) closes by itself once the source's `login()` succeeds, and the
+ * last successful login is shown when the dialog opens.
  */
 export function SourceLoginDialog({
   service,
@@ -46,14 +49,26 @@ export function SourceLoginDialog({
       (report) => {
         setBusy(false);
         const toasts = report.logs.filter((line) => line.startsWith("[toast] "));
+        const answer = report.result && report.result !== "undefined" ? report.result : "";
+        if (report.loggedIn) {
+          const text = t("srcLogin.success", { text: answer || t("srcLogin.done") });
+          setMessage({ text, error: false });
+          setForm((current) =>
+            current ? { ...current, lastLogin: answer, lastLoginAt: Date.now() } : current,
+          );
+          toast({ text });
+          return;
+        }
+        const web = action ? /^https?:/i.test(action) : Boolean(form?.browserOnly);
         const text =
           toasts.map((line) => line.slice(8)).join("\n") ||
-          (report.result && report.result !== "undefined" ? report.result : t("srcLogin.done"));
+          answer ||
+          (web ? t("srcLogin.unconfirmed") : t("srcLogin.done"));
         setMessage({ text, error: false });
       },
       (failure: unknown) => {
         setBusy(false);
-        setMessage({ text: String(failure), error: true });
+        setMessage({ text: describeError(failure), error: true });
       },
     );
   };
@@ -66,6 +81,14 @@ export function SourceLoginDialog({
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">{t("src.login")}</DialogTitle>
         </DialogHeader>
+        {form?.lastLogin != null && form.lastLoginAt != null && (
+          <p className="text-xs text-secondary">
+            {t("srcLogin.last", {
+              text: form.lastLogin || t("srcLogin.done"),
+              time: formatDateTime(form.lastLoginAt),
+            })}
+          </p>
+        )}
         {form?.browserOnly && <p className="text-sm text-secondary">{t("srcLogin.web")}</p>}
         {form && !form.browserOnly && inputs.length === 0 && buttons.length === 0 && (
           <p className="text-sm text-secondary">{t("srcLogin.script")}</p>

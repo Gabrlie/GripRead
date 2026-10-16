@@ -21,7 +21,8 @@ use crate::models::{
     SourceUrlRequest, SourceUrlsRequest, SourceVariableRequest,
 };
 use crate::sources::context::{
-    login_info_key, source_custom_variable_key, BookData, Control, MemoryStore, SourceStore,
+    login_info_key, login_result_key, source_custom_variable_key, BookData, Control, MemoryStore,
+    SourceStore,
 };
 use crate::sources::error::{SourceError, SourceErrorKind};
 use crate::sources::http::{self, cookie_domain};
@@ -66,7 +67,27 @@ pub(crate) fn engine_error(error: SourceError) -> AppError {
         SourceErrorKind::Cancelled => ErrorCode::ImportCancelled,
         _ => ErrorCode::InvalidArgument,
     };
-    AppError::new(code, error.message)
+    let readable = readable_script_error(&error.message);
+    if readable == error.message {
+        return AppError::new(code, error.message);
+    }
+    // A source script's own error: the reader sees its message, the log
+    // keeps where it was thrown.
+    crate::app_log::warn("书源", &error.message);
+    AppError::keyed(code, "sourceScript", readable.clone()).with("message", readable)
+}
+
+/// A script error as a reader reads it: without the place it was thrown
+/// (`（at body (eval_script:15:35)）`) or a plain `Error:` prefix.
+pub(crate) fn readable_script_error(text: &str) -> String {
+    let mut text = text.trim();
+    if text.ends_with('）') {
+        if let Some(start) = text.rfind("（at ") {
+            text = text[..start].trim_end();
+        }
+    }
+    let text = text.strip_prefix("Error: ").unwrap_or(text);
+    text.to_string()
 }
 
 /// Runs engine work on a thread with room for nested scripts, and waits.
@@ -372,6 +393,9 @@ pub async fn get_source_login_form(
                     .collect()
             })
             .unwrap_or_default();
+        let last: Option<Json> = storage
+            .source_cache_get(&login_result_key(&source.url()))?
+            .and_then(|stored| serde_json::from_str(&stored).ok());
         let login_url = source.login_url();
         let browser_only = rows.is_empty()
             && login_url
@@ -382,6 +406,10 @@ pub async fn get_source_login_form(
             values,
             browser_only,
             login_url,
+            last_login: last
+                .as_ref()
+                .and_then(|last| last["text"].as_str().map(str::to_string)),
+            last_login_at: last.as_ref().and_then(|last| last["at"].as_i64()),
         })
     })
     .await
@@ -413,12 +441,30 @@ pub async fn login_book_source(
                 .filter(|url| crate::sources::util::is_absolute_url(url)),
             _ => None,
         };
+        let url = source.url();
         if let Some(page) = page {
+            // The source's login() confirms a web login while the page is
+            // open, unless it opens a page itself.
+            let check = Some(script.as_str())
+                .filter(|script| script.contains("login") && !script.contains("startBrowser"));
+            let control = Control::new(Arc::new(AtomicBool::new(false)), None);
             let session = session_for(&storage, source, control).map_err(engine_error)?;
-            let result = session.browse(&page, "登录").map_err(engine_error)?;
+            let (_, answer) = session
+                .login_in_page(&page, "登录", check)
+                .map_err(engine_error)?;
+            let logged_in = answer.is_some();
+            let result = match answer {
+                Some(text) => {
+                    remember_login(&storage, &url, &text)?;
+                    text
+                }
+                // The page closed without a confirmed login; its cookies are kept.
+                None => String::new(),
+            };
             return Ok(SourceScriptReport {
-                result: format!("已关闭网页 {}", result.url),
+                result,
                 logs: session.logs(),
+                logged_in,
             });
         }
         let body = match &request.action {
@@ -428,13 +474,31 @@ pub async fn login_book_source(
             ),
         };
         let session = session_for(&storage, source, control).map_err(engine_error)?;
-        let result = session.run_script(&body, None).map_err(engine_error)?;
+        let result = session.run_script(&body, None).map_err(engine_error)?.to_text();
+        let logged_in = request.action.is_none();
+        if logged_in {
+            let text = if result.is_empty() || result == "undefined" { "已登录" } else { &result };
+            remember_login(&storage, &url, text)?;
+        }
         Ok(SourceScriptReport {
-            result: result.to_text(),
+            result,
             logs: session.logs(),
+            logged_in,
         })
     })
     .await?
+}
+
+fn remember_login(
+    storage: &Mutex<crate::storage::Storage>,
+    url: &str,
+    text: &str,
+) -> Result<(), AppError> {
+    let stored = serde_json::json!({ "text": text, "at": crate::cloud::now_millis() }).to_string();
+    storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+        .source_cache_put(&login_result_key(url), &stored, 0)
 }
 
 pub async fn get_source_variable(
@@ -875,6 +939,24 @@ pub async fn check_book_sources(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn script_errors_read_without_their_place() {
+        assert_eq!(
+            readable_script_error("Error: 书源：请求无效。（at body (eval_script:15:35)）"),
+            "书源：请求无效。"
+        );
+        assert_eq!(
+            readable_script_error("TypeError: not a function（at listOf (eval_script:97:65)）"),
+            "TypeError: not a function"
+        );
+        assert_eq!(readable_script_error("网站返回 404"), "网站返回 404");
+        let error = engine_error(SourceError::script(
+            "Error: 请先登录（at body (eval_script:1:1)）",
+        ));
+        assert_eq!(error.key.as_deref(), Some("sourceScript"));
+        assert_eq!(error.message, "请先登录");
+    }
+
     use super::*;
 
     #[test]

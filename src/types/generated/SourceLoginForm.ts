@@ -8,4 +8,8 @@ export type SourceLoginForm = { rows: Array<SourceLoginRow>, values: Record<stri
 /**
  * The source logs in only through a web page, which needs WebView.
  */
-browserOnly: boolean, loginUrl: string | null, };
+browserOnly: boolean, loginUrl: string | null, 
+/**
+ * What the source's last successful login answered, and when (ms).
+ */
+lastLogin: string | null, lastLoginAt: number | null, };

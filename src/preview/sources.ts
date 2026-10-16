@@ -216,9 +216,11 @@ export function createMemorySourceService(
         values: {},
         browserOnly: !rows.length && /^https?:/.test(text(raw?.loginUrl)),
         loginUrl: text(raw?.loginUrl) || null,
+        lastLogin: null,
+        lastLoginAt: null,
       };
     },
-    login: async () => ({ result: "已登录", logs: [] }),
+    login: async () => ({ result: "已登录", logs: [], loggedIn: true }),
     getVariable: async (url) => text(find(url)?.__variable) || null,
     setVariable: (url, value) =>
       update([url], (raw) => {

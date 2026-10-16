@@ -112,5 +112,72 @@ mod android {
                 cookies: answer.cookies,
             })
         }
+
+        fn browse_watch(
+            &self,
+            request: &BrowseRequest,
+            check: &mut dyn FnMut(&WebResult) -> bool,
+        ) -> Result<WebResult, String> {
+            #[derive(serde::Deserialize)]
+            struct Opened {
+                id: i64,
+            }
+            #[derive(serde::Deserialize)]
+            struct State {
+                url: String,
+                body: String,
+                cookies: Option<String>,
+                closed: bool,
+            }
+            let payload = serde_json::json!({
+                "url": request.url,
+                "title": request.title,
+                "headers": headers(&request.headers),
+                "html": request.html,
+                "doneLabel": "完成登录",
+            });
+            let id = self
+                .handle
+                .run_mobile_plugin::<Opened>("browseOpen", payload)
+                .map_err(|error| error.to_string())?
+                .id;
+            let started = std::time::Instant::now();
+            let mut seen: Option<(String, Option<String>)> = None;
+            loop {
+                std::thread::sleep(POLL);
+                let state = self
+                    .handle
+                    .run_mobile_plugin::<State>("browseState", serde_json::json!({ "id": id }))
+                    .map_err(|error| error.to_string())?;
+                let result = WebResult {
+                    url: state.url.clone(),
+                    body: state.body,
+                    cookies: state.cookies.clone(),
+                };
+                if state.closed {
+                    return Ok(result);
+                }
+                let now = (state.url, state.cookies);
+                if seen.as_ref() == Some(&now) && started.elapsed() < WATCH_LIMIT {
+                    continue;
+                }
+                seen = Some(now);
+                if check(&result) || started.elapsed() >= WATCH_LIMIT {
+                    let last = self
+                        .handle
+                        .run_mobile_plugin::<State>("browseClose", serde_json::json!({ "id": id }))
+                        .map_err(|error| error.to_string())?;
+                    return Ok(WebResult {
+                        url: last.url,
+                        body: last.body,
+                        cookies: last.cookies.or(result.cookies),
+                    });
+                }
+            }
+        }
     }
+
+    /// How often an open login page is looked at, and how long at most.
+    const POLL: std::time::Duration = std::time::Duration::from_millis(800);
+    const WATCH_LIMIT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 }

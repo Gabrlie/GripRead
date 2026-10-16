@@ -231,6 +231,61 @@ impl SourceSession {
         })
     }
 
+    /// A web login: shows `url` and, while it is open, runs the source's
+    /// `login()` (from `login_script`) each time the page's address or
+    /// cookies change, closing the page once it succeeds. Answers the
+    /// page's last state and `login()`'s answer when it succeeded, running
+    /// it once more after the reader closed the page themselves.
+    pub fn login_in_page(
+        &self,
+        url: &str,
+        title: &str,
+        login_script: Option<&str>,
+    ) -> SourceResult<(super::webview::WebResult, Option<String>)> {
+        self.host.run(|scope| {
+            let rule = AnalyzeRule::new(self.env.clone());
+            let headers = super::url::source_headers(&rule, scope, true)?;
+            let call = login_script.map(|script| {
+                format!("{script}\nif (typeof login == 'function') login.apply(this); else throw new Error('no login')")
+            });
+            let mut answer = None;
+            let attempt = |answer: &mut Option<String>| -> bool {
+                let Some(call) = &call else {
+                    return false;
+                };
+                match rule.eval_js(scope, call, &Val::Null) {
+                    Ok(value) => {
+                        let text = value.to_text();
+                        *answer = Some(if text.is_empty() || text == "undefined" {
+                            "已登录".to_string()
+                        } else {
+                            text
+                        });
+                        true
+                    }
+                    Err(error) => {
+                        self.env.log(format!("登录检查未通过：{}", error.message));
+                        false
+                    }
+                }
+            };
+            let (result, passed) = super::webview::browse_until(
+                &self.env,
+                super::webview::BrowseRequest {
+                    url: url.to_string(),
+                    title: title.to_string(),
+                    headers,
+                    html: None,
+                },
+                |_| attempt(&mut answer),
+            )?;
+            if !passed {
+                attempt(&mut answer);
+            }
+            Ok((result, answer))
+        })
+    }
+
     /// Runs a script with the source's bindings, as a login button or a
     /// source's own action does.
     pub fn run_script(&self, script: &str, book: Option<&BookRef>) -> SourceResult<Val> {

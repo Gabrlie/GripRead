@@ -3,6 +3,7 @@ import type { errors as zh } from "../zh-CN/errors";
 
 export const errors = {
   "error.webdavUnset": "No WebDAV account is set up yet.",
+  "error.sourceScript": "{message}",
   "error.engineUnreachable": "Could not reach the translation service: {error}",
   "error.engineHttp": "The translation service answered HTTP {status}: {detail}",
   "error.engineAnswer": "The translation service's answer could not be read.",

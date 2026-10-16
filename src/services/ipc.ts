@@ -170,12 +170,20 @@ const ERROR_CODES = new Set<ErrorCode>([
 
 export class ReaderServiceError extends Error {
   public readonly code: ErrorCode;
+  /** What the reader is shown: the message alone, in the interface's language when keyed. */
+  public readonly text: string;
 
   public constructor(error: AppError) {
-    // The message is in the interface's language when the core keyed it.
-    super(`${error.code}: ${errorText(error)}`);
+    const text = errorText(error);
+    super(`${error.code}: ${text}`);
     this.name = "ReaderServiceError";
     this.code = error.code;
+    this.text = text;
+  }
+
+  /** Pages show failures with `String(failure)`; they get the readable text. */
+  public override toString(): string {
+    return this.text;
   }
 }
 

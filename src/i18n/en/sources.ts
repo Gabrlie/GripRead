@@ -211,7 +211,11 @@ export const sources = {
   "srcDebug.log": "Debug log",
   "srcDebug.idle": "Not started",
   "srcLogin.done": "Done",
-  "srcLogin.web": "This source logs in on its web page; close the page when done.",
+  "srcLogin.web":
+    "This source logs in on its web page, which closes by itself once you are logged in.",
+  "srcLogin.success": "Logged in: {text}",
+  "srcLogin.last": "Last login: {text} · {time}",
+  "srcLogin.unconfirmed": "The page closed without a confirmed login; its sign-in was kept.",
   "srcLogin.script": "This source has no login form; Log in runs its login script.",
   "srcLogin.busy": "Logging in…",
   "srcLogin.openWeb": "Log in on the web page",

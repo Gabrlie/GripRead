@@ -154,6 +154,11 @@ pub fn login_info_key(source_url: &str) -> String {
     format!("userInfo_{source_url}")
 }
 
+/// The source's last successful login: `{"text": …, "at": ms}`.
+pub fn login_result_key(source_url: &str) -> String {
+    format!("loginResult_{source_url}")
+}
+
 pub fn login_header_key(source_url: &str) -> String {
     format!("loginHeader_{source_url}")
 }
