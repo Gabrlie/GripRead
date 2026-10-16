@@ -143,6 +143,7 @@ impl AppState {
         platform: Arc<dyn Platform>,
     ) -> Result<Arc<Self>, AppError> {
         crate::app_log::init(&data_dir);
+        crate::translation::set_events(events.clone());
         crate::app_log::info(
             "app",
             format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),

@@ -246,13 +246,60 @@ fn answer_lines(answer: &str) -> Option<Vec<String>> {
     serde_json::from_str(answer.get(start..=end)?).ok()
 }
 
+/// `text` with the engine's `{apiKey}` and `{model}` filled in.
+fn fill(text: &str, engine: &TranslationEngine) -> String {
+    text.replace("{apiKey}", engine.api_key.trim())
+        .replace("{model}", engine.model.trim())
+}
+
 fn base(engine: &TranslationEngine, official: &str) -> String {
     let address = engine.base_url.trim().trim_end_matches('/');
     if address.is_empty() {
         official.to_string()
     } else {
-        address.to_string()
+        fill(address, engine)
     }
+}
+
+/// Whether the engine puts its key in the address or a header itself.
+fn key_placed(engine: &TranslationEngine) -> bool {
+    engine.base_url.contains("{apiKey}") || engine.headers.contains("{apiKey}")
+}
+
+/// The engine's own headers, `Name: value` per line.
+fn extra_headers(engine: &TranslationEngine) -> Vec<(String, String)> {
+    engine
+        .headers
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            let name = name.trim();
+            (!name.is_empty()).then(|| (name.to_string(), fill(value.trim(), engine)))
+        })
+        .collect()
+}
+
+/// Posts `body` with the kind's key header (unless the engine places its
+/// key itself) and the engine's own headers.
+fn send(
+    agent: &ureq::Agent,
+    engine: &TranslationEngine,
+    url: &str,
+    key_headers: Vec<(&str, String)>,
+    body: &Value,
+) -> Result<Value, AppError> {
+    let extra = extra_headers(engine);
+    let mut headers: Vec<(&str, String)> = if key_placed(engine) {
+        Vec::new()
+    } else {
+        key_headers
+    };
+    headers.extend(
+        extra
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.clone())),
+    );
+    post(agent, url, &headers, body)
 }
 
 /// Translates one batch with `engine`; the answer has as many lines.
@@ -276,10 +323,11 @@ fn call(
             if !key.is_empty() {
                 headers.push(("Authorization", format!("Bearer {key}")));
             }
-            let reply = post(
+            let reply = send(
                 agent,
+                engine,
                 &url,
-                &headers,
+                headers,
                 &json!({
                     "model": engine.model,
                     "temperature": 0.3,
@@ -296,10 +344,11 @@ fn call(
         }
         EngineKind::Claude => {
             let url = format!("{}/v1/messages", base(engine, "https://api.anthropic.com"));
-            let reply = post(
+            let reply = send(
                 agent,
+                engine,
                 &url,
-                &[
+                vec![
                     ("x-api-key", key),
                     ("anthropic-version", "2023-06-01".into()),
                 ],
@@ -326,10 +375,11 @@ fn call(
                 base(engine, "https://generativelanguage.googleapis.com"),
                 engine.model
             );
-            let reply = post(
+            let reply = send(
                 agent,
+                engine,
                 &url,
-                &[("x-goog-api-key", key)],
+                vec![("x-goog-api-key", key)],
                 &json!({
                     "systemInstruction": { "parts": [{ "text": system }] },
                     "contents": [{ "role": "user", "parts": [{ "text": input }] }],
@@ -358,10 +408,11 @@ fn call(
             if let Some(code) = source.and_then(language) {
                 body["source_lang"] = json!(code.2.split('-').next().unwrap_or(code.2));
             }
-            let reply = post(
+            let reply = send(
                 agent,
+                engine,
                 &url,
-                &[("Authorization", format!("DeepL-Auth-Key {key}"))],
+                vec![("Authorization", format!("DeepL-Auth-Key {key}"))],
                 &body,
             )?;
             let texts: Vec<String> = reply["translations"]
@@ -379,12 +430,55 @@ fn call(
                 Err(error("engineCount", "翻译结果的行数不对"))
             };
         }
+        EngineKind::Deeplx => {
+            // DeepLX takes one text: the lines go joined and come back split.
+            let url = format!("{}/translate", base(engine, "http://127.0.0.1:1188"));
+            let target_code = language(target).map_or(target, |language| language.2);
+            let source_code = source
+                .and_then(language)
+                .map_or("auto", |code| code.2.split('-').next().unwrap_or(code.2));
+            let mut key_headers = Vec::new();
+            if !key.is_empty() {
+                key_headers.push(("Authorization", format!("Bearer {key}")));
+            }
+            let reply = send(
+                agent,
+                engine,
+                &url,
+                key_headers,
+                &json!({
+                    "text": lines.join("\n"),
+                    "source_lang": source_code,
+                    "target_lang": target_code,
+                }),
+            )?;
+            let Some(text) = reply["data"].as_str() else {
+                return Err(error("engineAnswer", "翻译服务的回答无法识别"));
+            };
+            let texts: Vec<String> = text.split('\n').map(str::to_string).collect();
+            return if texts.len() == lines.len() {
+                Ok(texts)
+            } else {
+                Err(error("engineCount", "翻译结果的行数不对"))
+            };
+        }
     };
     match answer_lines(&answer) {
         Some(texts) if texts.len() == lines.len() => Ok(texts),
         Some(_) => Err(error("engineCount", "翻译结果的行数不对")),
         None => Err(error("engineAnswer", "翻译服务的回答无法识别")),
     }
+}
+
+/// A translation as one paragraph, or `None` when it is empty.
+fn tidy(text: &str) -> Option<String> {
+    let folded = text
+        .split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!folded.is_empty()).then_some(folded)
 }
 
 /// Translates `lines`, splitting a batch whose answer has the wrong count
@@ -437,6 +531,20 @@ pub fn translate_lines(
     target: &str,
     lines: &[&str],
 ) -> Result<Vec<Option<String>>, AppError> {
+    translate_lines_reporting(storage, root, engine, source, target, lines, &|_, _| {})
+}
+
+/// As [`translate_lines`], reporting the lines sent to the engine so far
+/// and how many it needs, after each batch (nothing when all were cached).
+pub fn translate_lines_reporting(
+    storage: &Mutex<Storage>,
+    root: &Path,
+    engine: &TranslationEngine,
+    source: Option<&str>,
+    target: &str,
+    lines: &[&str],
+    progress: &dyn Fn(usize, usize),
+) -> Result<Vec<Option<String>>, AppError> {
     let engine_key = fingerprint(engine);
     let texts: Vec<&str> = lines.iter().map(|line| split_marks(line).1).collect();
     let hashes: Vec<String> = texts.iter().map(|text| line_hash(text)).collect();
@@ -451,7 +559,8 @@ pub fn translate_lines(
         .zip(&hashes)
         .map(|(line, hash)| {
             if translatable(line) {
-                cached.get(hash).cloned()
+                // Translations cached before they were tidied read the same.
+                cached.get(hash).and_then(|text| tidy(text))
             } else {
                 None
             }
@@ -483,6 +592,9 @@ pub fn translate_lines(
             }
         }
         let mut first_failure = None;
+        let total: usize = batches.iter().map(Vec::len).sum();
+        let mut done = 0;
+        progress(0, total);
         for batch in batches {
             let input: Vec<String> = batch
                 .iter()
@@ -490,18 +602,30 @@ pub fn translate_lines(
                 .collect();
             match call_split(&agent, engine, &input, source, target) {
                 Ok(translated) => {
+                    // A translation is one paragraph: line breaks a model put
+                    // in become spaces, and an empty answer leaves the line
+                    // untranslated (and uncached, so it is asked for again).
+                    let translated: Vec<Option<String>> =
+                        translated.iter().map(|text| tidy(text)).collect();
                     let stored: Vec<CachedLine> = batch
                         .iter()
                         .zip(&translated)
-                        .map(|(&index, text)| CachedLine {
-                            source_hash: hashes[index].clone(),
-                            text: text.clone(),
+                        .filter_map(|(&index, text)| {
+                            Some(CachedLine {
+                                source_hash: hashes[index].clone(),
+                                text: text.clone()?,
+                            })
                         })
                         .collect();
                     if let Ok(mut guard) = storage.lock() {
                         let _ = guard.store_translations(&stored, target, &engine_key);
                     }
+                    done += batch.len();
+                    progress(done, total);
                     for (index, text) in batch.iter().zip(translated) {
+                        let Some(text) = text else {
+                            continue;
+                        };
                         // Every line with the same text takes it.
                         for (other, hash) in hashes.iter().enumerate() {
                             if hash == &hashes[*index] && translatable(lines[other]) {
@@ -555,6 +679,26 @@ pub fn compose(
         }
     }
     out
+}
+
+/// Where `chapter-translation` progress goes; installed by the app.
+static EVENTS: std::sync::RwLock<Option<std::sync::Arc<dyn crate::api::Events>>> =
+    std::sync::RwLock::new(None);
+
+pub fn set_events(events: std::sync::Arc<dyn crate::api::Events>) {
+    if let Ok(mut slot) = EVENTS.write() {
+        *slot = Some(events);
+    }
+}
+
+/// Reports an online chapter's translation (`chapter-translation`).
+pub fn report_chapter(event: &crate::models::ChapterTranslationEvent) {
+    if let Some(events) = EVENTS.read().ok().and_then(|slot| slot.clone()) {
+        events.emit(
+            "chapter-translation",
+            serde_json::to_value(event).unwrap_or_default(),
+        );
+    }
 }
 
 // --- Snapshots: the fixed translations a local book's text is made from ---
@@ -1048,6 +1192,7 @@ mod tests {
             model: "m".into(),
             api_key: "k:fx".into(),
             prompt: String::new(),
+            headers: String::new(),
         }
     }
 
@@ -1091,6 +1236,21 @@ mod tests {
                     .map(|text| json!({ "text": text }))
                     .collect();
                 Response::json(&json!({ "translations": texts }).to_string())
+            } else if request.path.ends_with("/translate") {
+                // DeepLX: the key in the address replaces the usual header.
+                let authorization = request.headers.get("authorization").cloned();
+                if request.path.contains("/k:fx/") {
+                    assert_eq!(authorization, None);
+                    assert_eq!(
+                        request.headers.get("x-model").map(String::as_str),
+                        Some("m")
+                    );
+                } else {
+                    assert_eq!(authorization.as_deref(), Some("Bearer k:fx"));
+                }
+                let text = body["text"].as_str().unwrap_or_default();
+                let lines = wrap(text.split('\n').map(str::to_string).collect());
+                Response::json(&json!({ "code": 200, "data": lines.join("\n") }).to_string())
             } else {
                 Response::not_found()
             }
@@ -1110,6 +1270,7 @@ mod tests {
             EngineKind::Claude,
             EngineKind::Gemini,
             EngineKind::Deepl,
+            EngineKind::Deeplx,
         ] {
             let engine = engine(kind, &base);
             let translated =
@@ -1203,6 +1364,35 @@ mod tests {
         );
         drop(storage);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn placeholders_put_the_key_in_the_address_and_headers() {
+        let base = stub();
+        let root =
+            std::env::temp_dir().join(format!("gripread-translation-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let mut hosted = engine(EngineKind::Deeplx, &format!("{base}/{{apiKey}}"));
+        hosted.headers = "X-Model: {model}\nbroken line".into();
+        assert_eq!(fill(&hosted.base_url, &hosted), format!("{base}/k:fx"));
+        assert_eq!(
+            extra_headers(&hosted),
+            vec![("X-Model".to_string(), "m".to_string())]
+        );
+        let agent = agent(&root).unwrap();
+        let answer = call(&agent, &hosted, &["a".into(), "b".into()], None, "zh-CN").unwrap();
+        assert_eq!(answer, vec!["[a]".to_string(), "[b]".to_string()]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn translations_are_one_paragraph_and_never_empty() {
+        assert_eq!(
+            tidy("第一句。\n\n第二句。\r\n"),
+            Some("第一句。 第二句。".into())
+        );
+        assert_eq!(tidy("  \n "), None);
+        assert_eq!(tidy("夜很静。"), Some("夜很静。".into()));
     }
 
     #[test]

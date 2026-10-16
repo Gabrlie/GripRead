@@ -64,6 +64,20 @@ export const PRESETS: {
   { id: "claude", name: "Claude", kind: "claude", baseUrl: "", model: "claude-haiku-5-5" },
   { id: "gemini", name: "Gemini", kind: "gemini", baseUrl: "", model: "gemini-2.5-flash" },
   { id: "deepl", name: "DeepL", kind: "deepl", baseUrl: "", model: "" },
+  {
+    id: "deeplx",
+    name: "translation.preset.deeplx",
+    kind: "deeplx",
+    baseUrl: "http://127.0.0.1:1188",
+    model: "",
+  },
+  {
+    id: "deeplxHosted",
+    name: "translation.preset.deeplxHosted",
+    kind: "deeplx",
+    baseUrl: "https://api.deeplx.org/{apiKey}",
+    model: "",
+  },
 ];
 
 export function presetName(preset: (typeof PRESETS)[number]): string {
@@ -80,6 +94,7 @@ export function engineFrom(preset: (typeof PRESETS)[number]): TranslationEngine 
     model: preset.model,
     apiKey: "",
     prompt: "",
+    headers: "",
   };
 }
 

@@ -24,7 +24,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 
-const KINDS: EngineKind[] = ["openAi", "claude", "gemini", "deepl"];
+const KINDS: EngineKind[] = ["openAi", "claude", "gemini", "deepl", "deeplx"];
 const AHEAD = [0, 1, 2, 3, 5];
 
 const selectClass =
@@ -151,10 +151,10 @@ export function TranslationSettingsPage({
 
       <PageSection title={t("translation.title")}>
         <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-          <span>{t("translation.target")}</span>
+          <span className="min-w-0 flex-1 truncate">{t("translation.target")}</span>
           <select
             aria-label={t("translation.target")}
-            className={`${selectClass} w-40`}
+            className={`${selectClass} !w-auto shrink-0 max-w-[50%] truncate`}
             value={settings.target}
             onChange={(event) => save({ ...settings, target: event.target.value })}
           >
@@ -250,6 +250,7 @@ function EngineDialog({
   const [draft, setDraft] = useState(engine);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const isDeepl = draft.kind === "deepl" || draft.kind === "deeplx";
   const set = (patch: Partial<TranslationEngine>) =>
     setDraft((current) => ({ ...current, ...patch }));
   const field = (label: string, key: "name" | "baseUrl" | "model" | "apiKey", placeholder = "") => (
@@ -290,10 +291,23 @@ function EngineDialog({
           </select>
         </label>
         {field(t("translation.baseUrl"), "baseUrl", t("translation.baseUrl.placeholder"))}
-        {draft.kind !== "deepl" && field(t("translation.model"), "model")}
+        <p className="text-[11px] text-secondary">{t("translation.baseUrl.note")}</p>
+        {!isDeepl && field(t("translation.model"), "model")}
         {field(t("translation.apiKey"), "apiKey")}
         <p className="text-[11px] text-secondary">{t("translation.apiKey.note")}</p>
-        {draft.kind !== "deepl" && (
+        <label className="block space-y-1 text-xs text-secondary">
+          {t("translation.headers")}
+          <textarea
+            aria-label={t("translation.headers")}
+            rows={2}
+            value={draft.headers}
+            placeholder={t("translation.headers.placeholder")}
+            autoCapitalize="none"
+            onChange={(event) => set({ headers: event.target.value })}
+            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"
+          />
+        </label>
+        {!isDeepl && (
           <label className="block space-y-1 text-xs text-secondary">
             {t("translation.prompt")}
             <textarea
@@ -309,7 +323,7 @@ function EngineDialog({
         {result && (
           <p
             role={result.ok ? "status" : "alert"}
-            className={`text-xs break-words ${result.ok ? "text-secondary" : "text-error"}`}
+            className={`text-xs break-words ${result.ok ? "text-primary" : "text-error"}`}
           >
             {result.text}
           </p>
@@ -322,11 +336,20 @@ function EngineDialog({
             onClick={() => {
               setTesting(true);
               setResult(null);
+              const started = Date.now();
               void service
                 .testEngine(draft, target)
                 .then(
-                  (text) => setResult({ ok: true, text: t("translation.testResult", { text }) }),
-                  (failure: unknown) => setResult({ ok: false, text: describeError(failure) }),
+                  (text) =>
+                    setResult({
+                      ok: true,
+                      text: t("translation.testOk", { text, ms: Date.now() - started }),
+                    }),
+                  (failure: unknown) =>
+                    setResult({
+                      ok: false,
+                      text: t("translation.testFailed", { error: describeError(failure) }),
+                    }),
                 )
                 .finally(() => setTesting(false));
             }}

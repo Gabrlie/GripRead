@@ -2332,6 +2332,9 @@ pub enum EngineKind {
     Claude,
     Gemini,
     Deepl,
+    /// A DeepLX service (self-hosted, or a hosted one with the key in its
+    /// address).
+    Deeplx,
 }
 
 /// A translation engine, kept on this device with its key.
@@ -2341,12 +2344,18 @@ pub struct TranslationEngine {
     pub id: String,
     pub name: String,
     pub kind: EngineKind,
-    /// The API address; empty uses the kind's official one.
+    /// The API address; empty uses the kind's official one. `{apiKey}`
+    /// and `{model}` are filled in.
     pub base_url: String,
     pub model: String,
     pub api_key: String,
     /// Extra instructions for language models (style, names, terms).
     pub prompt: String,
+    /// Extra request headers, one `Name: value` per line, with the same
+    /// placeholders. When the address or a header takes `{apiKey}`, the
+    /// kind's usual key header is not sent.
+    #[serde(default)]
+    pub headers: String,
 }
 
 /// How a translated book reads: the translation alone, or each paragraph
@@ -2471,4 +2480,17 @@ pub struct ImportReplaceRulesRequest {
     /// Positions in the preview to import; all when absent.
     #[ts(optional)]
     pub chosen: Option<Vec<u32>>,
+}
+
+/// Progress of translating an online chapter as it is read
+/// (`chapter-translation`): lines sent to the engine of those it needs.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterTranslationEvent {
+    pub book_id: String,
+    pub index: u32,
+    pub done: u32,
+    pub total: u32,
+    /// Translated ahead of the reader rather than opened.
+    pub ahead: bool,
 }

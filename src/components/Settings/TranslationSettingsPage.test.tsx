@@ -37,7 +37,7 @@ describe("翻译", () => {
     );
     await userEvent.type(screen.getByLabelText("API 密钥"), "sk-test");
     await userEvent.click(screen.getByRole("button", { name: "测试" }));
-    expect(await screen.findByText("测试译文：测试译文")).toBeTruthy();
+    expect(await screen.findByText(/✓ 测试成功（\d+ 毫秒）：测试译文/)).toBeTruthy();
     expect(translation.testEngine).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: "sk-test", model: "deepseek-chat" }),
       "zh-CN",
@@ -69,6 +69,7 @@ describe("翻译", () => {
               model: "deepseek-chat",
               apiKey: "k",
               prompt: "",
+              headers: "",
             },
           ],
         }),
@@ -107,6 +108,7 @@ describe("翻译", () => {
               model: "",
               apiKey: "k",
               prompt: "",
+              headers: "",
             },
           ],
         }),

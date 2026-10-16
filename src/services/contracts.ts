@@ -2,6 +2,7 @@ import type {
   BookImage,
   BookTranslation,
   BookTranslationEvent,
+  ChapterTranslationEvent,
   TranslationEngine,
   TranslationSettings,
   InstallOutcome,
@@ -373,6 +374,8 @@ export interface TranslationService {
   translateBook(bookId: string, whole: boolean): Promise<void>;
   stopBook(bookId: string): Promise<void>;
   onBookProgress(listener: (event: BookTranslationEvent) => void): Promise<() => void>;
+  /** An online chapter being translated as it opens. */
+  onChapterProgress(listener: (event: ChapterTranslationEvent) => void): Promise<() => void>;
 }
 
 export interface AppServices {

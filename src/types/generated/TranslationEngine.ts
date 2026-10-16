@@ -6,10 +6,17 @@ import type { EngineKind } from "./EngineKind";
  */
 export type TranslationEngine = { id: string, name: string, kind: EngineKind, 
 /**
- * The API address; empty uses the kind's official one.
+ * The API address; empty uses the kind's official one. `{apiKey}`
+ * and `{model}` are filled in.
  */
 baseUrl: string, model: string, apiKey: string, 
 /**
  * Extra instructions for language models (style, names, terms).
  */
-prompt: string, };
+prompt: string, 
+/**
+ * Extra request headers, one `Name: value` per line, with the same
+ * placeholders. When the address or a header takes `{apiKey}`, the
+ * kind's usual key header is not sent.
+ */
+headers: string, };

@@ -20,6 +20,7 @@ import type {
   BookTranslation,
   BookTranslationRequest,
   BookTranslationEvent,
+  ChapterTranslationEvent,
   TranslateBookRequest,
   TestEngineRequest,
   TranslationSettings,
@@ -871,5 +872,7 @@ export const tauriServices: AppServices = {
       });
     },
     onBookProgress: (listener) => listen<BookTranslationEvent>("book-translation", listener),
+    onChapterProgress: (listener) =>
+      listen<ChapterTranslationEvent>("chapter-translation", listener),
   },
 };

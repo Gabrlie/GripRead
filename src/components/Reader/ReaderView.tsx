@@ -884,6 +884,29 @@ export function ReaderView() {
   // A translated local book: each new snapshot of its translations is
   // applied like a changed rule, and the job resumes when the book opens.
   const localBook = Boolean(bookId) && !activeBook?.online;
+  // An online chapter being translated as it opens: 正在翻译 replaces 正在读取正文.
+  const [chapterTranslation, setChapterTranslation] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!bookId || localBook) return;
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void runtime.services.translation
+      .onChapterProgress((event) => {
+        if (event.bookId !== bookId || event.ahead) return;
+        setChapterTranslation(
+          event.done < event.total ? { done: event.done, total: event.total } : null,
+        );
+      })
+      .then((stop) => (active ? (unlisten = stop) : stop()));
+    return () => {
+      active = false;
+      unlisten?.();
+      setChapterTranslation(null);
+    };
+  }, [bookId, localBook, runtime]);
   const [translating, setTranslating] = useState<number | null>(null);
   useEffect(() => {
     if (!bookId || !localBook) return;
@@ -1369,7 +1392,9 @@ export function ReaderView() {
         )}
         {!page && state.loading && (
           <p role="status" className="text-sm text-secondary">
-            {t("reader.loadingText")}
+            {chapterTranslation
+              ? t("translation.chapterProgress", chapterTranslation)
+              : t("reader.loadingText")}
           </p>
         )}
         {!state.loading && state.contentWindow?.totalLength === 0 && (

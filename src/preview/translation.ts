@@ -13,6 +13,7 @@ export function memoryTranslation(): TranslationService {
         model: "deepseek-chat",
         apiKey: "",
         prompt: "",
+        headers: "",
       },
     ],
     defaultEngine: "preview",
@@ -42,5 +43,6 @@ export function memoryTranslation(): TranslationService {
     translateBook: async () => undefined,
     stopBook: async () => undefined,
     onBookProgress: async () => () => undefined,
+    onChapterProgress: async () => () => undefined,
   };
 }

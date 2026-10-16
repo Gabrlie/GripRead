@@ -3,4 +3,4 @@
 /**
  * The kind of service a translation engine talks to.
  */
-export type EngineKind = "openAi" | "claude" | "gemini" | "deepl";
+export type EngineKind = "openAi" | "claude" | "gemini" | "deepl" | "deeplx";

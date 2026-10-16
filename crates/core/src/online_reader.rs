@@ -290,6 +290,12 @@ pub fn chapter_translation(
     )
 }
 
+thread_local! {
+    /// Set while chapters are translated ahead of the reader, so their
+    /// progress does not show as the chapter being opened.
+    static AHEAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn build_chapter_text(
     storage: &Shared,
     book_id: &str,
@@ -312,13 +318,24 @@ fn build_chapter_text(
     // chapter shows as written and says so in the log.
     if let Some(translation) = translation {
         let lines: Vec<&str> = text.split('\n').collect();
-        match crate::translation::translate_lines(
+        let ahead = AHEAD.with(|ahead| ahead.get());
+        let report = |done: usize, total: usize| {
+            crate::translation::report_chapter(&crate::models::ChapterTranslationEvent {
+                book_id: book_id.to_string(),
+                index,
+                done: done as u32,
+                total: total as u32,
+                ahead,
+            })
+        };
+        match crate::translation::translate_lines_reporting(
             storage,
             &translation.root,
             &translation.engine,
             translation.source.as_deref(),
             &translation.target,
             &lines,
+            &report,
         ) {
             Ok(translated) => {
                 text = crate::translation::compose(&lines, &translated, translation.display)
@@ -437,29 +454,28 @@ pub fn read_window(
         }
     }
     let total = chapter.units.len();
-    let max = (request.max_units.max(1) as usize).min(1_000_000);
+    // A window holds the rest of its chapter (from the place asked for, or
+    // up to it), never a part: a page cut where a window ended mid-chapter
+    // would end short with the chapter going on (bilingual chapters run
+    // past the reader's usual window size). The chapter is in memory anyway.
     let (start, end) = match request.direction {
-        WindowDirection::Forward => {
-            let start = floor_boundary(
+        WindowDirection::Forward => (
+            floor_boundary(
                 &chapter.units,
                 request.locator.as_ref().map_or(0, |l| l.offset as usize),
-            );
-            let mut end = floor_boundary(&chapter.units, start + max);
-            if end <= start && start < total {
-                end = ceil_boundary(&chapter.units, start + 1);
-            }
-            (start, end)
-        }
-        WindowDirection::Backward => {
-            let end = ceil_boundary(
+            ),
+            total,
+        ),
+        WindowDirection::Backward => (
+            0,
+            ceil_boundary(
                 &chapter.units,
                 request
                     .locator
                     .as_ref()
                     .map_or(total, |l| l.offset as usize),
-            );
-            (ceil_boundary(&chapter.units, end.saturating_sub(max)), end)
-        }
+            ),
+        ),
     };
     let end = end.min(total);
     let start = start.min(end);
@@ -771,11 +787,13 @@ fn translate_ahead(storage: Shared, book_id: String, index: u32) {
                 .lock()
                 .map(|guard| guard.online_chapter_count(&book_id).unwrap_or(0))
                 .unwrap_or(0);
+            AHEAD.with(|flag| flag.set(true));
             for next in index + 1..(index + 1 + ahead).min(count) {
                 if chapter_text(&storage, &book_id, next).is_err() {
                     break;
                 }
             }
+            AHEAD.with(|flag| flag.set(false));
             if let Ok(mut set) = running().lock() {
                 set.remove(&key);
             }
@@ -987,8 +1005,11 @@ mod tests {
             &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
         )
         .unwrap();
-        assert_eq!(first.text, "第一章 ");
-        assert!(first.has_after);
+        // A window is the rest of its chapter, whatever size was asked for.
+        assert_eq!(first.text, "第一章 惊蛰\n第一段\n第二段");
+        assert!(!first.has_after);
+        assert_eq!(first.next_resource_id.as_deref(), Some("chapter-2"));
+        assert_eq!(first.end_offset, first.total_length);
         assert_eq!(first.resource_index, Some(1));
         let rest = read_window(
             &storage,
@@ -1003,14 +1024,15 @@ mod tests {
             ),
         )
         .unwrap();
-        assert_eq!(rest.text, "惊蛰\n第");
-        // Backward from the resource's end reads its last units.
+        assert_eq!(rest.text, "惊蛰\n第一段\n第二段");
+        // Backward from the resource's end reads it all, up to there.
         let end = read_window(
             &storage,
             &request(&id, None, Some("chapter-1"), WindowDirection::Backward),
         )
         .unwrap();
-        assert_eq!(end.text, "\n第二段");
+        assert_eq!(end.text, "第一章 惊蛰\n第一段\n第二段");
+        assert_eq!(end.start_offset, 0);
         assert_eq!(end.end_offset, end.total_length);
 
         let cached = storage.lock().unwrap().cached_online_chapters(&id).unwrap();

@@ -20,7 +20,7 @@ import { Switch } from "../../ui/switch";
 import { toast } from "../../ui/toast";
 
 const selectClass =
-  "rounded-lg border border-surface-variant bg-surface-container px-2 py-1.5 text-sm";
+  "shrink-0 max-w-[50%] truncate rounded-lg border border-surface-variant bg-surface-container px-2 py-1.5 text-sm";
 
 /**
  * 翻译 from the reader's menu: the book's language (detected, or chosen),
@@ -112,7 +112,7 @@ export function TranslationDialog({
           <DialogDescription>{t("translation.book.slow")}</DialogDescription>
         </DialogHeader>
         <label className="flex items-center justify-between gap-3 text-sm">
-          <span>{t("translation.book.language")}</span>
+          <span className="min-w-0 flex-1 truncate">{t("translation.book.language")}</span>
           {book ? (
             <select
               aria-label={t("translation.book.language")}
@@ -144,7 +144,9 @@ export function TranslationDialog({
         ) : (
           <>
             <label className="flex items-center justify-between gap-3 text-sm">
-              <span>{t("translation.book.on", { target: languageName(target) })}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {t("translation.book.on", { target: languageName(target) })}
+              </span>
               <Switch
                 aria-label={t("translation.book")}
                 checked={Boolean(book?.translateTo)}
