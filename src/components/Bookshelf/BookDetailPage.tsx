@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { currentLocale, t } from "../../i18n";
+import { introLabel, useIntroTranslation } from "../Online/use-title-translation";
 
 const TILE_CLASS =
   "flex flex-col items-center justify-center gap-1 rounded-xl bg-surface-container-low py-2.5 text-xs text-on-surface hover:bg-surface-container disabled:opacity-60 outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
@@ -88,6 +89,7 @@ export function BookDetailPage({
   const [confirm, setConfirm] = useState<"delete" | "delete-cloud" | null>(null);
   const removed = book.removedAt !== null;
   const [expanded, setExpanded] = useState(false);
+  const intro = useIntroTranslation(info?.intro);
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState(0);
   const id = book.book.id;
@@ -355,14 +357,26 @@ export function BookDetailPage({
             </p>
           )}
           <section aria-labelledby="book-intro" className="space-y-1.5 min-w-0">
-            <h2 id="book-intro" className="text-xs text-secondary font-medium">
-              {t("detail.intro")}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 id="book-intro" className="text-xs text-secondary font-medium">
+                {t("detail.intro")}
+              </h2>
+              {intro.available && (
+                <button
+                  type="button"
+                  className="text-xs text-primary disabled:opacity-60"
+                  disabled={intro.busy}
+                  onClick={intro.toggle}
+                >
+                  {introLabel(intro)}
+                </button>
+              )}
+            </div>
             <p
               data-selectable="true"
               className={`text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-on-surface/90 ${expanded ? "" : "line-clamp-4"}`}
             >
-              {info ? info.intro || t("detail.noIntro") : t("common.loading")}
+              {info ? intro.text || t("detail.noIntro") : t("common.loading")}
             </p>
             {info?.intro && info.intro.length > 80 && (
               <button

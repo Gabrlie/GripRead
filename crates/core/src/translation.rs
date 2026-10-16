@@ -860,6 +860,61 @@ pub mod commands {
         blocking(move || test_engine(&root, &request.engine, &request.target)).await
     }
 
+    /// Translates short texts (titles in 搜索 and 发现, a book's
+    /// introduction) with the default engine into the target language,
+    /// through the shared cache. Texts already in that language, and every
+    /// text when there is no engine, answer `None`.
+    pub async fn translate_texts(
+        state: &Arc<AppState>,
+        request: crate::models::TranslateTextsRequest,
+    ) -> Result<Vec<Option<String>>, AppError> {
+        let storage = state.storage.clone();
+        let root = state.data_root.clone();
+        blocking(move || {
+            let settings = load_settings(&root);
+            let Some(engine) = default_engine(&settings).cloned() else {
+                return Ok(vec![None; request.texts.len()]);
+            };
+            let wanted: Vec<bool> = request
+                .texts
+                .iter()
+                .map(|text| {
+                    translatable(text)
+                        && !detect(text)
+                            .is_some_and(|language| same_language(&language, &settings.target))
+                })
+                .collect();
+            // Every line of the wanted texts goes in one call, in order.
+            let lines: Vec<&str> = request
+                .texts
+                .iter()
+                .zip(&wanted)
+                .filter(|(_, wanted)| **wanted)
+                .flat_map(|(text, _)| text.split('\n'))
+                .collect();
+            let translated =
+                translate_lines(&storage, &root, &engine, None, &settings.target, &lines)?;
+            let mut next = translated.into_iter();
+            Ok(request
+                .texts
+                .iter()
+                .zip(&wanted)
+                .map(|(text, wanted)| {
+                    if !*wanted {
+                        return None;
+                    }
+                    let parts: Vec<String> = text
+                        .split('\n')
+                        .map(|line| next.next().flatten().unwrap_or_else(|| line.to_string()))
+                        .collect();
+                    let joined = parts.join("\n");
+                    (joined != *text).then_some(joined)
+                })
+                .collect())
+        })
+        .await
+    }
+
     fn current(storage: &Storage, book_id: &str) -> Result<BookTranslation, AppError> {
         let (language, translate_to) = storage.book_translation(book_id)?;
         Ok(BookTranslation {

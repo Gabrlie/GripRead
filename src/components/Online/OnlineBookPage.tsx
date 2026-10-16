@@ -22,6 +22,7 @@ import { OnlineCover } from "./OnlineCover";
 import { OnlineTocPage } from "./OnlineTocPage";
 import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
 import { t } from "../../i18n";
+import { introLabel, useIntroTranslation } from "./use-title-translation";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -92,6 +93,7 @@ export function OnlineBookPage({
   }, [service, origin, refresh]);
 
   const shown = book ?? origin;
+  const intro = useIntroTranslation(shown?.intro);
   if (!shown) return null;
   const onShelf = Boolean(kept?.online?.onShelf);
   // The shelf's copy keeps its own source until it is switched (换源).
@@ -267,9 +269,21 @@ export function OnlineBookPage({
 
       {shown.intro && (
         <section className="rounded-xl bg-surface-container-low p-3">
-          <h3 className="text-[11px] text-secondary mb-1">{t("detail.intro")}</h3>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-[11px] text-secondary">{t("detail.intro")}</h3>
+            {intro.available && (
+              <button
+                type="button"
+                className="text-[11px] text-primary disabled:opacity-60"
+                disabled={intro.busy}
+                onClick={intro.toggle}
+              >
+                {introLabel(intro)}
+              </button>
+            )}
+          </div>
           <p data-selectable="true" className="text-sm leading-relaxed whitespace-pre-wrap">
-            {shown.intro}
+            {intro.text}
           </p>
         </section>
       )}

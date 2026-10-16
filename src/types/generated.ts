@@ -185,6 +185,7 @@ export type { BookTranslationRequest } from "./generated/BookTranslationRequest"
 export type { BookLanguageRequest } from "./generated/BookLanguageRequest";
 export type { TestEngineRequest } from "./generated/TestEngineRequest";
 export type { TranslateBookRequest } from "./generated/TranslateBookRequest";
+export type { TranslateTextsRequest } from "./generated/TranslateTextsRequest";
 export type { BookTranslationEvent } from "./generated/BookTranslationEvent";
 export type { ChapterTranslationEvent } from "./generated/ChapterTranslationEvent";
 export type { UpdateSettings } from "./generated/UpdateSettings";

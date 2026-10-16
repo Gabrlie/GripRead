@@ -2517,3 +2517,10 @@ pub struct ChapterTranslationEvent {
     /// Translated ahead of the reader rather than opened.
     pub ahead: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateTextsRequest {
+    /// Titles or introductions; each may hold several lines.
+    pub texts: Vec<String>,
+}

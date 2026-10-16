@@ -27,6 +27,7 @@ A book in another language can be read translated into the reader's language, as
 
 **Online and local books:**
 - Online chapters are translated as they open, along with the next chapters ahead; while a chapter being opened is translated, the reader shows 正在翻译 with the paragraphs done (`chapter-translation` events; those translated ahead are marked and not shown).
+- 搜索 and 发现 lists have 翻译, which translates the titles shown (and those loaded later) with the default engine, each row showing the translation over the original, until 显示原文; a book's detail page has 翻译简介 for its introduction. Texts already in the target language are left as written (`translate_texts`, through the shared cache).
 - A translated line starts with the mark U+100000, kept in the text like the image and directory marks so offsets hold; the reader hides it and styles those paragraphs with 译文样式 (默认, 弱化, 引用, 斜体, 模糊 until a tap shows it, or 自定义 CSS declarations with a live preview; selectors and at-rules are dropped). Local translations stored before the mark read without it until translated again.
 - A translation is one paragraph: line breaks in an answer become spaces, and an empty answer leaves the line untranslated and uncached.
 - 测试 in an engine's settings reports success with the sample's translation and the time taken, or failure with the reason.

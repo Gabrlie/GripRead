@@ -45,6 +45,7 @@ export function translationServiceMocks(
     stopBook: vi.fn(async () => undefined),
     onBookProgress: vi.fn(async () => () => undefined),
     onChapterProgress: vi.fn(async () => () => undefined),
+    translateTexts: vi.fn(async (texts: string[]) => texts.map((text) => `【${text}】`)),
     ...overrides,
   };
 }

@@ -22,6 +22,7 @@ import type {
   BookTranslationEvent,
   ChapterTranslationEvent,
   TranslateBookRequest,
+  TranslateTextsRequest,
   TestEngineRequest,
   TranslationSettings,
 } from "../types/generated";
@@ -872,6 +873,10 @@ export const tauriServices: AppServices = {
       });
     },
     onBookProgress: (listener) => listen<BookTranslationEvent>("book-translation", listener),
+    translateTexts: (texts) =>
+      invokeCommand<(string | null)[]>("translate_texts", {
+        request: { texts } satisfies TranslateTextsRequest,
+      }),
     onChapterProgress: (listener) =>
       listen<ChapterTranslationEvent>("chapter-translation", listener),
   },

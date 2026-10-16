@@ -22,6 +22,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineBookPage } from "./OnlineBookPage";
+import { TitleTranslationChip } from "./TitleTranslationChip";
+import { useTitleTranslation } from "./use-title-translation";
 import { t } from "../../i18n";
 
 /**
@@ -50,6 +52,8 @@ export function SearchPage({
   const [precise, setPrecise] = useState(false);
   const [history, setHistory] = useState(readSearchHistory);
   const [event, setEvent] = useState<OnlineSearchEvent | null>(restored?.event ?? null);
+  const shownTitles = useMemo(() => event?.results.map((result) => result.name) ?? [], [event]);
+  const titles = useTitleTranslation(shownTitles);
   const [opened, setOpened] = useState<{ result: OnlineSearchResult; origin: number } | null>(
     restored ? { result: restored.result, origin: restored.origin } : null,
   );
@@ -176,6 +180,7 @@ export function SearchPage({
         >
           {t("onlineSearch.exact")}
         </button>
+        <TitleTranslationChip titles={titles} />
       </div>
 
       {event === null && history.length > 0 && (
@@ -237,6 +242,7 @@ export function SearchPage({
             key={`${result.name}\n${result.author}`}
             service={service}
             result={result}
+            translatedName={titles.title(result.name)}
             onOpen={() => setOpened({ result, origin: 0 })}
           />
         ))}
@@ -293,10 +299,13 @@ export function SearchPage({
 export function SearchResultRow({
   service,
   result,
+  translatedName,
   onOpen,
 }: {
   service: SourceService;
   result: OnlineSearchResult;
+  /** The title translated (列表 翻译), shown with the original below it. */
+  translatedName?: string;
   onOpen: () => void;
 }) {
   const first = result.origins[0];
@@ -320,13 +329,16 @@ export function SearchResultRow({
         </span>
         <span className="flex-1 min-w-0 space-y-0.5">
           <span className="flex items-center gap-1.5">
-            <span className="text-sm font-medium truncate">{result.name}</span>
+            <span className="text-sm font-medium truncate">{translatedName ?? result.name}</span>
             {result.origins.length > 1 && (
               <span className="shrink-0 rounded-full bg-primary/10 text-primary text-[10px] px-1.5 leading-4">
                 {t("onlineSearch.origins", { count: result.origins.length })}
               </span>
             )}
           </span>
+          {translatedName && (
+            <span className="block text-[11px] text-secondary truncate">{result.name}</span>
+          )}
           <span className="block text-[11px] text-secondary truncate">
             {[result.author, result.kind, result.wordCount].filter(Boolean).join(" · ")}
           </span>

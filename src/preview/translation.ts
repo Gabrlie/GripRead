@@ -46,5 +46,6 @@ export function memoryTranslation(): TranslationService {
     stopBook: async () => undefined,
     onBookProgress: async () => () => undefined,
     onChapterProgress: async () => () => undefined,
+    translateTexts: async (texts) => texts.map((text) => `译：${text}`),
   };
 }

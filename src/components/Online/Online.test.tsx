@@ -6,6 +6,7 @@ import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "../../preview/sources";
 import { DiscoverView } from "../Discover/DiscoverView";
+import { translationServiceMocks, translationSettings } from "../../test/translation";
 import { SearchPage } from "./SearchPage";
 import { ChangeSourceDialog } from "./ChangeSourceDialog";
 import { SourceDetailsDialog } from "./SourceDetailsDialog";
@@ -118,6 +119,24 @@ describe("online search", () => {
 
 describe("发现", () => {
   it("expands a source into categories and opens a category's books", async () => {
+    const translation = translationServiceMocks({
+      getSettings: vi.fn(async () =>
+        translationSettings({
+          engines: [
+            {
+              id: "e",
+              name: "e",
+              kind: "deepl",
+              baseUrl: "",
+              model: "",
+              apiKey: "k",
+              prompt: "",
+              headers: "",
+            },
+          ],
+        }),
+      ),
+    });
     const sources = createMemorySourceService(
       [
         ...PREVIEW_SOURCES,
@@ -147,6 +166,7 @@ describe("发现", () => {
       },
       sync: {},
       sources,
+      translation,
     } as unknown as AppServices);
     render(
       <RuntimeContext.Provider value={runtime}>
@@ -161,6 +181,12 @@ describe("发现", () => {
     expect(await screen.findByRole("dialog", { name: "甲站小说 · 都市" })).toBeTruthy();
     const books = await screen.findByRole("list", { name: "书籍" });
     expect((await within(books).findAllByText("剑来外传")).length).toBeGreaterThan(0);
+    // 翻译 shows each title translated, the original under it, until 显示原文.
+    await userEvent.click(screen.getByRole("button", { name: "翻译" }));
+    expect((await within(books).findAllByText("【剑来外传】")).length).toBeGreaterThan(0);
+    expect(translation.translateTexts).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "显示原文" }));
+    expect(within(books).queryByText("【剑来外传】")).toBeNull();
   });
 });
 
