@@ -2653,6 +2653,25 @@ impl Storage {
 
     /// Adds a rule when `id` is empty, otherwise updates it.
     pub fn save_replace_rule(&mut self, rule: &ReplaceRule) -> Result<ReplaceRule, AppError> {
+        self.store_replace_rule(rule, true)
+    }
+
+    /// A rule another device made, kept under its id whether or not this
+    /// library has it yet (sync records).
+    pub(crate) fn upsert_replace_rule(
+        &mut self,
+        rule: &ReplaceRule,
+    ) -> Result<ReplaceRule, AppError> {
+        self.store_replace_rule(rule, false)
+    }
+
+    /// Saves a rule; an id this library lacks is refused when `must_exist`
+    /// (an edit of a rule deleted meanwhile).
+    fn store_replace_rule(
+        &mut self,
+        rule: &ReplaceRule,
+        must_exist: bool,
+    ) -> Result<ReplaceRule, AppError> {
         let name = rule.name.trim();
         if name.is_empty() || name.chars().count() > 64 {
             return Err(AppError::invalid_argument(
@@ -2686,7 +2705,7 @@ impl Storage {
                 params![saved.id],
                 |row| row.get(0),
             )?;
-            if !exists {
+            if !exists && must_exist {
                 return Err(AppError::new(
                     ErrorCode::NotFound,
                     "replace rule was not found",
@@ -9865,6 +9884,90 @@ mod tests {
             &verified,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn turning_updates_off_for_one_book_keeps_them_off_for_another() {
+        let root = TestRoot::new();
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let book = |name: &str| crate::models::OnlineBook {
+            source_url: "https://a.example".into(),
+            source_name: "甲站".into(),
+            name: name.into(),
+            author: "某人".into(),
+            kind: String::new(),
+            cover_url: String::new(),
+            intro: String::new(),
+            word_count: String::new(),
+            latest_chapter_title: String::new(),
+            book_url: format!("https://a.example/{name}"),
+            toc_url: String::new(),
+            variables: String::new(),
+            reverse_toc: false,
+        };
+        let first = phone.add_online_book(&book("甲"), &[], true).unwrap();
+        let second = phone.add_online_book(&book("乙"), &[], true).unwrap();
+        let mut at = 0;
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        let allowed = |storage: &Storage, name: &str| -> bool {
+            let id = storage
+                .find_online_book(name, "某人")
+                .unwrap()
+                .expect("the book is there");
+            storage.online_record(&id).unwrap().can_update
+        };
+        // The source signs its addresses per request: the server's copy of
+        // each book's details differs from the phone's after every refresh.
+        let resign = |storage: &Storage, sign: &str| {
+            storage
+                .conn
+                .execute(
+                    "UPDATE online_books SET book_json = json_set(book_json, '$.bookUrl', \
+                     json_extract(book_json, '$.bookUrl') || ?1)",
+                    params![sign],
+                )
+                .unwrap();
+        };
+        resign(&server, "&sign=server1");
+        resign(&phone, "&sign=phone1");
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        phone.set_online_can_update(&first, false).unwrap();
+        resign(&server, "&sign=server2");
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        assert!(!allowed(&phone, "甲"), "the phone's change was overwritten");
+        assert!(!allowed(&server, "甲"));
+        phone.set_online_can_update(&second, false).unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        assert!(!allowed(&phone, "甲"), "the first book turned back on");
+        assert!(!allowed(&phone, "乙"));
+        assert!(!allowed(&server, "甲"));
+        assert!(!allowed(&server, "乙"));
+        // A replace rule made on the phone reaches the server under its id.
+        let rule = phone
+            .save_replace_rule(&ReplaceRule {
+                id: String::new(),
+                name: "去广告".into(),
+                group: String::new(),
+                pattern: "广告".into(),
+                replacement: String::new(),
+                is_regex: false,
+                scope: String::new(),
+                enabled: true,
+                serial: 0,
+            })
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        assert!(server
+            .list_replace_rules()
+            .unwrap()
+            .iter()
+            .any(|known| known.id == rule.id));
+        // Details that differ by signature alone do not go back and forth.
+        sync_round(&mut server, &mut phone, "phone", &mut at);
+        assert!(phone.sync_pending().unwrap().is_empty());
+        assert!(server.sync_pending().unwrap().is_empty());
     }
 
     #[test]

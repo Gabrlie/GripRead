@@ -73,6 +73,56 @@ pub fn record_hash(value: &Value) -> String {
     hex_digest(&Sha256::digest(value.to_string().as_bytes()))
 }
 
+/// The hash a record is compared by. An online book's details (addresses
+/// some sources sign per request, the latest chapter, the introduction)
+/// change with every refresh on each side, so they do not count as a
+/// change: only its source does. Without this the two sides send the
+/// record back and forth for ever.
+pub fn stable_hash(key: &str, value: &Value) -> String {
+    if !is_online_book_record(key) {
+        return record_hash(value);
+    }
+    let mut stable = value.clone();
+    if let Some(book) = stable.get_mut("book") {
+        let source = book.get("sourceUrl").cloned().unwrap_or(Value::Null);
+        *book = json!({ "sourceUrl": source });
+    }
+    record_hash(&stable)
+}
+
+fn is_online_book_record(key: &str) -> bool {
+    key.starts_with("online:")
+}
+
+/// Records whose fields are merged one by one with what this device holds:
+/// a book's details and placement, and the preferences.
+fn merged_by_field(key: &str) -> bool {
+    is_online_book_record(key) || key.starts_with("book:") || key.starts_with("prefs:")
+}
+
+/// A record from elsewhere merged with this device's: each field the other
+/// side changed since the last sync (`base`) comes in; the others keep this
+/// device's value, so a change made here meanwhile (允许更新 turned off, a
+/// custom style a server too old to know drops) is not lost.
+fn merge_fields(local: &Value, base: &Value, incoming: &Value) -> Value {
+    let (Value::Object(local), Value::Object(base), Value::Object(incoming)) =
+        (local, base, incoming)
+    else {
+        return incoming.clone();
+    };
+    let mut merged = local.clone();
+    for key in incoming.keys().chain(base.keys()) {
+        let (theirs, before) = (incoming.get(key), base.get(key));
+        if theirs != before {
+            match theirs {
+                Some(value) => merged.insert(key.clone(), value.clone()),
+                None => merged.remove(key),
+            };
+        }
+    }
+    Value::Object(merged)
+}
+
 fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -318,7 +368,7 @@ impl Storage {
                 let Some((hash, synced)) = synced.get(*key) else {
                     return true;
                 };
-                if hash == &record_hash(value) {
+                if hash == &stable_hash(key, value) {
                     return false;
                 }
                 // A position goes out only when newer than the one synced; an
@@ -357,7 +407,11 @@ impl Storage {
             Some(value) => self.conn.execute(
                 "INSERT INTO sync_records(key, hash, value) VALUES (?1, ?2, ?3)
                  ON CONFLICT(key) DO UPDATE SET hash = excluded.hash, value = excluded.value",
-                params![change.key, record_hash(value), value.to_string()],
+                params![
+                    change.key,
+                    stable_hash(&change.key, value),
+                    value.to_string()
+                ],
             )?,
             None => self.conn.execute(
                 "DELETE FROM sync_records WHERE key = ?1",
@@ -379,6 +433,11 @@ impl Storage {
         let mut ordered: Vec<&SyncChange> = changes.iter().collect();
         ordered.sort_by_key(|change| apply_order(&change.key));
         let synced = self.synced_records()?;
+        let local = if ordered.iter().any(|change| merged_by_field(&change.key)) {
+            self.sync_snapshot()?
+        } else {
+            BTreeMap::new()
+        };
         let mut applied = 0;
         for change in ordered {
             if self.sync_excluded(&change.key)? {
@@ -387,7 +446,13 @@ impl Storage {
             let base = synced
                 .get(&change.key)
                 .and_then(|(_, value)| value.as_ref());
-            match self.apply_record(&change.key, change.value.as_ref(), base) {
+            let merged = match (&change.value, base, local.get(&change.key)) {
+                (Some(incoming), Some(base), Some(local)) if merged_by_field(&change.key) => {
+                    Some(merge_fields(local, base, incoming))
+                }
+                _ => change.value.clone(),
+            };
+            match self.apply_record(&change.key, merged.as_ref(), base) {
                 Ok(()) => applied += 1,
                 Err(error) => crate::app_log::warn(
                     "sync",
@@ -423,7 +488,7 @@ impl Storage {
             }
             ("replace", Some(value)) => {
                 let rule: crate::models::ReplaceRule = serde_json::from_value(value.clone())?;
-                self.save_replace_rule(&rule)?;
+                self.upsert_replace_rule(&rule)?;
             }
             ("replace", None) => self.delete_replace_rules(&[rest.to_string()])?,
             ("toc", Some(value)) => {
