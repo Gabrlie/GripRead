@@ -11,6 +11,8 @@ export interface ReaderDisplayedPage extends ReaderPage {
   locator: ReaderLocator;
   /** The page starts inside a line, so its first paragraph is not indented. */
   continued: boolean;
+  /** That line is a translation, so the paragraph keeps the translation's look. */
+  continuedTranslated?: boolean;
 }
 
 export interface ReaderPresentationContext {

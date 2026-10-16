@@ -1,16 +1,20 @@
 /**
  * EPUB marks in reader text (crates/core/src/epub.rs): a line holding only
  * `U+E000 + n` is image `n` of the book, and `U+F0000 + n` at a line start
- * places directory entry `n`. Both stay in the text so offsets hold; the
- * renderer hides the directory marks and draws images in place of theirs.
+ * places directory entry `n`; `U+100000` leads a line that is a
+ * translation (crates/core/src/translation.rs). They stay in the text so
+ * offsets hold; the renderer hides the directory and translation marks and
+ * draws images in place of theirs.
  */
 const IMAGE_BASE = 0xe000;
 const IMAGE_LIMIT = 0x1900;
 
-/** Directory marks, and leading spaces or marks of a line. */
-export const MARK = /[\u{F0000}-\u{FFFFD}]/u;
-export const MARKS = /[\u{F0000}-\u{FFFFD}]/gu;
-export const LEADING = /^[\s　\u{F0000}-\u{FFFFD}]+/u;
+/** Directory and translation marks, and leading spaces or marks of a line. */
+export const MARK = /[\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/u;
+export const MARKS = /[\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu;
+export const LEADING = /^[\s　\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]+/u;
+/** Leads a translated line. */
+export const TRANSLATED_MARK = "\u{100000}";
 
 /** The image a line shows, if it is an image line. */
 export function imageOfLine(line: string): number | null {

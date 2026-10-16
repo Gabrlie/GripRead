@@ -12,6 +12,8 @@ export function translationSettings(
     display: "translated",
     autoTranslate: false,
     ahead: 2,
+    style: "plain",
+    customCss: "",
     ...overrides,
   };
 }

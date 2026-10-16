@@ -760,7 +760,10 @@ mod tests {
     #[tokio::test]
     async fn commands_run_by_name_with_their_request() {
         let root = std::env::temp_dir().join(format!("gripread-api-{}", uuid::Uuid::new_v4()));
-        let state = AppState::open(root.clone(), Arc::new(NoEvents), Arc::new(Filesystem)).unwrap();
+        let state = {
+            let _log = crate::app_log::test_lock();
+            AppState::open(root.clone(), Arc::new(NoEvents), Arc::new(Filesystem)).unwrap()
+        };
         let created = dispatch(
             &state,
             "create_group",

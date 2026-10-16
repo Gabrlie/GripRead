@@ -729,6 +729,7 @@ export class PageTurnAdapter implements ReaderPresentationAdapter {
     element.dataset.total = String(page.totalLength);
     renderReaderText(element, page.text, {
       continued: page.continued,
+      continuedTranslated: page.continuedTranslated,
       headings: this.headings.local(page.startOffset, page.endOffset),
     });
     element.style.pointerEvents = "none";

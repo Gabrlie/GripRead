@@ -7,7 +7,7 @@ import type {
 } from "../types/generated";
 import type { ReaderService } from "../services/contracts";
 import { isUtf16ScalarBoundary, windowStartsMidLine } from "./pagination";
-import { continuesLine } from "./render";
+import { continuesLine, translatedLineAt } from "./render";
 import { ReaderPositions } from "./positions";
 import { appLog } from "../services/log";
 import { chapterRanges, chapterAt, type ReaderChapter } from "./chapters";
@@ -1284,6 +1284,7 @@ function normalizePages(
       totalLength: window.totalLength,
       locator,
       continued: continuesLine(window.text, localStart, windowContinued),
+      continuedTranslated: translatedLineAt(window.text, localStart, window.locator.contextBefore),
     });
     cursor = page.endOffset;
   }

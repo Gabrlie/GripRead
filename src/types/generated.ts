@@ -179,6 +179,7 @@ export type { EngineKind } from "./generated/EngineKind";
 export type { TranslationEngine } from "./generated/TranslationEngine";
 export type { TranslationDisplay } from "./generated/TranslationDisplay";
 export type { TranslationSettings } from "./generated/TranslationSettings";
+export type { TranslationStyle } from "./generated/TranslationStyle";
 export type { BookTranslation } from "./generated/BookTranslation";
 export type { BookTranslationRequest } from "./generated/BookTranslationRequest";
 export type { BookLanguageRequest } from "./generated/BookLanguageRequest";

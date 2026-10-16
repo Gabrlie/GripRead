@@ -175,6 +175,7 @@ impl Storage {
         Ok(Some(crate::transform::TranslationSpec {
             snapshot,
             bilingual: settings.display == crate::models::TranslationDisplay::Bilingual,
+            marked: true,
         }))
     }
 

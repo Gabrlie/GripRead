@@ -139,6 +139,10 @@ fn split_marks(line: &str) -> (&str, &str) {
     line.split_at(end)
 }
 
+/// Leads a line that is a translation, so the reader can style it (U+100000,
+/// a mark like the image and directory marks, hidden when shown).
+pub const TRANSLATED_MARK: &str = "\u{100000}";
+
 fn is_mark(ch: char) -> bool {
     matches!(ch, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{10FFFD}')
 }
@@ -668,11 +672,13 @@ pub fn compose(
         match (&translated[index], display) {
             (Some(text), TranslationDisplay::Translated) => {
                 out.push_str(split_marks(line).0);
+                out.push_str(TRANSLATED_MARK);
                 out.push_str(text);
             }
             (Some(text), TranslationDisplay::Bilingual) => {
                 out.push_str(line);
                 out.push('\n');
+                out.push_str(TRANSLATED_MARK);
                 out.push_str(text);
             }
             (None, _) => out.push_str(line),
@@ -786,16 +792,18 @@ pub fn translate_from(
     snapshot: &std::collections::HashMap<String, String>,
     line: &str,
     bilingual: bool,
+    marked: bool,
 ) -> Option<String> {
     if !translatable(line) {
         return None;
     }
     let (marks, text) = split_marks(line);
     let translated = snapshot.get(&line_hash(text))?;
+    let mark = if marked { TRANSLATED_MARK } else { "" };
     Some(if bilingual {
-        format!("{line}\n{translated}")
+        format!("{line}\n{mark}{translated}")
     } else {
-        format!("{marks}{translated}")
+        format!("{marks}{mark}{translated}")
     })
 }
 
@@ -1173,11 +1181,11 @@ mod tests {
         ];
         assert_eq!(
             compose(&lines, &translated, TranslationDisplay::Translated),
-            "\u{F0001}第一章\n\n他来了。"
+            "\u{F0001}\u{100000}第一章\n\n\u{100000}他来了。"
         );
         assert_eq!(
             compose(&lines, &translated, TranslationDisplay::Bilingual),
-            "\u{F0001}Chapter One\n第一章\n\nHe came.\n他来了。"
+            "\u{F0001}Chapter One\n\u{100000}第一章\n\nHe came.\n\u{100000}他来了。"
         );
     }
 
@@ -1360,7 +1368,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             storage.read_content_window(&id, None, 200).unwrap().text,
-            "[Chapter One]\n[The night was quiet.]\n\n[Later the door opened.]"
+            "\u{100000}[Chapter One]\n\u{100000}[The night was quiet.]\n\n\u{100000}[Later the door opened.]"
         );
         drop(storage);
         fs::remove_dir_all(&root).unwrap();

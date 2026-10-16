@@ -5,6 +5,15 @@ export function selectionActive(): boolean {
   return Boolean(window.getSelection()?.toString());
 }
 
+/** A translation hidden by 译文样式 模糊, which a tap shows (styles.css). */
+const BLURRED =
+  '[data-translation-style="blur"] .reader-paragraph[data-translated]:not([data-revealed])';
+
+export function blurredTarget(target: EventTarget | null): HTMLElement | null {
+  const found = target instanceof Element ? target.closest(BLURRED) : null;
+  return found instanceof HTMLElement ? found : null;
+}
+
 export function interactiveTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
@@ -62,6 +71,8 @@ export function ReaderSurface({
   const handlers = useRef(gestures);
   handlers.current = gestures;
   const tracker = useRef<PageGestureTracker | null>(null);
+  /** A blurred translation under the finger: a tap on it shows it, not a turn. */
+  const reveal = useRef<HTMLElement | null>(null);
   tracker.current ??= new PageGestureTracker({
     tap: (...args) => handlers.current.tap(...args),
     dragStart: (...args) => handlers.current.dragStart(...args),
@@ -99,6 +110,7 @@ export function ReaderSurface({
         onInteract();
         if (!event.isPrimary || !acceptsGestures() || interactiveTarget(event.target)) return;
         if (event.pointerType === "mouse" && event.button !== 0) return;
+        reveal.current = blurredTarget(event.target);
         // Keep receiving moves even when the finger leaves the text node.
         event.currentTarget.setPointerCapture?.(event.pointerId);
         tracker.current?.down(local(event));
@@ -112,6 +124,13 @@ export function ReaderSurface({
       }}
       onPointerUp={(event) => {
         if (!event.isPrimary) return;
+        const blurred = reveal.current;
+        reveal.current = null;
+        if (blurred && !tracker.current?.dragging) {
+          blurred.dataset.revealed = "true";
+          tracker.current?.cancel();
+          return;
+        }
         const rect = event.currentTarget.getBoundingClientRect();
         tracker.current?.up(local(event), rect.width, rect.height, selectionActive());
       }}

@@ -27,6 +27,10 @@ pub(crate) struct TransformRule {
 pub(crate) struct TranslationSpec {
     pub(crate) snapshot: String,
     pub(crate) bilingual: bool,
+    /// Translated lines carry [`crate::translation::TRANSLATED_MARK`]; specs
+    /// stored before the mark existed read without it, as they were made.
+    #[serde(default)]
+    pub(crate) marked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -169,6 +173,10 @@ pub(crate) fn apply(text: &str, transform: &TextTransform) -> (String, OffsetMap
         .translation
         .as_ref()
         .is_some_and(|spec| spec.bilingual);
+    let marked = transform
+        .translation
+        .as_ref()
+        .is_some_and(|spec| spec.marked);
     let compiled: Vec<CompiledRule<'_>> = transform
         .rules
         .iter()
@@ -199,10 +207,9 @@ pub(crate) fn apply(text: &str, transform: &TextTransform) -> (String, OffsetMap
                 current = std::borrow::Cow::Owned(next);
             }
         }
-        if let Some(translated) = snapshot
-            .as_ref()
-            .and_then(|snapshot| crate::translation::translate_from(snapshot, &current, bilingual))
-        {
+        if let Some(translated) = snapshot.as_ref().and_then(|snapshot| {
+            crate::translation::translate_from(snapshot, &current, bilingual, marked)
+        }) {
             current = std::borrow::Cow::Owned(translated);
         }
         let source_units = units(line);

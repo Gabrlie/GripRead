@@ -3,12 +3,20 @@ import { useRuntime } from "../../application/runtime";
 import {
   LANGUAGES,
   PRESETS,
+  TRANSLATION_STYLES,
   engineFrom,
   languageName,
   presetName,
+  translationDeclarations,
+  translationStyleSheet,
 } from "../../application/translation";
 import { t } from "../../i18n";
-import type { EngineKind, TranslationEngine, TranslationSettings } from "../../types/generated";
+import type {
+  EngineKind,
+  TranslationEngine,
+  TranslationSettings,
+  TranslationStyle,
+} from "../../types/generated";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
@@ -46,6 +54,7 @@ export function TranslationSettingsPage({
   const service = useRuntime().services.translation;
   const [settings, setSettings] = useState<TranslationSettings | null>(null);
   const [editing, setEditing] = useState<TranslationEngine | null>(null);
+  const [editingStyle, setEditingStyle] = useState(false);
 
   useEffect(() => {
     void service
@@ -187,6 +196,33 @@ export function TranslationSettingsPage({
           </div>
         </div>
         <div className="px-4 py-3 space-y-2 text-sm">
+          <span>{t("translation.style")}</span>
+          <div
+            role="radiogroup"
+            aria-label={t("translation.style")}
+            className="grid grid-cols-3 gap-1 bg-surface-container p-1 rounded-lg"
+          >
+            {TRANSLATION_STYLES.map((style) => (
+              <button
+                key={style}
+                type="button"
+                role="radio"
+                aria-checked={settings.style === style}
+                onClick={() => save({ ...settings, style })}
+                className={`h-8 rounded-md text-xs ${settings.style === style ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
+              >
+                {t(`translation.style.${style}`)}
+              </button>
+            ))}
+          </div>
+          <TranslationPreview style={settings.style} css={settings.customCss} />
+          {settings.style === "custom" && (
+            <Button size="sm" variant="outline" onClick={() => setEditingStyle(true)}>
+              {t("translation.style.edit")}
+            </Button>
+          )}
+        </div>
+        <div className="px-4 py-3 space-y-2 text-sm">
           <span>
             {t("translation.ahead")}
             <span className="block text-[11px] text-secondary">{t("translation.ahead.note")}</span>
@@ -223,6 +259,16 @@ export function TranslationSettingsPage({
         </label>
       </PageSection>
 
+      {editingStyle && (
+        <StyleEditor
+          css={settings.customCss}
+          onSave={(customCss) => {
+            save({ ...settings, customCss });
+            setEditingStyle(false);
+          }}
+          onClose={() => setEditingStyle(false)}
+        />
+      )}
       {editing && (
         <EngineDialog
           engine={editing}
@@ -360,6 +406,87 @@ function EngineDialog({
             {t("common.cancel")}
           </Button>
           <Button size="sm" disabled={!draft.name.trim()} onClick={() => onSave(draft)}>
+            {t("common.save")}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Sample bilingual paragraphs in a 译文样式, styled as the reader styles
+ * them (styles.css, and a custom style's sheet scoped to the preview).
+ */
+function TranslationPreview({ style, css }: { style: TranslationStyle; css: string }) {
+  const sheet = style === "custom" ? translationStyleSheet(css, ".translation-preview") : "";
+  return (
+    <div
+      className="translation-preview rounded-lg bg-surface-container-low px-3 py-2"
+      data-translation-style={style}
+      aria-label={t("translation.style.preview")}
+    >
+      {sheet && <style>{sheet}</style>}
+      <div
+        className="reader-prose text-sm leading-relaxed space-y-1"
+        onClick={(event) => {
+          const paragraph = (event.target as Element).closest?.("[data-translated]");
+          if (paragraph instanceof HTMLElement) paragraph.dataset.revealed = "true";
+        }}
+      >
+        <p className="reader-paragraph">{t("translation.style.sampleOriginal")}</p>
+        <p className="reader-paragraph" data-translated="true">
+          {t("translation.style.sampleTranslated")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** 自定义译文样式: CSS declarations for translated paragraphs, previewed live. */
+function StyleEditor({
+  css,
+  onSave,
+  onClose,
+}: {
+  css: string;
+  onSave: (css: string) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(css);
+  const kept = translationDeclarations(draft);
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] overflow-y-auto p-5 gap-3">
+        <DialogHeader>
+          <DialogTitle className="font-title-editorial text-base">
+            {t("translation.style.edit")}
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-[11px] text-secondary">{t("translation.style.cssNote")}</p>
+        <textarea
+          aria-label={t("translation.style.css")}
+          rows={6}
+          value={draft}
+          placeholder={
+            "color: #8a6d3b;\nfont-size: 0.9em;\nborder-bottom: 1px dashed currentColor;"
+          }
+          autoCapitalize="none"
+          spellCheck={false}
+          onChange={(event) => setDraft(event.target.value)}
+          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"
+        />
+        <TranslationPreview style="custom" css={draft} />
+        {draft.trim() && !kept && (
+          <p role="alert" className="text-xs text-error">
+            {t("translation.style.cssEmpty")}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button size="sm" onClick={() => onSave(draft)}>
             {t("common.save")}
           </Button>
         </div>

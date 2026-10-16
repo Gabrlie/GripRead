@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { ContentWindow } from "../../types/generated";
 import type { HeadingIndex, ReaderController } from "../../reader";
-import { renderReaderText, continuesLine } from "../../reader";
+import { renderReaderText, continuesLine, translatedLineAt } from "../../reader";
 import { rectAtOffset, visibleOffsets } from "../../reader/scroll-layout";
 import { selectionActive } from "./ReaderSurface";
 
@@ -157,6 +157,7 @@ export function ReaderScrollText({
         0,
         content.startOffset > 0 && !content.locator.contextBefore.endsWith("\n"),
       ),
+      continuedTranslated: translatedLineAt(content.text, 0, content.locator.contextBefore),
       highlight: highlight
         ? { start: highlight.start - content.startOffset, end: highlight.end - content.startOffset }
         : null,

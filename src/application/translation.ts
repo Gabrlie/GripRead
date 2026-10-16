@@ -1,5 +1,5 @@
 import { t, type MessageKey } from "../i18n";
-import type { EngineKind, TranslationEngine } from "../types/generated";
+import type { EngineKind, TranslationEngine, TranslationStyle } from "../types/generated";
 
 /** The languages books are detected in and translated into (`translation.rs`). */
 export const LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru"] as const;
@@ -101,4 +101,35 @@ export function engineFrom(preset: (typeof PRESETS)[number]): TranslationEngine 
 /** Whether a book in `language` reads as written in `target`. */
 export function sameLanguage(language: string | null | undefined, target: string): boolean {
   return Boolean(language) && language!.toLowerCase() === target.toLowerCase();
+}
+
+/** 译文样式 presets, as shown in 设置 › 翻译. */
+export const TRANSLATION_STYLES: TranslationStyle[] = [
+  "plain",
+  "dim",
+  "quote",
+  "italic",
+  "blur",
+  "custom",
+];
+
+/**
+ * A custom 译文样式 as CSS declarations only: comments, selectors, blocks,
+ * at-rules, and markup are dropped, so the style reaches nothing but the
+ * translated paragraphs it is applied to.
+ */
+export function translationDeclarations(css: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(/[;\n]/)
+    .map((part) => part.trim())
+    .filter((part) => /^-{0,2}[a-zA-Z][\w-]*\s*:[^{}<>@\\]+$/.test(part))
+    .join("; ");
+}
+
+/** The style sheet a custom 译文样式 adds to the reader (and its preview). */
+export function translationStyleSheet(css: string, scope = ".reader-screen"): string {
+  const declarations = translationDeclarations(css);
+  if (!declarations) return "";
+  return `${scope}[data-translation-style="custom"] .reader-prose > .reader-paragraph[data-translated] { ${declarations}; }`;
 }

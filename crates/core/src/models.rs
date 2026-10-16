@@ -2382,6 +2382,27 @@ pub struct TranslationSettings {
     pub auto_translate: bool,
     /// Chapters of online books translated ahead of the one being read.
     pub ahead: u32,
+    /// How translated paragraphs look (译文样式).
+    pub style: TranslationStyle,
+    /// CSS declarations for translated paragraphs when `style` is `custom`.
+    pub custom_css: String,
+}
+
+/// 译文样式: the look of translated paragraphs in the reader.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TranslationStyle {
+    #[default]
+    Plain,
+    /// Secondary colour, a little smaller.
+    Dim,
+    /// A rule at the left, indented.
+    Quote,
+    Italic,
+    /// Blurred until tapped.
+    Blur,
+    /// `custom_css`.
+    Custom,
 }
 
 impl Default for TranslationSettings {
@@ -2393,6 +2414,8 @@ impl Default for TranslationSettings {
             display: TranslationDisplay::Translated,
             auto_translate: false,
             ahead: 2,
+            style: TranslationStyle::Plain,
+            custom_css: String::new(),
         }
     }
 }

@@ -27,6 +27,7 @@ export function ReaderPageText({ page, bookId, highlight, headings, layout }: Re
     if (!content.current) return;
     renderReaderText(content.current, page.text, {
       continued: page.continued,
+      continuedTranslated: page.continuedTranslated,
       headings: headings.local(page.startOffset, page.endOffset),
       highlight:
         highlightStart === null || highlightEnd === null

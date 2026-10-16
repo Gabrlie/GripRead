@@ -21,6 +21,8 @@ export function memoryTranslation(): TranslationService {
     display: "translated",
     autoTranslate: false,
     ahead: 2,
+    style: "plain",
+    customCss: "",
   };
   const books = new Map<string, BookTranslation>();
   const book = (bookId: string) =>

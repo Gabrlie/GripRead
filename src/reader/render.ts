@@ -7,7 +7,7 @@
  * feeds remain in the DOM as hidden text so `textContent` still equals the
  * page's UTF-16 slice while layout is controlled by paragraph boxes.
  */
-import { LEADING, MARKS, imageOfLine, readerImages } from "./images";
+import { LEADING, MARKS, TRANSLATED_MARK, imageOfLine, readerImages } from "./images";
 
 export interface RenderTextOptions {
   /** The first character continues a line that began on an earlier page. */
@@ -16,6 +16,8 @@ export interface RenderTextOptions {
   highlight?: { start: number; end: number } | null;
   /** Local offsets of lines that are recognized chapter headings. */
   headings?: ReadonlySet<number>;
+  /** The continued first line is a translation (its mark is on an earlier page). */
+  continuedTranslated?: boolean;
 }
 
 export const READER_PARAGRAPH_CLASS = "reader-paragraph";
@@ -43,6 +45,9 @@ export function renderReaderText(
       paragraph.dataset.textStart = String(lineStart);
       if (continued) paragraph.dataset.continued = "true";
       if (!continued && options.headings?.has(lineStart)) paragraph.dataset.heading = "true";
+      const lead = continued ? "" : (LEADING.exec(text.slice(lineStart, lineEnd))?.[0] ?? "");
+      if (continued ? options.continuedTranslated : lead.includes(TRANSLATED_MARK))
+        paragraph.dataset.translated = "true";
       // Like Legado, a paragraph's own leading spaces give way to the
       // configured indent. They stay in the DOM, hidden, so offsets hold.
       let bodyStart = lineStart;
@@ -211,6 +216,18 @@ export function spreadFill(left: number, thresholds: readonly number[]): number 
 }
 
 /** Whether the character at `offset` in `text` continues a line started earlier. */
+/**
+ * Whether the line holding `offset` of `text` is a translation: its leading
+ * marks include the translation mark. `before` is text ahead of `text`
+ * (a window's context), for a line that began before it.
+ */
+export function translatedLineAt(text: string, offset: number, before = ""): boolean {
+  const head = before + text.slice(0, offset);
+  const start = head.lastIndexOf("\n") + 1;
+  const lead = LEADING.exec(head.slice(start) + text.slice(offset, offset + 8))?.[0] ?? "";
+  return lead.includes(TRANSLATED_MARK);
+}
+
 export function continuesLine(text: string, offset: number, windowContinued: boolean): boolean {
   if (offset <= 0) return windowContinued;
   return text.charCodeAt(offset - 1) !== 0x0a;

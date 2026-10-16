@@ -1,5 +1,10 @@
 import type { ContentWindow, WindowDirection } from "../types/generated";
-import { continuesLine, renderReaderText, READER_PARAGRAPH_CLASS } from "./render";
+import {
+  continuesLine,
+  renderReaderText,
+  READER_PARAGRAPH_CLASS,
+  translatedLineAt,
+} from "./render";
 import { NO_HEADINGS, type HeadingIndex } from "./headings";
 
 /** A page of already normalized content measured in UTF-16 code units. */
@@ -170,6 +175,7 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     text: string,
     direction: WindowDirection = "forward",
     continuedAt: (localStart: number) => boolean = () => false,
+    translatedAt: (localStart: number) => boolean = () => false,
   ): number {
     this.assertUsable();
     const boundaries = utf16Boundaries(text);
@@ -180,7 +186,12 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     // on a page. Measuring a prefix/suffix inside the full window gives the
     // candidate a different line wrap and mishandles trailing line breaks.
     const fits = (candidate: string, localStart: number): boolean =>
-      this.fitsText(candidate, continuedAt(localStart), this.origin + localStart);
+      this.fitsText(
+        candidate,
+        continuedAt(localStart),
+        this.origin + localStart,
+        translatedAt(localStart),
+      );
 
     if (direction === "backward") {
       let low = 1;
@@ -234,8 +245,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
       while (right > 0) {
         const remaining = text.slice(0, boundaries[right]);
         this.origin = contentWindow.startOffset;
-        const units = this.fit(remaining, "backward", (local) =>
-          continuesLine(text, local, windowContinued),
+        const units = this.fit(
+          remaining,
+          "backward",
+          (local) => continuesLine(text, local, windowContinued),
+          (local) => translatedLineAt(text, local, contentWindow.locator.contextBefore),
         );
         const target = boundaries[right] - units;
         const left = greatestBoundaryAtOrBefore(boundaries, target);
@@ -259,8 +273,11 @@ export class DomReaderMeasurer implements ReaderMeasurer {
       const remaining = text.slice(boundaries[left]);
       const pageStart = boundaries[left];
       this.origin = contentWindow.startOffset + pageStart;
-      const units = this.fit(remaining, "forward", () =>
-        continuesLine(text, pageStart, windowContinued),
+      const units = this.fit(
+        remaining,
+        "forward",
+        () => continuesLine(text, pageStart, windowContinued),
+        () => translatedLineAt(text, pageStart, contentWindow.locator.contextBefore),
       );
       const target = boundaries[left] + units;
       const right = greatestBoundaryAtOrBefore(boundaries, target);
@@ -316,9 +333,15 @@ export class DomReaderMeasurer implements ReaderMeasurer {
     };
   }
 
-  private fitsText(text: string, continued: boolean, start: number): boolean {
+  private fitsText(
+    text: string,
+    continued: boolean,
+    start: number,
+    continuedTranslated = false,
+  ): boolean {
     renderReaderText(this.element, text, {
       continued,
+      continuedTranslated,
       headings: this.headings.local(start, start + text.length),
     });
     const layout = this.layoutRect();

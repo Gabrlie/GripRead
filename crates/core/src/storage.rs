@@ -9232,14 +9232,17 @@ mod tests {
         assert!(storage.text_transform_pending(&id).unwrap());
         storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
         let window = storage.read_content_window(&id, None, 200).unwrap();
-        assert_eq!(window.text, "第一章\n夜很静。\n后来门开了。");
+        assert_eq!(
+            window.text,
+            "\u{100000}第一章\n\u{100000}夜很静。\n\u{100000}后来门开了。"
+        );
         let saved = storage.saved_position(&id).unwrap().unwrap();
         assert!(window
             .text
             .encode_utf16()
             .skip(saved.offset as usize)
-            .take(2)
-            .eq("后来".encode_utf16()));
+            .take(4)
+            .eq("\u{100000}后来".encode_utf16()));
         // The snapshot reproduces the text: importing the file again finds it.
         assert_eq!(import(&mut storage, &source, "again").book.id, id);
         // 双语对照 keeps each line and adds its translation.
@@ -9250,7 +9253,7 @@ mod tests {
         storage.set_txt_encoding(&id, TxtEncoding::Auto).unwrap();
         assert_eq!(
             storage.read_content_window(&id, None, 200).unwrap().text,
-            "Chapter One\n第一章\nThe night was quiet.\n夜很静。\nLater the door opened.\n后来门开了。"
+            "Chapter One\n\u{100000}第一章\nThe night was quiet.\n\u{100000}夜很静。\nLater the door opened.\n\u{100000}后来门开了。"
         );
         // Turning translation off gives the original back.
         storage.set_book_translate_to(&id, None).unwrap();

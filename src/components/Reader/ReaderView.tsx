@@ -81,6 +81,7 @@ import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
 import { t } from "../../i18n";
 import { ConversionDialog } from "./dialogs/ConversionDialog";
 import { TranslationDialog } from "./dialogs/TranslationDialog";
+import { translationStyleSheet } from "../../application/translation";
 import { TranslationSettingsPage } from "../Settings/TranslationSettingsPage";
 import { CloudProgressDialog } from "./dialogs/CloudProgressDialog";
 import { BookDetailPage } from "../Bookshelf/BookDetailPage";
@@ -89,7 +90,7 @@ import { rememberChaptersWhenRead } from "../../application/shelf";
 import { appLog } from "../../services/log";
 import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
-import type { ContentWindow } from "../../types/generated";
+import type { ContentWindow, TranslationStyle } from "../../types/generated";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 
@@ -884,6 +885,24 @@ export function ReaderView() {
   // A translated local book: each new snapshot of its translations is
   // applied like a changed rule, and the job resumes when the book opens.
   const localBook = Boolean(bookId) && !activeBook?.online;
+  // 译文样式 from 设置 › 翻译, read when the book opens and when 翻译 closes.
+  const [translationLook, setTranslationLook] = useState<{
+    style: TranslationStyle;
+    css: string;
+  }>({ style: "plain", css: "" });
+  const translationDialogOpen = dialog === "translation" || dialog === "translationSettings";
+  useEffect(() => {
+    if (translationDialogOpen) return;
+    let active = true;
+    void runtime.services.translation.getSettings().then(
+      (settings) =>
+        active && setTranslationLook({ style: settings.style, css: settings.customCss }),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [bookId, runtime, translationDialogOpen]);
   // An online chapter being translated as it opens: 正在翻译 replaces 正在读取正文.
   const [chapterTranslation, setChapterTranslation] = useState<{
     done: number;
@@ -1070,7 +1089,7 @@ export function ReaderView() {
     document.addEventListener("selectionchange", pauseForSelection);
     return () => document.removeEventListener("selectionchange", pauseForSelection);
   }, [automaticTurn.running, pauseAutomatic]);
-  const layoutSignature = `${appearance.signature}|${headings.signature()}`;
+  const layoutSignature = `${appearance.signature}|${headings.signature()}|${translationLook.style}:${translationLook.css}`;
   const pauseForLayout = useCallback(() => void pauseAutomatic(), [pauseAutomatic]);
   useReaderLayout(
     controller,
@@ -1259,6 +1278,7 @@ export function ReaderView() {
       style={appearance.root}
       data-title-mode={style?.titleMode ?? "left"}
       data-reader-effect={reducedMotion ? "instant" : preferences?.pageTurnEffect}
+      data-translation-style={translationLook.style}
       data-reader-mode={state.mode}
       data-reader-position={page?.startOffset}
       data-reader-loading={state.loading ? "true" : "false"}
@@ -1401,6 +1421,9 @@ export function ReaderView() {
           <p className="text-sm text-secondary">{t("reader.noText")}</p>
         )}
       </ReaderSurface>
+      {translationLook.style === "custom" && (
+        <style>{translationStyleSheet(translationLook.css)}</style>
+      )}
       <div
         ref={measureBox}
         className="reader-measure reader-prose"

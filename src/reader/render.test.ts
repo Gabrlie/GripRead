@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bookImages, setReaderImages, withoutMarks } from "./images";
 import { windowParagraphs } from "./read-aloud";
-import { continuesLine, renderReaderText, spreadFill } from "./render";
+import { continuesLine, renderReaderText, spreadFill, translatedLineAt } from "./render";
 
 function render(text: string, continued = false, highlight?: { start: number; end: number }) {
   const container = document.createElement("div");
@@ -196,5 +196,33 @@ describe("bottom alignment", () => {
     // Past the threshold all three share: 2f - 0 + (f - 3) = 21 → f = 8.
     expect(spreadFill(21, [3, 0, 0])).toBe(8);
     expect(spreadFill(5, [2])).toBe(7);
+  });
+});
+
+describe("translated lines", () => {
+  const mark = String.fromCodePoint(0x100000);
+  const text = `The night was quiet.\n${mark}夜很静。\n${mark}后来门开了。`;
+
+  it("marks translated paragraphs and hides the mark", () => {
+    const container = render(text);
+    expect(container.textContent).toBe(text);
+    const [original, first, second] = Array.from(container.querySelectorAll("p"));
+    expect(original.dataset.translated).toBeUndefined();
+    expect(first.dataset.translated).toBe("true");
+    expect(second.dataset.translated).toBe("true");
+    // The mark is hidden, not shown as a glyph.
+    expect(first.querySelector("span[hidden]")?.textContent).toBe(mark);
+    expect(withoutMarks(text)).not.toContain(mark);
+  });
+
+  it("knows a page continuing a translated line", () => {
+    const middle = text.indexOf("门");
+    expect(translatedLineAt(text, middle)).toBe(true);
+    expect(translatedLineAt(text, 3)).toBe(false);
+    // The line began before the window: its context says so.
+    expect(translatedLineAt("门开了。", 0, `夜很静。\n${mark}后来`)).toBe(true);
+    const container = document.createElement("div");
+    renderReaderText(container, "门开了。", { continued: true, continuedTranslated: true });
+    expect(container.querySelector("p")?.dataset.translated).toBe("true");
   });
 });

@@ -288,12 +288,21 @@ pub(crate) fn init_for_test(root: &Path) {
     init(root);
 }
 
+/// The log is one per process: tests that point it elsewhere (opening an
+/// `AppState`) or count its entries hold this so they do not interleave.
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn secrets_are_redacted_and_detail_needs_the_switch() {
+        let _log = test_lock();
         assert_eq!(
             redact(r#"请求失败 {"Cookie":"a=1; b=2","User-Agent":"x"} password=hunter2&u=1"#),
             r#"请求失败 {"Cookie":***,"User-Agent":"x"} password=***&u=1"#
