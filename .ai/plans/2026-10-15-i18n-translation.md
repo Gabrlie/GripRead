@@ -62,6 +62,11 @@ Commands and results are recorded here per batch.
 - The job translated a TXT end to end against the stub engine and its snapshot was applied by a re-decode.
 - Not yet run: a device test with a real engine.
 
+**Test round 1 (`v0.2.2-beta.1` feedback, 20 items and the source relay):**
+- Batches: source logins and readable script errors; Discover, shelf, replace-rule import, and 同步内容; update reuse and the version rule; DeepLX, placeholders, chapter progress, and whole online windows; translation styles; title and intro translation; interface styles; the source relay ([decision](../notes/implemented/2026-10-16-source-relay.md)).
+- `pnpm check` passed after each batch, last with 258 frontend, 242 core, and 13 server tests; Android clippy and the Kotlin compile passed.
+- Not yet run: a device test of the round, including web logins, the source relay against a deployed server, and real engines.
+
 ## Handoff
 
 Pending.
