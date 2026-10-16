@@ -703,6 +703,45 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub auto_update_shelf: Option<bool>,
+    /// 界面样式 the reader made (设置 › 外观 › 更多外观设置).
+    #[serde(default)]
+    pub custom_styles: Vec<InterfaceStyle>,
+    /// The custom style in use, by id; absent uses `paper_tone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub custom_style: Option<String>,
+    /// The 界面样式 shown in 外观, at most four: paper tone ids
+    /// (`warm-tea`, …) or custom style ids. Empty shows the four tones.
+    #[serde(default)]
+    pub pinned_styles: Vec<String>,
+}
+
+/// A 界面样式 made from a main colour; the others, when empty, are derived
+/// from it for day and night (src/application/theme-colors.ts).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InterfaceStyle {
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb`, as are the others.
+    pub primary: String,
+    /// The page (surface) colour.
+    #[serde(default)]
+    pub paper: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Secondary text and controls.
+    #[serde(default)]
+    pub secondary: Option<String>,
+}
+
+/// Custom 界面样式 kept at once.
+pub const CUSTOM_STYLES_MAX: usize = 24;
+
+fn hex_colour(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..].chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 /// A reading colour scheme with day and night variants (Legado ReadBookConfig).
@@ -1100,6 +1139,9 @@ impl Default for ReaderPreferences {
             serial_days: None,
             clear_cache_on_exit: None,
             auto_update_shelf: None,
+            custom_styles: Vec::new(),
+            custom_style: None,
+            pinned_styles: Vec::new(),
         }
     }
 }
@@ -1128,6 +1170,25 @@ impl ReaderPreferences {
             return Err(AppError::invalid_argument(
                 "auto_scroll_speed must be between 5 and 200 CSS pixels per second",
             ));
+        }
+        if self.custom_styles.len() > CUSTOM_STYLES_MAX || self.pinned_styles.len() > 4 {
+            return Err(AppError::invalid_argument(
+                "too many custom or pinned interface styles",
+            ));
+        }
+        for style in &self.custom_styles {
+            let colours = [&style.paper, &style.text, &style.secondary];
+            if style.id.is_empty()
+                || style.name.chars().count() > 40
+                || !hex_colour(&style.primary)
+                || colours
+                    .iter()
+                    .any(|colour| colour.as_deref().is_some_and(|colour| !hex_colour(colour)))
+            {
+                return Err(AppError::invalid_argument(
+                    "an interface style needs an id, a short name, and #rrggbb colours",
+                ));
+            }
         }
         self.style.validate()
     }

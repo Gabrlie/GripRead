@@ -113,6 +113,7 @@ export type { ReaderFont } from "./generated/ReaderFont";
 export type { PageTurnEffect } from "./generated/PageTurnEffect";
 export type { ReaderMode } from "./generated/ReaderMode";
 export type { ReaderPreferences } from "./generated/ReaderPreferences";
+export type { InterfaceStyle } from "./generated/InterfaceStyle";
 export type { SaveSettingsRequest } from "./generated/SaveSettingsRequest";
 export type { UpdateBookRequest } from "./generated/UpdateBookRequest";
 export type { ShelfLayout } from "./generated/ShelfLayout";

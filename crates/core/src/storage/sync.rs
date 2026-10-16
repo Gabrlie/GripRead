@@ -130,7 +130,14 @@ fn bare_book(source_sha256: &str) -> PortableBook {
     }
 }
 
-const THEME_FIELDS: [&str; 3] = ["theme", "paperTone", "oledBlack"];
+const THEME_FIELDS: [&str; 6] = [
+    "theme",
+    "paperTone",
+    "oledBlack",
+    "customStyles",
+    "customStyle",
+    "pinnedStyles",
+];
 
 /// The `prefs:reading`, `prefs:theme`, and `prefs:shelf` records.
 fn preference_records(

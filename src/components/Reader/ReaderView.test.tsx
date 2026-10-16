@@ -231,6 +231,8 @@ function runtime() {
         autoPageSeconds: 8,
         readingMode: "single" as const,
         autoScrollSpeed: 40,
+        customStyles: [],
+        pinnedStyles: [],
         style: DEFAULT_READING_STYLE,
       })),
       saveSettings: vi.fn(async (value) => value),

@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "../Layout/Header";
 import { PageLink, PageSection } from "../Layout/FullPage";
 import { Icon } from "../ui/Icon";
@@ -29,17 +29,12 @@ import { NetworkSettingsPage } from "./NetworkSettingsPage";
 import { ServerAccountPage } from "./ServerAccountPage";
 import { ServerSyncPage } from "./ServerSyncPage";
 import { TranslationSettingsPage } from "./TranslationSettingsPage";
+import { AppearancePage } from "./AppearancePage";
+import { StyleSwatch, choose, chosenStyle, pinnedChoices } from "./interface-styles";
 import { native } from "../../services/transport";
-import {
-  languageChoice,
-  setLanguage,
-  useT,
-  type LanguageChoice,
-  type MessageKey,
-} from "../../i18n";
+import { useT, type MessageKey } from "../../i18n";
 
 type ThemeMode = ReaderPreferences["theme"];
-type PaperTone = ReaderPreferences["paperTone"];
 const SERIAL_DAYS = [0, 7, 30, 90, 180];
 
 type Page =
@@ -55,61 +50,14 @@ type Page =
   | "network"
   | "account"
   | "server"
-  | "translation";
+  | "translation"
+  | "appearance";
 
 const THEMES: [ThemeMode, MessageKey][] = [
   ["system", "common.followSystem"],
   ["light", "settings.theme.light"],
   ["dark", "settings.theme.dark"],
 ];
-
-const LANGUAGES: [LanguageChoice, string][] = [
-  ["system", ""],
-  ["zh-CN", "简体中文"],
-  ["en", "English"],
-];
-
-/** The app's paper tones: page, swatch, and accent colours, light then dark. */
-const TONES: {
-  id: PaperTone;
-  light: [string, string, string];
-  dark: [string, string, string];
-}[] = [
-  {
-    id: "warm-tea",
-    light: ["#fbf8f1", "#eee5d8", "#925429"],
-    dark: ["#25221e", "#342e27", "#d49960"],
-  },
-  {
-    id: "bone-white",
-    light: ["#faf8f5", "#eae6df", "#2a3b4c"],
-    dark: ["#1f2124", "#2f333a", "#96aec6"],
-  },
-  {
-    id: "xuan-paper",
-    light: ["#f4ede1", "#e6d8c2", "#a43d24"],
-    dark: ["#252019", "#383025", "#cc745a"],
-  },
-  {
-    id: "jade-green",
-    light: ["#edf1eb", "#d5e0d3", "#225e41"],
-    dark: ["#1b231d", "#28352c", "#6ab38a"],
-  },
-];
-
-/** CSS variables for a tone's swatch; the `dark:` classes pick the night set. */
-function toneStyle(tone: (typeof TONES)[number]) {
-  const [paper, swatch, accent] = tone.light;
-  const [nightPaper, nightSwatch, nightAccent] = tone.dark;
-  return {
-    "--tone-paper": paper,
-    "--tone-swatch": swatch,
-    "--tone-accent": accent,
-    "--tone-paper-dark": nightPaper,
-    "--tone-swatch-dark": nightSwatch,
-    "--tone-accent-dark": nightAccent,
-  } as CSSProperties;
-}
 
 /**
  * Legado's 我的 page for a local reader: reading statistics, the app's
@@ -121,7 +69,6 @@ export function SettingsView() {
   const t = useT();
   const runtime = useRuntime();
   const { openReader } = useApp();
-  const [language, setLanguageChoice] = useState(languageChoice);
   const { state, store } = useSettings();
   const { state: library } = useLibrary();
   const [page, setPage] = useState<Page | null>(null);
@@ -218,30 +165,6 @@ export function SettingsView() {
         <PageSection title={t("settings.appearance")}>
           <div className="p-4 space-y-4">
             <div className="space-y-2">
-              <span className="text-sm">{t("settings.language")}</span>
-              <div
-                role="radiogroup"
-                aria-label={t("settings.language")}
-                className="grid grid-cols-3 gap-1.5 bg-surface-container p-1 rounded-lg"
-              >
-                {LANGUAGES.map(([choice, label]) => (
-                  <button
-                    key={choice}
-                    type="button"
-                    role="radio"
-                    aria-checked={language === choice}
-                    onClick={() => {
-                      setLanguage(choice);
-                      setLanguageChoice(choice);
-                    }}
-                    className={`h-8 rounded-md text-xs ${language === choice ? "bg-surface text-primary font-semibold shadow-sm" : "text-secondary"}`}
-                  >
-                    {label || t("common.followSystem")}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
               <span className="text-sm">{t("settings.theme")}</span>
               <div
                 role="radiogroup"
@@ -263,31 +186,20 @@ export function SettingsView() {
               </div>
             </div>
             <div className="space-y-2">
-              <span className="text-sm">{t("settings.paperTone")}</span>
+              <span className="text-sm">{t("settings.interfaceStyle")}</span>
               <div
                 role="radiogroup"
-                aria-label={t("settings.paperTone")}
+                aria-label={t("settings.interfaceStyle")}
                 className="grid grid-cols-4 gap-2"
               >
-                {TONES.map((tone) => {
-                  const selected = value.paperTone === tone.id;
-                  return (
-                    <button
-                      key={tone.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => store.set({ paperTone: tone.id })}
-                      style={toneStyle(tone)}
-                      className={`flex flex-col items-center gap-1 rounded-xl p-1.5 border border-black/5 dark:border-white/10 bg-[var(--tone-paper)] dark:bg-[var(--tone-paper-dark)] text-[var(--tone-accent)] dark:text-[var(--tone-accent-dark)] ${selected ? "ring-2 ring-[var(--tone-accent)] dark:ring-[var(--tone-accent-dark)]" : ""}`}
-                    >
-                      <span className="w-full h-7 rounded-lg flex items-center justify-center bg-[var(--tone-swatch)] dark:bg-[var(--tone-swatch-dark)]">
-                        {selected && <Icon name="check" size={15} />}
-                      </span>
-                      <span className="text-[11px]">{t(`settings.tone.${tone.id}`)}</span>
-                    </button>
-                  );
-                })}
+                {pinnedChoices(value).map((choice) => (
+                  <StyleSwatch
+                    key={choice.id}
+                    choice={choice}
+                    selected={chosenStyle(value) === choice.id}
+                    onChoose={() => store.set(choose(choice))}
+                  />
+                ))}
               </div>
             </div>
             <label className="flex items-center justify-between gap-3 text-sm">
@@ -302,6 +214,12 @@ export function SettingsView() {
               />
             </label>
           </div>
+          <PageLink
+            icon="tune"
+            label={t("settings.moreAppearance")}
+            detail={t("settings.moreAppearance.note")}
+            onClick={() => setPage("appearance")}
+          />
         </PageSection>
 
         <PageSection title={t("settings.shelf")}>
@@ -469,6 +387,7 @@ export function SettingsView() {
       {page === "cache" && <DataManagerPage onClose={close} />}
       {page === "network" && <NetworkSettingsPage onClose={close} />}
       {page === "translation" && <TranslationSettingsPage onClose={close} />}
+      {page === "appearance" && <AppearancePage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

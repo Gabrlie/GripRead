@@ -1674,6 +1674,9 @@ pub(super) fn merge_preferences(
     restored.theme = source.theme.clone();
     restored.paper_tone = source.paper_tone.clone();
     restored.oled_black = source.oled_black;
+    restored.custom_styles = source.custom_styles.clone();
+    restored.custom_style = source.custom_style.clone();
+    restored.pinned_styles = source.pinned_styles.clone();
     if reading {
         keep_device_assets(&mut restored, current);
     }

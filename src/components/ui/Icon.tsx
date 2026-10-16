@@ -1,6 +1,7 @@
 import type { SVGProps } from "react";
 import {
   ArrowLeftRight,
+  Pin,
   ExternalLink,
   UserRound,
   HardDrive,
@@ -141,6 +142,7 @@ const icons = {
   expand_more: ChevronDown,
   expand_less: ChevronUp,
   edit: Pencil,
+  push_pin: Pin,
   delete: Trash,
   drag_indicator: GripVertical,
   content_copy: Copy,

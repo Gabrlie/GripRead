@@ -113,6 +113,8 @@ const PREFERENCES: ReaderPreferences = {
   autoPageSeconds: 8,
   readingMode: "single",
   autoScrollSpeed: 40,
+  customStyles: [],
+  pinnedStyles: [],
   style: DEFAULT_READING_STYLE,
 };
 

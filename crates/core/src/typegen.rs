@@ -115,6 +115,7 @@ const IPC_TYPES: &[&str] = &[
     "PageTurnEffect",
     "ReaderMode",
     "ReaderPreferences",
+    "InterfaceStyle",
     "SaveSettingsRequest",
     "UpdateBookRequest",
     "ShelfLayout",
@@ -452,6 +453,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<PageTurnEffect>(&config)?;
     export_all::<ReaderMode>(&config)?;
     export_all::<ReaderPreferences>(&config)?;
+    export_all::<InterfaceStyle>(&config)?;
     export_all::<SaveSettingsRequest>(&config)?;
     export_all::<UpdateBookRequest>(&config)?;
     export_all::<ShelfLayout>(&config)?;

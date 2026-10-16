@@ -101,6 +101,8 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
       autoPageSeconds: 8,
       readingMode: "single",
       autoScrollSpeed: 40,
+      customStyles: [],
+      pinnedStyles: [],
       style: DEFAULT_READING_STYLE,
     })),
     saveSettings: vi.fn(async (value) => value),
