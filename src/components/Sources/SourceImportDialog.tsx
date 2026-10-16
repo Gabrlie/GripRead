@@ -52,15 +52,22 @@ const STATUS_LABEL: Record<SourceImportStatus, string> = {
 export function SourceImportDialog({
   service,
   method,
+  initialUrl,
+  subscribed = false,
   onDone,
   onClose,
 }: {
   service: SourceService;
   method: ImportMethod;
+  /** An address to fetch at once (a 书源订阅's update). */
+  initialUrl?: string;
+  /** The address is a subscription already, so 保存为订阅 is not offered. */
+  subscribed?: boolean;
   onDone: (count: number) => void;
   onClose: () => void;
 }) {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialUrl ?? "");
+  const [subscribe, setSubscribe] = useState(false);
   const [json, setJson] = useState<string | null>(null);
   const [preview, setPreview] = useState<SourceImportPreview | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
@@ -84,6 +91,11 @@ export function SourceImportDialog({
     setBusy(false);
     setError(String(failure));
   };
+
+  // A subscription's update fetches its address at once.
+  useEffect(() => {
+    if (method === "network" && initialUrl) load();
+  }, []);
 
   useEffect(() => {
     if (method !== "file") return;
@@ -128,7 +140,23 @@ export function SourceImportDialog({
         keepGroup,
         keepEnabled,
       })
-      .then((saved) => onDone(saved.length), fail);
+      .then(async (saved) => {
+        if (subscribe && method === "network" && input.trim())
+          await service
+            .saveSubscription({
+              id: "",
+              name: "",
+              url: input.trim(),
+              updatedAt: null,
+              imported: null,
+            })
+            .then((list) => {
+              const added = list.find((item) => item.url === input.trim());
+              return added && service.subscriptionImported(added.id, saved.length);
+            })
+            .catch(() => undefined);
+        onDone(saved.length);
+      }, fail);
   };
 
   const toggle = (url: string) =>
@@ -256,6 +284,9 @@ export function SourceImportDialog({
                   [t("srcImport.keepName"), keepName, setKeepName],
                   [t("srcImport.keepGroup"), keepGroup, setKeepGroup],
                   [t("srcImport.keepEnabled"), keepEnabled, setKeepEnabled],
+                  ...(method === "network" && !subscribed
+                    ? [[t("srcSub.saveAs"), subscribe, setSubscribe]]
+                    : []),
                 ] as [string, boolean, (value: boolean) => void][]
               ).map(([label, value, set]) => (
                 <label key={label} className="flex items-center justify-between">

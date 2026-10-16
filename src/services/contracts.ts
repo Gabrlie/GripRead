@@ -64,6 +64,7 @@ import type {
   SourceLoginForm,
   SourceLoginRequest,
   SourceNotice,
+  SourceSubscription,
   SourceScriptReport,
   DebugSourceRequest,
   SourceDebugEvent,
@@ -289,6 +290,13 @@ export interface SourceService {
   /** Starts a debug run; lines arrive through `onDebug`. */
   debug(request: DebugSourceRequest): Promise<void>;
   onDebug(listener: (event: SourceDebugEvent) => void): Promise<Unsubscribe>;
+  /** 书源订阅, kept on this device. */
+  listSubscriptions(): Promise<SourceSubscription[]>;
+  /** Adds one (empty id) or changes one; answers the list. */
+  saveSubscription(subscription: SourceSubscription): Promise<SourceSubscription[]>;
+  deleteSubscription(id: string): Promise<SourceSubscription[]>;
+  /** Notes that an update imported `count` sources. */
+  subscriptionImported(id: string, count: number): Promise<SourceSubscription[]>;
   /** Notices about sources the reader should hear of (a relay that fell back). */
   onNotice(listener: (event: SourceNotice) => void): Promise<Unsubscribe>;
   /** Starts checking sources; progress arrives through `onCheck`. */

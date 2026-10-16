@@ -33,6 +33,7 @@ import { SourceImportDialog, type ImportMethod } from "./SourceImportDialog";
 import { SourceEditPage } from "./SourceEditPage";
 import { SourceDebugPage } from "./SourceDebugPage";
 import { SourceLoginDialog } from "./SourceLoginDialog";
+import { SourceSubscriptionsPage } from "./SourceSubscriptionsPage";
 import { t } from "../../i18n";
 
 interface CheckProgress {
@@ -85,6 +86,7 @@ export function SourceManagePage({
   const [reverse, setReverse] = useState(false);
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [importing, setImporting] = useState<ImportMethod | null>(null);
+  const [subscriptions, setSubscriptions] = useState(false);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [debugging, setDebugging] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState<string | null>(null);
@@ -265,6 +267,10 @@ export function SourceManagePage({
           <DropdownMenuItem onClick={() => setImporting("paste")}>
             <Icon name="content_paste" size={15} />
             {t("src.importPaste")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setSubscriptions(true)}>
+            <Icon name="link" size={15} />
+            {t("srcSub.title")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!sources.length} onClick={() => setSelected(new Set())}>
             <Icon name="checklist" size={15} />
@@ -590,6 +596,13 @@ export function SourceManagePage({
         </div>
       )}
 
+      {subscriptions && (
+        <SourceSubscriptionsPage
+          service={service}
+          onImported={() => void load()}
+          onClose={() => setSubscriptions(false)}
+        />
+      )}
       {importing && (
         <SourceImportDialog
           service={service}

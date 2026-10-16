@@ -55,6 +55,9 @@ import type {
   SourceLoginForm,
   SourceLoginRequest,
   SourceNotice,
+  SourceSubscription,
+  SubscriptionImportedRequest,
+  SubscriptionRequest,
   SourceScriptReport,
   SourceVariableRequest,
   DebugSourceRequest,
@@ -716,6 +719,17 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("debug_book_source", { request: request satisfies DebugSourceRequest }),
     onDebug: (listener) => listen<SourceDebugEvent>("source-debug", listener),
     onNotice: (listener) => listen<SourceNotice>("source-notice", listener),
+    listSubscriptions: () => invokeCommand<SourceSubscription[]>("list_source_subscriptions"),
+    saveSubscription: (subscription) =>
+      invokeCommand<SourceSubscription[]>("save_source_subscription", { request: subscription }),
+    deleteSubscription: (id) =>
+      invokeCommand<SourceSubscription[]>("delete_source_subscription", {
+        request: { id } satisfies SubscriptionRequest,
+      }),
+    subscriptionImported: (id, count) =>
+      invokeCommand<SourceSubscription[]>("source_subscription_imported", {
+        request: { id, count } satisfies SubscriptionImportedRequest,
+      }),
     check: (request) =>
       invokeCommand<void>("check_book_sources", {
         request: request satisfies CheckSourcesRequest,

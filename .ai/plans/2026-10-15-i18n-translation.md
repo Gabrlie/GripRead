@@ -67,6 +67,11 @@ Commands and results are recorded here per batch.
 - `pnpm check` passed after each batch, last with 258 frontend, 242 core, and 13 server tests; Android clippy and the Kotlin compile passed.
 - Not yet run: a device test of the round, including web logins, the source relay against a deployed server, and real engines.
 
+**Test round 2 (`v0.2.2-beta.2` feedback, 7 items):**
+- 允许更新 reverting was traced in the deployed server's records: online book details that sources sign per request made the phone and the server send the records back and forth, and a record pulled first overwrote the change. Records now compare online books by source and merge field by field against the last synced value; a two-library test reproduces the old failure. Replace rules now reach the server under their ids.
+- Also: shelf order by joining time (schema 24), a notice when the relay goes direct, translated titles and intros in place with 译, the style list, default covers, covers on Wi‑Fi only, the main screen and bottom navigation settings, and 书源订阅.
+- `pnpm check` passed after each batch; Android clippy and the Kotlin compile passed.
+
 ## Handoff
 
 Pending.

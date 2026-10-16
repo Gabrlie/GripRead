@@ -2660,3 +2660,32 @@ pub enum SourceNoticeKind {
     /// 通过服务器访问 failed; the source was reached directly.
     RelayFallback,
 }
+
+/// 书源订阅: a source list's address, updated by hand through 网络导入.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSubscription {
+    /// Empty when adding one.
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    /// When it was last imported from (ms), and how many sources that saved.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub updated_at: Option<i64>,
+    #[serde(default)]
+    pub imported: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionImportedRequest {
+    pub id: String,
+    pub count: u32,
+}

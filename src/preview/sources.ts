@@ -1,5 +1,6 @@
 import type { SourceService } from "../services/contracts";
 import type {
+  SourceSubscription,
   BookSourceSummary,
   OnlineBook,
   OnlineChapter,
@@ -72,6 +73,7 @@ export function createMemorySourceService(
   catalogue: OnlineBook[] = [],
 ): SourceService {
   let sources: Raw[] = initial.map((raw) => ({ ...raw }));
+  let subscriptions: SourceSubscription[] = [];
   const searchListeners = new Set<(event: OnlineSearchEvent) => void>();
   const cancelled = new Set<string>();
   const debugListeners = new Set<(event: SourceDebugEvent) => void>();
@@ -257,6 +259,33 @@ export function createMemorySourceService(
       );
     },
     onNotice: async () => () => undefined,
+    listSubscriptions: async () => subscriptions.map((item) => ({ ...item })),
+    saveSubscription: async (subscription) => {
+      const url = subscription.url.trim();
+      const found = subscriptions.find(
+        (item) => (subscription.id && item.id === subscription.id) || item.url === url,
+      );
+      const name = subscription.name.trim() || new URL(url).host;
+      if (found) Object.assign(found, { name, url });
+      else
+        subscriptions.push({
+          id: subscription.id || `sub-${subscriptions.length + 1}`,
+          name,
+          url,
+          updatedAt: null,
+          imported: null,
+        });
+      return subscriptions.map((item) => ({ ...item }));
+    },
+    deleteSubscription: async (id) => {
+      subscriptions = subscriptions.filter((item) => item.id !== id);
+      return subscriptions.map((item) => ({ ...item }));
+    },
+    subscriptionImported: async (id, count) => {
+      const found = subscriptions.find((item) => item.id === id);
+      if (found) Object.assign(found, { updatedAt: Date.now(), imported: count });
+      return subscriptions.map((item) => ({ ...item }));
+    },
     onDebug: async (listener) => {
       debugListeners.add(listener);
       return () => debugListeners.delete(listener);

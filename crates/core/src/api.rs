@@ -107,6 +107,10 @@ pub fn mutates(name: &str) -> bool {
         "set_book_translation",
         "set_book_language",
         "set_sources_via_server",
+        "list_source_subscriptions",
+        "save_source_subscription",
+        "delete_source_subscription",
+        "source_subscription_imported",
         "translate_book",
         "translate_texts",
         "install_update",
@@ -220,7 +224,11 @@ pub const COMMANDS: &[&str] = &[
     "get_book_translation",
     "set_book_translation",
     "set_book_language",
+    "list_source_subscriptions",
     "set_sources_via_server",
+    "save_source_subscription",
+    "delete_source_subscription",
+    "source_subscription_imported",
     "translate_book",
     "translate_texts",
     "delete_recovery_point",
@@ -319,6 +327,18 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "cancel_import" => reply(crate::commands::cancel_import(state, request(args)?).await),
         "cancel_search" => reply(crate::commands::cancel_search(state, request(args)?).await),
+        "list_source_subscriptions" => {
+            reply(crate::subscriptions::list_source_subscriptions(state).await)
+        }
+        "save_source_subscription" => {
+            reply(crate::subscriptions::save_source_subscription(state, request(args)?).await)
+        }
+        "delete_source_subscription" => {
+            reply(crate::subscriptions::delete_source_subscription(state, request(args)?).await)
+        }
+        "source_subscription_imported" => {
+            reply(crate::subscriptions::source_subscription_imported(state, request(args)?).await)
+        }
         "set_sources_via_server" => {
             reply(crate::source_commands::set_sources_via_server(state, request(args)?).await)
         }

@@ -24,6 +24,7 @@ pub mod relocation;
 pub mod source_commands;
 pub mod sources;
 pub mod storage;
+pub mod subscriptions;
 pub mod sync;
 pub mod sync_client;
 pub mod transform;

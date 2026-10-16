@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sourceServiceMocks } from "../../test/sources";
 import { SourceManagePage } from "./SourceManagePage";
 import { SourceEditPage } from "./SourceEditPage";
@@ -87,6 +87,32 @@ describe("书源管理", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: /通过服务器访问/ }));
     expect(service.setViaServer).toHaveBeenCalledWith(["https://a.com"], true);
     expect(await screen.findByText("服务器")).toBeTruthy();
+  });
+
+  it("keeps a network import as a subscription and updates it through the preview", async () => {
+    const service = sourceServiceMocks(SOURCES);
+    const listed = JSON.stringify([{ bookSourceUrl: "https://c.com", bookSourceName: "丙站" }]);
+    service.fetchText = vi.fn(async () => listed);
+    render(<SourceManagePage service={service} onClose={() => undefined} />);
+    await screen.findByText("甲站");
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "网络导入" }));
+    await userEvent.type(screen.getByLabelText("书源地址"), "https://list.example/s.json");
+    await userEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByRole("checkbox", { name: "导入 丙站" });
+    await userEvent.click(screen.getAllByLabelText("保存为订阅").at(-1)!);
+    await userEvent.click(screen.getByRole("button", { name: /导入 1/ }));
+    await waitFor(() =>
+      expect(service.subscriptionImported).toHaveBeenCalledWith(expect.any(String), 1),
+    );
+    // 书源订阅 lists it; 更新 runs the same preview on its address.
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "书源订阅" }));
+    expect(await screen.findByText("https://list.example/s.json")).toBeTruthy();
+    expect(screen.getByText(/导入 1 个/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "更新" }));
+    expect(await screen.findByRole("checkbox", { name: "导入 丙站" })).toBeTruthy();
+    expect(service.fetchText).toHaveBeenLastCalledWith("https://list.example/s.json");
   });
 
   it("checks sources and reports progress until done", async () => {
