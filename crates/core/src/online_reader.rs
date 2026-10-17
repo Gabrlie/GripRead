@@ -627,14 +627,15 @@ pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
     let titles = guard.title_transform(book_id)?;
     let (settings, _) = guard.book_toc_settings(book_id)?;
     // Offsets into a translated chapter are not those of its text.
-    let inner = (settings.inner_chapters && chapter_translation(&guard, book_id)?.is_none())
-        .then(|| -> Result<_, AppError> {
-            Ok((
-                inner_rules(&guard, &settings)?,
-                guard.book_transform(book_id)?,
-            ))
-        })
-        .transpose()?;
+    let inner = if settings.inner_chapters && chapter_translation(&guard, book_id)?.is_none() {
+        let rules = inner_rules(&guard, &settings)?;
+        let transform = guard.book_transform(book_id)?;
+        let sample = inner_sample(&guard, book_id, &transform)?;
+        inner_rule(&sample, &rules, settings.rule_id.is_some())
+            .map(|(rule, regex, _)| (rule.id.clone(), rule.name.clone(), regex, transform))
+    } else {
+        None
+    };
     let mut entries = Vec::with_capacity(chapters.len());
     for chapter in &chapters {
         let title = titles.title(&chapter.title);
@@ -656,13 +657,14 @@ pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
             locator: locator(0),
             tag: Some(chapter.tag.trim().to_string()).filter(|tag| !tag.is_empty()),
         });
-        let Some((rules, transform)) = inner.as_ref().filter(|_| kept && !chapter.is_volume) else {
+        let Some((_, _, regex, transform)) = inner.as_ref().filter(|_| kept && !chapter.is_volume)
+        else {
             continue;
         };
         let Ok(raw) = fs::read_to_string(guard.online_chapter_path(book_id, chapter)) else {
             continue;
         };
-        for (offset, heading) in inner_headings(&title, &raw, transform, rules) {
+        for (offset, heading) in inner_headings(&title, &inner_body(&raw, transform), regex) {
             entries.push(TocEntry {
                 ordinal: entries.len() as u64,
                 title: titles.title(&heading),
@@ -673,16 +675,19 @@ pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
             });
         }
     }
+    let (rule_id, rule_name) = inner
+        .map(|(id, name, _, _)| (Some(id), name))
+        .unwrap_or_default();
     Ok(TocListing {
         entries,
-        rule_id: None,
-        rule_name: String::new(),
+        rule_id,
+        rule_name,
         settings,
     })
 }
 
 /// The rules 章内分章 looks for headings with: the book's chosen rule, or
-/// every enabled one.
+/// the enabled rules that are not loose enough to match prose.
 fn inner_rules(
     storage: &Storage,
     settings: &crate::models::BookTocSettings,
@@ -690,9 +695,10 @@ fn inner_rules(
     Ok(storage
         .list_txt_toc_rules()?
         .into_iter()
+        .filter(|rule| !rule.pattern.is_empty())
         .filter(|rule| match &settings.rule_id {
             Some(id) => &rule.id == id,
-            None => rule.enabled,
+            None => rule.enabled && !crate::txt_toc::is_loose_rule(&rule.id),
         })
         .map(|rule| crate::txt_toc::RuleSpec {
             id: rule.id,
@@ -702,16 +708,9 @@ fn inner_rules(
         .collect())
 }
 
-/// Headings inside one kept chapter, at their UTF-16 offsets in the text
-/// the reader shows (the title line, then the transformed body; a picture
-/// is one mark). Fewer than two is no chapter split, as a source's own
-/// chapter heading repeated in its text often is one.
-fn inner_headings(
-    title: &str,
-    raw: &str,
-    transform: &transform::TextTransform,
-    rules: &[crate::txt_toc::RuleSpec],
-) -> Vec<(u64, String)> {
+/// A kept chapter's body as the reader shows it below the title line (the
+/// transformed text; a picture is one mark).
+fn inner_body(raw: &str, transform: &transform::TextTransform) -> String {
     let body: String = raw
         .trim_matches('\n')
         .split('\n')
@@ -724,40 +723,95 @@ fn inner_headings(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let body = transform::apply(&body, transform).0;
-    let Some(rule) = crate::txt_toc::choose_rule(&body, rules) else {
-        return Vec::new();
-    };
-    let Ok(regex) = crate::txt_toc::compile_rule(&rule.pattern) else {
-        return Vec::new();
-    };
-    let padded = format!("\n{body}");
-    let mut found = Vec::new();
-    for heading in regex.find_iter(&padded) {
-        let Ok(heading) = heading else { break };
-        let start = heading.start().saturating_sub(1).min(body.len());
-        let line = body[start..].lines().next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        found.push((start, line.chars().take(120).collect::<String>()));
-    }
-    if found.len() < 2 {
+    transform::apply(&body, transform).0
+}
+
+/// Headings inside one kept chapter, at their UTF-16 offsets in the text
+/// the reader shows (the title line, then the body). Fewer than two, or
+/// numbers that do not count up, are no chapter split.
+fn inner_headings(title: &str, body: &str, regex: &fancy_regex::Regex) -> Vec<(u64, String)> {
+    let found = crate::txt_toc::heading_lines(body, regex, title);
+    let titles: Vec<&str> = found.iter().map(|(_, line)| line.as_str()).collect();
+    if found.len() < 2 || !crate::txt_toc::numbered_in_order(&titles) {
         return Vec::new();
     }
     // The title line and its newline come first in the shown text.
     let lead = title.encode_utf16().count() as u64 + 1;
     found
         .into_iter()
-        .map(|(start, line)| {
-            let start = crate::txt_toc::floor_boundary(&body, start);
-            (lead + body[..start].encode_utf16().count() as u64, line)
-        })
+        .map(|(start, line)| (lead + body[..start].encode_utf16().count() as u64, line))
         .collect()
 }
 
-/// The 章内分章 question for an online book: a kept chapter (of the first
-/// twenty) whose text holds several headings.
+/// The rule 章内分章 uses for a book, with the headings it finds in the
+/// sampled chapters. A rule the reader chose is used as it is; otherwise
+/// the best scoring rule must find headings in two chapters, or three in
+/// one, so a stray line in one chapter does not split a book.
+fn inner_rule<'a>(
+    chapters: &[(String, String)],
+    rules: &'a [crate::txt_toc::RuleSpec],
+    chosen: bool,
+) -> Option<(
+    &'a crate::txt_toc::RuleSpec,
+    fancy_regex::Regex,
+    Vec<String>,
+)> {
+    let mut best: Option<(&crate::txt_toc::RuleSpec, fancy_regex::Regex, Vec<String>)> = None;
+    for rule in rules {
+        let Ok(regex) = crate::txt_toc::compile_rule(&rule.pattern) else {
+            continue;
+        };
+        if chosen {
+            return Some((rule, regex, Vec::new()));
+        }
+        let mut titles = Vec::new();
+        let (mut hit, mut strong) = (0, false);
+        for (title, body) in chapters {
+            let found = inner_headings(title, body, &regex);
+            if found.is_empty() {
+                continue;
+            }
+            hit += 1;
+            strong |= found.len() >= 3;
+            titles.extend(found.into_iter().map(|(_, line)| line));
+        }
+        if (hit >= 2 || strong)
+            && best
+                .as_ref()
+                .is_none_or(|(_, _, best)| titles.len() > best.len())
+        {
+            best = Some((rule, regex, titles));
+        }
+    }
+    best
+}
+
+/// The first kept chapters of an online book, as (shown title, body).
+fn inner_sample(
+    storage: &Storage,
+    book_id: &str,
+    transform: &transform::TextTransform,
+) -> Result<Vec<(String, String)>, AppError> {
+    let titles = storage.title_transform(book_id)?;
+    let cached = storage.cached_online_chapters(book_id)?;
+    let mut sample = Vec::new();
+    for chapter in storage.online_chapters(book_id)?.iter() {
+        if sample.len() >= 20 {
+            break;
+        }
+        if chapter.is_volume || !cached.contains(&chapter.index) {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(storage.online_chapter_path(book_id, chapter)) else {
+            continue;
+        };
+        sample.push((titles.title(&chapter.title), inner_body(&raw, transform)));
+    }
+    Ok(sample)
+}
+
+/// The 章内分章 question for an online book: the first kept chapters hold
+/// chapters of their own by a rule that is not loose.
 pub fn toc_suggestion(
     storage: &Shared,
     book_id: &str,
@@ -767,32 +821,18 @@ pub fn toc_suggestion(
     if settings.asked || settings.inner_chapters {
         return Ok(None);
     }
-    let rules = inner_rules(&guard, &settings)?;
+    let rules = inner_rules(&guard, &crate::models::BookTocSettings::default())?;
     let transform = guard.book_transform(book_id)?;
-    let cached = guard.cached_online_chapters(book_id)?;
-    for chapter in guard.online_chapters(book_id)?.iter().take(20) {
-        if chapter.is_volume || !cached.contains(&chapter.index) {
-            continue;
-        }
-        let Ok(raw) = fs::read_to_string(guard.online_chapter_path(book_id, chapter)) else {
-            continue;
-        };
-        let headings = inner_headings(&chapter.title, &raw, &transform, &rules);
-        if headings.len() >= 2 {
-            let rule = crate::txt_toc::choose_rule(&raw, &rules);
-            return Ok(Some(crate::models::TocSuggestion {
-                kind: "inner".into(),
-                rule_id: rule.map(|rule| rule.id.clone()).unwrap_or_default(),
-                rule_name: rule.map(|rule| rule.name.clone()).unwrap_or_default(),
-                titles: headings
-                    .into_iter()
-                    .take(5)
-                    .map(|(_, title)| title)
-                    .collect(),
-            }));
-        }
-    }
-    Ok(None)
+    let sample = inner_sample(&guard, book_id, &transform)?;
+    Ok(
+        inner_rule(&sample, &rules, false).map(|(rule, _, titles)| crate::models::TocSuggestion {
+            kind: "inner".into(),
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            count: titles.len() as u32,
+            titles: titles.into_iter().take(8).collect(),
+        }),
+    )
 }
 
 /// In-book search over the chapters kept on the device.
@@ -1301,7 +1341,7 @@ mod tests {
     fn chapters_inside_a_chapter_are_offered_once_and_listed() {
         let base = start(|request: &Request| match request.path.as_str() {
             "/c/1.html" => Response::html(
-                r#"<div id="content">第一章 开端<br>甲的故事<br>第二章 转折<br>乙的故事</div>"#,
+                r#"<div id="content">第一章 开端<br>甲的故事<br>第二章 转折<br>乙的故事<br>第三章 结局<br>丙的故事</div>"#,
             ),
             _ => Response::not_found(),
         });
@@ -1315,8 +1355,13 @@ mod tests {
         .unwrap();
         let asked = toc_suggestion(&storage, &id).unwrap().unwrap();
         assert_eq!(asked.kind, "inner");
-        assert_eq!(asked.titles, vec!["第一章 开端", "第二章 转折"]);
+        assert_eq!(asked.count, 3);
+        assert_eq!(
+            asked.titles,
+            vec!["第一章 开端", "第二章 转折", "第三章 结局"]
+        );
         let (settings, _) = storage.lock().unwrap().book_toc_settings(&id).unwrap();
+        // Saying yes keeps the rule that found them.
         storage
             .lock()
             .unwrap()
@@ -1325,6 +1370,7 @@ mod tests {
                 &crate::models::BookTocSettings {
                     asked: true,
                     inner_chapters: true,
+                    rule_id: Some(asked.rule_id.clone()),
                     ..settings
                 },
             )
@@ -1336,7 +1382,8 @@ mod tests {
             .iter()
             .filter(|entry| entry.locator.resource_id == "chapter-1" && entry.locator.offset > 0)
             .collect();
-        assert_eq!(inner.len(), 2);
+        assert_eq!(inner.len(), 3);
+        assert_eq!(listing.rule_id.as_deref(), Some(asked.rule_id.as_str()));
         // Each entry opens where its heading is shown.
         let shown = chapter_text(&storage, &id, 1).unwrap();
         for entry in inner {
@@ -1349,6 +1396,55 @@ mod tests {
             ordinals,
             (0..listing.entries.len() as u64).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn prose_inside_a_chapter_is_not_split() {
+        // Lines enabled rules match in ordinary text: numbered lists, 第N节课
+        // in a sentence, a line opening with 后记, dialogue, and the
+        // chapter's own title repeated; and two real headings in one chapter.
+        let prose = concat!(
+            r#"<div id="content">第一章 惊蛰<br>他列了几条：<br>1. 先去城里<br>2. 再去山上<br>"#,
+            r#"一、带上剑<br>二、带上酒<br>这是第三节课的内容<br>翻到第五页<br>后记得要回信<br>"#,
+            r#"“第二章写完了吗？”<br>番外篇还没写。<br>甲<br>第九章 外传<br>乙<br>第十章 外传<br>丙</div>"#,
+        );
+        let base = start(move |request: &Request| match request.path.as_str() {
+            "/c/1.html" => Response::html(prose),
+            _ => Response::not_found(),
+        });
+        let (_dir, storage, id) = library(&base);
+        read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        // Two headings in one chapter are not enough to ask.
+        assert_eq!(toc_suggestion(&storage, &id).unwrap(), None);
+        // Turned on by hand, the automatic choice finds nothing either.
+        storage
+            .lock()
+            .unwrap()
+            .save_book_toc_settings(
+                &id,
+                &crate::models::BookTocSettings {
+                    asked: true,
+                    inner_chapters: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let listing = toc(&storage, &id).unwrap();
+        assert!(listing
+            .entries
+            .iter()
+            .all(|entry| entry.locator.offset == 0));
+        // A loose rule chosen by hand still keeps to whole title lines.
+        let regex =
+            crate::txt_toc::compile_rule(r"^[ 　\t]{0,4}\d{1,5}[:：,.， 、_—\-].{1,30}$").unwrap();
+        let body = "他说：\n1. 先去城里\n2. 再去山上。\n3. 第三条";
+        let found = crate::txt_toc::heading_lines(body, &regex, "");
+        let titles: Vec<&str> = found.iter().map(|(_, line)| line.as_str()).collect();
+        assert_eq!(titles, vec!["1. 先去城里", "3. 第三条"]);
     }
 
     #[test]

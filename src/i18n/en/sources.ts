@@ -180,6 +180,9 @@ export const sources = {
   "rules.importSkipped": "; {count} title-only rules skipped",
   "tocRule.pageNote": "Enabled rules take part in detection, earlier ones first.",
   "tocRule.builtin": "Built in",
+  "tocRule.loose": "Loose",
+  "tocRule.looseNote":
+    "This rule easily takes ordinary text for headings, so it is used only when chosen, never found automatically inside online chapters or suggested.",
   "rules.address": "Rule address",
   "rules.fetching": "Fetching…",
   "rules.fetch": "Fetch",

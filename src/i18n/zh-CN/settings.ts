@@ -71,7 +71,7 @@ export const settings = {
   "settings.sources.note": "导入、编辑、校验书源",
   "settings.replace": "替换净化",
   "settings.replace.note": "替换或删除正文中的文字，所有书共用",
-  "settings.toc": "TXT目录规则",
+  "settings.toc": "目录规则",
   "settings.toc.note": "识别章节标题的规则",
   "settings.cloud": "备份与云端",
   "settings.server": "服务器",

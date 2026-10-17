@@ -75,4 +75,13 @@ navLabels?: boolean,
 /**
  * The bottom navigation hides while the shelf scrolls down; `None` is off.
  */
-navAutohide?: boolean, };
+navAutohide?: boolean, 
+/**
+ * 未命中规则时的标题 for books without their own: a template as
+ * [`BookTocSettings::untitled_title`]; `None` is Legado's `第N章(n)`.
+ */
+tocUntitledTitle?: string, 
+/**
+ * The size of those pieces in KB; `None` is Legado's 10.
+ */
+tocChunkKb?: number, };

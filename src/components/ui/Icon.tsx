@@ -91,6 +91,9 @@ import {
   Folder,
   CircleAlert,
   CircleCheck,
+  Scissors,
+  Split,
+  ListOrdered,
 } from "lucide-react";
 const icons = {
   auto_stories: BookOpen,
@@ -155,6 +158,9 @@ const icons = {
   arrow_downward: ArrowDown,
   palette: Palette,
   toc_rule: ListTree,
+  content_cut: Scissors,
+  call_split: Split,
+  format_list_numbered: ListOrdered,
   title: Heading,
   bookmark_add: BookmarkPlus,
   info: Info,

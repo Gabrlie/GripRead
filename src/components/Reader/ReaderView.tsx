@@ -1350,6 +1350,7 @@ export function ReaderView() {
           onAddBookmark={addBookmark}
           onRefreshDirectory={refreshDirectory}
           txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
+          tocRules={activeBook.asset?.kind !== "epub"}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           onCache={activeBook.online ? () => setCachingRange(true) : undefined}
           replaceEnabled={useReplaceRules}
@@ -1863,11 +1864,16 @@ export function ReaderView() {
       )}
       {panel === "untitled" && (
         <UntitledTitleDialog
-          settings={tools.tocSettings}
+          style={{ title: tools.tocSettings.untitledTitle, chunkKb: tools.tocSettings.chunkKb }}
+          fallback={{ title: preferences?.tocUntitledTitle, chunkKb: preferences?.tocChunkKb }}
           busy={tools.busy}
-          onSave={(settings) => {
+          onSave={(style) => {
             panels.back();
-            void tools.saveTocSettings(settings);
+            void tools.saveTocSettings({
+              ...tools.tocSettings,
+              untitledTitle: style.title,
+              chunkKb: style.chunkKb,
+            });
           }}
           onClose={panels.back}
         />
@@ -1879,6 +1885,7 @@ export function ReaderView() {
           settings={tools.tocSettings}
           detectedName={tools.tocRuleName}
           busy={tools.busy}
+          online={Boolean(activeBook.online)}
           onSelect={(ruleId) => void tools.saveTocSettings({ ...tools.tocSettings, ruleId })}
           onToggleSplit={
             activeBook.online

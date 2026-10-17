@@ -12,4 +12,10 @@ id: string, name: string,
 /**
  * A Java-compatible regex applied in multi-line mode; empty splits by size.
  */
-pattern: string, example: string, serial: number, enabled: boolean, builtin: boolean, };
+pattern: string, example: string, serial: number, enabled: boolean, builtin: boolean, 
+/**
+ * A built-in rule loose enough to match prose; such rules are only
+ * used when chosen, never found automatically inside online chapters
+ * or suggested.
+ */
+loose: boolean, };

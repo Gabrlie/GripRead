@@ -38,8 +38,11 @@ interface ReaderTopBarProps {
   onOpenTools: () => void;
   /** The book detail page; the title opens it too. */
   onOpenDetail: () => void;
-  /** TXT目录规则 and 设置编码 apply to local TXT books only. */
+  /** 设置编码 applies to local TXT books only. */
   txtTools?: boolean;
+  /** 目录规则 in More: TXT books, and online books for 章内分章 (an EPUB
+   * keeps its own contents). */
+  tocRules?: boolean;
   /** 换源, for an online book. */
   onChangeSource?: () => void;
   /** 缓存 a chapter range, for an online book. */
@@ -77,6 +80,7 @@ export function ReaderTopBar({
   onOpenTools,
   onOpenDetail,
   txtTools = true,
+  tocRules = txtTools,
   onChangeSource,
   onCache,
 }: ReaderTopBarProps) {
@@ -144,7 +148,6 @@ export function ReaderTopBar({
             <Icon name="swap_horiz" size={19} />
           </Button>
         )}
-        {txtTools && action("rules", t("settings.toc"), "toc_rule")}
         {txtTools && action("encoding", t("reader.setEncoding"), "translate")}
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -162,6 +165,12 @@ export function ReaderTopBar({
               <Icon name="refresh" size={15} />
               {t("shelf.menu.update")}
             </DropdownMenuItem>
+            {tocRules && (
+              <DropdownMenuItem onClick={() => onOpenPanel("rules")}>
+                <Icon name="toc_rule" size={15} />
+                {t("settings.toc")}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => onOpenPanel("style")}>
               <Icon name="swap_vert" size={15} />
               {t("style.effect")}

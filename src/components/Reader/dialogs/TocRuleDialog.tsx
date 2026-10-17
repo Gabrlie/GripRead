@@ -26,6 +26,8 @@ interface TocRuleDialogProps {
   onSelect: (ruleId: string | null) => void;
   /** 拆分超长章节, for a TXT; an online book's chapters are not split. */
   onToggleSplit?: () => void;
+  /** An online book: the rule finds headings inside its chapters (章内分章). */
+  online?: boolean;
   onSave: (rule: TxtTocRule) => Promise<unknown>;
   onDelete: (rule: TxtTocRule) => Promise<unknown>;
   onOrder: (ids: string[]) => Promise<unknown>;
@@ -45,6 +47,7 @@ export const NEW_TOC_RULE: TxtTocRule = {
   serial: 0,
   enabled: true,
   builtin: false,
+  loose: false,
 };
 
 type View = { kind: "list" } | { kind: "edit"; rule: TxtTocRule } | { kind: "import" };
@@ -139,6 +142,7 @@ function RuleList({
   busy,
   onSelect,
   onToggleSplit,
+  online,
   onSave,
   onDelete,
   onOrder,
@@ -184,7 +188,9 @@ function RuleList({
             <span className="block text-[11px] text-secondary truncate">
               {settings.ruleId === null && detectedName
                 ? t("tocRule.detected", { name: detectedName })
-                : t("tocRule.autoNote")}
+                : online
+                  ? t("tocRule.autoInnerNote")
+                  : t("tocRule.autoNote")}
             </span>
           </span>
         </button>
@@ -202,7 +208,17 @@ function RuleList({
             >
               {radio(settings.ruleId === rule.id)}
               <span className="flex-1 min-w-0">
-                <span className="block text-sm truncate">{rule.name}</span>
+                <span className="block text-sm truncate">
+                  {rule.name}
+                  {rule.loose && (
+                    <span
+                      className="ml-1.5 text-[10px] text-secondary"
+                      title={t("tocRule.looseNote")}
+                    >
+                      {t("tocRule.loose")}
+                    </span>
+                  )}
+                </span>
                 <span className="block text-[11px] text-secondary truncate">
                   {rule.example.split("\n")[0] ||
                     (rule.pattern ? rule.pattern : t("tocRule.byLength"))}

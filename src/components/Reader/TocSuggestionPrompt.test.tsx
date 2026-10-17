@@ -27,6 +27,7 @@ describe("the contents question", () => {
       ruleId: "odd",
       ruleName: "六角括号",
       titles: ["〔1〕开始", "〔2〕继续"],
+      count: 2,
     }));
     const runtime = runtimeWith({
       tocSuggestion: suggestion,
@@ -62,6 +63,7 @@ describe("the contents question", () => {
         ruleId: "",
         ruleName: "",
         titles: ["第一章", "第二章"],
+        count: 2,
       })),
       listToc: vi.fn(async () => tocListing()),
       saveBookTocSettings: save,
@@ -77,6 +79,34 @@ describe("the contents question", () => {
       expect(save).toHaveBeenCalledWith(
         "b2",
         expect.objectContaining({ asked: true, innerChapters: false }),
+      ),
+    );
+  });
+
+  it("keeps the rule that found the chapters inside chapters", async () => {
+    const save = vi.fn(async (_id: string, settings: unknown) => settings);
+    const runtime = runtimeWith({
+      tocSuggestion: vi.fn(async () => ({
+        kind: "inner",
+        ruleId: "legado-2",
+        ruleName: "目录",
+        titles: ["第一章 开端", "第二章 转折", "第三章 结局"],
+        count: 3,
+      })),
+      listToc: vi.fn(async () => tocListing()),
+      saveBookTocSettings: save,
+    });
+    render(
+      <RuntimeContext.Provider value={runtime}>
+        <TocSuggestionPrompt bookId="b3" />
+      </RuntimeContext.Provider>,
+    );
+    expect(await screen.findByText(/找到 3 个/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "在目录中列出" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        "b3",
+        expect.objectContaining({ asked: true, innerChapters: true, ruleId: "legado-2" }),
       ),
     );
   });

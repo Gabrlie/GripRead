@@ -64,7 +64,7 @@ pub struct PendingBookmark {
 
 /// Legado's `BookHelp.getChapterNum`: the number in 第…章/节/回/卷, in
 /// Arabic or Chinese numerals; 0 when there is none.
-fn chapter_number(title: &str) -> i64 {
+pub(crate) fn chapter_number(title: &str) -> i64 {
     let chars: Vec<char> = title.chars().collect();
     let Some(start) = chars.iter().position(|c| *c == '第') else {
         return 0;

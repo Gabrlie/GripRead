@@ -33,7 +33,7 @@ use crate::txt_toc::{
     build_toc, compile_rule, parse_name_author, RuleSpec, TocBuild, TocBuildRule,
 };
 
-mod online;
+pub(crate) mod online;
 mod online_cache;
 mod online_convert;
 mod usage;
@@ -2657,6 +2657,7 @@ impl Storage {
                 serial: 0,
                 enabled,
                 builtin: false,
+                loose: false,
             })?);
         }
         Ok(imported)
@@ -3155,21 +3156,17 @@ impl Storage {
             .rule_id
             .as_deref()
             .and_then(|id| rules.iter().find(|rule| rule.id == id));
-        let build = match selected {
-            Some(rule) => TocBuildRule {
-                automatic: false,
-                rules: vec![spec(rule)],
-                split_long_chapters: settings.split_long_chapters,
-                untitled_title: settings.untitled_title.clone(),
-                chunk_bytes: settings.chunk_kb.map(|kb| kb as usize * 1024),
+        let (untitled_title, chunk_kb) =
+            untitled_style(&settings, &self.get_settings().unwrap_or_default());
+        let build = TocBuildRule {
+            automatic: selected.is_none(),
+            rules: match selected {
+                Some(rule) => vec![spec(rule)],
+                None => rules.iter().filter(|rule| rule.enabled).map(spec).collect(),
             },
-            None => TocBuildRule {
-                automatic: true,
-                rules: rules.iter().filter(|rule| rule.enabled).map(spec).collect(),
-                split_long_chapters: settings.split_long_chapters,
-                untitled_title: settings.untitled_title.clone(),
-                chunk_bytes: settings.chunk_kb.map(|kb| kb as usize * 1024),
-            },
+            split_long_chapters: settings.split_long_chapters,
+            untitled_title,
+            chunk_bytes: chunk_kb.map(|kb| kb as usize * 1024),
         };
         Ok((build, revision))
     }
@@ -5672,10 +5669,33 @@ pub(crate) fn build_toc_from_context(
 
 /// A disabled rule that finds chapters in a TXT no enabled rule matched,
 /// with a few of the headings it finds.
+/// The titles and size of a rule-less book's pieces: the book's own when
+/// it set either (`{legado}` naming Legado's), else the app's default.
+pub(crate) fn untitled_style(
+    settings: &BookTocSettings,
+    preferences: &ReaderPreferences,
+) -> (Option<String>, Option<u32>) {
+    let (title, kb) = if settings.untitled_title.is_some() || settings.chunk_kb.is_some() {
+        (settings.untitled_title.clone(), settings.chunk_kb)
+    } else {
+        (
+            preferences.toc_untitled_title.clone(),
+            preferences.toc_chunk_kb,
+        )
+    };
+    (
+        title.filter(|title| !title.trim().is_empty() && title.trim() != LEGADO_TITLES),
+        kb.filter(|kb| *kb != 10),
+    )
+}
+
+/// The template that names Legado's own `第N章(n)` titles.
+pub const LEGADO_TITLES: &str = "{legado}";
+
 pub(crate) fn disabled_rule_for(
     context: &ContentReadContext,
     disabled: &[crate::txt_toc::RuleSpec],
-) -> Result<Option<(crate::txt_toc::RuleSpec, Vec<String>)>, AppError> {
+) -> Result<Option<(crate::txt_toc::RuleSpec, Vec<String>, u32)>, AppError> {
     if context.epub_toc.is_some() || disabled.is_empty() {
         return Ok(None);
     }
@@ -5684,12 +5704,21 @@ pub(crate) fn disabled_rule_for(
     let Some(rule) = crate::txt_toc::choose_rule(&text, disabled) else {
         return Ok(None);
     };
+    // A rule that finds two or fewer headings in a whole book is no help.
+    let count = crate::txt_toc::compile_rule(&rule.pattern)?
+        .find_iter(&text)
+        .take(100_000)
+        .filter(|found| found.is_ok())
+        .count() as u32;
+    if count < 3 {
+        return Ok(None);
+    }
     let sample = &text[..crate::txt_toc::floor_boundary(&text, 512_000)];
     let titles = crate::txt_toc::test_rule(&rule.pattern, sample)?
         .into_iter()
-        .take(5)
+        .take(8)
         .collect();
-    Ok(Some((rule.clone(), titles)))
+    Ok(Some((rule.clone(), titles, count)))
 }
 
 fn search_text_stream(
@@ -6960,6 +6989,7 @@ fn txt_toc_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TxtTocRule
         serial: row.get(4)?,
         enabled: row.get(5)?,
         builtin: row.get(6)?,
+        loose: row.get::<_, bool>(6)? && crate::txt_toc::is_loose_rule(&row.get::<_, String>(0)?),
     })
 }
 
@@ -8149,6 +8179,7 @@ mod tests {
                 serial: 0,
                 enabled: false,
                 builtin: false,
+                loose: false,
             })
             .unwrap();
         let settings = BookTocSettings {
@@ -10066,6 +10097,35 @@ mod tests {
     }
 
     #[test]
+    fn rule_less_books_follow_the_default_titles_unless_they_set_their_own() {
+        let root = TestRoot::new();
+        let text = "没有标题的正文。\n".repeat(3000);
+        let source = write_source(&root.0, "plain.txt", text.as_bytes());
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let id = import(&mut storage, &source, "plain").book.id;
+        let first = |storage: &mut Storage| storage.list_toc(&id).unwrap().entries[0].title.clone();
+        assert_eq!(first(&mut storage), "第1章(1)");
+        storage
+            .save_settings(&ReaderPreferences {
+                toc_untitled_title: Some("第{n}节".into()),
+                ..ReaderPreferences::default()
+            })
+            .unwrap();
+        assert_eq!(first(&mut storage), "第1节");
+        // The book's own choice of Legado's titles wins over the default.
+        storage
+            .save_book_toc_settings(
+                &id,
+                &BookTocSettings {
+                    untitled_title: Some(LEGADO_TITLES.into()),
+                    ..BookTocSettings::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(first(&mut storage), "第1章(1)");
+    }
+
+    #[test]
     fn a_disabled_rule_that_finds_the_chapters_is_offered() {
         let root = TestRoot::new();
         let text = (1..=6)
@@ -10084,6 +10144,7 @@ mod tests {
                 serial: 0,
                 enabled: false,
                 builtin: false,
+                loose: false,
             })
             .unwrap();
         let disabled: Vec<crate::txt_toc::RuleSpec> = storage
@@ -10104,11 +10165,21 @@ mod tests {
             .filter(|rule| rule.id == saved.id)
             .cloned()
             .collect();
-        let (rule, titles) = disabled_rule_for(&context, &own).unwrap().unwrap();
+        let (rule, titles, count) = disabled_rule_for(&context, &own).unwrap().unwrap();
         assert_eq!(rule.id, saved.id);
         assert_eq!(titles[0], "〔1〕的章节");
+        assert_eq!(count, 6);
         // Every disabled rule: one that finds them is offered.
         assert!(disabled_rule_for(&context, &disabled).unwrap().is_some());
+        // Too few headings to be a book's chapters: nothing is offered.
+        let short = write_source(
+            &root.0,
+            "few.txt",
+            "〔1〕的章节\n正文。\n〔2〕的章节\n正文。".as_bytes(),
+        );
+        let few = import(&mut storage, &short, "few").book.id;
+        let context = storage.content_read_context(&few).unwrap();
+        assert!(disabled_rule_for(&context, &own).unwrap().is_none());
     }
 
     #[test]

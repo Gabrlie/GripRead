@@ -83,6 +83,7 @@ const RULES: TxtTocRule[] = [
     serial: 0,
     enabled: true,
     builtin: true,
+    loose: false,
   },
   {
     id: "english",
@@ -92,6 +93,7 @@ const RULES: TxtTocRule[] = [
     serial: 1,
     enabled: true,
     builtin: true,
+    loose: false,
   },
 ];
 const entry: LibraryBook = {
@@ -320,7 +322,8 @@ describe("reader directory and search operation ownership", () => {
     vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
     vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValue(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "目录规则" }));
     await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledWith(entry.book.id, {
       ruleId: "english",
@@ -729,7 +732,8 @@ describe("reader directory and search operation ownership", () => {
     vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
     vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValue(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "目录规则" }));
     await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     let complete = false;
     const flush = app.readerFlush!().then(() => {
@@ -757,7 +761,8 @@ describe("reader directory and search operation ownership", () => {
     vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
     vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValueOnce(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "目录规则" }));
     await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     fireEvent.keyDown(window, { key: "Escape" });
     await act(async () => saving.reject(new Error("database unavailable")));
@@ -779,7 +784,8 @@ describe("reader directory and search operation ownership", () => {
     vi.mocked(app.services.reader.listTxtTocRules).mockResolvedValue(RULES);
     vi.mocked(app.services.reader.saveBookTocSettings).mockReturnValueOnce(saving.promise);
     await view(app);
-    await userEvent.click(screen.getByRole("button", { name: "TXT目录规则" }));
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "目录规则" }));
     await userEvent.click(screen.getByRole("radio", { name: /英文章节/ }));
     const firstFlush = app.readerFlush!().then(
       () => null,
@@ -874,7 +880,6 @@ describe("online books", () => {
     const app = onlineRuntime();
     await view(app);
     expect(screen.getByTestId("reader-page").textContent).toContain("第一段");
-    expect(screen.queryByRole("button", { name: "TXT目录规则" })).toBeNull();
     expect(screen.queryByRole("button", { name: "设置编码" })).toBeNull();
     expect(app.services.library.getTxtEncoding).not.toHaveBeenCalled();
     const nextChapter = screen.getByRole("button", { name: "下一章" });
@@ -889,6 +894,19 @@ describe("online books", () => {
     await userEvent.click(screen.getByRole("button", { name: "目录" }));
     const current = await screen.findByRole("button", { name: /第二章 开门/ });
     expect(current.getAttribute("aria-current")).toBe("location");
+    // The contents' More menu has the online book's tools, 目录规则 among them.
+    await userEvent.click(screen.getByRole("button", { name: "目录选项" }));
+    for (const name of ["目录规则", "章内分章", "替换净化", "更新目录", "倒序显示"])
+      expect(await screen.findByRole("menuitem", { name })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "拆分超长章节" })).toBeNull();
+  });
+
+  it("puts 目录规则 in the reader's More menu for an online book", async () => {
+    navigation.activeBook = onlineEntry;
+    const app = onlineRuntime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(await screen.findByRole("menuitem", { name: "目录规则" })).toBeTruthy();
   });
 
   it("asks before leaving a book that is not on the shelf", async () => {

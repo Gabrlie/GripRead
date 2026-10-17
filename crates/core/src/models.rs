@@ -291,6 +291,11 @@ pub struct TxtTocRule {
     pub serial: i64,
     pub enabled: bool,
     pub builtin: bool,
+    /// A built-in rule loose enough to match prose; such rules are only
+    /// used when chosen, never found automatically inside online chapters
+    /// or suggested.
+    #[serde(default)]
+    pub loose: bool,
 }
 
 /// Per-book chapter detection settings.
@@ -333,6 +338,9 @@ pub struct TocSuggestion {
     pub rule_name: String,
     /// A few of the headings the rule finds.
     pub titles: Vec<String>,
+    /// How many headings it finds: in the whole text, or in the online
+    /// chapters kept so far.
+    pub count: u32,
 }
 
 /// A book's chapters and the rule that produced them.
@@ -793,6 +801,15 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub nav_autohide: Option<bool>,
+    /// 未命中规则时的标题 for books without their own: a template as
+    /// [`BookTocSettings::untitled_title`]; `None` is Legado's `第N章(n)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub toc_untitled_title: Option<String>,
+    /// The size of those pieces in KB; `None` is Legado's 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub toc_chunk_kb: Option<u32>,
 }
 
 /// A 界面样式 made from a main colour; the others, when empty, are derived
@@ -1242,6 +1259,8 @@ impl Default for ReaderPreferences {
             show_subscription: None,
             nav_labels: None,
             nav_autohide: None,
+            toc_untitled_title: None,
+            toc_chunk_kb: None,
         }
     }
 }
@@ -1251,6 +1270,22 @@ impl ReaderPreferences {
     /// persistent preferences record. Enum fields are validated by serde;
     /// these bounds keep typography values finite and usable by the WebView.
     pub fn validate(&self) -> Result<(), AppError> {
+        if self
+            .toc_untitled_title
+            .as_deref()
+            .is_some_and(|title| title.chars().count() > 64)
+        {
+            return Err(AppError::keyed(
+                crate::error::ErrorCode::InvalidArgument,
+                "untitledTooLong",
+                "标题样式最多 64 个字",
+            ));
+        }
+        if self.toc_chunk_kb.is_some_and(|kb| !(2..=200).contains(&kb)) {
+            return Err(AppError::invalid_argument(
+                "toc_chunk_kb must be between 2 and 200",
+            ));
+        }
         if !self.font_size.is_finite() || !(8.0..=96.0).contains(&self.font_size) {
             return Err(AppError::invalid_argument(
                 "font_size must be a finite value between 8 and 96",

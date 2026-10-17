@@ -56,7 +56,9 @@ export function TocSuggestionPrompt({
           ...settings,
           asked: true,
           ...(accept && suggestion.kind === "rule" ? { ruleId: suggestion.ruleId } : {}),
-          ...(accept && suggestion.kind === "inner" ? { innerChapters: true } : {}),
+          ...(accept && suggestion.kind === "inner"
+            ? { innerChapters: true, ruleId: suggestion.ruleId }
+            : {}),
         }),
       )
       .then(
@@ -73,10 +75,13 @@ export function TocSuggestionPrompt({
             {t("contents.askTitle")}
           </DialogTitle>
           <DialogDescription>
-            {inner ? t("contents.askInner") : t("contents.askRule", { rule: suggestion.ruleName })}
+            {t(inner ? "contents.askInner" : "contents.askRule", {
+              rule: suggestion.ruleName,
+              count: suggestion.count,
+            })}
           </DialogDescription>
         </DialogHeader>
-        <ul className="rounded-xl bg-surface-container-low px-3 py-2 text-sm space-y-1">
+        <ul className="rounded-xl bg-surface-container-low px-3 py-2 text-sm space-y-1 max-h-48 overflow-y-auto">
           {suggestion.titles.map((title, index) => (
             <li key={index} className="truncate">
               {title}

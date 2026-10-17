@@ -13,4 +13,9 @@ kind: string, ruleId: string, ruleName: string,
 /**
  * A few of the headings the rule finds.
  */
-titles: Array<string>, };
+titles: Array<string>, 
+/**
+ * How many headings it finds: in the whole text, or in the online
+ * chapters kept so far.
+ */
+count: number, };

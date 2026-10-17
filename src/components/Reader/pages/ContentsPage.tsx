@@ -217,22 +217,24 @@ export function ContentsPage({
               <Icon name="more_vert" size={19} />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {kind === "online" && onToggleInner && (
-                <DropdownMenuItem disabled={busy} onClick={onToggleInner}>
-                  <Checkmark on={innerChapters} />
-                  {t("contents.innerChapters")}
-                </DropdownMenuItem>
-              )}
-              {(txtTools || (kind === "online" && innerChapters)) && (
+              {txtTools || kind === "online" ? (
                 <DropdownMenuItem onClick={onOpenRules}>
                   <Icon name="toc_rule" size={15} />
                   {t("settings.toc")}
                 </DropdownMenuItem>
+              ) : null}
+              {kind === "online" && onToggleInner && (
+                <DropdownMenuItem disabled={busy} onClick={onToggleInner}>
+                  <Icon name="call_split" size={15} />
+                  {t("contents.innerChapters")}
+                  <Checkmark on={innerChapters} />
+                </DropdownMenuItem>
               )}
               {txtTools && (
                 <DropdownMenuItem disabled={busy} onClick={onToggleSplit}>
-                  <Checkmark on={splitLongChapters} />
+                  <Icon name="content_cut" size={15} />
                   {t("tocRule.split")}
+                  <Checkmark on={splitLongChapters} />
                 </DropdownMenuItem>
               )}
               {txtTools && onOpenUntitled && (
@@ -254,13 +256,15 @@ export function ContentsPage({
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setReversed((value) => !value)}>
-                <Checkmark on={reversed} />
+                <Icon name="swap_vert" size={15} />
                 {t("contents.reverse")}
+                <Checkmark on={reversed} />
               </DropdownMenuItem>
               {txtTools && (
                 <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
-                  <Checkmark on={showLength} />
+                  <Icon name="format_list_numbered" size={15} />
                   {t("contents.lengths")}
+                  <Checkmark on={showLength} />
                 </DropdownMenuItem>
               )}
               {volumes.length > 0 && (
@@ -501,9 +505,9 @@ export function ContentsPage({
   );
 }
 
-/** A menu toggle's state: a check mark, or the same space left blank. */
+/** A menu toggle that is on: a check mark at the end of its row. */
 function Checkmark({ on }: { on: boolean }) {
-  return on ? <Icon name="check" size={15} /> : <span aria-hidden="true" className="w-[15px]" />;
+  return on ? <Icon name="check" size={15} className="ml-auto text-primary" /> : null;
 }
 
 function chapterTitleAt(toc: TocEntry[], locator: ReaderLocator, byResource: boolean): string {

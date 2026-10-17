@@ -953,7 +953,7 @@ pub async fn toc_suggestion(
             let disabled: Vec<crate::txt_toc::RuleSpec> = guard
                 .list_txt_toc_rules()?
                 .into_iter()
-                .filter(|rule| !rule.enabled)
+                .filter(|rule| !rule.enabled && !rule.loose && !rule.pattern.is_empty())
                 .map(|rule| crate::txt_toc::RuleSpec {
                     id: rule.id,
                     name: rule.name,
@@ -963,12 +963,13 @@ pub async fn toc_suggestion(
             (guard.content_read_context(&request.book_id)?, disabled)
         };
         Ok(
-            crate::storage::disabled_rule_for(&context, &disabled)?.map(|(rule, titles)| {
+            crate::storage::disabled_rule_for(&context, &disabled)?.map(|(rule, titles, count)| {
                 crate::models::TocSuggestion {
                     kind: "rule".into(),
                     rule_id: rule.id,
                     rule_name: rule.name,
                     titles,
+                    count,
                 }
             }),
         )

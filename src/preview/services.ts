@@ -100,6 +100,7 @@ const RULES: TxtTocRule[] = [
   serial,
   enabled: enabled as boolean,
   builtin: true,
+  loose: false,
 }));
 
 const PREFERENCES: ReaderPreferences = {

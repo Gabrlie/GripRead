@@ -175,6 +175,9 @@ export const sources = {
   "rules.importSkipped": "，跳过 {count} 条只作用于标题的规则",
   "tocRule.pageNote": "开启的规则参与自动识别，越靠前越优先。",
   "tocRule.builtin": "内置",
+  "tocRule.loose": "宽松",
+  "tocRule.looseNote":
+    "这条规则容易把正文当成标题，只在手动选择时使用，不参与章内分章的自动识别和推荐。",
   "rules.address": "规则地址",
   "rules.fetching": "获取中…",
   "rules.fetch": "获取",

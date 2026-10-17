@@ -249,6 +249,8 @@ export const reader = {
   "tocRule.bookRule": "This book's chapter rule",
   "tocRule.detected": "Detected: {name}",
   "tocRule.autoNote": "The enabled rule with the most matches",
+  "tocRule.autoInnerNote":
+    "The enabled rule, not a loose one, that finds whole-line headings in several chapters",
   "tocRule.byLength": "Split by length",
   "tocRule.enabled": "{name} takes part in detection",
   "tocRule.deleted": "Rule deleted.",
@@ -273,7 +275,10 @@ export const reader = {
   "contents.untitled": "Titles without a rule",
   "contents.untitledNote":
     "When no contents rule finds chapters, the text is cut by size; this names the pieces.",
-  "contents.untitledLegado": "第1章(1) (default)",
+  "contents.untitledLegado": "第1章(1) (Legado's)",
+  "contents.untitledDefault": "Default titles without a rule",
+  "contents.untitledFollow": "Follow the default ({style})",
+  "contents.untitledWithSize": "{title}, {kb} KB pieces",
   "contents.untitledSection": "Section 1",
   "contents.untitledNumber": "#1",
   "contents.untitledText": "Opening words",
@@ -283,9 +288,10 @@ export const reader = {
   "contents.chunkKb": "Piece size (KB)",
   "contents.askTitle": "Contents",
   "contents.askRule":
-    "No enabled contents rule finds this book's chapters, but the disabled rule “{rule}” finds:",
+    "No enabled contents rule finds this book's chapters, but the disabled rule “{rule}” finds {count}, such as:",
   "contents.askRuleYes": "Use it for this book",
-  "contents.askInner": "This book's chapters hold further chapter headings, such as:",
+  "contents.askInner":
+    "This book's chapters hold chapter headings of their own: the rule “{rule}” finds {count} in the chapters kept so far, such as:",
   "contents.askInnerYes": "List them in the contents",
   "contents.askNo": "No thanks",
   "contents.askLater": "You can change this later in the contents More menu.",
@@ -298,7 +304,7 @@ export const reader = {
   "contents.loading": "Reading the contents…",
   "contents.expand": "Expand {title}",
   "contents.collapse": "Collapse {title}",
-  "contents.noChapters": "No chapters found; try another rule in TXT chapter rules.",
+  "contents.noChapters": "No chapters found; try another rule in Contents rules.",
   "contents.empty": "The contents are empty.",
   "contents.blank": "(blank position)",
   "contents.stale": " · older text",

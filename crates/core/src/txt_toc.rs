@@ -143,6 +143,108 @@ pub fn choose_rule<'a>(text: &str, rules: &'a [RuleSpec]) -> Option<&'a RuleSpec
     best
 }
 
+/// Built-in rules loose enough to match ordinary prose (numbered lists,
+/// short lines, symbols, 第N节课): left out of automatic detection inside
+/// online chapters and of the disabled-rule suggestion, but still usable
+/// when chosen by hand.
+const LOOSE_RULE_IDS: [&str; 15] = [
+    "legado-5",
+    "legado-6",
+    "legado-7",
+    "legado-8",
+    "legado-9",
+    "legado-10",
+    "legado-15",
+    "legado-16",
+    "legado-18",
+    "legado-21",
+    "legado-22",
+    "legado-23",
+    "legado-24",
+    "legado-25",
+    "legado-100",
+];
+
+pub fn is_loose_rule(id: &str) -> bool {
+    LOOSE_RULE_IDS.contains(&id)
+}
+
+/// Headings `regex` finds in `text` that are whole lines and read like
+/// titles, as byte offsets of their line starts with the trimmed line:
+/// the match covers the line but for indentation and trailing spaces, the
+/// line is at most 30 characters, does not end like a sentence or open
+/// with a quotation mark, and is not `skip` (the chapter's own title).
+pub fn heading_lines(text: &str, regex: &Regex, skip: &str) -> Vec<(usize, String)> {
+    let blank = |part: &str| part.chars().all(|c| c.is_whitespace() || c == '\u{3000}');
+    let key = |line: &str| {
+        line.chars()
+            .filter(|c| !c.is_whitespace() && *c != '\u{3000}')
+            .collect::<String>()
+    };
+    let skip = key(skip);
+    let mut found: Vec<(usize, String)> = Vec::new();
+    for heading in regex.find_iter(text) {
+        let Ok(heading) = heading else { break };
+        if heading.as_str().trim().is_empty() {
+            continue;
+        }
+        let line_start = text[..heading.start()].rfind('\n').map_or(0, |at| at + 1);
+        let line_end = text[heading.end()..]
+            .find('\n')
+            .map_or(text.len(), |at| heading.end() + at);
+        if !blank(&text[line_start..heading.start()]) || !blank(&text[heading.end()..line_end]) {
+            continue;
+        }
+        let line =
+            text[line_start..line_end].trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}');
+        let count = line.chars().count();
+        if count == 0 || count > 30 || found.last().is_some_and(|(at, _)| *at == line_start) {
+            continue;
+        }
+        let last = line.chars().last().unwrap_or(' ');
+        let first = line.chars().next().unwrap_or(' ');
+        if "。，,！!？?；;…、：:".contains(last) || "“\"「『‘'—".contains(first) {
+            continue;
+        }
+        if !skip.is_empty() && key(line) == skip || keyword_in_sentence(line) {
+            continue;
+        }
+        found.push((line_start, line.to_string()));
+    }
+    found
+}
+
+/// A line opening with a heading word that runs on into a sentence:
+/// 后记得要回信, 尾声渐远, where a title has 后记, 番外一, 番外篇 or 序章：….
+fn keyword_in_sentence(line: &str) -> bool {
+    const WORDS: [&str; 10] = [
+        "序章", "楔子", "正文", "终章", "后记", "尾声", "番外", "前言", "文案", "简介",
+    ];
+    let Some(rest) = WORDS.iter().find_map(|word| line.strip_prefix(word)) else {
+        return false;
+    };
+    rest.chars().next().is_some_and(|next| {
+        ('\u{4e00}'..='\u{9fff}').contains(&next)
+            && !"〇零一二两三四五六七八九十百千篇章卷之".contains(next)
+    })
+}
+
+/// Numbered headings (第N章 and the like) mostly count up; fewer than two
+/// numbers say nothing either way.
+pub fn numbered_in_order(titles: &[&str]) -> bool {
+    let numbers: Vec<i64> = titles
+        .iter()
+        .map(|title| crate::storage::online::chapter_number(title))
+        .filter(|number| *number > 0)
+        .collect();
+    if numbers.len() < 2 {
+        return true;
+    }
+    let pairs = numbers.len() - 1;
+    let rising = numbers.windows(2).filter(|pair| pair[1] > pair[0]).count();
+    rising * 3 >= pairs * 2
+}
+
 /// Builds the TOC for normalized text.
 pub fn build_toc(
     text: &str,

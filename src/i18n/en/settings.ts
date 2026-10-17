@@ -78,7 +78,7 @@ export const settings = {
   "settings.sources.note": "Import, edit, and check book sources",
   "settings.replace": "Replace rules",
   "settings.replace.note": "Replace or remove text in books; shared by all books",
-  "settings.toc": "TXT chapter rules",
+  "settings.toc": "Contents rules",
   "settings.toc.note": "Rules that find chapter titles",
   "settings.cloud": "Backup and cloud",
   "settings.server": "Server",
