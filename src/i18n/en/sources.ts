@@ -283,6 +283,7 @@ export const sources = {
   "cover.use": "Use this cover",
   "onlineSearch.query": "Title or author",
   "onlineSearch.exact": "Exact search",
+  "onlineSearch.author": "Author",
   "onlineSearch.history": "Search history",
   "onlineSearch.summary": "{total} {total|source|sources}; {found} {found|book|books} found",
   "onlineSearch.noSources":

@@ -5,4 +5,9 @@ export type SearchOnlineRequest = { operationId: string, key: string, scope: Sea
 /**
  * Keep only results whose name or author contains the key.
  */
-precise: boolean, page: number, };
+precise: boolean, page: number, 
+/**
+ * Keep only this author's books. With an empty `key` the author is
+ * what the sources are searched for.
+ */
+author?: string, };

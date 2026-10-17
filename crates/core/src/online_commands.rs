@@ -172,9 +172,41 @@ pub fn chapter_data(chapter: &OnlineChapter) -> ChapterData {
 /// contain it, each ordered by how many sources have them, then the rest in
 /// arrival order (left out by precise search).
 pub fn merge_results(key: &str, books: &[OnlineBook], precise: bool) -> Vec<OnlineSearchResult> {
-    let key = key.trim();
+    merge_results_by(key, books, precise, None)
+}
+
+/// An author as sources write it, for comparing: without `作者：`-style
+/// labels, spaces, and a trailing 著.
+pub fn plain_author(author: &str) -> String {
+    let text = author.trim();
+    let text = ["作者：", "作者:", "作者", "作 者：", "Author:", "author:"]
+        .iter()
+        .find_map(|label| text.strip_prefix(label))
+        .unwrap_or(text);
+    let text: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    text.strip_suffix('著').unwrap_or(&text).to_lowercase()
+}
+
+/// [`merge_results`], keeping only `author`'s books when one is given.
+pub fn merge_results_by(
+    key: &str,
+    books: &[OnlineBook],
+    precise: bool,
+    author: Option<&str>,
+) -> Vec<OnlineSearchResult> {
+    let wanted = author.map(plain_author).filter(|author| !author.is_empty());
+    let key = match key.trim() {
+        // Searched by author alone: ranked by the author.
+        "" => author.unwrap_or_default().trim(),
+        key => key,
+    };
     let mut tiers: [Vec<OnlineSearchResult>; 3] = Default::default();
     for book in books {
+        if let Some(wanted) = &wanted {
+            if !plain_author(&book.author).contains(wanted.as_str()) {
+                continue;
+            }
+        }
         let tier = if book.name == key || book.author == key {
             0
         } else if book.name.contains(key) || book.author.contains(key) {
@@ -291,7 +323,12 @@ pub async fn search_online_books(
                     searched: searched.load(Ordering::Acquire),
                     total,
                     done,
-                    results: merge_results(&request.key, &found.0, request.precise),
+                    results: merge_results_by(
+                        &request.key,
+                        &found.0,
+                        request.precise,
+                        request.author.as_deref(),
+                    ),
                     failures: found.1.clone(),
                 },
             );
@@ -315,6 +352,11 @@ pub async fn search_online_books(
             pages.clone(),
         );
         let request = request.clone();
+        // An author alone is what the sources are asked for.
+        let term = match request.key.trim() {
+            "" => request.author.clone().unwrap_or_default(),
+            key => key.to_string(),
+        };
         spawn_engine(move || {
             loop {
                 if cancel.load(Ordering::Acquire) {
@@ -327,7 +369,7 @@ pub async fn search_online_books(
                 let url = source.url();
                 let control = Control::new(cancel.clone(), Some(Instant::now() + SEARCH_TIMEOUT));
                 let outcome = session_for(&storage, source, control)
-                    .and_then(|session| session.search(&request.key, request.page.max(1) as i64));
+                    .and_then(|session| session.search(&term, request.page.max(1) as i64));
                 if cancel.load(Ordering::Acquire) {
                     break;
                 }
@@ -1513,6 +1555,17 @@ mod tests {
                 ("雪中", "烽火", 1)
             ]
         );
+        // Only one author's books, the label of an author left out.
+        let by_author = merge_results_by("剑来", &books, false, Some("作者：烽火"));
+        let names: Vec<&str> = by_author
+            .iter()
+            .map(|result| result.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["剑来", "雪中"]);
+        // The author alone ranks by the author.
+        let alone = merge_results_by("", &books, true, Some("烽火"));
+        assert_eq!(alone.len(), 2);
+        assert_eq!(plain_author(" 作者：烽火 戏诸侯 著"), "烽火戏诸侯");
         let precise = merge_results("剑来", &books, true);
         assert_eq!(precise.len(), 3);
     }

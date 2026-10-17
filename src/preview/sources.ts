@@ -45,10 +45,17 @@ function parse(json: string): Raw[] {
 }
 
 /** A simplified stand-in for the engine's merge: same name and author fold together. */
-function mergeSearchResults(key: string, books: OnlineBook[], precise: boolean) {
+function mergeSearchResults(
+  key: string,
+  books: OnlineBook[],
+  precise: boolean,
+  author?: string | null,
+) {
   const results: OnlineSearchEvent["results"] = [];
+  const wanted = author?.trim();
   for (const book of books) {
-    if (precise && !book.name.includes(key) && !book.author.includes(key)) continue;
+    if (wanted && !book.author.includes(wanted)) continue;
+    if (precise && key && !book.name.includes(key) && !book.author.includes(key)) continue;
     const same = results.find((item) => item.name === book.name && item.author === book.author);
     if (same) same.origins.push(book);
     else results.push({ ...book, origins: [book] });
@@ -348,7 +355,7 @@ export function createMemorySourceService(
             searched,
             total: asked.length,
             done,
-            results: mergeSearchResults(request.key, found, request.precise),
+            results: mergeSearchResults(request.key, found, request.precise, request.author),
             failures: [],
           });
       };

@@ -1934,6 +1934,11 @@ pub struct SearchOnlineRequest {
     /// Keep only results whose name or author contains the key.
     pub precise: bool,
     pub page: u32,
+    /// Keep only this author's books. With an empty `key` the author is
+    /// what the sources are searched for.
+    #[serde(default)]
+    #[ts(optional)]
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

@@ -18,6 +18,24 @@ function service() {
 }
 
 describe("online search", () => {
+  it("filters by author and searches again when 精准搜索 changes", async () => {
+    const sources = service();
+    const search = vi.spyOn(sources, "search");
+    render(<SearchPage service={sources} onClose={() => undefined} />);
+    // The author alone is enough to search.
+    await userEvent.type(screen.getByRole("textbox", { name: "作者" }), "烽火");
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
+    expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ key: "", author: "烽火" }));
+    await screen.findByRole("list", { name: "搜索结果" });
+    await userEvent.click(screen.getByRole("button", { name: "精准搜索" }));
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith(
+        expect.objectContaining({ precise: true, author: "烽火" }),
+      ),
+    );
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
   it("shows merged results as sources answer and opens a book with its sources", async () => {
     const sources = service();
     const search = vi.spyOn(sources, "search");

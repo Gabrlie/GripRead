@@ -49,6 +49,7 @@ export function SearchPage({
   onClose: () => void;
 }) {
   const [key, setKey] = useState(initialKey);
+  const [author, setAuthor] = useState("");
   const [scope, setScope] = useState<SearchScope>(initialScope);
   const [precise, setPrecise] = useState(false);
   const [history, setHistory] = useState(readSearchHistory);
@@ -88,15 +89,16 @@ export function SearchPage({
 
   const start = (keyword = key) => {
     const trimmed = keyword.trim();
-    if (!trimmed) return;
+    const who = author.trim();
+    if (!trimmed && !who) return;
     if (operation.current) void service.cancel(operation.current);
     const operationId = `search-${Date.now()}`;
     operation.current = operationId;
     setKey(trimmed);
-    setHistory(rememberSearch(trimmed));
+    if (trimmed) setHistory(rememberSearch(trimmed));
     setEvent({ operationId, searched: 0, total: 0, done: false, results: [], failures: [] });
     void service
-      .search({ operationId, key: trimmed, scope, precise, page: 1 })
+      .search({ operationId, key: trimmed, scope, precise, page: 1, author: who || undefined })
       .catch((failure: unknown) => {
         operation.current = null;
         setEvent({
@@ -113,6 +115,15 @@ export function SearchPage({
   useEffect(() => {
     if (initialKey && !restored) start(initialKey);
   }, []);
+  // A changed 搜索范围 or 精准搜索 searches again, once a search has run.
+  const searched = useRef(false);
+  useEffect(() => {
+    if (!searched.current) {
+      searched.current = true;
+      return;
+    }
+    if (event) start();
+  }, [scope, precise]);
 
   const stop = () => {
     if (operation.current) void service.cancel(operation.current);
@@ -135,7 +146,7 @@ export function SearchPage({
           start();
         }}
       >
-        <label className="flex-1 min-w-0 flex items-center gap-2 rounded-xl bg-surface-container-low px-3 h-10">
+        <label className="flex-1 min-w-0 flex items-center gap-2 rounded-xl bg-surface-container-low px-3 h-10 self-center">
           <Icon name="search" size={16} className="text-secondary" />
           <input
             aria-label={t("onlineSearch.query")}
@@ -152,12 +163,23 @@ export function SearchPage({
             </button>
           )}
         </label>
+        <input
+          aria-label={t("onlineSearch.author")}
+          placeholder={t("onlineSearch.author")}
+          value={author}
+          onChange={(change) => setAuthor(change.target.value)}
+          className="w-24 sm:w-32 shrink-0 h-10 rounded-xl bg-surface-container-low px-3 text-sm outline-none self-center"
+        />
         {running ? (
-          <Button type="button" variant="outline" onClick={stop}>
+          <Button type="button" variant="outline" className="h-10 self-center" onClick={stop}>
             {t("search.stop")}
           </Button>
         ) : (
-          <Button type="submit" disabled={!key.trim()}>
+          <Button
+            type="submit"
+            className="h-10 self-center"
+            disabled={!key.trim() && !author.trim()}
+          >
             {t("header.search")}
           </Button>
         )}
@@ -181,6 +203,8 @@ export function SearchPage({
         >
           {t("onlineSearch.exact")}
         </button>
+        {/* Apart from the search options: it changes how results read, not what is searched. */}
+        <span className="flex-1" />
         <TitleTranslationChip titles={titles} />
       </div>
 
@@ -377,7 +401,7 @@ function ScopeDialog({
   );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] p-5 gap-3 flex flex-col">
+      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md h-[min(72dvh,560px)] p-5 gap-3 flex flex-col">
         <DialogHeader>
           <DialogTitle className="font-title-editorial text-base">
             {t("onlineSearch.scope")}

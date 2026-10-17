@@ -275,6 +275,7 @@ export const sources = {
   "cover.use": "用这个封面",
   "onlineSearch.query": "书名或作者",
   "onlineSearch.exact": "精准搜索",
+  "onlineSearch.author": "\u4f5c\u8005",
   "onlineSearch.history": "搜索历史",
   "onlineSearch.summary": "{total} 个书源，找到 {found} 本",
   "onlineSearch.noSources": "没有可用于搜索的书源，先在书源管理里导入或启用书源。",
