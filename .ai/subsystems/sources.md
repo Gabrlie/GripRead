@@ -45,7 +45,7 @@ The engine lives in `crates/core/src/sources/` and runs scripts in QuickJS with 
 | `webView` fetching, content `webJs`, `java.webView`, `webViewGetSource`, `webViewGetOverrideUrl`, `startBrowser`, `startBrowserAwait`, web logins | supported on Android through the [WebView host](../notes/implemented/2026-10-13-webview-host-and-downloads.md); elsewhere reported as unsupported |
 | `getVerificationCode` captchas | unsupported, reported as such |
 | Font decryption (`queryTTF`), local files, archives | unsupported, reported as such |
-| Images in chapter text | not shown; images are dropped from the text |
+| Images in chapter text | shown in place: each `<img>` (lazy `data-original`/`data-src` first) becomes a line of its own with an absolute address; the picture is fetched through the source (headers, cookies, `Referer` retry, `ruleContent.imageDecode`), kept with the book's cached chapters in `online_images` (schema 25), and read as an EPUB-style image mark; a picture that fails is left out, and a TXT made from the book drops them |
 
 ### Network settings
 

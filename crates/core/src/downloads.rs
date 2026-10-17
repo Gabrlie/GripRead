@@ -414,7 +414,10 @@ impl ChapterStore for LibraryChapters {
     }
 
     fn fetch(&self, book_id: &str, index: u32) -> Result<(), AppError> {
-        crate::online_reader::raw_chapter(&self.0, book_id, index).map(|_| ())
+        // Pictures too, so a cached book shows them offline.
+        let raw = crate::online_reader::raw_chapter(&self.0, book_id, index)?;
+        crate::online_reader::with_image_marks(&self.0, book_id, &raw);
+        Ok(())
     }
 }
 

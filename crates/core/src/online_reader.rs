@@ -158,6 +158,56 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     Ok(content.text)
 }
 
+/// A chapter's pictures as the reader's image marks (`U+E000 + n`, as an
+/// EPUB's), each fetched through the source once and kept with the book's
+/// cached chapters. A picture that cannot be fetched is left out.
+pub fn with_image_marks(storage: &Shared, book_id: &str, text: &str) -> String {
+    use crate::sources::web_book::image_of_line;
+    if !text.lines().any(|line| image_of_line(line).is_some()) {
+        return text.to_string();
+    }
+    let source_url = lock(storage)
+        .and_then(|guard| guard.online_record(book_id))
+        .map(|record| record.book.source_url)
+        .unwrap_or_default();
+    let mark = |url: &str| -> Option<char> {
+        let known = lock(storage).ok()?.online_image_index(book_id, url).ok()?;
+        let index = match known {
+            Some(index) => index,
+            None => {
+                let bytes =
+                    crate::online_commands::content_image_bytes(storage, &source_url, url).ok()?;
+                let size = imagesize::blob_size(&bytes).ok()?;
+                lock(storage)
+                    .ok()?
+                    .keep_online_image(book_id, url, &bytes, size.width as u32, size.height as u32)
+                    .ok()?
+            }
+        };
+        (index < IMAGE_LIMIT)
+            .then(|| char::from_u32(crate::epub::IMAGE_BASE + index))
+            .flatten()
+    };
+    text.split('\n')
+        .filter_map(|line| match image_of_line(line) {
+            Some(url) => mark(url).map(String::from),
+            None => Some(line.to_string()),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Image marks run up to the directory marks (`src/reader/images.ts`).
+const IMAGE_LIMIT: u32 = 0x1900;
+
+/// A chapter's text without its pictures, for a TXT made from the book.
+pub fn without_images(text: &str) -> String {
+    text.split('\n')
+        .filter(|line| crate::sources::web_book::image_of_line(line).is_none())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Text that is an HTML page rather than a chapter.
 pub(crate) fn is_web_page(text: &str) -> bool {
     let start: String = text.trim_start().chars().take(15).collect();
@@ -311,7 +361,7 @@ fn build_chapter_text(
     transform: &transform::TextTransform,
     translation: Option<&ChapterTranslation>,
 ) -> Result<(ChapterText, bool), AppError> {
-    let raw = raw_chapter(storage, book_id, index)?;
+    let raw = with_image_marks(storage, book_id, &raw_chapter(storage, book_id, index)?);
     let body = raw.trim_matches('\n');
     let joined = if body.is_empty() {
         chapter.title.clone()
@@ -510,6 +560,25 @@ pub fn resolve_offset(
             "不是网络书籍的章节",
         )
     })?;
+    if request.offset == 0 {
+        // A chapter's start needs no text: the reader opens at once and
+        // fetches the chapter itself, showing its progress (and failure).
+        let guard = lock(storage)?;
+        if let Some(chapter) = guard
+            .online_chapters(&request.book_id)?
+            .iter()
+            .find(|chapter| chapter.index == index)
+        {
+            return Ok(ReaderLocator {
+                book_id: request.book_id.clone(),
+                content_version: chapter_version(&request.book_id, chapter),
+                resource_id: chapter_resource(index),
+                offset: 0,
+                context_before: String::new(),
+                context_after: String::new(),
+            });
+        }
+    }
     let chapter = chapter_text(storage, &request.book_id, index)?;
     Ok(locator_in(
         &request.book_id,
@@ -980,6 +1049,77 @@ mod tests {
             guard.online_chapter_path(&id, &chapter)
         };
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn chapter_pictures_show_as_image_marks_with_their_size() {
+        let base = start(|request: &Request| match request.path.as_str() {
+            "/c/1.html" => Response::html(
+                r#"<div id="content">第一段<img src="/p/1.png"><img src="/p/gone.png">第二段</div>"#,
+            ),
+            "/p/1.png" => {
+                // A PNG header saying 3 × 2 pixels.
+                let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+                png.extend([0, 0, 0, 13]);
+                png.extend(b"IHDR");
+                png.extend(3u32.to_be_bytes());
+                png.extend(2u32.to_be_bytes());
+                png.extend([8, 6, 0, 0, 0]);
+                Response {
+                    status: 200,
+                    content_type: "image/png".into(),
+                    headers: Vec::new(),
+                    body: png,
+                }
+            }
+            _ => Response::not_found(),
+        });
+        let (_dir, storage, id) = library(&base);
+        let window = read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        // The picture that could not be fetched is left out.
+        assert_eq!(window.text, "第一章 惊蛰\n第一段\n\u{E000}\n第二段");
+        let guard = storage.lock().unwrap();
+        assert_eq!(
+            guard.book_images(&id).unwrap(),
+            vec![crate::models::BookImage {
+                width: 3,
+                height: 2
+            }]
+        );
+        assert!(guard.online_image_path(&id, 0).is_file());
+        // Clearing the cache takes the pictures with the chapters.
+        guard.clear_online_cache(&id).unwrap();
+        assert!(guard.book_images(&id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_chapter_start_opens_before_its_text_is_fetched() {
+        let base = site();
+        let (_dir, storage, id) = library(&base);
+        let locator = resolve_offset(
+            &storage,
+            &ResolveOffsetRequest {
+                book_id: id.clone(),
+                content_version: String::new(),
+                resource_id: "chapter-2".into(),
+                offset: 0,
+            },
+        )
+        .unwrap();
+        // Nothing fetched: the reader does that, showing its progress.
+        let cached = storage.lock().unwrap().cached_online_chapters(&id).unwrap();
+        assert!(!cached.contains(&2));
+        // The reader opens there, the versions agreeing.
+        let window = read_window(
+            &storage,
+            &request(&id, Some(locator), None, WindowDirection::Forward),
+        )
+        .unwrap();
+        assert_eq!(window.resource_index, Some(2));
     }
 
     #[test]

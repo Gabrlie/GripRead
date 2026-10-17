@@ -29,5 +29,12 @@ export type {
   ReaderPresentationContext,
   ReaderSnapshot,
 } from "./types";
-export { bookImages, imageOfLine, readerImages, setReaderImages, withoutMarks } from "./images";
+export {
+  bookImages,
+  imageOfLine,
+  imagesNeeded,
+  readerImages,
+  setReaderImages,
+  withoutMarks,
+} from "./images";
 export type { ReaderImages } from "./images";

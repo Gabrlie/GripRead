@@ -22,6 +22,7 @@ export function OnlineTocPage({
   bookName,
   chapters,
   current = -1,
+  busy = false,
   onChoose,
   onClose,
 }: {
@@ -29,6 +30,8 @@ export function OnlineTocPage({
   chapters: OnlineChapter[];
   /** The chapter being read, highlighted; -1 for none. */
   current?: number;
+  /** A chapter is being opened. */
+  busy?: boolean;
   onChoose: (index: number) => void;
   onClose: () => void;
 }) {
@@ -146,6 +149,13 @@ export function OnlineTocPage({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {busy && (
+          <div
+            role="progressbar"
+            aria-label={t("onlineToc.opening")}
+            className="h-0.5 bg-primary/70 animate-pulse"
+          />
+        )}
       </header>
 
       <div ref={list} className="flex-1 min-h-0 overflow-y-auto overscroll-contain">

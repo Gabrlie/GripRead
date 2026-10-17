@@ -23,6 +23,16 @@ export function imageOfLine(line: string): number | null {
   return code >= 0 && code < IMAGE_LIMIT ? code : null;
 }
 
+/** How many images `text` needs known: one past its highest image mark. */
+export function imagesNeeded(text: string): number {
+  let needed = 0;
+  for (const line of text.split("\n")) {
+    const index = imageOfLine(line);
+    if (index !== null && index >= needed) needed = index + 1;
+  }
+  return needed;
+}
+
 /** Text without image or directory marks, for speech and excerpts. */
 export function withoutMarks(text: string): string {
   return text.replace(MARKS, "").replace(/[-]/g, "");
@@ -57,14 +67,25 @@ export function readerImages(): ReaderImages | null {
  * object URLs until `dispose`.
  */
 export function bookImages(
-  sizes: { width: number; height: number }[],
+  initial: { width: number; height: number }[],
   read: (index: number) => Promise<ArrayBuffer>,
-): ReaderImages & { dispose(): void } {
+): ReaderImages & {
+  dispose(): void;
+  /** How many sizes are known. */
+  count(): number;
+  /** New sizes, as an online book's chapters bring pictures. */
+  update(next: { width: number; height: number }[]): void;
+} {
+  let sizes = initial;
   const urls = new Map<number, string>();
   const loading = new Set<number>();
   let disposed = false;
   return {
     size: (index) => sizes[index],
+    count: () => sizes.length,
+    update(next) {
+      sizes = next;
+    },
     url: (index) => urls.get(index),
     load(index) {
       if (disposed || urls.has(index) || loading.has(index) || !sizes[index]) return;

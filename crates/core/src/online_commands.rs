@@ -178,11 +178,7 @@ pub fn merge_results(key: &str, books: &[OnlineBook], precise: bool) -> Vec<Onli
 /// An author as sources write it, for comparing: without `作者：`-style
 /// labels, spaces, and a trailing 著.
 pub fn plain_author(author: &str) -> String {
-    let text = author.trim();
-    let text = ["作者：", "作者:", "作者", "作 者：", "Author:", "author:"]
-        .iter()
-        .find_map(|label| text.strip_prefix(label))
-        .unwrap_or(text);
+    let text = crate::sources::web_book::format_book_author(author);
     let text: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
     text.strip_suffix('著').unwrap_or(&text).to_lowercase()
 }
@@ -624,6 +620,25 @@ fn cover_bytes(
     source_url: &str,
     url: &str,
 ) -> Result<Vec<u8>, AppError> {
+    source_image(storage, source_url, url, false)
+}
+
+/// A picture inside a chapter, fetched and kept as covers are (not held
+/// back on mobile data, and decoded by the source's `imageDecode`).
+pub(crate) fn content_image_bytes(
+    storage: &Arc<Mutex<crate::storage::Storage>>,
+    source_url: &str,
+    url: &str,
+) -> Result<Vec<u8>, AppError> {
+    source_image(storage, source_url, url, true)
+}
+
+fn source_image(
+    storage: &Arc<Mutex<crate::storage::Storage>>,
+    source_url: &str,
+    url: &str,
+    content: bool,
+) -> Result<Vec<u8>, AppError> {
     use crate::storage::CachedCover;
     let key = crate::storage::cover_key(source_url, url);
     let lock = || {
@@ -631,7 +646,13 @@ fn cover_bytes(
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
     };
-    match lock()?.cached_cover(&key)? {
+    // A chapter's pictures are kept with the chapter by the caller.
+    let cached = if content {
+        CachedCover::Unknown
+    } else {
+        lock()?.cached_cover(&key)?
+    };
+    match cached {
         CachedCover::Kept(path) => return Ok(std::fs::read(path)?),
         CachedCover::RecentlyFailed => {
             return Err(AppError::keyed(
@@ -648,7 +669,7 @@ fn cover_bytes(
         .ok()
         .and_then(|settings| settings.covers_wifi_only)
         .unwrap_or(false);
-    if wifi_only && crate::network::metered() {
+    if !content && wifi_only && crate::network::metered() {
         return Err(AppError::keyed(
             ErrorCode::Io,
             "coverWifiOnly",
@@ -657,7 +678,12 @@ fn cover_bytes(
     }
     let _slot = CoverSlot::take();
     let source = load_source(storage, source_url)?;
-    let decode = source.cover_decode_js().filter(|js| !js.trim().is_empty());
+    let decode = if content {
+        source.rule("ruleContent", "imageDecode")
+    } else {
+        source.cover_decode_js()
+    }
+    .filter(|js| !js.trim().is_empty());
     let control = Control::new(Default::default(), Some(Instant::now() + COVER_TIMEOUT));
     let session = session_for(storage, source, control).map_err(engine_error)?;
     let fetched = session.run_with_rule(|scope, rule| {
@@ -690,34 +716,47 @@ fn cover_bytes(
         }
         if !response.code.to_string().starts_with('2') && !is_image(&bytes) {
             return Err(SourceError::rule(format!(
-                "封面下载失败（{}）",
+                "图片下载失败（{}）",
                 response.code
             )));
         }
         if !is_image(&bytes) {
-            return Err(SourceError::rule("封面不是图片".to_string()));
+            return Err(SourceError::rule("不是图片".to_string()));
         }
         Ok(bytes)
     });
     match fetched {
         Ok(bytes) => {
-            lock()?.keep_cover(&key, &bytes)?;
+            if !content {
+                lock()?.keep_cover(&key, &bytes)?;
+            }
             Ok(bytes)
         }
         Err(error) => {
             // Only a definite answer waits before asking again; a timeout or
             // dropped connection is tried again next time.
-            if error.kind == crate::sources::error::SourceErrorKind::Rule {
+            if !content && error.kind == crate::sources::error::SourceErrorKind::Rule {
                 lock()?.record_cover_failure(&key)?;
             }
-            crate::log_keyed!(
-                Warn,
-                "source",
-                "coverFailed",
-                format!("封面下载失败 {url}：{}", error.message),
-                @error engine_error(error.clone()),
-                url = url,
-            );
+            if content {
+                crate::log_keyed!(
+                    Warn,
+                    "source",
+                    "imageFailed",
+                    format!("正文图片下载失败 {url}：{}", error.message),
+                    @error engine_error(error.clone()),
+                    url = url,
+                );
+            } else {
+                crate::log_keyed!(
+                    Warn,
+                    "source",
+                    "coverFailed",
+                    format!("封面下载失败 {url}：{}", error.message),
+                    @error engine_error(error.clone()),
+                    url = url,
+                );
+            }
             Err(engine_error(error))
         }
     }
@@ -1229,7 +1268,10 @@ pub async fn convert_online_to_local(
             )));
         }
         let texts = (0..count)
-            .map(|index| crate::online_reader::raw_chapter(&storage, &request.book_id, index))
+            .map(|index| {
+                crate::online_reader::raw_chapter(&storage, &request.book_id, index)
+                    .map(|text| crate::online_reader::without_images(&text))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let mut guard = storage
             .lock()

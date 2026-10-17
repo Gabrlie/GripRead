@@ -264,6 +264,7 @@ export const sources = {
   "onlineBook.contents": "目录（{count} 章）",
   "onlineBook.read": "阅读",
   "onlineToc.bought": "已购",
+  "onlineToc.opening": "正在打开章节",
   "onlineToc.count": "共 {count} 章",
   "explore.loading": "正在加载第 {page} 页…",
   "explore.end": "没有更多了",

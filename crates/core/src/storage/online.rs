@@ -868,7 +868,76 @@ impl Storage {
         Ok(cached)
     }
 
+    /// The pictures of a book's chapters, by the index their marks carry.
+    pub fn online_images(&self, book_id: &str) -> Result<Vec<crate::models::BookImage>, AppError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT width, height FROM online_images WHERE book_id = ?1 ORDER BY idx")?;
+        let images = statement
+            .query_map(params![book_id], |row| {
+                Ok(crate::models::BookImage {
+                    width: row.get(0)?,
+                    height: row.get(1)?,
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(images)
+    }
+
+    /// The mark index of a picture already kept for the book.
+    pub fn online_image_index(&self, book_id: &str, url: &str) -> Result<Option<u32>, AppError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT idx FROM online_images WHERE book_id = ?1 AND url = ?2",
+                params![book_id, url],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Keeps a fetched picture with the book's cached chapters and gives it
+    /// the next mark index.
+    pub fn keep_online_image(
+        &self,
+        book_id: &str,
+        url: &str,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<u32, AppError> {
+        if let Some(index) = self.online_image_index(book_id, url)? {
+            return Ok(index);
+        }
+        let index: u32 = self.conn.query_row(
+            "SELECT COALESCE(MAX(idx) + 1, 0) FROM online_images WHERE book_id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )?;
+        let path = self.online_image_path(book_id, index);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, bytes)?;
+        self.conn.execute(
+            "INSERT INTO online_images(book_id, idx, url, width, height) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![book_id, index, url, width, height],
+        )?;
+        Ok(index)
+    }
+
+    pub fn online_image_path(&self, book_id: &str, index: u32) -> PathBuf {
+        self.online_cache_dir(book_id)
+            .join("images")
+            .join(index.to_string())
+    }
+
     pub fn clear_online_cache(&self, book_id: &str) -> Result<(), AppError> {
+        // Pictures go with the chapters, so their indexes start over.
+        self.conn.execute(
+            "DELETE FROM online_images WHERE book_id = ?1",
+            params![book_id],
+        )?;
         forget_cached_chapters(book_id);
         let dir = self.online_cache_dir(book_id);
         match fs::remove_dir_all(&dir) {

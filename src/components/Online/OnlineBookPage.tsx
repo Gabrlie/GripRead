@@ -128,7 +128,7 @@ export function OnlineBookPage({
 
   const act = (work: () => Promise<void>) => {
     setBusy(true);
-    void work()
+    return work()
       .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
       .finally(() => setBusy(false));
   };
@@ -344,9 +344,11 @@ export function OnlineBookPage({
         <OnlineTocPage
           bookName={book.name}
           chapters={chapters}
+          busy={busy}
           onChoose={(index) => {
-            setShowChapters(false);
-            read(index);
+            // The contents stay until the reader is over them, not the
+            // detail page in between.
+            if (!busy) void read(index).finally(() => setShowChapters(false));
           }}
           onClose={() => setShowChapters(false)}
         />

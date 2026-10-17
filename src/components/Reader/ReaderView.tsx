@@ -1,3 +1,4 @@
+import type { ReaderService } from "../../services/contracts";
 import {
   useState,
   useEffect,
@@ -16,6 +17,7 @@ import {
   HeadingIndex,
   PageTurnAdapter,
   bookImages,
+  imagesNeeded,
   emptyReaderSnapshot,
   setReaderImages,
   withoutMarks,
@@ -988,16 +990,18 @@ export function ReaderView() {
 
   // An EPUB's image sizes are needed before its pages are measured.
   const imagesReady = useRef<Promise<void>>(Promise.resolve());
+  const bookImageSet = useRef<ReturnType<typeof bookImages> | null>(null);
   useLayoutEffect(() => {
     if (!bookId) return;
     let images: ReturnType<typeof bookImages> | null = null;
     let active = true;
     imagesReady.current = runtime.services.library.listBookImages(bookId).then(
       (sizes) => {
-        if (!active || !sizes.length) return;
+        if (!active) return;
         images = bookImages(sizes, (index) =>
           runtime.services.library.readBookImage(bookId, index),
         );
+        bookImageSet.current = images;
         setReaderImages(images);
       },
       () => undefined,
@@ -1005,6 +1009,7 @@ export function ReaderView() {
     return () => {
       active = false;
       images?.dispose();
+      bookImageSet.current = null;
       setReaderImages(null);
     };
   }, [bookId, runtime]);
@@ -1027,7 +1032,21 @@ export function ReaderView() {
     measuring.setHeadings(headingsRef.current);
     presentation.setHeadings(headingsRef.current);
     measurer.current = measuring;
-    const reader = new ReaderController(runtime.services.reader, {
+    // An online chapter can bring pictures the book did not have: their
+    // sizes are fetched before its pages are measured.
+    const service: ReaderService = Object.create(runtime.services.reader);
+    service.readContentWindow = async (request) => {
+      const window = await runtime.services.reader.readContentWindow(request);
+      const images = bookImageSet.current;
+      if (images && imagesNeeded(window.text) > images.count()) {
+        await runtime.services.library.listBookImages(bookId).then(
+          (sizes) => images.update(sizes),
+          () => undefined,
+        );
+      }
+      return window;
+    };
+    const reader = new ReaderController(service, {
       measurer: measuring,
       maxUnits: 8192,
       reducedMotion: Boolean(reducedMotion),
@@ -1414,12 +1433,18 @@ export function ReaderView() {
             </div>
           )
         )}
-        {!page && state.loading && (
-          <p role="status" className="text-sm text-secondary">
+        {/* Until the first page is laid out (fetching a chapter, translating
+            it, or measuring), not a blank page. */}
+        {!page && !state.error && !(!state.loading && state.contentWindow?.totalLength === 0) && (
+          <div
+            role="status"
+            className="fixed inset-0 z-10 flex flex-col items-center justify-center gap-3 pointer-events-none text-sm text-secondary"
+          >
+            <Icon name="progress_activity" size={28} className="animate-spin text-primary" />
             {chapterTranslation
               ? t("translation.chapterProgress", chapterTranslation)
               : t("reader.loadingText")}
-          </p>
+          </div>
         )}
         {!state.loading && state.contentWindow?.totalLength === 0 && (
           <p className="text-sm text-secondary">{t("reader.noText")}</p>

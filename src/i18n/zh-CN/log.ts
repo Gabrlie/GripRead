@@ -3,6 +3,7 @@ export const log = {
   "log.searchFailed": "{source} 搜索失败：{error}",
   "log.sourceFailed": "{source}（{url}）：{error}",
   "log.coverFailed": "封面下载失败 {url}：{error}",
+  "log.imageFailed": "正文图片下载失败 {url}：{error}",
   "log.sourceChangedMoved": "换源：《{title}》换到 {source}，进度移到第 {chapter} 章",
   "log.sourceChangedKept": "换源：《{title}》换到 {source}，没有找到对应章节，停在第 {chapter} 章",
   "log.sourceChangedUnread": "换源：《{title}》换到 {source}，尚未阅读",

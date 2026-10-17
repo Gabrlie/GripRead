@@ -128,13 +128,18 @@ fn format_html(html: &str, keep_images: bool) -> String {
     }
 }
 
-/// Plain paragraphs for the reader: entities decoded, images dropped
-/// (pictures in online chapters are not shown yet), each line trimmed,
-/// empty lines removed.
+/// Plain paragraphs for the reader: entities decoded, each picture a line
+/// of its own ([`image_line`]), each line trimmed, empty lines removed.
 pub fn content_paragraphs(html: &str) -> String {
-    let formatted = format_html(html, false);
+    let formatted = format_html(html, true);
     let decoded = unescape_html(&formatted);
-    decoded
+    // Text and pictures sharing a line become lines of their own.
+    let separated = img_tag().replace_all(&decoded, |caps: &regex::Captures| {
+        img_source(&caps[0])
+            .map(|src| format!("\n{}\n", image_line(src)))
+            .unwrap_or_default()
+    });
+    separated
         .lines()
         .map(|line| {
             line.trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}' || c == '\u{a0}')
@@ -142,6 +147,67 @@ pub fn content_paragraphs(html: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+const IMAGE_LINE_START: &str = "<img src=\"";
+
+/// A chapter line that is a picture: `<img src="…">` alone, its address
+/// absolute. Kept chapters hold these; the reader shows them as images.
+pub fn image_line(url: &str) -> String {
+    format!("{IMAGE_LINE_START}{url}\">")
+}
+
+/// The picture's address when `line` is an [`image_line`].
+pub fn image_of_line(line: &str) -> Option<&str> {
+    line.strip_prefix(IMAGE_LINE_START)?
+        .strip_suffix("\">")
+        .filter(|url| !url.is_empty())
+}
+
+fn img_tag() -> &'static regex::Regex {
+    static TAG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    TAG.get_or_init(|| regex::Regex::new(r"(?i)<img\b[^>]*>").expect("valid"))
+}
+
+/// A picture's address in an `<img>` tag: lazy-loading attributes first,
+/// as pages put the real address there and a placeholder in `src`.
+fn img_source(tag: &str) -> Option<&str> {
+    static ATTRIBUTE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let attribute = ATTRIBUTE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)\s(data-original|data-src|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#,
+        )
+        .expect("valid")
+    });
+    attribute
+        .captures_iter(tag)
+        .filter_map(|caps| {
+            let rank = match caps[1].to_ascii_lowercase().as_str() {
+                "data-original" => 0,
+                "data-src" => 1,
+                _ => 2,
+            };
+            let value = caps.get(2).or(caps.get(3)).or(caps.get(4))?.as_str().trim();
+            (!value.is_empty()).then_some((rank, value))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, value)| value)
+}
+
+/// Pictures in a content page with addresses made absolute against the page
+/// they were on, as Legado's `HtmlFormatter.formatKeepImg` does.
+fn absolute_images(content: &str, base_url: &str) -> String {
+    img_tag()
+        .replace_all(content, |caps: &regex::Captures| {
+            match img_source(&caps[0]) {
+                Some(src) => format!(
+                    "\n{}\n",
+                    image_line(&super::util::absolute_url(base_url, &unescape_html(src)))
+                ),
+                None => String::new(),
+            }
+        })
+        .into_owned()
 }
 
 /// One source and the host its scripts run in, for one operation.
@@ -1213,7 +1279,10 @@ fn analyze_content_page(
     rule.set_redirect_url(redirect_url);
     rule.set_next_chapter_url(next_chapter_url.map(str::to_string));
     let rules = rule.split_source_rule(content_rule, false);
-    let content = rule.get_string_rules(scope, rules, None, false, false)?;
+    let content = absolute_images(
+        &rule.get_string_rules(scope, rules, None, false, false)?,
+        base_url,
+    );
     let mut next_urls = Vec::new();
     if want_next {
         if let Some(next_rule) = env

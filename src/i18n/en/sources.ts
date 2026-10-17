@@ -272,6 +272,7 @@ export const sources = {
   "onlineBook.contents": "Contents ({count} chapters)",
   "onlineBook.read": "Read",
   "onlineToc.bought": "Bought",
+  "onlineToc.opening": "Opening the chapter",
   "onlineToc.count": "{count} {count|chapter|chapters}",
   "explore.loading": "Loading page {page}…",
   "explore.end": "No more",

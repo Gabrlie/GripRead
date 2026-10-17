@@ -315,6 +315,22 @@ fn list_helpers_follow_legado() {
         content_paragraphs("<p>　　甲&amp;乙</p><br/><p>&nbsp;</p>丙"),
         "甲&乙\n丙"
     );
+    // A picture is a line of its own, its lazy-loaded address preferred.
+    assert_eq!(
+        content_paragraphs(
+            "<p>甲<img src=\"x.gif\" data-original=\"https://a.cn/1.jpg\">乙</p><img alt=1>"
+        ),
+        "甲\n<img src=\"https://a.cn/1.jpg\">\n乙"
+    );
+    assert_eq!(
+        absolute_images("<img src='/p/2.png'>", "https://a.cn/book/3.html"),
+        "\n<img src=\"https://a.cn/p/2.png\">\n"
+    );
+    assert_eq!(
+        image_of_line("<img src=\"https://a.cn/p/2.png\">"),
+        Some("https://a.cn/p/2.png")
+    );
+    assert_eq!(image_of_line("正文"), None);
 }
 
 #[test]

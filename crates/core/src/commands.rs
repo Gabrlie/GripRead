@@ -1755,7 +1755,8 @@ pub async fn set_book_cover(
     .await
 }
 
-/// The sizes of an EPUB's images, by the index its text marks carry.
+/// The sizes of a book's images (an EPUB's, or an online book's kept
+/// chapter pictures), by the index its text marks carry.
 pub async fn list_book_images(
     state: &Arc<AppState>,
     request: BookRequest,
@@ -1763,11 +1764,27 @@ pub async fn list_book_images(
     with_storage(state, move |storage| storage.book_images(&request.book_id)).await
 }
 
-/// One EPUB image's bytes.
+/// One image's bytes.
 pub async fn read_book_image(
     state: &Arc<AppState>,
     request: crate::models::BookImageRequest,
 ) -> Result<Vec<u8>, AppError> {
+    let request_online = request.clone();
+    let online = with_storage(state, move |storage| {
+        if !storage.is_online_book(&request_online.book_id)? {
+            return Ok(None);
+        }
+        Ok(Some(storage.online_image_path(
+            &request_online.book_id,
+            request_online.index,
+        )))
+    })
+    .await?;
+    // An online book's pictures are kept with its chapters.
+    if let Some(path) = online {
+        return std::fs::read(&path)
+            .map_err(|_| AppError::keyed(ErrorCode::NotFound, "imageMissing", "没有这张图片"));
+    }
     let (source, inner) = with_storage(state, move |storage| {
         storage.book_image_location(&request.book_id, request.index)
     })
