@@ -745,6 +745,10 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub show_discover: Option<bool>,
+    /// The 订阅 tab shows; `None` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub show_subscription: Option<bool>,
     /// The bottom navigation shows its labels; `None` is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1188,6 +1192,7 @@ impl Default for ReaderPreferences {
             covers_wifi_only: None,
             home_tab: None,
             show_discover: None,
+            show_subscription: None,
             nav_labels: None,
             nav_autohide: None,
         }

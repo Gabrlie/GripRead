@@ -33,7 +33,11 @@ async function runtimeWith(preferences: Partial<ReaderPreferences>) {
 
 describe("外观 › 主界面 与 底部导航", () => {
   it("hides the 发现 tab and the labels when asked", async () => {
-    const runtime = await runtimeWith({ showDiscover: false, navLabels: false });
+    const runtime = await runtimeWith({
+      showDiscover: false,
+      showSubscription: false,
+      navLabels: false,
+    });
     render(
       <RuntimeContext.Provider value={runtime}>
         <AppProvider>
@@ -42,7 +46,7 @@ describe("外观 › 主界面 与 底部导航", () => {
       </RuntimeContext.Provider>,
     );
     const dock = screen.getByLabelText("Mobile Navigation Dock");
-    expect(dock.querySelectorAll("button")).toHaveLength(3);
+    expect(dock.querySelectorAll("button")).toHaveLength(2);
     // Without labels each tab still has its name for screen readers.
     expect(dock.querySelector('button[aria-label="书架"]')).toBeTruthy();
     expect(dock.textContent).not.toContain("书架");

@@ -32,7 +32,10 @@ export const translation = {
   "translation.testing": "测试中…",
   "translation.testOk": "✓ 测试成功（{ms} 毫秒）：{text}",
   "translation.testFailed": "✗ 测试失败：{error}",
-  "translation.target": "译成",
+  "translation.target": "默认译成",
+  "translation.book.into": "本书译成",
+  "translation.target.note":
+    "新打开翻译的书默认译成这种语言；每本书可以在阅读菜单的 翻译 中单独修改。",
   "translation.display": "显示方式",
   "translation.display.translated": "仅译文",
   "translation.display.bilingual": "双语对照",

@@ -100,7 +100,9 @@ export function TranslationDialog({
   };
 
   const hasEngine = Boolean(settings?.engines.length);
-  const target = settings?.target ?? "zh-CN";
+  // The book's own language to read in, else 设置 › 翻译's default.
+  const [picked, setPicked] = useState<string | null>(null);
+  const target = picked ?? book?.translateTo ?? settings?.target ?? "zh-CN";
   const same = sameLanguage(book?.language, target);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -143,6 +145,27 @@ export function TranslationDialog({
           </div>
         ) : (
           <>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 flex-1 truncate">{t("translation.book.into")}</span>
+              <select
+                aria-label={t("translation.book.into")}
+                className={selectClass}
+                value={target}
+                disabled={busy || !book}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setPicked(next);
+                  // A book read translated switches language at once.
+                  if (book?.translateTo) change(() => service.setBook(bookId, next));
+                }}
+              >
+                {LANGUAGES.map((code) => (
+                  <option key={code} value={code}>
+                    {languageName(code)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="flex items-center justify-between gap-3 text-sm">
               <span className="min-w-0 flex-1 truncate">
                 {t("translation.book.on", { target: languageName(target) })}

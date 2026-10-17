@@ -53,6 +53,7 @@ export const settings = {
   "appearance.main": "Main screen",
   "appearance.home": "Open the app on",
   "appearance.showDiscover": "Show the Discover tab",
+  "appearance.showSubscription": "Show the Subscriptions tab",
   "appearance.nav": "Bottom navigation",
   "appearance.navLabels": "Show labels",
   "appearance.navAutohide": "Hide while the shelf scrolls",

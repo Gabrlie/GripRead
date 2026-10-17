@@ -12,8 +12,10 @@ import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import {
   PINNED_MAX,
+  TONES,
   choose,
   chosenStyle,
+  editable,
   pinnedChoices,
   styleChoices,
   type StyleChoice,
@@ -60,21 +62,26 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
   const saveStyle = (style: InterfaceStyle) => {
     const styles = value.customStyles ?? [];
     const exists = styles.some((item) => item.id === style.id);
+    const isTone = TONES.some((tone) => tone.id === style.id);
     const patch: Partial<ReaderPreferences> = {
       customStyles: exists
         ? styles.map((item) => (item.id === style.id ? style : item))
         : [...styles, style],
       customStyle: style.id,
+      ...(isTone ? { paperTone: style.id as ReaderPreferences["paperTone"] } : {}),
     };
     // A new style shows in 外观 while there is room.
-    if (!exists && pinned.length < PINNED_MAX) patch.pinnedStyles = [...pinned, style.id];
+    if (!exists && !isTone && pinned.length < PINNED_MAX)
+      patch.pinnedStyles = [...pinned, style.id];
     store.set(patch);
     setEditing(null);
   };
+  /** Deletes a custom style, or gives a built-in tone its own colours back. */
   const deleteStyle = (id: string) => {
+    const isTone = TONES.some((tone) => tone.id === id);
     store.set({
       customStyles: (value.customStyles ?? []).filter((item) => item.id !== id),
-      pinnedStyles: pinned.filter((item) => item !== id),
+      pinnedStyles: isTone ? pinned : pinned.filter((item) => item !== id),
       customStyle: value.customStyle === id ? undefined : value.customStyle,
     });
     setEditing(null);
@@ -117,7 +124,8 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
             const selected = chosen === choice.id;
             const isPinned = pinned.includes(choice.id);
             return (
-              <li key={choice.id} className="flex items-center gap-3 px-4 py-2 min-h-12">
+              // The icon buttons' own padding makes up the right margin.
+              <li key={choice.id} className="flex items-center gap-1 pl-4 pr-2 py-2 min-h-12">
                 <button
                   type="button"
                   role="radio"
@@ -142,18 +150,14 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
                 >
                   <Icon name="push_pin" size={15} fill={isPinned} />
                 </button>
-                <span className="h-8 w-8 shrink-0 inline-flex">
-                  {choice.custom && (
-                    <button
-                      type="button"
-                      aria-label={t("appearance.edit", { name: choice.name })}
-                      onClick={() => setEditing(choice.custom!)}
-                      className="h-8 w-8 rounded-full inline-flex items-center justify-center text-secondary"
-                    >
-                      <Icon name="edit" size={15} />
-                    </button>
-                  )}
-                </span>
+                <button
+                  type="button"
+                  aria-label={t("appearance.edit", { name: choice.name })}
+                  onClick={() => setEditing(editable(choice))}
+                  className="h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center text-secondary"
+                >
+                  <Icon name="edit" size={15} />
+                </button>
               </li>
             );
           })}
@@ -241,6 +245,11 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
             )
           }
         />
+        <Toggle
+          label={t("appearance.showSubscription")}
+          checked={value.showSubscription ?? true}
+          onChange={(showSubscription) => store.set({ showSubscription })}
+        />
       </PageSection>
 
       <PageSection title={t("appearance.nav")}>
@@ -261,6 +270,7 @@ export function AppearancePage({ onClose }: { onClose: () => void }) {
         <StyleEditor
           style={editing}
           existing={(value.customStyles ?? []).some((item) => item.id === editing.id)}
+          builtIn={TONES.some((tone) => tone.id === editing.id)}
           onSave={saveStyle}
           onDelete={() => deleteStyle(editing.id)}
           onClose={() => setEditing(null)}
@@ -282,12 +292,15 @@ function StyleEditor({
   existing,
   onSave,
   onDelete,
+  builtIn = false,
   onClose,
 }: {
   style: InterfaceStyle;
   existing: boolean;
   onSave: (style: InterfaceStyle) => void;
   onDelete: () => void;
+  /** A built-in tone: its name stays, and 删除 reads 恢复默认. */
+  builtIn?: boolean;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(style);
@@ -398,7 +411,7 @@ function StyleEditor({
         <div className="flex justify-between gap-2">
           {existing ? (
             <Button variant="ghost" size="sm" className="text-error" onClick={onDelete}>
-              {t("common.delete")}
+              {builtIn ? t("appearance.coverReset") : t("common.delete")}
             </Button>
           ) : (
             <span />

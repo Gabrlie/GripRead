@@ -389,6 +389,8 @@ export interface TranslationService {
   onBookProgress(listener: (event: BookTranslationEvent) => void): Promise<() => void>;
   /** Short texts (titles, introductions) translated; `null` when kept as written. */
   translateTexts(texts: string[]): Promise<(string | null)[]>;
+  /** Each text's language code, `null` where it cannot be told. */
+  detectLanguages(texts: string[]): Promise<(string | null)[]>;
   /** An online chapter being translated as it opens. */
   onChapterProgress(listener: (event: ChapterTranslationEvent) => void): Promise<() => void>;
 }

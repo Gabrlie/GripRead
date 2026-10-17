@@ -897,6 +897,10 @@ export const tauriServices: AppServices = {
       });
     },
     onBookProgress: (listener) => listen<BookTranslationEvent>("book-translation", listener),
+    detectLanguages: (texts) =>
+      invokeCommand<(string | null)[]>("detect_languages", {
+        request: { texts } satisfies TranslateTextsRequest,
+      }),
     translateTexts: (texts) =>
       invokeCommand<(string | null)[]>("translate_texts", {
         request: { texts } satisfies TranslateTextsRequest,

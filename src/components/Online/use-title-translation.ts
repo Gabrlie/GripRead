@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { RuntimeContext } from "../../application/runtime";
+import { sameLanguage } from "../../application/translation";
 import { t } from "../../i18n";
 import { describeError } from "../Cloud/format";
 import { toast } from "../ui/toast";
@@ -74,6 +75,24 @@ export function useIntroTranslation(intro: string | null | undefined) {
   const [translated, setTranslated] = useState<{ intro: string; text: string | null } | null>(null);
   const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 翻译简介 is offered only for an introduction in another language.
+  const [foreign, setForeign] = useState<boolean | null>(null);
+  useEffect(() => {
+    setForeign(null);
+    if (!service || !intro?.trim()) return;
+    let active = true;
+    void Promise.all([service.getSettings(), service.detectLanguages([intro])]).then(
+      ([settings, [language]]) => {
+        if (!active) return;
+        const same = Boolean(language) && sameLanguage(language, settings.target);
+        setForeign(!same);
+      },
+      () => active && setForeign(true),
+    );
+    return () => {
+      active = false;
+    };
+  }, [service, intro]);
   const current = translated && translated.intro === intro ? translated.text : undefined;
   const toggle = () => {
     if (on || !service || !intro) {
@@ -102,7 +121,7 @@ export function useIntroTranslation(intro: string | null | undefined) {
       .finally(() => setBusy(false));
   };
   return {
-    available: Boolean(service && intro),
+    available: Boolean(service && intro && foreign),
     on,
     busy,
     toggle,

@@ -1682,6 +1682,7 @@ pub(super) fn merge_preferences(
     restored.covers_wifi_only = source.covers_wifi_only;
     restored.home_tab = source.home_tab.clone();
     restored.show_discover = source.show_discover;
+    restored.show_subscription = source.show_subscription;
     restored.nav_labels = source.nav_labels;
     restored.nav_autohide = source.nav_autohide;
     if reading {

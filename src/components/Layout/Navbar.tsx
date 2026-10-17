@@ -41,15 +41,18 @@ const TABS: TabItem[] = [
   },
 ];
 
-/** The tabs 外观 › 主界面 shows: 发现 can be hidden. */
-export function shownTabs(showDiscover: boolean): TabItem[] {
-  return TABS.filter((tab) => showDiscover || tab.id !== "discover");
+/** The tabs 外观 › 主界面 shows: 发现 and 订阅 can be hidden. */
+export function shownTabs(showDiscover: boolean, showSubscription = true): TabItem[] {
+  return TABS.filter(
+    (tab) =>
+      (showDiscover || tab.id !== "discover") && (showSubscription || tab.id !== "subscription"),
+  );
 }
 
 export function Navbar() {
   const { activeTab, setActiveTab, activeBook } = useApp();
   const preferences = useOptionalPreferences();
-  const tabs = shownTabs(preferences?.showDiscover ?? true);
+  const tabs = shownTabs(preferences?.showDiscover ?? true, preferences?.showSubscription ?? true);
   const labels = preferences?.navLabels ?? true;
   const hidden = useHiddenOnScroll(
     Boolean(preferences?.navAutohide) && activeTab === "bookshelf" && !activeBook,

@@ -39,27 +39,54 @@ export const PINNED_MAX = 4;
 export interface StyleChoice {
   id: string;
   name: string;
+  /** The colours a reader set: a custom style, or a built-in tone's override. */
   custom?: InterfaceStyle;
+  /** A built-in paper tone (possibly overridden). */
+  tone?: boolean;
   light: [string, string, string];
   dark: [string, string, string];
 }
 
 export function styleChoices(preferences: ReaderPreferences): StyleChoice[] {
+  const styles = preferences.customStyles ?? [];
+  const toneIds = new Set<string>(TONES.map((tone) => tone.id));
   return [
-    ...TONES.map((tone) => ({
-      id: tone.id,
-      name: t(`settings.tone.${tone.id}`),
-      light: tone.light,
-      dark: tone.dark,
-    })),
-    ...(preferences.customStyles ?? []).map((style) => ({
-      id: style.id,
-      name: style.name,
-      custom: style,
-      light: styleSwatch(style, false),
-      dark: styleSwatch(style, true),
-    })),
+    ...TONES.map((tone) => {
+      // A built-in tone edited by the reader keeps its row with their colours.
+      const override = styles.find((style) => style.id === tone.id);
+      return {
+        id: tone.id,
+        name: t(`settings.tone.${tone.id}`),
+        tone: true,
+        custom: override,
+        light: override ? styleSwatch(override, false) : tone.light,
+        dark: override ? styleSwatch(override, true) : tone.dark,
+      };
+    }),
+    ...styles
+      .filter((style) => !toneIds.has(style.id))
+      .map((style) => ({
+        id: style.id,
+        name: style.name,
+        custom: style,
+        light: styleSwatch(style, false),
+        dark: styleSwatch(style, true),
+      })),
   ];
+}
+
+/** The colours the editor starts from: the style's own, or a tone's as built. */
+export function editable(choice: StyleChoice): InterfaceStyle {
+  if (choice.custom) return choice.custom;
+  const tone = TONES.find((item) => item.id === choice.id);
+  return {
+    id: choice.id,
+    name: choice.name,
+    primary: tone?.light[2] ?? "#925429",
+    paper: tone?.light[0] ?? null,
+    text: null,
+    secondary: null,
+  };
 }
 
 /** The styles shown in 外观: the pinned ones that still exist, else the four tones. */
@@ -80,9 +107,12 @@ export function chosenStyle(preferences: ReaderPreferences): string {
 
 /** The preferences change that makes `choice` the 界面样式 in use. */
 export function choose(choice: StyleChoice): Partial<ReaderPreferences> {
-  return choice.custom
-    ? { customStyle: choice.id }
-    : { paperTone: choice.id as PaperTone, customStyle: undefined };
+  if (choice.tone)
+    return {
+      paperTone: choice.id as PaperTone,
+      customStyle: choice.custom ? choice.id : undefined,
+    };
+  return { customStyle: choice.id };
 }
 
 /** CSS variables for a style's swatch; the `dark:` classes pick the night set. */

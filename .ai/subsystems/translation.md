@@ -10,7 +10,7 @@ A book in another language can be read translated into the reader's language, as
 
 **Settings:**
 - **Device-local:** engines with their addresses, models, keys, prompts, and extra request headers (`{apiKey}` and `{model}` are filled in the address and headers; when either takes the key, the kind's key header is not sent), kept in a device-local file that is never in backups or sync records.
-- **Also device-local:** the target language, the display, the default engine, 提前翻译 (chapters of online books translated ahead, two by default), and 自动翻译外语书籍. Each book's language and its translation are stored with the book on the device (`book_translation`, schema 23).
+- **Also device-local:** the default target language (each book can choose its own in the reader's 翻译 dialog, kept with the book), the display, the default engine, 提前翻译 (chapters of online books translated ahead, two by default), and 自动翻译外语书籍. Each book's language and its translation are stored with the book on the device (`book_translation`, schema 23).
 
 **Cache:** translations are cached by source line, target, and engine (kind, model, prompt), and are cleared in 数据管理.
 
@@ -27,7 +27,7 @@ A book in another language can be read translated into the reader's language, as
 
 **Online and local books:**
 - Online chapters are translated as they open, along with the next chapters ahead; while a chapter being opened is translated, the reader shows 正在翻译 with the paragraphs done (`chapter-translation` events; those translated ahead are marked and not shown).
-- 搜索 and 发现 lists have 翻译, which translates the titles shown (and those loaded later) with the default engine, each row showing the translation in place of the original with a small 译 mark (rows keep their height), until 显示原文; a book's detail page has 翻译简介, which replaces its introduction the same way. Texts already in the target language are left as written (`translate_texts`, through the shared cache).
+- 搜索 and 发现 lists have 翻译, which translates the titles shown (and those loaded later) with the default engine, each row showing the translation in place of the original with a small 译 mark (rows keep their height), until 显示原文; a book's detail page has 翻译简介, which replaces its introduction the same way and is offered only when the introduction is in another language than the target. Texts already in the target language are left as written (`translate_texts`, through the shared cache).
 - A translated line starts with the mark U+100000, kept in the text like the image and directory marks so offsets hold; the reader hides it and styles those paragraphs with 译文样式 (默认, 弱化, 引用, 斜体, 模糊 until a tap shows it, or 自定义 CSS declarations with a live preview; selectors and at-rules are dropped). Local translations stored before the mark read without it until translated again.
 - A translation is one paragraph: line breaks in an answer become spaces, and an empty answer leaves the line untranslated and uncached.
 - 测试 in an engine's settings reports success with the sample's translation and the time taken, or failure with the reason.

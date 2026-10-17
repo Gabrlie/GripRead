@@ -34,7 +34,10 @@ export const translation = {
   "translation.testing": "Testing…",
   "translation.testOk": "✓ Test passed ({ms} ms): {text}",
   "translation.testFailed": "✗ Test failed: {error}",
-  "translation.target": "Translate into",
+  "translation.target": "Translate into by default",
+  "translation.book.into": "Translate this book into",
+  "translation.target.note":
+    "Books start translated into this language; each book can choose its own in the reader's Translation menu.",
   "translation.display": "Display",
   "translation.display.translated": "Translation only",
   "translation.display.bilingual": "Bilingual",

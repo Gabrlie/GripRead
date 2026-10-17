@@ -180,7 +180,7 @@ fn bare_book(source_sha256: &str) -> PortableBook {
     }
 }
 
-const THEME_FIELDS: [&str; 13] = [
+const THEME_FIELDS: [&str; 14] = [
     "theme",
     "paperTone",
     "oledBlack",
@@ -192,6 +192,7 @@ const THEME_FIELDS: [&str; 13] = [
     "coversWifiOnly",
     "homeTab",
     "showDiscover",
+    "showSubscription",
     "navLabels",
     "navAutohide",
 ];

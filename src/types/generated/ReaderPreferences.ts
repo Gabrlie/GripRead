@@ -65,6 +65,10 @@ homeTab?: string,
  */
 showDiscover?: boolean, 
 /**
+ * The 订阅 tab shows; `None` is on.
+ */
+showSubscription?: boolean, 
+/**
  * The bottom navigation shows its labels; `None` is on.
  */
 navLabels?: boolean, 

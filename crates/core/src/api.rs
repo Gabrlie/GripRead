@@ -113,6 +113,7 @@ pub fn mutates(name: &str) -> bool {
         "source_subscription_imported",
         "translate_book",
         "translate_texts",
+        "detect_languages",
         "install_update",
         "forget_sync_server_login",
         "server_api",
@@ -231,6 +232,7 @@ pub const COMMANDS: &[&str] = &[
     "delete_source_subscription",
     "source_subscription_imported",
     "translate_book",
+    "detect_languages",
     "translate_texts",
     "delete_recovery_point",
     "list_remote_backups",
@@ -551,6 +553,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "translate_book" => {
             reply(crate::translation::commands::translate_book(state, request(args)?).await)
+        }
+        "detect_languages" => {
+            reply(crate::translation::commands::detect_languages(state, request(args)?).await)
         }
         "translate_texts" => {
             reply(crate::translation::commands::translate_texts(state, request(args)?).await)

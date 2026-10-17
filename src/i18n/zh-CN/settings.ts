@@ -49,6 +49,7 @@ export const settings = {
   "appearance.main": "主界面",
   "appearance.home": "打开应用时显示",
   "appearance.showDiscover": "显示 发现 标签",
+  "appearance.showSubscription": "显示 订阅 标签",
   "appearance.nav": "底部导航",
   "appearance.navLabels": "显示文字",
   "appearance.navAutohide": "滑动书架时隐藏底栏",

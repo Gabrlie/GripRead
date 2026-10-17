@@ -160,7 +160,10 @@ export function TranslationSettingsPage({
 
       <PageSection title={t("translation.title")}>
         <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-          <span className="min-w-0 flex-1 truncate">{t("translation.target")}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{t("translation.target")}</span>
+            <span className="block text-[11px] text-secondary">{t("translation.target.note")}</span>
+          </span>
           <select
             aria-label={t("translation.target")}
             className={`${selectClass} !w-auto shrink-0 max-w-[50%] truncate`}

@@ -214,7 +214,11 @@ function MainContent() {
       const home = value.homeTab;
       if (home === "discover" || home === "settings") setActiveTab(home);
     }
-    if (value.showDiscover === false && activeTab === "discover") setActiveTab("bookshelf");
+    if (
+      (value.showDiscover === false && activeTab === "discover") ||
+      (value.showSubscription === false && activeTab === "subscription")
+    )
+      setActiveTab("bookshelf");
   }, [settings.value, activeTab, setActiveTab]);
   const backState = useRef({ activeTab, activeBook, closePending });
   backState.current = { activeTab, activeBook, closePending };

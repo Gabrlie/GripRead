@@ -903,6 +903,15 @@ pub mod commands {
         .await
     }
 
+    /// The language of each text (a code such as `en`), `None` where it
+    /// cannot be told; 翻译简介 is offered only for another language.
+    pub async fn detect_languages(
+        _state: &Arc<AppState>,
+        request: crate::models::TranslateTextsRequest,
+    ) -> Result<Vec<Option<String>>, AppError> {
+        Ok(request.texts.iter().map(|text| detect(text)).collect())
+    }
+
     fn current(storage: &Storage, book_id: &str) -> Result<BookTranslation, AppError> {
         let (language, translate_to) = storage.book_translation(book_id)?;
         Ok(BookTranslation {

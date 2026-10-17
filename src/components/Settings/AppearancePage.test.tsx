@@ -59,4 +59,59 @@ describe("更多外观设置", () => {
       runtime.settings.getSnapshot().value!.customStyles[0].id,
     ]);
   });
+
+  it("edits a custom style and a built-in tone, which can go back to its own", async () => {
+    const preferences = {
+      theme: "light",
+      paperTone: "warm-tea",
+      oledBlack: false,
+      customStyles: [
+        { id: "sea", name: "海", primary: "#4a6fa5", paper: null, text: null, secondary: null },
+      ],
+      customStyle: "sea",
+      pinnedStyles: [],
+    } as unknown as ReaderPreferences;
+    const runtime = new AppRuntime({
+      library: { listBooks: vi.fn(async () => []), onImportProgress: vi.fn(async () => () => {}) },
+      reader: {},
+      settings: {
+        getSettings: vi.fn(async () => preferences),
+        saveSettings: vi.fn(async (value: ReaderPreferences) => value),
+      },
+      sync: {},
+      sources: {},
+    } as unknown as AppServices);
+    await runtime.settings.load();
+    render(
+      <RuntimeContext.Provider value={runtime}>
+        <AppearancePage onClose={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    const value = () => runtime.settings.getSnapshot().value!;
+    await userEvent.click(await screen.findByRole("button", { name: "编辑 海" }));
+    const primary = screen.getByLabelText("主色 #");
+    await userEvent.clear(primary);
+    await userEvent.type(primary, "#aa3311");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(value().customStyles[0].primary).toBe("#aa3311"));
+    // A built-in tone keeps its row and pin, with the reader's colours.
+    await userEvent.click(screen.getByRole("button", { name: "编辑 羊脂白" }));
+    const tone = screen.getByLabelText("主色 #");
+    await userEvent.clear(tone);
+    await userEvent.type(tone, "#225588");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(value().customStyles.find((style) => style.id === "bone-white")?.primary).toBe(
+        "#225588",
+      ),
+    );
+    expect(value()).toMatchObject({ paperTone: "bone-white", customStyle: "bone-white" });
+    expect(screen.getAllByRole("radio", { name: /羊脂白/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "编辑 羊脂白" }));
+    await userEvent.click(screen.getByRole("button", { name: "恢复默认" }));
+    await waitFor(() =>
+      expect(value().customStyles.some((style) => style.id === "bone-white")).toBe(false),
+    );
+    expect(value().customStyle).toBeUndefined();
+  });
 });
