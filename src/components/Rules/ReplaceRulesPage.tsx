@@ -90,7 +90,7 @@ export function ReplaceRulesPage({
       aria-modal="true"
       aria-label={t("settings.replace")}
       data-open=""
-      className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col pt-safe pb-safe"
+      className="fixed inset-0 z-[45] bg-surface text-on-surface flex flex-col overflow-hidden pt-safe pb-safe"
     >
       <header className="shrink-0 h-14 px-2 flex items-center gap-1 border-b border-surface-variant/30 max-w-3xl mx-auto w-full">
         <Button

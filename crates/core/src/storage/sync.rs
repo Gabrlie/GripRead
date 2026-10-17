@@ -429,6 +429,24 @@ impl Storage {
         Ok(())
     }
 
+    /// Notes book files the server holds, for the shelf's cloud mark.
+    pub fn mark_on_server(&self, sha256s: &[String]) -> Result<(), AppError> {
+        for sha in sha256s {
+            self.conn.execute(
+                "INSERT INTO server_books(source_sha256, seen_at) VALUES (?1, ?2)
+                 ON CONFLICT(source_sha256) DO UPDATE SET seen_at = excluded.seen_at",
+                params![sha, now_millis()],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Leaving the server: its books are no longer this device's cloud.
+    pub fn forget_server_books(&self) -> Result<(), AppError> {
+        self.conn.execute("DELETE FROM server_books", [])?;
+        Ok(())
+    }
+
     /// Forgets what was synced, so the next sync sends every record.
     pub fn sync_forget(&self) -> Result<(), AppError> {
         self.conn.execute("DELETE FROM sync_records", [])?;

@@ -8,6 +8,9 @@ const OPEN_LAYER =
  * Android back gesture (dispatched as Escape) closes them; a dialog opened
  * on top of the page closes first.
  */
+/** Full-screen pages open now. */
+const open = { count: 0 };
+
 export function usePageLayer(onClose: () => void) {
   const close = useRef(onClose);
   close.current = onClose;
@@ -20,7 +23,15 @@ export function usePageLayer(onClose: () => void) {
       close.current();
     };
     window.addEventListener("keydown", handle);
-    return () => window.removeEventListener("keydown", handle);
+    // The window behind a full-screen page does not scroll (or show its
+    // scrollbar) while the page is open.
+    open.count += 1;
+    document.documentElement.classList.add("page-layer-open");
+    return () => {
+      window.removeEventListener("keydown", handle);
+      open.count -= 1;
+      if (open.count === 0) document.documentElement.classList.remove("page-layer-open");
+    };
   }, []);
   return page;
 }

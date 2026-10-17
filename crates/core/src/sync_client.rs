@@ -778,6 +778,9 @@ impl SyncClient {
             let _ = http.json::<Value>(Method::POST, "/api/auth/logout", None);
         }
         self.update(|config| *config = Config::default());
+        if let Ok(storage) = self.lock() {
+            let _ = storage.forget_server_books();
+        }
         crate::log_keyed!(Info, "sync", "serverDisconnected", "已断开服务器");
         self.announce();
     }
@@ -977,6 +980,15 @@ impl SyncClient {
                 for change in &changes {
                     storage.sync_mark(change)?;
                 }
+                // Books whose files the server did not ask for are there.
+                let held: Vec<String> = changes
+                    .iter()
+                    .filter(|change| change.value.is_some())
+                    .filter_map(|change| change.key.strip_prefix("book:"))
+                    .filter(|sha| !reply.missing_books.iter().any(|missing| missing == sha))
+                    .map(str::to_string)
+                    .collect();
+                storage.mark_on_server(&held)?;
             }
             self.update(|config| {
                 for sha in reply.missing_books {
@@ -1006,6 +1018,9 @@ impl SyncClient {
             let file = protocol::book_file(&*self.lock()?, &sha)?;
             if let Some(file) = file {
                 http.upload(&format!("/api/blobs/book/{sha}"), &file)?;
+                self.lock()?.mark_on_server(std::slice::from_ref(&sha))?;
+                // The shelf's cloud mark changed.
+                self.inner.events.emit("sync-applied", Value::Null);
             }
             self.update(|config| config.uploads.retain(|pending| pending != &sha));
         }

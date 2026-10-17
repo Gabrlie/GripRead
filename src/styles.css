@@ -751,3 +751,13 @@ button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 3px;
 }
+
+/* A full-screen page is open (use-page-layer.ts): the page behind keeps
+   its place without scrolling, and scrolling inside stops at the page. */
+html.page-layer-open,
+html.page-layer-open body {
+  overflow: hidden;
+}
+[role="dialog"][data-open] .overflow-y-auto {
+  overscroll-behavior: contain;
+}
