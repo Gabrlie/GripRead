@@ -482,9 +482,13 @@ fn relay_failed(env: &Env, message: &str) {
                 message: message.to_string(),
             },
         );
-        crate::app_log::warn(
+        crate::log_keyed!(
+            Warn,
             "source",
+            "relayFallback",
             format!("{source} 通过服务器访问失败，改为直接访问：{message}"),
+            source = env.source.name(),
+            message = message,
         );
     }
 }

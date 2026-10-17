@@ -1,6 +1,12 @@
 import { call } from "./transport";
 import type { LogEntry, LogLevel, LogPage } from "../types/generated";
 
+/** What an entry says, keyed so the log page shows it in its language. */
+export interface LogWords {
+  key: string;
+  params?: Record<string, string>;
+}
+
 /** The app and the server keep the log; the browser preview and tests have none. */
 function native(): boolean {
   if (typeof window === "undefined") return false;
@@ -25,20 +31,38 @@ export const appLog = {
     kept.length = 0;
     if (native()) await call("clear_logs");
   },
-  exportText: async (): Promise<string> =>
-    native()
-      ? call<string>("export_log_text")
-      : kept.map((entry) => `${entry.level} [${entry.area}] ${entry.message}`).join("\n"),
-  /** Never throws: logging must not break the action that failed. */
-  write: (level: LogLevel, area: string, message: string) => {
+  /** Every kept entry, oldest first, for an export the page words itself. */
+  allEntries: async (): Promise<LogEntry[]> =>
+    native() ? call<LogEntry[]>("export_log_entries") : [...kept],
+  /**
+   * Never throws: logging must not break the action that failed. `words`
+   * makes the entry read in the interface language; `message` is the text
+   * kept beside it.
+   */
+  write: (level: LogLevel, area: string, message: string, words?: LogWords) => {
+    const entry = { level, area, message, key: words?.key, params: words?.params };
     if (!native()) {
-      kept.push({ time: Date.now(), level, area, message });
+      kept.push({ time: Date.now(), ...entry });
       if (kept.length > 500) kept.shift();
       return;
     }
-    void call("log_frontend", { request: { level, area, message } }).catch(() => undefined);
+    void call("log_frontend", { request: entry }).catch(() => undefined);
   },
 };
+
+/** An error as log params, as the core writes them (`error`, `errorKey`, `errorParams`). */
+export function errorParams(error: {
+  message: string;
+  key?: string | null;
+  params?: Record<string, string> | null;
+}): Record<string, string> {
+  const params: Record<string, string> = { error: error.message };
+  if (error.key) {
+    params.errorKey = error.key;
+    params.errorParams = JSON.stringify(error.params ?? {});
+  }
+  return params;
+}
 
 function rank(level: LogLevel): number {
   return ["detail", "info", "warn", "error"].indexOf(level);
@@ -47,17 +71,17 @@ function rank(level: LogLevel): number {
 /** Records uncaught errors and rejected promises from the page. */
 export function captureUncaughtErrors() {
   window.addEventListener("error", (event) => {
-    appLog.write(
-      "error",
-      "ui",
-      `${event.message}${event.filename ? ` (${event.filename}:${event.lineno})` : ""}`,
-    );
+    const message = `${event.message}${event.filename ? ` (${event.filename}:${event.lineno})` : ""}`;
+    appLog.write("error", "ui", message, { key: "pageError", params: { message } });
   });
   window.addEventListener("unhandledrejection", (event) => {
     const reason: unknown = event.reason;
     const text =
       reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason ?? "");
-    appLog.write("error", "ui", `未处理的错误：${text}`);
+    appLog.write("error", "ui", `未处理的错误：${text}`, {
+      key: "uncaught",
+      params: { error: text },
+    });
   });
 }
 
@@ -79,6 +103,10 @@ export function captureLongTasks() {
             "detail",
             "ui",
             `界面卡顿 ${Math.round(entry.duration)} ms（${topLayer()}）`,
+            {
+              key: "longTask",
+              params: { ms: String(Math.round(entry.duration)), layer: topLayer() },
+            },
           );
     });
     observer.observe({ type: "longtask", buffered: false });

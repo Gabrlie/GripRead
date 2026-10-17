@@ -9,4 +9,15 @@ time: number, level: LogLevel,
 /**
  * What wrote it: `source`, `reader`, `sync`, `library`, `app`, `ui`.
  */
-area: string, message: string, };
+area: string, 
+/**
+ * The text as written (Chinese); shown when the entry has no key, as
+ * older entries and engine traces do not.
+ */
+message: string, 
+/**
+ * What the entry says, as a `log.<key>` the page shows in its own
+ * language with `params`; an error among them is `error` (its text),
+ * `errorKey`, and `errorParams` (JSON).
+ */
+key?: string, params?: { [key in string]: string }, };

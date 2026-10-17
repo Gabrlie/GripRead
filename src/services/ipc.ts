@@ -1,7 +1,7 @@
 import { addPluginListener } from "@tauri-apps/api/core";
 import { errorText, t } from "../i18n";
 import type { AppServices } from "./contracts";
-import { appLog } from "./log";
+import { appLog, errorParams } from "./log";
 import { androidApp, call, listen, native } from "./transport";
 import { finishSave, pickFiles, pickSaveTarget, pickTxtFolderFiles } from "./files";
 export type { LibraryService, ReaderService, SettingsService, AppServices } from "./contracts";
@@ -243,7 +243,10 @@ export function invokeCommand<T>(command: string, args?: Record<string, unknown>
   return call<T>(command, args).catch((error: unknown) => {
     const normalized = normalizeError(error);
     if (!QUIET_CODES.has(normalized.code))
-      appLog.write("warn", "command", `${command}：${normalized.message}`);
+      appLog.write("warn", "command", `${command}：${normalized.message}`, {
+        key: "commandFailed",
+        params: { command, ...errorParams(normalized) },
+      });
     throw new ReaderServiceError(normalized);
   });
 }

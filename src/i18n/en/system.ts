@@ -3,6 +3,7 @@ import type { system as zh } from "../zh-CN/system";
 
 export const system = {
   "logs.title": "Logs",
+  "logs.exportTitle": "GripRead {version} log",
   "logs.filter.error": "Errors",
   "logs.filter.warn": "Warnings",
   "logs.filter.info": "All",

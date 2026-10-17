@@ -2059,6 +2059,13 @@ pub struct FrontendLogRequest {
     #[serde(default)]
     pub area: String,
     pub message: String,
+    /// `log.<key>` and its params, so the entry reads in the page's language.
+    #[serde(default)]
+    #[ts(optional)]
+    pub key: Option<String>,
+    #[serde(default)]
+    #[ts(as = "Option<std::collections::BTreeMap<String, String>>", optional)]
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 /// One part of the app's data folder (数据管理).

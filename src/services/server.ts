@@ -1,6 +1,6 @@
 import { errorText } from "../i18n";
 import { invokeCommand } from "./ipc";
-import { appLog } from "./log";
+import { appLog, errorParams } from "./log";
 import { native, type TransportError } from "./transport";
 import { t } from "../i18n";
 
@@ -42,7 +42,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep the status as the message.
     }
-    appLog.write("warn", "server", `${path}：${error.message}`);
+    appLog.write("warn", "server", `${path}：${error.message}`, {
+      key: "serverRequestFailed",
+      params: { path, ...errorParams(error) },
+    });
     throw new Error(errorText(error));
   }
   if (response.status === 204) return undefined as T;

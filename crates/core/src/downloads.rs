@@ -295,7 +295,7 @@ impl Downloads {
                 .stack_size(ENGINE_STACK)
                 .spawn(move || queue.run(&id, &stop));
             if spawned.is_err() {
-                crate::app_log::warn("download", "下载线程启动失败");
+                crate::log_keyed!(Warn, "download", "downloadThread", "下载线程启动失败");
                 return;
             }
         }
@@ -323,9 +323,13 @@ impl Downloads {
         let (count, cached) = match planned {
             Ok(value) => value,
             Err(error) => {
-                crate::app_log::warn(
+                crate::log_keyed!(
+                    Warn,
                     "download",
+                    "cacheFailed",
                     format!("《{}》无法缓存：{}", job.title, error.message),
+                    @error error,
+                    title = job.title,
                 );
                 self.finish(id, stop);
                 return;

@@ -7,6 +7,8 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import { formatDateTime, t, useT, type MessageKey } from "../../i18n";
+import { logExport, logText } from "../../application/logs";
+import { APP_VERSION } from "./AboutPage";
 
 const LEVELS: LogLevel[] = ["error", "warn", "info", "detail"];
 
@@ -73,11 +75,12 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
   }, [level, revision]);
 
   const share = async (method: "copy" | "share") => {
-    const text = await appLog.exportText();
-    if (!text.trim()) {
+    const kept = await appLog.allEntries();
+    if (!kept.length) {
       toast(t("logs.empty"));
       return;
     }
+    const text = logExport(kept, APP_VERSION);
     if (method === "copy") {
       await copyText(text);
       toast(t("logs.copied"));
@@ -189,7 +192,7 @@ export function LogPage({ onClose, layer }: { onClose: () => void; layer?: strin
                 <span className="text-secondary tabular-nums">{time(entry.time)}</span>
               </p>
               <p className="break-words [overflow-wrap:anywhere] whitespace-pre-wrap select-text">
-                {entry.message}
+                {logText(entry)}
               </p>
             </li>
           ))}

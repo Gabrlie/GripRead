@@ -144,20 +144,29 @@ impl AppState {
     ) -> Result<Arc<Self>, AppError> {
         crate::app_log::init(&data_dir);
         crate::notify::set_events(events.clone());
-        crate::app_log::info(
+        crate::log_keyed!(
+            Info,
             "app",
+            "started",
             format!("启动 GripRead {}", env!("CARGO_PKG_VERSION")),
+            version = env!("CARGO_PKG_VERSION"),
         );
         let mut storage = Storage::open(&data_dir)?;
         match storage.purge_unshelved_online_books() {
             Ok(0) => {}
-            Ok(count) => crate::app_log::info(
+            Ok(count) => crate::log_keyed!(
+                Info,
                 "library",
+                "purgedUnshelved",
                 format!("清理了 {count} 本 30 天未打开、未加入书架的网络书籍"),
+                count = count,
             ),
-            Err(error) => crate::app_log::warn(
+            Err(error) => crate::log_keyed!(
+                Warn,
                 "library",
+                "purgeFailed",
                 format!("清理未加入书架的书失败：{}", error.message),
+                @error error,
             ),
         }
         // 退出时清理缓存: Android has no dependable exit, so the caches the
@@ -171,7 +180,7 @@ impl AppState {
                 .map(|part| part.to_string())
                 .collect();
             if let Err(error) = storage.clear_data(&parts) {
-                crate::app_log::warn("library", format!("清理缓存失败：{}", error.message));
+                crate::log_keyed!(Warn, "library", "clearCacheFailed", format!("清理缓存失败：{}", error.message), @error error);
             }
         }
         let data_root = storage.root_path().to_path_buf();
@@ -179,9 +188,12 @@ impl AppState {
         crate::documents::clear_staging(&data_root)?;
         let storage = Arc::new(Mutex::new(storage));
         if let Err(error) = crate::network::start(&data_root) {
-            crate::app_log::warn(
+            crate::log_keyed!(
+                Warn,
                 "network",
+                "networkSettingsInvalid",
                 format!("网络设置无效，已用默认：{}", error.message),
+                @error error,
             );
         }
         let downloads = {
@@ -369,9 +381,12 @@ pub async fn start_import(
                                 eprintln!("Unable to apply restored records: {}", error.message);
                             }
                             if let Err(error) = guard.apply_epub_cover(&imported.book.id) {
-                                crate::app_log::warn(
+                                crate::log_keyed!(
+                                    Warn,
                                     "import",
+                                    "epubCoverFailed",
                                     format!("EPUB 封面设置失败：{}", error.message),
+                                    @error error,
                                 );
                             }
                             return Ok(imported);
@@ -995,9 +1010,12 @@ async fn for_online_book<T: Send + 'static>(
     let outcome = crate::source_commands::on_engine_thread(move || work(&storage)).await?;
     // 详细日志 times every online reading step, to find what stutters.
     if crate::app_log::detailed() {
-        crate::app_log::detail(
+        crate::log_keyed!(
+            Detail,
             "reader",
+            "onlineTiming",
             format!("网络书籍操作 {} ms", started.elapsed().as_millis()),
+            ms = started.elapsed().as_millis(),
         );
     }
     outcome.map(Some)
@@ -2061,7 +2079,13 @@ pub async fn backup_to_webdav(
     let app = state.clone();
     with_cloud(state, move |storage, _| {
         let (backup, document) = crate::cloud::backup_now(storage, device_name())?;
-        crate::app_log::info("sync", format!("已备份到 WebDAV：{}", backup.name));
+        crate::log_keyed!(
+            Info,
+            "sync",
+            "backedUp",
+            format!("已备份到 WebDAV：{}", backup.name),
+            name = backup.name
+        );
         let folder = lock_storage(storage)?.stored_webdav()?.local_folder;
         if let Some(folder) = folder {
             write_local_backup(&app, &folder, &backup.name, &serde_json::to_vec(&document)?)?;
@@ -2217,7 +2241,7 @@ pub async fn restore_backup(
         // restores without them.
         if lock_storage(storage)?.stored_webdav()?.configured() {
             if let Err(error) = crate::cloud::fetch_backup_covers(storage, &document) {
-                crate::app_log::warn("sync", format!("恢复时封面下载失败：{}", error.message));
+                crate::log_keyed!(Warn, "sync", "restoreCoverFailed", format!("恢复时封面下载失败：{}", error.message), @error error);
             }
         }
         let mut guard = lock_storage(storage)?;
@@ -2225,8 +2249,10 @@ pub async fn restore_backup(
         let recovery_point = guard.write_recovery_point(&device)?;
         let mut report = guard.restore_backup(&document)?;
         report.recovery_point = recovery_point;
-        crate::app_log::info(
+        crate::log_keyed!(
+            Info,
             "sync",
+            "restored",
             format!(
                 "已恢复备份：书籍 {}，网络书籍 {}，书源 {}，进度 {}，书签 {}",
                 report.books_restored,
@@ -2235,6 +2261,11 @@ pub async fn restore_backup(
                 report.positions_restored,
                 report.bookmarks_added
             ),
+            books = report.books_restored,
+            online = report.online_books_restored,
+            sources = report.sources_restored,
+            positions = report.positions_restored,
+            bookmarks = report.bookmarks_added,
         );
         Ok(report)
     })
@@ -2424,12 +2455,26 @@ pub fn log_frontend(_state: &Arc<AppState>, request: crate::models::FrontendLogR
     } else {
         request.area.trim()
     };
+    if let Some(key) = &request.key {
+        let params: Vec<(&str, String)> = request
+            .params
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.clone()))
+            .collect();
+        crate::app_log::keyed(request.level, area, key, &params, &request.message);
+        return;
+    }
     match request.level {
         crate::app_log::LogLevel::Error => crate::app_log::error(area, &request.message),
         crate::app_log::LogLevel::Warn => crate::app_log::warn(area, &request.message),
         crate::app_log::LogLevel::Info => crate::app_log::info(area, &request.message),
         crate::app_log::LogLevel::Detail => crate::app_log::detail(area, &request.message),
     }
+}
+
+/// Every kept entry, for an export the page writes in its language.
+pub fn export_log_entries(_state: &Arc<AppState>) -> Vec<crate::app_log::LogEntry> {
+    crate::app_log::all_entries()
 }
 
 /// 阅读记录's 删除记录: the book's reading time no longer counts.

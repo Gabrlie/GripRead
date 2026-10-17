@@ -73,7 +73,13 @@ pub(crate) fn engine_error(error: SourceError) -> AppError {
     }
     // A source script's own error: the reader sees its message, the log
     // keeps where it was thrown.
-    crate::app_log::warn("书源", &error.message);
+    crate::log_keyed!(
+        Warn,
+        "source",
+        "sourceScriptError",
+        &error.message,
+        message = error.message
+    );
     AppError::keyed(code, "sourceScript", readable.clone()).with("message", readable)
 }
 

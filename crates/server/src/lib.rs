@@ -126,14 +126,25 @@ pub struct Server {
     activity: Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
-/// An entry in the server's log (the web version's 日志).
-fn log(message: impl AsRef<str>) {
-    gripread_core::app_log::info("server", message);
+/// An entry in the server's log (the web version's 日志), as `log.<key>`
+/// with its params and the Chinese text for older readers.
+fn log(key: &str, params: &[(&str, String)], text: impl AsRef<str>) {
+    gripread_core::app_log::keyed(
+        gripread_core::app_log::LogLevel::Info,
+        "server",
+        key,
+        params,
+        text,
+    );
 }
 
 impl Server {
     /// Logs a device's sync activity, at most once a minute per device and kind.
-    fn log_activity(&self, key: &str, message: impl FnOnce() -> String) {
+    fn log_activity(
+        &self,
+        key: &str,
+        message: impl FnOnce() -> (&'static str, Vec<(&'static str, String)>, String),
+    ) {
         let now = std::time::Instant::now();
         let Ok(mut seen) = self.activity.lock() else {
             return;
@@ -145,7 +156,8 @@ impl Server {
             return;
         }
         seen.insert(key.to_string(), now);
-        log(message());
+        let (log_key, params, text) = message();
+        log(log_key, &params, text);
     }
 }
 
@@ -179,7 +191,11 @@ pub fn app(config: Config) -> Result<Router, String> {
         jobs: jobs::Jobs::default(),
         activity: Mutex::default(),
     });
-    log(format!("服务器已启动（{}）", env!("CARGO_PKG_VERSION")));
+    log(
+        "serverStarted",
+        &[("version", env!("CARGO_PKG_VERSION").to_string())],
+        format!("服务器已启动（{}）", env!("CARGO_PKG_VERSION")),
+    );
     sync::watch_edits(server.clone(), edits);
     sync::daily_backups(server.clone());
     jobs::schedule(server.clone());
@@ -369,7 +385,11 @@ async fn setup(
         .setup(&credentials.password, &credentials.device)
     {
         Ok(token) => {
-            log(format!("设置了访问密码，「{}」已登录", credentials.device));
+            log(
+                "passwordSet",
+                &[("device", credentials.device.clone())],
+                format!("设置了访问密码，「{}」已登录", credentials.device),
+            );
             signed_in_reply(&headers, token)
         }
         Err(error) => auth_error(error),
@@ -391,12 +411,22 @@ async fn login(
     .await;
     match result {
         Ok(Ok(token)) => {
-            log(format!("「{device}」已登录"));
+            log(
+                "deviceSignedIn",
+                &[("device", device.clone())],
+                format!("「{device}」已登录"),
+            );
             signed_in_reply(&headers, token)
         }
         Ok(Err(error)) => {
             if matches!(error, AuthError::BadPassword | AuthError::TooMany) {
-                gripread_core::app_log::warn("server", format!("「{device}」登录失败：密码不对"));
+                gripread_core::log_keyed!(
+                    Warn,
+                    "server",
+                    "wrongPassword",
+                    format!("「{device}」登录失败：密码不对"),
+                    device = device,
+                );
             }
             auth_error(error)
         }
@@ -407,7 +437,11 @@ async fn login(
 async fn logout(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
     if let Some(session) = server.signed_in(&headers, None) {
         let _ = server.auth.revoke(&session.id);
-        log(format!("「{}」已退出登录", session.device));
+        log(
+            "deviceSignedOut",
+            &[("device", session.device.clone())],
+            format!("「{}」已退出登录", session.device),
+        );
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
@@ -436,10 +470,11 @@ async fn change_password(
         .change_password(&change.current, &change.next, &session.id)
     {
         Ok(()) => {
-            log(format!(
-                "「{}」修改了访问密码，其他设备需要重新登录",
-                session.device
-            ));
+            log(
+                "passwordChanged",
+                &[("device", session.device.clone())],
+                format!("「{}」修改了访问密码，其他设备需要重新登录", session.device),
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => auth_error(error),
@@ -480,7 +515,12 @@ async fn revoke(
         .map(|session| session.device);
     match server.auth.revoke(&id) {
         Ok(true) => {
-            log(format!("移除了设备「{}」", device.unwrap_or_default()));
+            let device = device.unwrap_or_default();
+            log(
+                "deviceRemoved",
+                &[("device", device.clone())],
+                format!("移除了设备「{device}」"),
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => failure_keyed(

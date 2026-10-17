@@ -466,9 +466,13 @@ impl Storage {
                 }
                 // Not marked: marking would make the record look removed
                 // here and send that removal on; this device keeps its own.
-                Err(error) => crate::app_log::warn(
+                Err(error) => crate::log_keyed!(
+                    Warn,
                     "sync",
+                    "recordNotApplied",
                     format!("同步记录未能应用（{}）：{}", change.key, error.message),
+                    @error error,
+                    record = change.key,
                 ),
             }
         }

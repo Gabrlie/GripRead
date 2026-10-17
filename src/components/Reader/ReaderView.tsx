@@ -638,7 +638,10 @@ export function ReaderView() {
   // Errors the reader shows also go to the app log.
   useEffect(() => {
     if (state.error)
-      appLog.write("error", "reader", `《${activeBook?.book.title ?? ""}》${state.error}`);
+      appLog.write("error", "reader", `《${activeBook?.book.title ?? ""}》${state.error}`, {
+        key: "readerError",
+        params: { title: activeBook?.book.title ?? "", error: state.error },
+      });
   }, [state.error]);
 
   const { setBookmarks, setEncodingInfo, reload: reloadTools } = tools;

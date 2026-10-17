@@ -36,7 +36,14 @@ async fn asset(
     let Some(session) = server.signed_in(&headers, None) else {
         return unauthorized();
     };
-    log(format!("「{}」经服务器下载更新 {name}", session.device));
+    log(
+        "updateRelayed",
+        &[
+            ("device", session.device.clone()),
+            ("name", name.to_string()),
+        ],
+        format!("「{}」经服务器下载更新 {name}", session.device),
+    );
     let root = server.core.data_root.clone();
     let path =
         match tokio::task::spawn_blocking(move || update::cached_asset(&root, &tag, &name)).await {

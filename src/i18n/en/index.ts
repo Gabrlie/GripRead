@@ -8,6 +8,7 @@ import { errors } from "./errors";
 import { settings } from "./settings";
 import { system } from "./system";
 import { update } from "./update";
+import { log } from "./log";
 
 export const en = {
   ...common,
@@ -20,4 +21,5 @@ export const en = {
   ...settings,
   ...system,
   ...update,
+  ...log,
 };

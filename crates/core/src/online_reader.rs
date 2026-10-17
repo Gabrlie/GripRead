@@ -138,12 +138,18 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     let content = session
         .content(&book, &chapter_data(&chapter), next.as_deref(), &urls)
         .map_err(|error| {
-            crate::app_log::error(
+            crate::log_keyed!(
+                Error,
                 "reader",
+                "chapterFailed",
                 format!(
                     "《{}》{} 读取失败（{}）：{}",
                     record.title, chapter.title, record.book.source_name, error.message
                 ),
+                @error engine_error(error.clone()),
+                title = record.title,
+                chapter = chapter.title,
+                source = record.book.source_name,
             );
             engine_error(error)
         })?;
@@ -342,9 +348,13 @@ fn build_chapter_text(
             }
             Err(failure) => {
                 complete = false;
-                crate::app_log::warn(
+                crate::log_keyed!(
+                    Warn,
                     "translation",
+                    "chapterUntranslated",
                     format!("《{}》翻译失败：{}", chapter.title, failure.message),
+                    @error failure,
+                    chapter = chapter.title,
                 )
             }
         }

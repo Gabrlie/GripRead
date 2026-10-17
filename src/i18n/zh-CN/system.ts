@@ -1,6 +1,7 @@
 /** 日志, 网络设置, and 数据管理. */
 export const system = {
   "logs.title": "日志",
+  "logs.exportTitle": "GripRead {version} \u65e5\u5fd7",
   "logs.filter.error": "错误",
   "logs.filter.warn": "警告",
   "logs.filter.info": "全部",

@@ -317,7 +317,12 @@ impl SyncClient {
             .and_then(|()| fs::rename(&partial, &path))
             .is_err()
         {
-            crate::app_log::warn("sync", "服务器同步设置保存失败");
+            crate::log_keyed!(
+                Warn,
+                "sync",
+                "serverSettingsUnsaved",
+                "服务器同步设置保存失败"
+            );
         }
     }
 
@@ -742,7 +747,7 @@ impl SyncClient {
         )
         .is_err()
         {
-            crate::app_log::warn("sync", "服务器登录信息保存失败");
+            crate::log_keyed!(Warn, "sync", "serverLoginUnsaved", "服务器登录信息保存失败");
         }
         if let Ok(mut covers) = self.inner.covers.lock() {
             covers.clear();
@@ -756,7 +761,7 @@ impl SyncClient {
                 ..Config::default()
             };
         });
-        crate::app_log::info("sync", "已连接服务器");
+        crate::log_keyed!(Info, "sync", "serverConnected", "已连接服务器");
         self.now();
         Ok(self.status())
     }
@@ -773,7 +778,7 @@ impl SyncClient {
             let _ = http.json::<Value>(Method::POST, "/api/auth/logout", None);
         }
         self.update(|config| *config = Config::default());
-        crate::app_log::info("sync", "已断开服务器");
+        crate::log_keyed!(Info, "sync", "serverDisconnected", "已断开服务器");
         self.announce();
     }
 
@@ -828,7 +833,7 @@ impl SyncClient {
                 match result {
                     Ok(()) => {
                         if failures > 0 {
-                            crate::app_log::info("sync", "服务器同步已恢复");
+                            crate::log_keyed!(Info, "sync", "syncRecovered", "服务器同步已恢复");
                         }
                         failures = 0;
                         self.update(|config| {
@@ -838,18 +843,24 @@ impl SyncClient {
                     }
                     Err(error) if self.background() => {
                         // The system cut the connection; coming back retries.
-                        crate::app_log::info(
+                        crate::log_keyed!(
+                            Info,
                             "sync",
+                            "syncPaused",
                             format!("后台同步中断，回到前台后重试：{}", error.message),
+                            @error error,
                         );
                     }
                     Err(error) => {
                         failures += 1;
                         // One line for an outage, however many rounds it fails.
                         if failures == 1 {
-                            crate::app_log::warn(
+                            crate::log_keyed!(
+                                Warn,
                                 "sync",
+                                "syncFailed",
                                 format!("同步失败，稍后重试：{}", error.message),
+                                @error error,
                             );
                         }
                         self.update(|config| config.last_error = Some(error.message.clone()));

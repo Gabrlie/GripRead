@@ -341,9 +341,13 @@ pub async fn search_online_books(
                             found.0.extend(books.iter().map(online_book));
                         }
                         Err(error) => {
-                            crate::app_log::warn(
+                            crate::log_keyed!(
+                                Warn,
                                 "source",
+                                "searchFailed",
                                 format!("{name} 搜索失败：{}", error.message),
+                                @error engine_error(error.clone()),
+                                source = name,
                             );
                             found.1.push(SourceFailure {
                                 source_name: name,
@@ -376,9 +380,14 @@ async fn run_step<T: Send + 'static>(
         let control = Control::new(Default::default(), Some(Instant::now() + STEP_TIMEOUT));
         let session = session_for(&storage, source, control).map_err(engine_error)?;
         step(&session).map_err(|error| {
-            crate::app_log::error(
+            crate::log_keyed!(
+                Error,
                 "source",
+                "sourceFailed",
                 format!("{name}（{source_url}）：{}", error.message),
+                @error engine_error(error.clone()),
+                source = name,
+                url = source_url,
             );
             engine_error(error)
         })
@@ -659,7 +668,14 @@ fn cover_bytes(
             if error.kind == crate::sources::error::SourceErrorKind::Rule {
                 lock()?.record_cover_failure(&key)?;
             }
-            crate::app_log::warn("source", format!("封面下载失败 {url}：{}", error.message));
+            crate::log_keyed!(
+                Warn,
+                "source",
+                "coverFailed",
+                format!("封面下载失败 {url}：{}", error.message),
+                @error engine_error(error.clone()),
+                url = url,
+            );
             Err(engine_error(error))
         }
     }
@@ -778,8 +794,15 @@ pub async fn change_online_source(
         let moved =
             storage.switch_online_source(&request.book_id, &request.book, &request.chapters)?;
         crate::online_reader::forget_shown(&request.book_id);
-        crate::app_log::info(
+        let (key, chapter) = match moved {
+            Some((index, true)) => ("sourceChangedMoved", index + 1),
+            Some((index, false)) => ("sourceChangedKept", index + 1),
+            None => ("sourceChangedUnread", 0),
+        };
+        crate::log_keyed!(
+            Info,
             "source",
+            key,
             format!(
                 "换源：《{}》换到 {}，{}",
                 request.book.name,
@@ -790,6 +813,9 @@ pub async fn change_online_source(
                     None => "尚未阅读".into(),
                 }
             ),
+            title = request.book.name,
+            source = request.book.source_name,
+            chapter = chapter,
         );
         Ok(crate::models::ChangeOnlineSourceResult {
             book: storage.library_book(&request.book_id)?,
@@ -935,14 +961,22 @@ fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<St
         let reply = match reply {
             Ok(Some(reply)) => reply,
             Ok(None) => {
-                crate::app_log::info("sync", "服务器版本较旧，不能代为更新书架，在本机更新");
+                crate::log_keyed!(
+                    Info,
+                    "sync",
+                    "serverTooOldToUpdate",
+                    "服务器版本较旧，不能代为更新书架，在本机更新"
+                );
                 let _ = update_here(&state, operation_id, ids).await;
                 return;
             }
             Err(error) => {
-                crate::app_log::warn(
+                crate::log_keyed!(
+                    Warn,
                     "sync",
+                    "serverUpdateFailed",
                     format!("服务器更新书架失败，改为本机更新：{}", error.message),
+                    @error error,
                 );
                 let _ = update_here(&state, operation_id, ids).await;
                 return;
@@ -1058,9 +1092,19 @@ async fn update_here(
                 let (new_chapters, error) = match outcome {
                     Ok(added) => (added, None),
                     Err(error) => {
-                        crate::app_log::warn(
+                        let title = storage
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.get_book(&book_id).ok())
+                            .map(|book| book.title)
+                            .unwrap_or_default();
+                        crate::log_keyed!(
+                            Warn,
                             "source",
-                            format!("更新目录失败（{book_id}）：{}", error.message),
+                            "tocUpdateFailed",
+                            format!("《{title}》更新目录失败：{}", error.message),
+                            @error error,
+                            title = title,
                         );
                         if let Ok(guard) = storage.lock() {
                             let _ = guard.record_online_update_error(&book_id, &error.message);
@@ -1149,7 +1193,13 @@ pub async fn convert_online_to_local(
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
         let local = guard.convert_online_to_local(&request.book_id, &texts)?;
-        crate::app_log::info("library", format!("网络书籍转为本地书籍：{local}"));
+        crate::log_keyed!(
+            Info,
+            "library",
+            "convertedToLocal",
+            format!("网络书籍转为本地书籍：{local}"),
+            title = local
+        );
         guard.library_book(&local)
     })
     .await?

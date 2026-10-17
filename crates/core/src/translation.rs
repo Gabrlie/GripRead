@@ -648,9 +648,12 @@ pub fn translate_lines_reporting(
             if result.iter().all(Option::is_none) {
                 return Err(failure);
             }
-            crate::app_log::warn(
+            crate::log_keyed!(
+                Warn,
                 "translation",
+                "partlyTranslated",
                 format!("部分段落未翻译：{}", failure.message),
+                @error failure,
             );
         }
     }

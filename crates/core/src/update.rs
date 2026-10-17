@@ -135,7 +135,7 @@ pub fn mark_checked(root: &Path) {
     let mut settings = load_settings(root);
     settings.last_check = Some(now_ms());
     if write_settings(root, &settings).is_err() {
-        crate::app_log::warn("update", "检查更新时间保存失败");
+        crate::log_keyed!(Warn, "update", "updateCheckUnsaved", "检查更新时间保存失败");
     }
 }
 
@@ -436,7 +436,13 @@ pub fn download(
     fs::create_dir_all(folder)?;
     let target = folder.join(name);
     if let Some(size) = verified_copy(&target, &expected) {
-        crate::app_log::info("update", format!("使用已下载的安装包 {name}"));
+        crate::log_keyed!(
+            Info,
+            "update",
+            "packageReused",
+            format!("使用已下载的安装包 {name}"),
+            name = name
+        );
         progress(size, Some(size));
         return Ok(target);
     }
@@ -651,9 +657,12 @@ fn releases_for(
             if settings.source == UpdateSource::Auto
                 && matches!(upstream, Upstream::Server { .. }) =>
         {
-            crate::app_log::warn(
+            crate::log_keyed!(
+                Warn,
                 "update",
+                "updateCheckDirect",
                 format!("通过服务器检查更新失败，改为直连 GitHub：{}", error.message),
+                @error error,
             );
             Ok((fetch_releases(root, &Upstream::GITHUB)?, Upstream::GITHUB))
         }
@@ -746,9 +755,12 @@ pub async fn install_update(
                                 && matches!(upstream, Upstream::Server { .. })
                                 && error.code != ErrorCode::ImportCancelled =>
                         {
-                            crate::app_log::warn(
+                            crate::log_keyed!(
+                                Warn,
                                 "update",
+                                "updateDownloadDirect",
                                 format!("通过服务器下载失败，改为直连 GitHub：{}", error.message),
+                                @error error,
                             );
                             // The bar starts over for the second download.
                             progress(0, None);

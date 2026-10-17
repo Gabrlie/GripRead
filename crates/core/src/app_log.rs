@@ -36,7 +36,18 @@ pub struct LogEntry {
     pub level: LogLevel,
     /// What wrote it: `source`, `reader`, `sync`, `library`, `app`, `ui`.
     pub area: String,
+    /// The text as written (Chinese); shown when the entry has no key, as
+    /// older entries and engine traces do not.
     pub message: String,
+    /// What the entry says, as a `log.<key>` the page shows in its own
+    /// language with `params`; an error among them is `error` (its text),
+    /// `errorKey`, and `errorParams` (JSON).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[ts(as = "Option<std::collections::BTreeMap<String, String>>", optional)]
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 struct Log {
@@ -133,6 +144,57 @@ pub fn redact(text: &str) -> String {
 }
 
 fn write(level: LogLevel, area: &str, message: &str) {
+    write_entry(level, area, message, None, Default::default());
+}
+
+/// A log entry the page shows in its language: `key` names `log.<key>`,
+/// `params` fill it, and `text` is the Chinese kept for older readers.
+pub fn keyed(
+    level: LogLevel,
+    area: &str,
+    key: &str,
+    params: &[(&str, String)],
+    text: impl AsRef<str>,
+) {
+    let params = params
+        .iter()
+        .map(|(name, value)| (name.to_string(), redact(value)))
+        .collect();
+    write_entry(level, area, text.as_ref(), Some(key.to_string()), params);
+}
+
+/// An error as log params: its text, and its key for the page to translate.
+pub fn error_params(error: &crate::error::AppError) -> Vec<(&'static str, String)> {
+    let mut params = vec![("error", error.message.clone())];
+    if let Some(key) = &error.key {
+        params.push(("errorKey", key.clone()));
+        params.push((
+            "errorParams",
+            serde_json::to_string(&error.params).unwrap_or_default(),
+        ));
+    }
+    params
+}
+
+/// `app_log::keyed` written as `log_keyed!(Warn, "area", "key", text, name = value, …)`;
+/// `@error e` adds an [`AppError`](crate::error::AppError)'s params.
+#[macro_export]
+macro_rules! log_keyed {
+    ($level:ident, $area:expr, $key:expr, $text:expr $(, @error $error:expr)? $(, $name:ident = $value:expr)* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut params: Vec<(&str, String)> = vec![$((stringify!($name), ($value).to_string())),*];
+        $(params.extend($crate::app_log::error_params(&$error));)?
+        $crate::app_log::keyed($crate::app_log::LogLevel::$level, $area, $key, &params, $text)
+    }};
+}
+
+fn write_entry(
+    level: LogLevel,
+    area: &str,
+    message: &str,
+    key: Option<String>,
+    params: std::collections::BTreeMap<String, String>,
+) {
     let Ok(mut guard) = log().lock() else {
         return;
     };
@@ -157,6 +219,8 @@ fn write(level: LogLevel, area: &str, message: &str) {
         level,
         area: area.to_string(),
         message,
+        key,
+        params,
     };
     if let Ok(line) = serde_json::to_string(&entry) {
         let path = state.dir.join(format!("{}.log", day_of(time)));
@@ -236,6 +300,22 @@ pub fn entries(level: LogLevel) -> Vec<LogEntry> {
         .unwrap_or_default()
 }
 
+/// Every kept entry, oldest first, for an export the page writes in its
+/// own language.
+pub fn all_entries() -> Vec<LogEntry> {
+    let Some(dir) = log()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|state| state.dir.clone()))
+    else {
+        return Vec::new();
+    };
+    day_files(&dir)
+        .iter()
+        .flat_map(|file| read_file(file))
+        .collect()
+}
+
 /// Every kept entry as text, oldest first, for sending.
 pub fn export_text() -> String {
     let Some(dir) = log()
@@ -312,15 +392,28 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("gripread-log-{}", uuid::Uuid::new_v4()));
         init_for_test(&dir);
         error("source", "甲站 搜索失败：网站返回 403");
+        // A keyed entry keeps what the page words it from.
+        crate::log_keyed!(
+            Warn,
+            "source",
+            "searchFailed",
+            "乙站 搜索失败",
+            source = "乙站"
+        );
+        let worded = entries(LogLevel::Warn);
+        let last = worded.last().unwrap();
+        assert_eq!(last.key.as_deref(), Some("searchFailed"));
+        assert_eq!(last.params.get("source").map(String::as_str), Some("乙站"));
         detail("source", "请求 https://a.com");
-        assert_eq!(entries(LogLevel::Detail).len(), 1, "detail is off");
+        assert_eq!(entries(LogLevel::Detail).len(), 2, "detail is off");
         set_detailed(true);
         detail("source", "请求 https://a.com");
-        assert_eq!(entries(LogLevel::Detail).len(), 2);
+        assert_eq!(entries(LogLevel::Detail).len(), 3);
         assert_eq!(entries(LogLevel::Error).len(), 1);
+        assert_eq!(entries(LogLevel::Warn).len(), 2);
         // A restart reads today's entries back.
         init(&dir);
-        assert_eq!(entries(LogLevel::Detail).len(), 2);
+        assert_eq!(entries(LogLevel::Detail).len(), 3);
         assert!(detailed());
         assert!(export_text().contains("甲站 搜索失败"));
         set_detailed(false);

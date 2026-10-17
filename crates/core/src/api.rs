@@ -183,6 +183,7 @@ pub const COMMANDS: &[&str] = &[
     "export_backup_file",
     "export_book_sources",
     "export_book_sources_file",
+    "export_log_entries",
     "export_log_text",
     "export_replace_rules",
     "export_txt_toc_rules",
@@ -451,6 +452,9 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         "export_book_sources_file" => {
             reply(crate::source_commands::export_book_sources_file(state, request(args)?).await)
         }
+        "export_log_entries" => reply(Ok::<_, AppError>(crate::commands::export_log_entries(
+            state,
+        ))),
         "export_log_text" => reply(Ok::<_, AppError>(crate::commands::export_log_text(state))),
         "export_replace_rules" => reply(crate::commands::export_replace_rules(state).await),
         "export_txt_toc_rules" => reply(crate::commands::export_txt_toc_rules(state).await),

@@ -1026,6 +1026,14 @@ export class ReaderController {
         "detail",
         "reader",
         `排版 ${window.text.length} 字用了 ${Math.round(spent)} ms，${pages.length} 页`,
+        {
+          key: "layoutTiming",
+          params: {
+            chars: String(window.text.length),
+            ms: String(Math.round(spent)),
+            pages: String(pages.length),
+          },
+        },
       );
     return { window, pages };
   }

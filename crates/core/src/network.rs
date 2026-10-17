@@ -245,7 +245,7 @@ pub fn refresh(root: &Path) {
         return;
     }
     if let Err(error) = apply(&load(root)) {
-        crate::app_log::warn("network", format!("系统代理无效：{}", error.message));
+        crate::log_keyed!(Warn, "network", "systemProxyInvalid", format!("系统代理无效：{}", error.message), @error error);
     }
 }
 

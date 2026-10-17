@@ -52,9 +52,12 @@ pub fn daily_backups(server: Arc<Server>) {
                 match guard.write_recovery_point("server") {
                     Ok(_) => Some(head),
                     Err(error) => {
-                        gripread_core::app_log::warn(
+                        gripread_core::log_keyed!(
+                            Warn,
                             "sync",
+                            "serverBackupFailed",
                             format!("服务器备份失败：{}", error.message),
+                            @error error,
                         );
                         backed_up
                     }
@@ -115,7 +118,14 @@ async fn push(
             server.announce(reply.head);
             if count > 0 {
                 server.log_activity(&format!("push:{}", session.id), || {
-                    format!("「{}」同步上来 {count} 条记录", session.device)
+                    (
+                        "devicePushed",
+                        vec![
+                            ("device", session.device.clone()),
+                            ("count", count.to_string()),
+                        ],
+                        format!("「{}」同步上来 {count} 条记录", session.device),
+                    )
                 });
             }
             Json(reply).into_response()
@@ -155,7 +165,14 @@ async fn pull(
         Ok(reply) => {
             if !reply.changes.is_empty() {
                 server.log_activity(&format!("pull:{}", session.id), || {
-                    format!("「{}」取走 {} 条记录", session.device, reply.changes.len())
+                    (
+                        "devicePulled",
+                        vec![
+                            ("device", session.device.clone()),
+                            ("count", reply.changes.len().to_string()),
+                        ],
+                        format!("「{}」取走 {} 条记录", session.device, reply.changes.len()),
+                    )
                 });
             }
             Json(reply).into_response()
@@ -255,7 +272,11 @@ async fn put_book(
     match stored {
         Ok(Ok(imported)) => {
             if imported {
-                log(format!("收到「{}」上传的书籍文件", session.device));
+                log(
+                    "bookUploaded",
+                    &[("device", session.device.clone())],
+                    format!("收到「{}」上传的书籍文件", session.device),
+                );
                 let core = server.core.clone();
                 let head = tokio::task::spawn_blocking(move || {
                     core.storage
@@ -343,7 +364,11 @@ async fn get_book(
     .ok()
     .flatten();
     if found.is_some() {
-        log(format!("「{}」下载了书籍文件", session.device));
+        log(
+            "bookDownloaded",
+            &[("device", session.device.clone())],
+            format!("「{}」下载了书籍文件", session.device),
+        );
     }
     send_file(found, "text/plain; charset=utf-8").await
 }
