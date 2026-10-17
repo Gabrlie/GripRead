@@ -4,6 +4,7 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /**
  * Legado's 书源调试: runs search → details → contents → first chapter for a
@@ -57,7 +58,7 @@ export function SourceDebugPage({
     setLines([]);
     track(operationId);
     void service.debug({ operationId, url, key: key.trim() }).catch((failure: unknown) => {
-      setLines([`✗ ${String(failure)}`]);
+      setLines([`✗ ${describeError(failure)}`]);
       track(null);
     });
   };

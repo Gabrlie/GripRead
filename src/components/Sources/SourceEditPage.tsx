@@ -15,6 +15,7 @@ import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import { SOURCE_TABS, fieldValue, withField, type SourceJson } from "./source-fields";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 const JSON_TAB = "json";
 
@@ -63,7 +64,7 @@ export function SourceEditPage({
         setSource(parsed);
         setSavedText(JSON.stringify(parsed));
       },
-      (failure: unknown) => toast({ text: String(failure), error: true }),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
   }, [service, url]);
 
@@ -76,7 +77,7 @@ export function SourceEditPage({
         setSource(parseSource(jsonText));
         setJsonError(null);
       } catch (failure) {
-        setJsonError(String(failure));
+        setJsonError(describeError(failure));
         return;
       }
     }
@@ -92,7 +93,7 @@ export function SourceEditPage({
       setJsonError(null);
       return parsed;
     } catch (failure) {
-      setJsonError(String(failure));
+      setJsonError(describeError(failure));
       return null;
     }
   };
@@ -108,7 +109,7 @@ export function SourceEditPage({
       toast(t("srcEdit.saved"));
       return summary.url;
     } catch (failure) {
-      toast({ text: String(failure), error: true });
+      toast({ text: describeError(failure), error: true });
       return null;
     }
   };

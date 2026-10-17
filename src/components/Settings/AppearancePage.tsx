@@ -18,6 +18,7 @@ import {
   styleChoices,
   type StyleChoice,
 } from "./interface-styles";
+import { describeError } from "../Cloud/format";
 
 const HOME_TABS: ["bookshelf" | "discover" | "settings", MessageKey][] = [
   ["bookshelf", "nav.shelf"],
@@ -484,7 +485,7 @@ function CoverImages({
   const pick = (key: "defaultCover" | "nightDefaultCover") =>
     void runtime.services.settings.pickBackgroundImage().then(
       (asset) => asset && onChange({ [key]: asset.id }),
-      (failure: unknown) => toast({ text: String(failure), error: true }),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
   const slot = (
     label: string,

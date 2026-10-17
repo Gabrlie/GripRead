@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "../ui/toast";
 import { OnlineCover } from "./OnlineCover";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /**
  * Legado's 换封面: every enabled source is searched for the title, and a
@@ -49,7 +50,7 @@ export function SourceDetailsDialog({
           page: 1,
         });
       })
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }));
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }));
     return () => {
       active = false;
       stop?.();
@@ -77,7 +78,7 @@ export function SourceDetailsDialog({
   const act = (book: OnlineBook, work: () => Promise<void>) => {
     setBusy(`${book.sourceUrl}\n${book.bookUrl}`);
     void work()
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
       .finally(() => setBusy(null));
   };
 

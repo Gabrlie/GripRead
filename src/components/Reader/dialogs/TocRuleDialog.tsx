@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "../../ui/dialog";
 import { t } from "../../../i18n";
+import { describeError } from "../../Cloud/format";
 
 interface TocRuleDialogProps {
   rules: TxtTocRule[];
@@ -57,7 +58,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
   const report = (work: Promise<unknown>, done?: string) =>
     work.then(
       () => done && toast(done),
-      (error: unknown) => toast({ text: String(error), error: true }),
+      (error: unknown) => toast({ text: describeError(error), error: true }),
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
@@ -100,7 +101,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
                   toast(rule.id ? t("tocRule.saved") : t("tocRule.added"));
                   setView({ kind: "list" });
                 },
-                (error: unknown) => toast({ text: String(error), error: true }),
+                (error: unknown) => toast({ text: describeError(error), error: true }),
               )
             }
           />
@@ -120,7 +121,7 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
                   );
                   setView({ kind: "list" });
                 },
-                (error: unknown) => toast({ text: String(error), error: true }),
+                (error: unknown) => toast({ text: describeError(error), error: true }),
               )
             }
           />
@@ -363,7 +364,7 @@ export function TocRuleEditor({
           disabled={!draft.pattern}
           onClick={() =>
             onTest(draft.pattern, draft.example).then(setTested, (error: unknown) =>
-              setTested(String(error)),
+              setTested(describeError(error)),
             )
           }
         >

@@ -460,13 +460,17 @@ impl Storage {
                 _ => change.value.clone(),
             };
             match self.apply_record(&change.key, merged.as_ref(), base) {
-                Ok(()) => applied += 1,
+                Ok(()) => {
+                    applied += 1;
+                    self.sync_mark(change)?;
+                }
+                // Not marked: marking would make the record look removed
+                // here and send that removal on; this device keeps its own.
                 Err(error) => crate::app_log::warn(
                     "sync",
                     format!("同步记录未能应用（{}）：{}", change.key, error.message),
                 ),
             }
-            self.sync_mark(change)?;
         }
         Ok(applied)
     }

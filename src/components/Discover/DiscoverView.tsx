@@ -24,6 +24,7 @@ import { SourceManagePage } from "../Sources/SourceManagePage";
 import { SourceEditPage } from "../Sources/SourceEditPage";
 import { toast } from "../ui/toast";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /** The gap between kinds, in pixels (`gap-1.5`). */
 const KIND_GAP = 6;
@@ -90,7 +91,7 @@ export function DiscoverView() {
         offset: 0,
       })
       .then((locator) => runtime.services.reader.saveReaderLocator(locator))
-      .then(open, (failure: unknown) => toast({ text: String(failure), error: true }));
+      .then(open, (failure: unknown) => toast({ text: describeError(failure), error: true }));
   };
   const [managing, setManaging] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -98,7 +99,7 @@ export function DiscoverView() {
   const load = () =>
     service.listSources().then(setSources, (failure: unknown) => {
       setSources([]);
-      toast({ text: String(failure), error: true });
+      toast({ text: describeError(failure), error: true });
     });
   useEffect(() => {
     void load();
@@ -122,7 +123,8 @@ export function DiscoverView() {
     setKinds((current) => ({ ...current, [source.url]: "loading" }));
     void service.exploreKinds(source.url, refresh).then(
       (list) => setKinds((current) => ({ ...current, [source.url]: list })),
-      (failure: unknown) => setKinds((current) => ({ ...current, [source.url]: String(failure) })),
+      (failure: unknown) =>
+        setKinds((current) => ({ ...current, [source.url]: describeError(failure) })),
     );
   };
 

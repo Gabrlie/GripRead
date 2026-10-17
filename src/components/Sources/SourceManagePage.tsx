@@ -35,6 +35,7 @@ import { SourceDebugPage } from "./SourceDebugPage";
 import { SourceLoginDialog } from "./SourceLoginDialog";
 import { SourceSubscriptionsPage } from "./SourceSubscriptionsPage";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 interface CheckProgress {
   operationId: string;
@@ -102,7 +103,7 @@ export function SourceManagePage({
         setSources(list);
         setLoaded(true);
       },
-      (failure: unknown) => toast({ text: String(failure), error: true }),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
   useEffect(() => {
     void load();
@@ -153,7 +154,7 @@ export function SourceManagePage({
       .then(load)
       .then(
         () => done && toast(done),
-        (failure: unknown) => toast({ text: String(failure), error: true }),
+        (failure: unknown) => toast({ text: describeError(failure), error: true }),
       );
 
   const selectedUrls = selected ? shown.filter((s) => selected.has(s.url)).map((s) => s.url) : [];
@@ -177,21 +178,21 @@ export function SourceManagePage({
     });
     void service
       .check({ operationId, urls, keyword, disableFailed })
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }));
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }));
   };
 
   const exportTo = (urls: string[], target: "file" | "clipboard") =>
     target === "file"
       ? void service.exportSourcesFile(urls).then(
           (saved) => saved && toast(t("src.exported", { count: urls.length || sources.length })),
-          (failure: unknown) => toast({ text: String(failure), error: true }),
+          (failure: unknown) => toast({ text: describeError(failure), error: true }),
         )
       : void service
           .exportSources(urls)
           .then(copyText)
           .then(
             () => toast(t("src.copied")),
-            (failure: unknown) => toast({ text: String(failure), error: true }),
+            (failure: unknown) => toast({ text: describeError(failure), error: true }),
           );
 
   const filterChip = (value: SourceFilter, label: string) => {

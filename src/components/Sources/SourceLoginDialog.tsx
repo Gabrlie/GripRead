@@ -38,7 +38,7 @@ export function SourceLoginDialog({
             initial[row.name] = loaded.values[row.name] ?? row.defaultValue ?? "";
         setValues(initial);
       },
-      (failure: unknown) => setMessage({ text: String(failure), error: true }),
+      (failure: unknown) => setMessage({ text: describeError(failure), error: true }),
     );
   }, [service, url]);
 

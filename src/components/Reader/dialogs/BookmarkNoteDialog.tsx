@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { t } from "../../../i18n";
+import { describeError } from "../../Cloud/format";
 
 /** Legado's bookmark dialog: the marked text and the reader's note. */
 export function BookmarkNoteDialog({
@@ -38,7 +39,7 @@ export function BookmarkNoteDialog({
             event.preventDefault();
             setSaving(true);
             void onSave(note.trim())
-              .then(onClose, (failure: unknown) => setError(String(failure)))
+              .then(onClose, (failure: unknown) => setError(describeError(failure)))
               .finally(() => setSaving(false));
           }}
         >

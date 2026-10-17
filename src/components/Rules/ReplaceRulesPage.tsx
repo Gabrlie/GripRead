@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
@@ -58,7 +59,9 @@ export function ReplaceRulesPage({
   const [importing, setImporting] = useState<ImportMethod | null>(null);
   const layer = usePageLayer(backCloses ? onClose : () => undefined);
   const load = () =>
-    service.listReplaceRules().then(setRules, (failure: unknown) => setError(String(failure)));
+    service
+      .listReplaceRules()
+      .then(setRules, (failure: unknown) => setError(describeError(failure)));
   useEffect(() => {
     void load();
   }, [service]);
@@ -71,7 +74,7 @@ export function ReplaceRulesPage({
           if (done) toast(done);
           onChanged?.();
         },
-        (failure: unknown) => setError(String(failure)),
+        (failure: unknown) => setError(describeError(failure)),
       );
   const move = (index: number, step: number) => {
     const ids = rules.map((rule) => rule.id);
@@ -139,7 +142,7 @@ export function ReplaceRulesPage({
                   .then(copyText)
                   .then(
                     () => toast(t("tocRule.exported")),
-                    (failure: unknown) => setError(String(failure)),
+                    (failure: unknown) => setError(describeError(failure)),
                   )
               }
             >
@@ -296,7 +299,7 @@ export function ReplaceRuleEditor({
       />
     </label>
   );
-  const fail = (failure: unknown) => setError(String(failure));
+  const fail = (failure: unknown) => setError(describeError(failure));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] overflow-y-auto p-5 gap-3">

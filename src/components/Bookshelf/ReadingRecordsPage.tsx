@@ -11,6 +11,7 @@ import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { formatDuration, localDay } from "../../application/reading-time";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /** Legado's 阅读记录: total and daily reading time, and time per book. */
 export function ReadingRecordsPage({
@@ -32,7 +33,7 @@ export function ReadingRecordsPage({
     void runtime.library.loadRemoved();
     runtime.services.library.readingStats(localDay()).then(
       (value) => !cancelled && setStats(value),
-      (failure: unknown) => !cancelled && setError(String(failure)),
+      (failure: unknown) => !cancelled && setError(describeError(failure)),
     );
     return () => {
       cancelled = true;
@@ -152,7 +153,7 @@ export function ReadingRecordsPage({
                   setRemoving(null);
                   void runtime.services.library.deleteReadingRecord(target.bookId).then(
                     () => setRevision((value) => value + 1),
-                    (failure: unknown) => setError(String(failure)),
+                    (failure: unknown) => setError(describeError(failure)),
                   );
                 }}
               >

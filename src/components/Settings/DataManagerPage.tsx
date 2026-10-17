@@ -8,6 +8,7 @@ import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import { useT, type MessageKey } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /** Parts chosen when the page opens: every cache except the shelf's chapters. */
 const UNCHOSEN = new Set(["shelved"]);
@@ -56,7 +57,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
             ),
         );
       },
-      (failure: unknown) => toast({ text: String(failure), error: true }),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
     return () => {
       active = false;
@@ -80,7 +81,7 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
           setRevision((value) => value + 1);
           return runtime.library.refresh();
         },
-        (failure: unknown) => toast({ text: String(failure), error: true }),
+        (failure: unknown) => toast({ text: describeError(failure), error: true }),
       )
       .finally(() => setBusy(false));
   };

@@ -14,6 +14,7 @@ import { SearchResultRow } from "./SearchPage";
 import { TitleTranslationChip } from "./TitleTranslationChip";
 import { useTitleTranslation } from "./use-title-translation";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 function asResult(book: OnlineBook): OnlineSearchResult {
   return {
@@ -80,7 +81,7 @@ export function ExploreListPage({
       (failure: unknown) => {
         if (!active) return;
         setLoading(false);
-        setError(String(failure));
+        setError(describeError(failure));
       },
     );
     return () => {

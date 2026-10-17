@@ -35,6 +35,7 @@ import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 import { SLIDE_MS, useSwipePages } from "../ui/use-swipe-pages";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /** 自动更新 runs again on returning to the app after this long. */
 const AUTO_UPDATE_GAP = 30 * 60_000;
@@ -172,7 +173,7 @@ export function BookshelfView() {
           );
         return store.refresh();
       })
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
       .finally(() => {
         updatingRef.current = false;
         setUpdating(null);

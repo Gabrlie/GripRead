@@ -91,6 +91,7 @@ import { appLog } from "../../services/log";
 import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import type { ContentWindow, TranslationStyle } from "../../types/generated";
+import { describeError } from "../Cloud/format";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
 
@@ -219,7 +220,7 @@ export function ReaderView() {
         setFontError(null);
       },
       (error: unknown) => {
-        if (!cancelled) setFontError(t("reader.fontFailed", { error: String(error) }));
+        if (!cancelled) setFontError(t("reader.fontFailed", { error: describeError(error) }));
       },
     );
     return () => {
@@ -1313,7 +1314,7 @@ export function ReaderView() {
                     reloadTools();
                   }
                 },
-                (failure: unknown) => toast({ text: String(failure), error: true }),
+                (failure: unknown) => toast({ text: describeError(failure), error: true }),
               );
               return;
             }
@@ -1724,7 +1725,7 @@ export function ReaderView() {
                       setAskShelf(null);
                       close(toDetail);
                     },
-                    (failure: unknown) => toast({ text: String(failure), error: true }),
+                    (failure: unknown) => toast({ text: describeError(failure), error: true }),
                   );
                 }}
               >

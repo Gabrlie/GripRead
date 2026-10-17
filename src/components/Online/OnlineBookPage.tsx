@@ -24,6 +24,7 @@ import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
 import { t } from "../../i18n";
 import { introLabel, useIntroTranslation } from "./use-title-translation";
 import { TranslatedMark } from "./TitleTranslationChip";
+import { describeError } from "../Cloud/format";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -86,7 +87,7 @@ export function OnlineBookPage({
         setBook(merged);
         return service.chapters(merged, fresh).then((list) => active && setChapters(list));
       })
-      .catch((failure: unknown) => active && setError(String(failure)))
+      .catch((failure: unknown) => active && setError(describeError(failure)))
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
@@ -128,7 +129,7 @@ export function OnlineBookPage({
   const act = (work: () => Promise<void>) => {
     setBusy(true);
     void work()
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
       .finally(() => setBusy(false));
   };
 

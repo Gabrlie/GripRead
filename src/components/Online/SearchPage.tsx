@@ -25,6 +25,7 @@ import { OnlineBookPage } from "./OnlineBookPage";
 import { TitleTranslationChip, TranslatedMark } from "./TitleTranslationChip";
 import { useTitleTranslation } from "./use-title-translation";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /**
  * Legado's 搜索: every chosen source is asked at once and results arrive as
@@ -104,7 +105,7 @@ export function SearchPage({
           total: 0,
           done: true,
           results: [],
-          failures: [{ sourceName: t("header.search"), message: String(failure) }],
+          failures: [{ sourceName: t("header.search"), message: describeError(failure) }],
         });
       });
   };

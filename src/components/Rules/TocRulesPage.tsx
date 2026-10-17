@@ -10,6 +10,7 @@ import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /**
  * Legado's TXT目录规则 management outside a book: the shared rules that
@@ -30,7 +31,7 @@ export function TocRulesPage({
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => service.listTxtTocRules().then(setRules), [service]);
   useEffect(() => {
-    void load().catch((error: unknown) => toast({ text: String(error), error: true }));
+    void load().catch((error: unknown) => toast({ text: describeError(error), error: true }));
   }, [load]);
   /** Runs a change and reloads; `work` may return the message to show. */
   const change = async (work: () => Promise<unknown>, done?: string) => {
@@ -42,7 +43,7 @@ export function TocRulesPage({
       if (text) toast(text);
       return true;
     } catch (error) {
-      toast({ text: String(error), error: true });
+      toast({ text: describeError(error), error: true });
       return false;
     } finally {
       setBusy(false);

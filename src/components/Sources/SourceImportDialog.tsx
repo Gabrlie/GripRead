@@ -7,6 +7,7 @@ import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 export type ImportMethod = "network" | "file" | "paste";
 
@@ -89,7 +90,7 @@ export function SourceImportDialog({
 
   const fail = (failure: unknown) => {
     setBusy(false);
-    setError(String(failure));
+    setError(describeError(failure));
   };
 
   // A subscription's update fetches its address at once.

@@ -4,6 +4,7 @@ import { onSignedOut, type TransportError } from "../../services/transport";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { t, useT } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 type Gate = "loading" | "setup" | "login" | "ready" | "offline";
 
@@ -11,7 +12,7 @@ const MIN_PASSWORD = 6;
 
 function messageOf(error: unknown): string {
   const failure = error as Partial<TransportError>;
-  return failure?.message ?? String(error);
+  return failure?.message ?? describeError(error);
 }
 
 /**

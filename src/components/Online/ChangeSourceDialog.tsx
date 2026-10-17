@@ -40,6 +40,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /**
  * Legado's 换源: every enabled source is searched for the book's name; the
@@ -97,7 +98,7 @@ export function ChangeSourceDialog({
           page: 1,
         });
       })
-      .catch((failure: unknown) => toast({ text: String(failure), error: true }));
+      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }));
     return () => {
       active = false;
       stop?.();
@@ -177,7 +178,7 @@ export function ChangeSourceDialog({
       onChanged(result);
     })()
       .catch((failure: unknown) =>
-        toast({ text: t("change.failed", { error: String(failure) }), error: true }),
+        toast({ text: t("change.failed", { error: describeError(failure) }), error: true }),
       )
       .finally(() => setSwitching(null));
   };

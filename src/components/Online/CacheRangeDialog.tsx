@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { toast } from "../ui/toast";
 import { t } from "../../i18n";
+import { describeError } from "../Cloud/format";
 
 /** A chosen range, `[start, end)` in chapter positions. */
 export interface ChapterRange {
@@ -61,7 +62,7 @@ export function CacheRangeDialog({
     onClose();
     void runtime.services.sources.enqueueDownload(book.book.id, range.start, range.end).then(
       () => toast(t("downloads.added")),
-      (failure: unknown) => toast({ text: String(failure), error: true }),
+      (failure: unknown) => toast({ text: describeError(failure), error: true }),
     );
   };
 

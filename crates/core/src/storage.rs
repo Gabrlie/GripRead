@@ -2411,9 +2411,7 @@ impl Storage {
                 book_from_row,
             )
             .optional()?
-            .ok_or_else(|| {
-                AppError::new(ErrorCode::NotFound, format!("book {book_id} was not found"))
-            })
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "bookMissing", "书籍不存在"))
     }
 
     pub fn txt_encoding_for_book(&self, book_id: &str) -> Result<TxtEncodingInfo, AppError> {
@@ -4565,7 +4563,21 @@ impl Storage {
                 asset_from_row,
             )
             .optional()?
-            .ok_or_else(|| AppError::new(ErrorCode::NotFound, format!("book {book_id} has no asset")))
+            .ok_or_else(|| {
+                // Named by its title: an id tells the reader nothing.
+                let title = self
+                    .conn
+                    .query_row("SELECT title FROM books WHERE id = ?1", params![book_id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .unwrap_or_default();
+                AppError::keyed(
+                    ErrorCode::NotFound,
+                    "bookNoFile",
+                    format!("《{title}》没有书籍文件"),
+                )
+                .with("title", title)
+            })
     }
 
     /// Read the database metadata needed for a content request. This method
@@ -4685,6 +4697,10 @@ impl Storage {
     /// The sizes of an EPUB's images, by the index its text marks carry;
     /// empty for a TXT.
     pub fn book_images(&self, book_id: &str) -> Result<Vec<crate::models::BookImage>, AppError> {
+        // Online books have no file; their images come with their chapters.
+        if self.is_online_book(book_id)? {
+            return Ok(Vec::new());
+        }
         if self.asset_for_book(book_id)?.asset.kind != AssetKind::Epub {
             return Ok(Vec::new());
         }
@@ -9978,6 +9994,20 @@ mod tests {
             .unwrap()
             .iter()
             .any(|known| known.id == rule.id));
+        // A record this library cannot apply is not taken for a removal.
+        let broken = SyncChange {
+            key: "replace:broken".into(),
+            value: Some(
+                serde_json::json!({ "id": "broken", "name": "坏规则", "group": "", "pattern": "(",
+                "replacement": "", "isRegex": true, "scope": "", "enabled": true, "serial": 0 }),
+            ),
+        };
+        server.sync_apply(std::slice::from_ref(&broken)).unwrap();
+        assert!(server
+            .sync_pending()
+            .unwrap()
+            .iter()
+            .all(|change| change.key != "replace:broken"));
         // Details that differ by signature alone do not go back and forth.
         sync_round(&mut server, &mut phone, "phone", &mut at);
         assert!(phone.sync_pending().unwrap().is_empty());

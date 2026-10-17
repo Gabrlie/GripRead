@@ -24,6 +24,7 @@ import {
   SheetContent,
 } from "../../ui/dialog";
 import { t } from "../../../i18n";
+import { describeError } from "../../Cloud/format";
 
 interface StylePanelProps {
   /** The view shown first; the bottom bar's 设置 tool opens 更多设置. */
@@ -462,7 +463,7 @@ function TextView({
     let cancelled = false;
     fonts.listFonts().then(
       (list) => !cancelled && setAssets(list),
-      (error: unknown) => !cancelled && toast({ text: String(error), error: true }),
+      (error: unknown) => !cancelled && toast({ text: describeError(error), error: true }),
     );
     return () => {
       cancelled = true;
@@ -515,7 +516,7 @@ function TextView({
                       setAssets((list) => list?.filter((item) => item.id !== asset.id) ?? null);
                       if (style.fontAssetId === asset.id) setStyle({ fontAssetId: null });
                     },
-                    (error: unknown) => toast({ text: String(error), error: true }),
+                    (error: unknown) => toast({ text: describeError(error), error: true }),
                   )
                 }
               >
@@ -536,7 +537,7 @@ function TextView({
                 setStyle({ fontAssetId: asset.id });
                 toast(t("style.font.imported", { name: asset.name }));
               },
-              (error: unknown) => toast({ text: String(error), error: true }),
+              (error: unknown) => toast({ text: describeError(error), error: true }),
             )
           }
         >
@@ -823,7 +824,7 @@ function PresetEditor({
                 setImageError(null);
                 if (asset) update({ [key]: asset.id });
               },
-              (failure: unknown) => setImageError(String(failure)),
+              (failure: unknown) => setImageError(describeError(failure)),
             )
           }
         >

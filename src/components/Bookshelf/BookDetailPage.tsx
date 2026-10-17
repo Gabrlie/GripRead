@@ -98,7 +98,7 @@ export function BookDetailPage({
     let cancelled = false;
     runtime.services.library.getBookInfo(id).then(
       (value) => !cancelled && setInfo(value),
-      (failure: unknown) => !cancelled && setError(String(failure)),
+      (failure: unknown) => !cancelled && setError(describeError(failure)),
     );
     return () => {
       cancelled = true;
@@ -108,7 +108,7 @@ export function BookDetailPage({
   const run = (action: () => Promise<unknown>) =>
     void action().then(
       () => setError(null),
-      (failure: unknown) => setError(String(failure)),
+      (failure: unknown) => setError(describeError(failure)),
     );
   const cloudAction = (work: () => Promise<string>) => {
     setCloudBusy(true);
@@ -569,7 +569,7 @@ function EditBookDialog({
       .then(() => store.refresh())
       .then(
         () => setError(null),
-        (failure: unknown) => setError(String(failure)),
+        (failure: unknown) => setError(describeError(failure)),
       )
       .finally(() => setBusy(false));
   };
@@ -586,7 +586,7 @@ function EditBookDialog({
             setBusy(true);
             void store
               .edit({ bookId: id, title: title.trim(), author: author.trim() || null, intro })
-              .then(onSaved, (failure: unknown) => setError(String(failure)))
+              .then(onSaved, (failure: unknown) => setError(describeError(failure)))
               .finally(() => setBusy(false));
           }}
         >
@@ -767,7 +767,7 @@ function OnlineActions({
                     : t("detail.updated"),
               ),
             )
-            .catch((failure: unknown) => toast({ text: String(failure), error: true }))
+            .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
             .finally(() => {
               setUpdating(false);
               onChanged();
