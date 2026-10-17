@@ -197,6 +197,24 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
               onChange={(change) => set({ dohCustomUrl: change.target.value })}
             />
           )}
+          {draft.dohServer === "custom" && (
+            <label className="block space-y-1 text-xs text-secondary">
+              {t("network.doh.bootstrap")}
+              <Input
+                aria-label={t("network.doh.bootstrap")}
+                placeholder="1.1.1.1, 2606:4700::1111"
+                value={draft.dohBootstrap}
+                onChange={(change) => set({ dohBootstrap: change.target.value })}
+              />
+              <span className="block text-[11px]">
+                {badBootstrap(draft.dohBootstrap).length
+                  ? t("network.doh.bootstrapBad", {
+                      items: badBootstrap(draft.dohBootstrap).join(", "),
+                    })
+                  : t("network.doh.bootstrapNote")}
+              </span>
+            </label>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -307,4 +325,14 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
       </PageSection>
     </FullPage>
   );
+}
+
+/** Entries of the 引导 IP field that are not IP addresses (the core skips them). */
+export function badBootstrap(text: string): string[] {
+  const ipv4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+  const ipv6 = /^[0-9a-f:]+(%\w+)?$/i;
+  return text
+    .split(/[,，\s]+/)
+    .map((part) => part.trim().replace(/^\[|\]$/g, ""))
+    .filter((part) => part && !ipv4.test(part) && !(part.includes(":") && ipv6.test(part)));
 }

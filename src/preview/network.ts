@@ -5,6 +5,7 @@ export const PREVIEW_NETWORK: NetworkSettings = {
   dohEnabled: false,
   dohServer: "ali",
   dohCustomUrl: "",
+  dohBootstrap: "",
   proxyKind: "none",
   proxyHost: "",
   proxyPort: 1080,

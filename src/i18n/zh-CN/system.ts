@@ -59,6 +59,10 @@ export const system = {
   "network.doh.note": "书源域名被污染时可以打开",
   "network.doh.server": "DoH 服务器",
   "network.doh.address": "DoH 地址",
+  "network.doh.bootstrap": "引导 IP（可选）",
+  "network.doh.bootstrapNote":
+    "DoH 服务器自己的 IP，可填多个，用逗号分隔；填写后找到 DoH 服务器不再需要系统 DNS。",
+  "network.doh.bootstrapBad": "这些不是 IP 地址，会被忽略：{items}",
   "network.testing": "测试中…",
   "network.doh.test": "测试 DoH",
   "network.proxy": "代理",

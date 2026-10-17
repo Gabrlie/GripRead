@@ -61,6 +61,10 @@ export const system = {
   "network.doh.note": "Turn on when source domains are poisoned",
   "network.doh.server": "DoH server",
   "network.doh.address": "DoH address",
+  "network.doh.bootstrap": "Bootstrap IPs (optional)",
+  "network.doh.bootstrapNote":
+    "The DoH server's own IPs, separated by commas; with them, reaching the server needs no system DNS.",
+  "network.doh.bootstrapBad": "Not IP addresses, and ignored: {items}",
   "network.testing": "Testing…",
   "network.doh.test": "Test DoH",
   "network.proxy": "Proxy",

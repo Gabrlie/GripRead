@@ -31,6 +31,7 @@ export const errors = {
   "error.coverHash": "The cover file does not match its checksum",
   "error.coverUnavailable": "The cover cannot be downloaded right now",
   "error.dohHttps": "The DoH address must start with https://",
+  "error.dohFailed": "DoH lookup failed: {details}",
   "error.downloadCancelled": "Download cancelled",
   "error.downloadInterrupted": "Download interrupted: {error}",
   "error.epubEntryMissing": "The EPUB has no {path}",

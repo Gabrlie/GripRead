@@ -29,6 +29,7 @@ export const errors = {
   "error.coverHash": "封面文件与它的校验值不符",
   "error.coverUnavailable": "封面暂时无法下载",
   "error.dohHttps": "DoH 地址需要以 https:// 开头",
+  "error.dohFailed": "DoH 查询失败：{details}",
   "error.downloadCancelled": "已取消下载",
   "error.downloadInterrupted": "下载中断：{error}",
   "error.epubEntryMissing": "EPUB 中没有 {path}",

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import { PREVIEW_NETWORK } from "../../preview/network";
-import { NetworkSettingsPage } from "./NetworkSettingsPage";
+import { NetworkSettingsPage, badBootstrap } from "./NetworkSettingsPage";
 
 afterEach(cleanup);
 
@@ -65,5 +65,10 @@ describe("网络设置", () => {
         }),
       ),
     );
+  });
+
+  it("names the 引导 IP entries that are not addresses", () => {
+    expect(badBootstrap("1.1.1.1, [2606:4700::1111]，8.8.8.8")).toEqual([]);
+    expect(badBootstrap("1.1.1.1 doh.example 300.1.1.1")).toEqual(["doh.example", "300.1.1.1"]);
   });
 });

@@ -2247,6 +2247,10 @@ pub struct NetworkSettings {
     /// `ali`, `tencent`, `cloudflare`, `google`, or `custom`.
     pub doh_server: String,
     pub doh_custom_url: String,
+    /// IPs (comma or space separated) the custom DoH server is reached by,
+    /// so finding it does not need DNS.
+    #[serde(default)]
+    pub doh_bootstrap: String,
     pub proxy_kind: ProxyKind,
     pub proxy_host: String,
     pub proxy_port: u16,

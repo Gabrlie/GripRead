@@ -21,6 +21,7 @@ impl Default for NetworkSettings {
             doh_enabled: false,
             doh_server: "ali".into(),
             doh_custom_url: String::new(),
+            doh_bootstrap: String::new(),
             proxy_kind: ProxyKind::None,
             proxy_host: String::new(),
             proxy_port: 1080,
@@ -72,7 +73,7 @@ fn doh_server(settings: &NetworkSettings) -> Option<DohServer> {
     }
     let known = |url: &str, ip: [u8; 4]| DohServer {
         url: url.into(),
-        bootstrap: Some(IpAddr::from(ip)),
+        bootstrap: vec![IpAddr::from(ip)],
     };
     Some(match settings.doh_server.as_str() {
         "tencent" => known("https://doh.pub/dns-query", [1, 12, 12, 12]),
@@ -85,11 +86,19 @@ fn doh_server(settings: &NetworkSettings) -> Option<DohServer> {
             }
             DohServer {
                 url: url.into(),
-                bootstrap: None,
+                bootstrap: bootstrap_ips(&settings.doh_bootstrap),
             }
         }
         _ => known("https://dns.alidns.com/dns-query", [223, 5, 5, 5]),
     })
+}
+
+/// The 引导 IP field: addresses separated by commas or spaces; others are
+/// left out (the page says which).
+pub fn bootstrap_ips(text: &str) -> Vec<IpAddr> {
+    text.split(|ch: char| ch == ',' || ch == '，' || ch.is_whitespace())
+        .filter_map(|part| part.trim().trim_matches(['[', ']']).parse().ok())
+        .collect()
 }
 
 /// The proxy as an address ureq understands, with its account.
@@ -283,18 +292,27 @@ pub fn check(settings: &NetworkSettings, kind: &str) -> Result<NetworkCheck, App
                     "DoH 地址需要以 https:// 开头",
                 )
             })?;
-            let (took, addresses) =
-                crate::sources::network::test_doh(server, "www.baidu.com").map_err(failed)?;
+            let (took, addresses, form) =
+                crate::sources::network::test_doh(server, "www.baidu.com").map_err(|error| {
+                    // Each form's failure: what the server said to it.
+                    AppError::keyed(
+                        ErrorCode::Io,
+                        "dohFailed",
+                        format!("DoH 查询失败：{}", error.message),
+                    )
+                    .with("details", error.message)
+                })?;
             Ok(NetworkCheck {
                 millis: took.as_millis() as u32,
                 detail: format!(
-                    "www.baidu.com → {}",
+                    "www.baidu.com → {} ({})",
                     addresses
                         .iter()
                         .take(2)
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
-                        .join("、")
+                        .join(", "),
+                    form.name()
                 ),
             })
         }
@@ -359,6 +377,18 @@ mod tests {
         settings.doh_server = "custom".into();
         settings.doh_custom_url = "http://insecure".into();
         assert_eq!(doh_server(&settings), None);
+        // A custom server with its own query and bootstrap IPs.
+        settings.doh_custom_url = "https://doh.example/q?cf=x".into();
+        settings.doh_bootstrap = "1.2.3.4， [2606:4700::1111] nonsense".into();
+        let server = doh_server(&settings).unwrap();
+        assert_eq!(server.url, "https://doh.example/q?cf=x");
+        assert_eq!(
+            server.bootstrap,
+            vec![
+                IpAddr::from([1, 2, 3, 4]),
+                "2606:4700::1111".parse::<IpAddr>().unwrap()
+            ]
+        );
     }
 
     #[test]

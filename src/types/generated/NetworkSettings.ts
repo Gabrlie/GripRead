@@ -11,7 +11,12 @@ export type NetworkSettings = { dohEnabled: boolean,
 /**
  * `ali`, `tencent`, `cloudflare`, `google`, or `custom`.
  */
-dohServer: string, dohCustomUrl: string, proxyKind: ProxyKind, proxyHost: string, proxyPort: number, proxyUsername: string, proxyPassword: string, preset: ConcurrencyPreset, 
+dohServer: string, dohCustomUrl: string, 
+/**
+ * IPs (comma or space separated) the custom DoH server is reached by,
+ * so finding it does not need DNS.
+ */
+dohBootstrap: string, proxyKind: ProxyKind, proxyHost: string, proxyPort: number, proxyUsername: string, proxyPassword: string, preset: ConcurrencyPreset, 
 /**
  * The 自定义 values; the presets have their own.
  */
