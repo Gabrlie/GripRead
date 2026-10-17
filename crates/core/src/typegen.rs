@@ -38,6 +38,7 @@ const IPC_TYPES: &[&str] = &[
     "TxtTocRule",
     "BookTocSettings",
     "TocListing",
+    "TocSuggestion",
     "SaveBookTocSettingsRequest",
     "SaveTxtTocRuleRequest",
     "TxtTocRuleIdRequest",
@@ -282,6 +283,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<TxtTocRule>(&config)?;
     export_all::<BookTocSettings>(&config)?;
     export_all::<TocListing>(&config)?;
+    export_all::<TocSuggestion>(&config)?;
     export_all::<SaveBookTocSettingsRequest>(&config)?;
     export_all::<SaveTxtTocRuleRequest>(&config)?;
     export_all::<TxtTocRuleIdRequest>(&config)?;

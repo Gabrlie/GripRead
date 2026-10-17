@@ -9,4 +9,8 @@ volume: boolean,
 /**
  * Chapter length in UTF-16 code units, up to the next entry.
  */
-length: number, locator: ReaderLocator, };
+length: number, locator: ReaderLocator, 
+/**
+ * An online chapter's tag from its source, usually its update time.
+ */
+tag?: string, };

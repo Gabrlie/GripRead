@@ -173,6 +173,8 @@ mod tests {
                     pattern: "^Chapter \\d+$".into(),
                 }],
                 split_long_chapters: false,
+                untitled_title: None,
+                chunk_bytes: None,
             };
             let built = crate::txt_toc::build_toc(&text, "book", "version", &rule).unwrap();
             for entry in built.entries {

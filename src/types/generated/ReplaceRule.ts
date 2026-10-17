@@ -9,4 +9,13 @@ export type ReplaceRule = {
 /**
  * Empty when adding a rule.
  */
-id: string, name: string, group: string, pattern: string, replacement: string, isRegex: boolean, scope: string, enabled: boolean, serial: number, };
+id: string, name: string, group: string, pattern: string, replacement: string, isRegex: boolean, scope: string, 
+/**
+ * Applies to chapter titles in the contents and the title line
+ * (Legado `scopeTitle`).
+ */
+scopeTitle: boolean, 
+/**
+ * Applies to the chapter text (Legado `scopeContent`).
+ */
+scopeContent: boolean, enabled: boolean, serial: number, };

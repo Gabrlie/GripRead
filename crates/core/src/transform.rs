@@ -42,6 +42,21 @@ pub(crate) struct TextTransform {
 }
 
 impl TextTransform {
+    /// A title as the transform shows it, on one line.
+    pub(crate) fn title(&self, title: &str) -> String {
+        if self.is_identity() {
+            return title.to_string();
+        }
+        let shown = apply(title, self).0;
+        let shown = shown.trim();
+        // A rule that empties a title leaves it as it was.
+        if shown.is_empty() {
+            title.to_string()
+        } else {
+            shown.replace('\n', " ")
+        }
+    }
+
     pub(crate) fn is_identity(&self) -> bool {
         self.rules.is_empty()
             && self.chinese == ChineseConversion::Off

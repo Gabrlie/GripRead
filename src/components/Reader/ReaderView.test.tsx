@@ -201,6 +201,7 @@ function runtime() {
       saveReaderLocator: vi.fn(async (value) => value),
       getSavedReaderLocator: vi.fn(async () => null),
       listToc: vi.fn(async () => tocListing([chapter("初始章节")])),
+      tocSuggestion: vi.fn(async () => null),
       ...ruleServiceMocks(),
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),
@@ -324,13 +325,22 @@ describe("reader directory and search operation ownership", () => {
     expect(app.services.reader.saveBookTocSettings).toHaveBeenCalledWith(entry.book.id, {
       ruleId: "english",
       splitLongChapters: false,
+      asked: false,
+      innerChapters: false,
     });
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     vi.mocked(app.services.reader.listToc).mockResolvedValue(
       tocListing([chapter("保存后章节")], "英文章节"),
     );
-    await act(async () => saving.resolve({ ruleId: "english", splitLongChapters: false }));
+    await act(async () =>
+      saving.resolve({
+        ruleId: "english",
+        splitLongChapters: false,
+        asked: false,
+        innerChapters: false,
+      }),
+    );
     await userEvent.click(screen.getByRole("button", { name: "目录" }));
     expect(await screen.findByRole("button", { name: /保存后章节/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /初始章节/ })).toBeNull();
@@ -730,7 +740,12 @@ describe("reader directory and search operation ownership", () => {
     });
     expect(complete).toBe(false);
     await act(async () => {
-      saving.resolve({ ruleId: "english", splitLongChapters: false });
+      saving.resolve({
+        ruleId: "english",
+        splitLongChapters: false,
+        asked: false,
+        innerChapters: false,
+      });
       await flush;
     });
     expect(complete).toBe(true);
@@ -753,6 +768,8 @@ describe("reader directory and search operation ownership", () => {
     expect(app.services.reader.saveBookTocSettings).toHaveBeenLastCalledWith(entry.book.id, {
       ruleId: "english",
       splitLongChapters: false,
+      asked: false,
+      innerChapters: false,
     });
   });
 

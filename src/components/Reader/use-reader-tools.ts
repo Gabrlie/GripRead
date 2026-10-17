@@ -1,3 +1,4 @@
+import { describeError } from "../Cloud/format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppRuntime } from "../../application/runtime";
 import type {
@@ -15,7 +16,7 @@ const NO_LISTING: TocListing = {
   entries: [],
   ruleId: null,
   ruleName: "",
-  settings: { ruleId: null, splitLongChapters: false },
+  settings: { ruleId: null, splitLongChapters: false, asked: false, innerChapters: false },
 };
 
 /**
@@ -68,7 +69,7 @@ export function useReaderTools(
       })
       .catch((failure) => {
         if (!cancelled) {
-          setError(String(failure));
+          setError(describeError(failure));
           setLoading(false);
         }
       });
@@ -127,7 +128,7 @@ export function useReaderTools(
         await writeSettings(bookId, settings);
       } catch (failure) {
         if (epoch === sessionEpoch.current)
-          fail(t("reader.tocSettingsFailed", { error: String(failure) }), () =>
+          fail(t("reader.tocSettingsFailed", { error: describeError(failure) }), () =>
             saveTocSettings(settings),
           );
       } finally {

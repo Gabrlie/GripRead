@@ -187,7 +187,12 @@ export function previewServices(): AppServices {
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
   let network = PREVIEW_NETWORK;
   let position: ReaderLocator | null = contextFor(ENTRIES[3].locator.offset);
-  let settings: BookTocSettings = { ruleId: null, splitLongChapters: false };
+  let settings: BookTocSettings = {
+    ruleId: null,
+    splitLongChapters: false,
+    asked: false,
+    innerChapters: false,
+  };
   let shelfState: ShelfState | null = null;
   let readingSeconds = 1260;
   let replaceRules: ReplaceRule[] = [
@@ -199,6 +204,8 @@ export function previewServices(): AppServices {
       replacement: "",
       isRegex: true,
       scope: "",
+      scopeTitle: false,
+      scopeContent: true,
       enabled: true,
       serial: 1,
     },
@@ -361,6 +368,7 @@ export function previewServices(): AppServices {
         ruleName: RULES.find((rule) => rule.id === (settings.ruleId ?? "legado-1"))!.name,
         settings,
       }),
+      tocSuggestion: async () => null,
       listTxtTocRules: async () => RULES,
       saveTxtTocRule: async (rule) => rule,
       deleteTxtTocRule: async () => undefined,

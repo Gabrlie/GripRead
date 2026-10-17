@@ -28,6 +28,7 @@ import type {
   TxtEncodingRequest,
   TxtSourceRequest,
   TocListing,
+  TocSuggestion,
   BookInfo,
   BookTocSettings,
   Bookmark,
@@ -150,6 +151,8 @@ export interface ReaderService {
   saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
   getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
   listToc(bookId: string): Promise<TocListing>;
+  /** The one-time question about the book's contents, if there is one. */
+  tocSuggestion(bookId: string): Promise<TocSuggestion | null>;
   /** Chapter rules shared by all books, ordered as automatic detection tries them. */
   listTxtTocRules(): Promise<TxtTocRule[]>;
   /** Adds a rule when `id` is empty; otherwise updates it. */

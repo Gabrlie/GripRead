@@ -239,6 +239,7 @@ pub const COMMANDS: &[&str] = &[
     "list_removed_books",
     "list_replace_rules",
     "list_toc",
+    "toc_suggestion",
     "list_txt_folder",
     "list_txt_toc_rules",
     "log_frontend",
@@ -567,6 +568,7 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         "list_removed_books" => reply(crate::commands::list_removed_books(state).await),
         "list_replace_rules" => reply(crate::commands::list_replace_rules(state).await),
         "list_toc" => reply(crate::commands::list_toc(state, request(args)?).await),
+        "toc_suggestion" => reply(crate::commands::toc_suggestion(state, request(args)?).await),
         "list_txt_folder" => reply(crate::commands::list_txt_folder(state, request(args)?).await),
         "list_txt_toc_rules" => reply(crate::commands::list_txt_toc_rules(state).await),
         "log_frontend" => {

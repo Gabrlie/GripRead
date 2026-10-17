@@ -122,6 +122,7 @@ import type {
   TxtDecodeStatus,
   TxtDecodeTask,
   TocListing,
+  TocSuggestion,
   BookInfo,
   BookTocSettings,
   SaveBookTocSettingsRequest,
@@ -406,6 +407,10 @@ export const tauriServices: AppServices = {
       }),
     listToc: (bookId) =>
       invokeCommand<TocListing>("list_toc", { request: { bookId } satisfies BookRequest }),
+    tocSuggestion: (bookId) =>
+      invokeCommand<TocSuggestion | null>("toc_suggestion", {
+        request: { bookId } satisfies BookRequest,
+      }),
     listTxtTocRules: () => invokeCommand<TxtTocRule[]>("list_txt_toc_rules"),
     saveTxtTocRule: (rule) =>
       invokeCommand<TxtTocRule>("save_txt_toc_rule", {

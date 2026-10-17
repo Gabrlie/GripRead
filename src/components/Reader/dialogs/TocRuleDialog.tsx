@@ -24,7 +24,8 @@ interface TocRuleDialogProps {
   detectedName: string;
   busy: boolean;
   onSelect: (ruleId: string | null) => void;
-  onToggleSplit: () => void;
+  /** 拆分超长章节, for a TXT; an online book's chapters are not split. */
+  onToggleSplit?: () => void;
   onSave: (rule: TxtTocRule) => Promise<unknown>;
   onDelete: (rule: TxtTocRule) => Promise<unknown>;
   onOrder: (ids: string[]) => Promise<unknown>;
@@ -260,17 +261,19 @@ function RuleList({
           </div>
         ))}
       </div>
-      <label className="flex items-center justify-between gap-3 text-sm px-1">
-        <span>
-          {t("tocRule.split")}
-          <span className="block text-[11px] text-secondary">{t("tocRule.split.note")}</span>
-        </span>
-        <Switch
-          checked={settings.splitLongChapters}
-          disabled={busy}
-          onCheckedChange={onToggleSplit}
-        />
-      </label>
+      {onToggleSplit && (
+        <label className="flex items-center justify-between gap-3 text-sm px-1">
+          <span>
+            {t("tocRule.split")}
+            <span className="block text-[11px] text-secondary">{t("tocRule.split.note")}</span>
+          </span>
+          <Switch
+            checked={settings.splitLongChapters}
+            disabled={busy}
+            onCheckedChange={onToggleSplit}
+          />
+        </label>
+      )}
       <div className="flex flex-wrap gap-2 pt-1">
         <Button size="sm" disabled={busy} onClick={() => onEdit(NEW_TOC_RULE)}>
           <Icon name="add" size={14} />

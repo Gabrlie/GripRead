@@ -898,13 +898,80 @@ pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<Toc
     let builds = Arc::clone(&state.toc_builds);
     tokio::task::spawn_blocking(move || {
         let build = list_toc_current(&storage, &builds, &request.book_id)?;
-        let (settings, _) = lock_storage(&storage)?.book_toc_settings(&request.book_id)?;
+        let (settings, titles) = {
+            let guard = lock_storage(&storage)?;
+            (
+                guard.book_toc_settings(&request.book_id)?.0,
+                guard.title_transform(&request.book_id)?,
+            )
+        };
+        // Built from the text, which the content rules already changed;
+        // the 作用于标题 rules change only how the contents read.
+        let mut entries = build.entries;
+        for entry in &mut entries {
+            entry.title = titles.title(&entry.title);
+        }
         Ok(TocListing {
-            entries: build.entries,
+            entries,
             rule_id: build.rule_id,
             rule_name: build.rule_name,
             settings,
         })
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, format!("toc worker stopped: {error}")))?
+}
+
+/// The one-time question about a book's contents, when there is one to
+/// ask: a disabled rule that finds chapters no enabled rule found, or (for
+/// an online book) chapters inside its chapters.
+pub async fn toc_suggestion(
+    state: &Arc<AppState>,
+    request: BookRequest,
+) -> Result<Option<crate::models::TocSuggestion>, AppError> {
+    let book_id = request.book_id.clone();
+    if let Some(found) = for_online_book(state, &request.book_id, move |storage| {
+        crate::online_reader::toc_suggestion(storage, &book_id)
+    })
+    .await?
+    {
+        return Ok(found);
+    }
+    let storage = Arc::clone(&state.storage);
+    let builds = Arc::clone(&state.toc_builds);
+    tokio::task::spawn_blocking(move || {
+        let (settings, _) = lock_storage(&storage)?.book_toc_settings(&request.book_id)?;
+        if settings.asked || settings.rule_id.is_some() {
+            return Ok(None);
+        }
+        let build = list_toc_current(&storage, &builds, &request.book_id)?;
+        if build.rule_id.is_some() {
+            return Ok(None);
+        }
+        let (context, disabled) = {
+            let guard = lock_storage(&storage)?;
+            let disabled: Vec<crate::txt_toc::RuleSpec> = guard
+                .list_txt_toc_rules()?
+                .into_iter()
+                .filter(|rule| !rule.enabled)
+                .map(|rule| crate::txt_toc::RuleSpec {
+                    id: rule.id,
+                    name: rule.name,
+                    pattern: rule.pattern,
+                })
+                .collect();
+            (guard.content_read_context(&request.book_id)?, disabled)
+        };
+        Ok(
+            crate::storage::disabled_rule_for(&context, &disabled)?.map(|(rule, titles)| {
+                crate::models::TocSuggestion {
+                    kind: "rule".into(),
+                    rule_id: rule.id,
+                    rule_name: rule.name,
+                    titles,
+                }
+            }),
+        )
     })
     .await
     .map_err(|error| AppError::new(ErrorCode::Io, format!("toc worker stopped: {error}")))?
@@ -2589,6 +2656,7 @@ mod tests {
                             &BookTocSettings {
                                 rule_id: Some("legado-12".to_string()),
                                 split_long_chapters: false,
+                                ..Default::default()
                             },
                         )
                         .unwrap();

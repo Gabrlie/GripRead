@@ -48,6 +48,9 @@ function serviceFor(
   return {
     requests,
     saves,
+    async tocSuggestion() {
+      return null;
+    },
     async readContentWindow(request) {
       requests.push(request);
       const content = contents[request.bookId];

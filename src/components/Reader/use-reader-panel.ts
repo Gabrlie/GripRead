@@ -6,7 +6,15 @@ import { t } from "../../i18n";
  * pages, the chapter rule and encoding dialogs, and the 界面 style sheet.
  */
 export type ReaderPanel =
-  "contents" | "search" | "rules" | "encoding" | "style" | "settings" | "replace" | "aloud";
+  | "contents"
+  | "search"
+  | "rules"
+  | "encoding"
+  | "style"
+  | "settings"
+  | "replace"
+  | "aloud"
+  | "untitled";
 
 /** Accessible labels of the menu buttons that open each top-level panel. */
 export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
@@ -33,6 +41,9 @@ export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
   },
   get aloud() {
     return t("reader.tool.aloud");
+  },
+  get untitled() {
+    return t("contents.untitled");
   },
 };
 

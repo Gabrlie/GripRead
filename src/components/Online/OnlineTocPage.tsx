@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { t } from "../../i18n";
+import { chapterTag } from "../../application/chapter-tag";
 
 /**
  * An online book's 目录 as its own page, laid out like the local contents
@@ -194,6 +195,11 @@ export function OnlineTocPage({
                 onClick={() => onChoose(index)}
               >
                 <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
+                {chapter.tag.trim() && (
+                  <span className="text-[11px] text-secondary tabular-nums shrink-0 max-w-[40%] truncate">
+                    {chapterTag(chapter.tag)}
+                  </span>
+                )}
                 {chapter.isVip && (
                   <span className="text-[10px] text-secondary shrink-0">
                     {chapter.isPay ? t("onlineToc.bought") : "VIP"}

@@ -28,6 +28,8 @@ export const EMPTY_REPLACE_RULE: ReplaceRule = {
   replacement: "",
   isRegex: true,
   scope: "",
+  scopeTitle: false,
+  scopeContent: true,
   enabled: true,
   serial: 0,
 };
@@ -328,6 +330,24 @@ export function ReplaceRuleEditor({
             onCheckedChange={(isRegex) => setRule({ ...rule, isRegex })}
           />
         </label>
+        {(
+          [
+            ["scopeTitle", "rules.scopeTitle"],
+            ["scopeContent", "rules.scopeContent"],
+          ] as const
+        ).map(([key, label]) => (
+          <label key={key} className="flex items-center justify-between text-xs">
+            {t(label)}
+            <Switch
+              aria-label={t(label)}
+              checked={rule[key]}
+              onCheckedChange={(on) => setRule({ ...rule, [key]: on })}
+            />
+          </label>
+        ))}
+        {!rule.scopeTitle && !rule.scopeContent && (
+          <p className="text-[11px] text-error">{t("error.replaceRuleNoScope")}</p>
+        )}
         {field(t("rules.scope"), "scope", t("rules.scopeNote"))}
         <div className="space-y-1.5 rounded-xl bg-surface-container-low p-3">
           <textarea
@@ -381,7 +401,9 @@ export function ReplaceRuleEditor({
             </Button>
             <Button
               size="sm"
-              disabled={!rule.name.trim() || !rule.pattern}
+              disabled={
+                !rule.name.trim() || !rule.pattern || !(rule.scopeTitle || rule.scopeContent)
+              }
               onClick={() => void onSave(rule).catch(fail)}
             >
               {t("common.save")}

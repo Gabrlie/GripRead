@@ -1506,6 +1506,7 @@ impl Storage {
                         .unwrap_or(false)
                 }),
                 split_long_chapters: book.toc.split_long_chapters,
+                ..Default::default()
             };
             if toc != self.book_toc_settings(book_id)?.0 {
                 self.save_book_toc_settings(book_id, &toc)?;

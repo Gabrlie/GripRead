@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu";
 import { currentLocale, t } from "../../../i18n";
+import { chapterTag } from "../../../application/chapter-tag";
 
 interface ContentsPageProps {
   bookTitle: string;
@@ -35,8 +36,18 @@ interface ContentsPageProps {
   onClose: () => void;
   /** For a book read chapter by chapter: the chapter resource being read. */
   resourceId?: string;
-  /** TXT目录规则 and 拆分超长章节 apply to local TXT books only. */
-  txtTools?: boolean;
+  /**
+   * What the More menu offers: a TXT its rule, 拆分超长章节, and the titles
+   * of pieces no rule names; an online book 章内分章 (with the rule it
+   * uses) and 更新目录; every book 替换净化.
+   */
+  kind?: "txt" | "epub" | "online";
+  /** 章内分章 is on (online books). */
+  innerChapters?: boolean;
+  onToggleInner?: () => void;
+  onOpenUntitled?: () => void;
+  onOpenReplace?: () => void;
+  onUpdateToc?: () => void;
 }
 
 const CHAPTER_ROW = 46;
@@ -74,8 +85,14 @@ export function ContentsPage({
   onToggleSplit,
   onClose,
   resourceId,
-  txtTools = true,
+  kind = "txt",
+  innerChapters = false,
+  onToggleInner,
+  onOpenUntitled,
+  onOpenReplace,
+  onUpdateToc,
 }: ContentsPageProps) {
+  const txtTools = kind === "txt";
   const [tab, setTab] = useState<"toc" | "bookmarks">("toc");
   const [filter, setFilter] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
@@ -85,8 +102,19 @@ export function ContentsPage({
   const current = useRef<HTMLButtonElement>(null);
 
   const currentIndex = useMemo(() => {
-    if (resourceId !== undefined)
-      return toc.findIndex((entry) => entry.locator.resourceId === resourceId);
+    if (resourceId !== undefined) {
+      // A chapter, or the last of the chapters found inside it at or
+      // before the page.
+      let found = -1;
+      toc.forEach((entry, index) => {
+        if (
+          entry.locator.resourceId === resourceId &&
+          (found < 0 || entry.locator.offset <= position)
+        )
+          found = index;
+      });
+      return found;
+    }
     let found = -1;
     for (let index = 0; index < toc.length; index += 1) {
       if (toc[index].locator.offset <= position) found = index;
@@ -189,7 +217,13 @@ export function ContentsPage({
               <Icon name="more_vert" size={19} />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {txtTools && (
+              {kind === "online" && onToggleInner && (
+                <DropdownMenuItem disabled={busy} onClick={onToggleInner}>
+                  <Checkmark on={innerChapters} />
+                  {t("contents.innerChapters")}
+                </DropdownMenuItem>
+              )}
+              {(txtTools || (kind === "online" && innerChapters)) && (
                 <DropdownMenuItem onClick={onOpenRules}>
                   <Icon name="toc_rule" size={15} />
                   {t("settings.toc")}
@@ -199,6 +233,24 @@ export function ContentsPage({
                 <DropdownMenuItem disabled={busy} onClick={onToggleSplit}>
                   <Checkmark on={splitLongChapters} />
                   {t("tocRule.split")}
+                </DropdownMenuItem>
+              )}
+              {txtTools && onOpenUntitled && (
+                <DropdownMenuItem onClick={onOpenUntitled}>
+                  <Icon name="title" size={15} />
+                  {t("contents.untitled")}
+                </DropdownMenuItem>
+              )}
+              {onOpenReplace && (
+                <DropdownMenuItem onClick={onOpenReplace}>
+                  <Icon name="find_replace" size={15} />
+                  {t("settings.replace")}
+                </DropdownMenuItem>
+              )}
+              {kind === "online" && onUpdateToc && (
+                <DropdownMenuItem disabled={busy} onClick={onUpdateToc}>
+                  <Icon name="refresh" size={15} />
+                  {t("shelf.menu.update")}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setReversed((value) => !value)}>
@@ -319,7 +371,19 @@ export function ContentsPage({
                   style={{ height: CHAPTER_ROW }}
                   onClick={() => onSeek(entry.locator)}
                 >
-                  <span className="flex-1 min-w-0 truncate">{entry.title}</span>
+                  <span
+                    className={`flex-1 min-w-0 truncate ${
+                      // Found inside an online chapter: under it.
+                      kind === "online" && entry.locator.offset > 0 ? "pl-4 text-[13px]" : ""
+                    }`}
+                  >
+                    {entry.title}
+                  </span>
+                  {entry.tag && (
+                    <span className="text-[11px] text-secondary tabular-nums shrink-0 max-w-[40%] truncate">
+                      {chapterTag(entry.tag)}
+                    </span>
+                  )}
                   {showLength && (
                     <span className="text-[11px] text-secondary tabular-nums shrink-0">
                       {formatLength(entry.length)}

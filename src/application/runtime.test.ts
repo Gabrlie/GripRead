@@ -71,6 +71,7 @@ function services(overrides: Partial<LibraryService> = {}): AppServices {
     saveReaderLocator: vi.fn(),
     getSavedReaderLocator: vi.fn(),
     listToc: vi.fn(async () => tocListing()),
+    tocSuggestion: vi.fn(async () => null),
     ...ruleServiceMocks(),
     listBookmarks: vi.fn(),
     addBookmark: vi.fn(),

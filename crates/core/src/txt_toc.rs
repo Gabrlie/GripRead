@@ -60,6 +60,12 @@ pub struct TocBuildRule {
     pub automatic: bool,
     pub rules: Vec<RuleSpec>,
     pub split_long_chapters: bool,
+    /// [`crate::models::BookTocSettings::untitled_title`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untitled_title: Option<String>,
+    /// Size-split pieces in bytes, when not Legado's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,6 +156,11 @@ pub fn build_toc(
         rule.rules.first().filter(|rule| !rule.pattern.is_empty())
     };
     let mut builder = Builder::new(text, book_id, content_version);
+    builder.untitled = rule
+        .untitled_title
+        .clone()
+        .filter(|title| !title.trim().is_empty());
+    builder.chunk_bytes = rule.chunk_bytes.unwrap_or(SIZE_SPLIT_BYTES).max(1024);
     let mut intro = None;
     match chosen {
         Some(spec) => {
@@ -225,6 +236,10 @@ struct Builder<'a> {
     /// UTF-16 offset of `cursor_byte`, advanced monotonically.
     cursor_byte: usize,
     cursor_units: u64,
+    untitled: Option<String>,
+    chunk_bytes: usize,
+    /// Size-split pieces named by `untitled` so far.
+    pieces: usize,
 }
 
 impl<'a> Builder<'a> {
@@ -236,6 +251,9 @@ impl<'a> Builder<'a> {
             entries: Vec::new(),
             cursor_byte: 0,
             cursor_units: 0,
+            untitled: None,
+            chunk_bytes: SIZE_SPLIT_BYTES,
+            pieces: 0,
         }
     }
 
@@ -259,6 +277,7 @@ impl<'a> Builder<'a> {
             volume,
             length,
             locator: make_toc_locator(self.text, self.book_id, self.content_version, start, units),
+            tag: None,
         });
     }
 
@@ -268,8 +287,13 @@ impl<'a> Builder<'a> {
     fn split_by_size(&mut self, start: usize, end: usize, title: Option<&str>) {
         let mut cuts = vec![start];
         let mut position = start;
-        while end - position > SIZE_SPLIT_BYTES {
-            let target = floor_boundary(self.text, position + SIZE_SPLIT_BYTES);
+        let size = if title.is_some() {
+            SIZE_SPLIT_BYTES
+        } else {
+            self.chunk_bytes
+        };
+        while end - position > size {
+            let target = floor_boundary(self.text, position + size);
             let cut = self.text[target..end]
                 .find('\n')
                 .map_or(end, |offset| target + offset + 1);
@@ -281,9 +305,13 @@ impl<'a> Builder<'a> {
         }
         for (index, &piece_start) in cuts.iter().enumerate() {
             let piece_end = cuts.get(index + 1).copied().unwrap_or(end);
-            let name = match title {
-                Some(title) => format!("{title}({})", index + 1),
-                None => {
+            let name = match (title, &self.untitled) {
+                (Some(title), _) => format!("{title}({})", index + 1),
+                (None, Some(template)) => {
+                    self.pieces += 1;
+                    untitled_title(template, self.pieces, &self.text[piece_start..piece_end])
+                }
+                (None, None) => {
                     let block = piece_start / BLOCK_BYTES + 1;
                     let within = cuts[..=index]
                         .iter()
@@ -294,6 +322,28 @@ impl<'a> Builder<'a> {
             };
             self.push(piece_start, piece_end, name, false, false);
         }
+    }
+}
+
+/// A size-split piece's title from a template: `{n}` its number, `{text}`
+/// the start of its first line.
+pub fn untitled_title(template: &str, number: usize, text: &str) -> String {
+    let first: String = text
+        .lines()
+        .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c == '\u{3000}'))
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(16)
+        .collect();
+    let title = template
+        .replace("{n}", &number.to_string())
+        .replace("{text}", &first);
+    let title = title.trim();
+    if title.is_empty() {
+        format!("{number}")
+    } else {
+        title.chars().take(MAX_TITLE_CHARS).collect()
     }
 }
 
@@ -354,7 +404,7 @@ fn shorten(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
 
-fn floor_boundary(text: &str, byte: usize) -> usize {
+pub(crate) fn floor_boundary(text: &str, byte: usize) -> usize {
     let mut byte = byte.min(text.len());
     while !text.is_char_boundary(byte) {
         byte -= 1;
@@ -442,6 +492,42 @@ pub fn format_author(author: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn untitled_pieces_take_the_books_title_style_and_size() {
+        let text = (0..60)
+            .map(|line| format!("第{line}行的文字，没有章节标题可以匹配。"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rule = |template: &str| TocBuildRule {
+            automatic: false,
+            rules: Vec::new(),
+            split_long_chapters: false,
+            untitled_title: Some(template.into()),
+            chunk_bytes: Some(1024),
+        };
+        let numbered = build_toc(&text, "b", "v", &rule("第{n}节")).unwrap();
+        assert!(numbered.entries.len() > 1);
+        assert_eq!(numbered.entries[0].title, "第1节");
+        assert_eq!(numbered.entries[1].title, "第2节");
+        let opening = build_toc(&text, "b", "v", &rule("{n}. {text}")).unwrap();
+        assert_eq!(
+            opening.entries[0].title,
+            "1. 第0行的文字，没有章节标题可以匹"
+        );
+        // Without a template the pieces keep Legado's names.
+        let legado = build_toc(
+            &text,
+            "b",
+            "v",
+            &TocBuildRule {
+                untitled_title: None,
+                ..rule("")
+            },
+        )
+        .unwrap();
+        assert_eq!(legado.entries[0].title, "第1章(1)");
+    }
+
     fn auto() -> TocBuildRule {
         TocBuildRule {
             automatic: true,
@@ -455,6 +541,8 @@ mod tests {
                 })
                 .collect(),
             split_long_chapters: false,
+            untitled_title: None,
+            chunk_bytes: None,
         }
     }
 
@@ -605,6 +693,8 @@ mod tests {
                 pattern: "^第.+章.*$".into(),
             }],
             split_long_chapters: false,
+            untitled_title: None,
+            chunk_bytes: None,
         };
         let build = build_toc(text, "b", "v", &rule).unwrap();
         assert_eq!(titles(&build), ["前言", "第二章 乙"]);
@@ -691,6 +781,8 @@ mod timing {
             automatic: false,
             rules: vec![chosen],
             split_long_chapters: false,
+            untitled_title: None,
+            chunk_bytes: None,
         };
         let started = std::time::Instant::now();
         let build = build_toc(&text, "b", "v", &fixed).unwrap();

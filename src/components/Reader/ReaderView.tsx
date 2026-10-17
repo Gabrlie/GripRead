@@ -77,6 +77,8 @@ import { StylePanel } from "./panels/StylePanel";
 import { ContentsPage } from "./pages/ContentsPage";
 import { SearchPage, SearchResultBar } from "./pages/SearchPage";
 import { TocRuleDialog } from "./dialogs/TocRuleDialog";
+import { UntitledTitleDialog } from "./dialogs/UntitledTitleDialog";
+import { TocSuggestionPrompt } from "./TocSuggestionPrompt";
 import { EncodingDialog } from "./dialogs/EncodingDialog";
 import { AutoPagePanel } from "./dialogs/AutoPagePanel";
 import { BottomToolsDialog } from "./dialogs/BottomToolsDialog";
@@ -671,6 +673,31 @@ export function ReaderView() {
     state.page,
   ]);
 
+  /** 更新目录: an online book asks its source; a local one reads its file again. */
+  const refreshDirectory = () => {
+    if (!activeBook) return;
+    if (activeBook.online) {
+      toast(t("shelf.updating"));
+      void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(
+        ([outcome]) => {
+          if (outcome?.error)
+            toast({
+              text: t("detail.updateFailed", { error: outcome.error }),
+              error: true,
+            });
+          else {
+            refreshingDirectory.current = true;
+            reloadTools();
+          }
+        },
+        (failure: unknown) => toast({ text: describeError(failure), error: true }),
+      );
+      return;
+    }
+    refreshingDirectory.current = true;
+    toast(t("shelf.updating"));
+    reloadTools();
+  };
   const useTool = (tool: ReaderTool) => {
     const panels: Partial<Record<ReaderTool, ReaderPanel>> = {
       search: "search",
@@ -1321,29 +1348,7 @@ export function ReaderView() {
           onOpenPanel={openPanel}
           canBookmark={Boolean(page) && !closing}
           onAddBookmark={addBookmark}
-          onRefreshDirectory={() => {
-            if (activeBook.online) {
-              toast(t("shelf.updating"));
-              void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(
-                ([outcome]) => {
-                  if (outcome?.error)
-                    toast({
-                      text: t("detail.updateFailed", { error: outcome.error }),
-                      error: true,
-                    });
-                  else {
-                    refreshingDirectory.current = true;
-                    reloadTools();
-                  }
-                },
-                (failure: unknown) => toast({ text: describeError(failure), error: true }),
-              );
-              return;
-            }
-            refreshingDirectory.current = true;
-            toast(t("shelf.updating"));
-            reloadTools();
-          }}
+          onRefreshDirectory={refreshDirectory}
           txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           onCache={activeBook.online ? () => setCachingRange(true) : undefined}
@@ -1600,7 +1605,18 @@ export function ReaderView() {
             })
           }
           resourceId={activeBook.online ? state.contentWindow?.resourceId : undefined}
-          txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
+          kind={activeBook.online ? "online" : activeBook.asset?.kind === "epub" ? "epub" : "txt"}
+          innerChapters={tools.tocSettings.innerChapters}
+          onToggleInner={() =>
+            void tools.saveTocSettings({
+              ...tools.tocSettings,
+              innerChapters: !tools.tocSettings.innerChapters,
+              asked: true,
+            })
+          }
+          onOpenUntitled={() => panels.push("untitled")}
+          onOpenReplace={() => panels.push("replace")}
+          onUpdateToc={refreshDirectory}
           onOpenRules={() => panels.push("rules")}
           onToggleSplit={() =>
             void tools.saveTocSettings({
@@ -1612,6 +1628,7 @@ export function ReaderView() {
         />
       )}
       <SelectionMenu enabled={panel === null && !closing} actions={selectionActions} />
+      {!closing && <TocSuggestionPrompt bookId={activeBook.book.id} onAnswered={reloadTools} />}
       {noteDraft && (
         <BookmarkNoteDialog
           excerpt={noteDraft.excerpt}
@@ -1844,6 +1861,17 @@ export function ReaderView() {
           onClose={closePanel}
         />
       )}
+      {panel === "untitled" && (
+        <UntitledTitleDialog
+          settings={tools.tocSettings}
+          busy={tools.busy}
+          onSave={(settings) => {
+            panels.back();
+            void tools.saveTocSettings(settings);
+          }}
+          onClose={panels.back}
+        />
+      )}
       {panel === "rules" && (
         <TocRuleDialog
           loader={runtime.services.reader}
@@ -1852,11 +1880,14 @@ export function ReaderView() {
           detectedName={tools.tocRuleName}
           busy={tools.busy}
           onSelect={(ruleId) => void tools.saveTocSettings({ ...tools.tocSettings, ruleId })}
-          onToggleSplit={() =>
-            void tools.saveTocSettings({
-              ...tools.tocSettings,
-              splitLongChapters: !tools.tocSettings.splitLongChapters,
-            })
+          onToggleSplit={
+            activeBook.online
+              ? undefined
+              : () =>
+                  void tools.saveTocSettings({
+                    ...tools.tocSettings,
+                    splitLongChapters: !tools.tocSettings.splitLongChapters,
+                  })
           }
           onSave={tools.saveRule}
           onDelete={(rule) => tools.deleteRule(rule.id)}

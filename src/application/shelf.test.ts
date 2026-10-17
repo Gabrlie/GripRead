@@ -106,6 +106,7 @@ function setup() {
   };
   const reader: ReaderService = {
     listToc: vi.fn(async () => tocListing(chapters)),
+    tocSuggestion: vi.fn(async () => null),
     ...ruleServiceMocks(),
     readContentWindow: vi.fn(),
     resolveLocator: vi.fn(),

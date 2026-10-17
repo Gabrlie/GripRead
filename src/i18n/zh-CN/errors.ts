@@ -2,6 +2,7 @@
 export const errors = {
   "error.webdavUnset": "还没有设置 WebDAV 账号。",
   "error.bookNoFile": "《{title}》没有书籍文件。",
+  "error.replaceRuleNoScope": "替换规则至少要作用于标题或正文",
   "error.sourceScript": "{message}",
   "error.engineUnreachable": "翻译服务连接失败：{error}",
   "error.engineHttp": "翻译服务返回 HTTP {status}：{detail}",

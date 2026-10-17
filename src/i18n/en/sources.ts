@@ -167,6 +167,8 @@ export const sources = {
   "rules.replacementText": "Leave empty to remove",
   "rules.useRegex": "Use a regular expression",
   "rules.scope": "Scope",
+  "rules.scopeTitle": "Apply to titles",
+  "rules.scopeContent": "Apply to text",
   "rules.scopeNote": "Book titles separated by semicolons; empty applies to all books",
   "rules.sample": "Test text",
   "rules.samplePlaceholder": "Type some text to test the rule",

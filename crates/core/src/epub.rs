@@ -829,6 +829,7 @@ pub fn build_toc(
                     bytes[index],
                     *offset,
                 ),
+                tag: None,
             }
         })
         .collect();

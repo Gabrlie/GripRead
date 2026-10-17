@@ -162,6 +162,8 @@ export const sources = {
   "rules.replacementText": "留空即删除",
   "rules.useRegex": "使用正则表达式",
   "rules.scope": "作用范围",
+  "rules.scopeTitle": "作用于标题",
+  "rules.scopeContent": "作用于正文",
   "rules.scopeNote": "书名，多个用分号隔开；留空作用于所有书",
   "rules.sample": "测试文字",
   "rules.samplePlaceholder": "输入一段文字测试规则",

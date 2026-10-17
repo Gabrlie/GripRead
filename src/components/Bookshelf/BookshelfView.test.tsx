@@ -106,6 +106,7 @@ function runtime(books: LibraryBook[] = []) {
       saveReaderLocator: vi.fn(),
       getSavedReaderLocator: vi.fn(),
       listToc: vi.fn(async () => tocListing()),
+      tocSuggestion: vi.fn(async () => null),
       ...ruleServiceMocks(),
       listBookmarks: vi.fn(async () => []),
       addBookmark: vi.fn(),

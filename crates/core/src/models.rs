@@ -271,6 +271,10 @@ pub struct TocEntry {
     #[serde(default)]
     pub length: u64,
     pub locator: ReaderLocator,
+    /// An online chapter's tag from its source, usually its update time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tag: Option<String>,
 }
 
 /// A TXT chapter rule (Legado `TxtTocRule`). Built-in rules come from
@@ -297,6 +301,38 @@ pub struct BookTocSettings {
     pub rule_id: Option<String>,
     /// Split chapters longer than about 100 KB (Legado 拆分超长章节).
     pub split_long_chapters: bool,
+    /// Titles of the pieces a text with no matching rule is cut into: a
+    /// template where `{n}` is the piece's number and `{text}` its first
+    /// words. `None` is Legado's `第N章(n)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub untitled_title: Option<String>,
+    /// The size of those pieces in KB; `None` is Legado's 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub chunk_kb: Option<u32>,
+    /// The one-time question about this book's contents (a disabled rule
+    /// that matches, or chapters inside an online chapter) was answered.
+    #[serde(default)]
+    pub asked: bool,
+    /// An online book: headings found inside its chapters (by `rule_id`, or
+    /// the enabled rules) are listed in the contents as well.
+    #[serde(default)]
+    pub inner_chapters: bool,
+}
+
+/// The one-time question about a book's contents, asked by the detail page
+/// or the reader, whichever opens first.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TocSuggestion {
+    /// `rule`: no enabled rule matches but a disabled one does; `inner`:
+    /// an online chapter holds several chapters.
+    pub kind: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    /// A few of the headings the rule finds.
+    pub titles: Vec<String>,
 }
 
 /// A book's chapters and the rule that produced them.
@@ -837,8 +873,19 @@ pub struct ReplaceRule {
     pub replacement: String,
     pub is_regex: bool,
     pub scope: String,
+    /// Applies to chapter titles in the contents and the title line
+    /// (Legado `scopeTitle`).
+    #[serde(default)]
+    pub scope_title: bool,
+    /// Applies to the chapter text (Legado `scopeContent`).
+    #[serde(default = "default_true")]
+    pub scope_content: bool,
     pub enabled: bool,
     pub serial: i64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

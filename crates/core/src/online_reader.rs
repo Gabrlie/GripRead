@@ -256,7 +256,7 @@ pub fn chapter_text(
     book_id: &str,
     index: u32,
 ) -> Result<Arc<ChapterText>, AppError> {
-    let (chapter, count, transform, translation) = {
+    let (chapter, count, transform, titles, translation) = {
         let guard = lock(storage)?;
         let chapter = guard
             .online_chapter(book_id, index)?
@@ -265,13 +265,15 @@ pub fn chapter_text(
             chapter,
             guard.online_chapter_count(book_id)?,
             guard.book_transform(book_id)?,
+            guard.title_transform(book_id)?,
             chapter_translation(&guard, book_id)?,
         )
     };
     let key = format!(
-        "{book_id}\n{index}\n{}\n{count}\n{}\n{}",
+        "{book_id}\n{index}\n{}\n{count}\n{}\n{}\n{}",
         chapter_version(book_id, &chapter),
         serde_json::to_string(&transform).unwrap_or_default(),
+        serde_json::to_string(&titles).unwrap_or_default(),
         translation
             .as_ref()
             .map(ChapterTranslation::spec)
@@ -290,7 +292,10 @@ pub fn chapter_text(
         index,
         &chapter,
         count,
-        &transform,
+        Transforms {
+            text: &transform,
+            titles: &titles,
+        },
         translation.as_ref(),
     )?;
     let text = Arc::new(text);
@@ -352,23 +357,32 @@ thread_local! {
     static AHEAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// What a chapter's text and its title line go through.
+struct Transforms<'a> {
+    /// 作用于正文 rules and 简繁转换.
+    text: &'a transform::TextTransform,
+    /// 作用于标题 rules and 简繁转换.
+    titles: &'a transform::TextTransform,
+}
+
 fn build_chapter_text(
     storage: &Shared,
     book_id: &str,
     index: u32,
     chapter: &OnlineChapter,
     count: u32,
-    transform: &transform::TextTransform,
+    transforms: Transforms<'_>,
     translation: Option<&ChapterTranslation>,
 ) -> Result<(ChapterText, bool), AppError> {
     let raw = with_image_marks(storage, book_id, &raw_chapter(storage, book_id, index)?);
     let body = raw.trim_matches('\n');
-    let joined = if body.is_empty() {
-        chapter.title.clone()
+    // The title line takes the 作用于标题 rules, the text the 作用于正文 ones.
+    let title = transforms.titles.title(&chapter.title);
+    let mut text = if body.is_empty() {
+        title
     } else {
-        format!("{}\n{}", chapter.title, body)
+        format!("{title}\n{}", transform::apply(body, transforms.text).0)
     };
-    let mut text = transform::apply(&joined, transform).0;
     let mut complete = true;
     // A translated book reads the translation; when the engine fails, the
     // chapter shows as written and says so in the log.
@@ -603,36 +617,182 @@ pub fn resolve_progress(
     Ok(locator_in(book_id, &chapter, 0))
 }
 
-/// The contents for the reader: one entry per chapter, at its start.
+/// The contents for the reader: one entry per chapter, at its start, and
+/// with 章内分章 on, the headings found inside kept chapters at theirs.
 pub fn toc(storage: &Shared, book_id: &str) -> Result<TocListing, AppError> {
     ensure_toc(storage, book_id)?;
     let guard = lock(storage)?;
     let chapters = guard.online_chapters(book_id)?;
     let cached = guard.cached_online_chapters(book_id)?;
-    let entries = chapters
-        .iter()
-        .map(|chapter| TocEntry {
-            ordinal: chapter.index as u64,
-            title: chapter.title.clone(),
+    let titles = guard.title_transform(book_id)?;
+    let (settings, _) = guard.book_toc_settings(book_id)?;
+    // Offsets into a translated chapter are not those of its text.
+    let inner = (settings.inner_chapters && chapter_translation(&guard, book_id)?.is_none())
+        .then(|| -> Result<_, AppError> {
+            Ok((
+                inner_rules(&guard, &settings)?,
+                guard.book_transform(book_id)?,
+            ))
+        })
+        .transpose()?;
+    let mut entries = Vec::with_capacity(chapters.len());
+    for chapter in &chapters {
+        let title = titles.title(&chapter.title);
+        let locator = |offset: u64| ReaderLocator {
+            book_id: book_id.to_string(),
+            content_version: chapter_version(book_id, chapter),
+            resource_id: chapter_resource(chapter.index),
+            offset,
+            context_before: String::new(),
+            context_after: String::new(),
+        };
+        let kept = cached.contains(&chapter.index);
+        entries.push(TocEntry {
+            ordinal: entries.len() as u64,
+            title: title.clone(),
             volume: chapter.is_volume,
             // Unknown until the chapter is read; cached chapters count 1.
-            length: u64::from(cached.contains(&chapter.index)),
-            locator: ReaderLocator {
-                book_id: book_id.to_string(),
-                content_version: chapter_version(book_id, chapter),
-                resource_id: chapter_resource(chapter.index),
-                offset: 0,
-                context_before: String::new(),
-                context_after: String::new(),
-            },
-        })
-        .collect();
+            length: u64::from(kept),
+            locator: locator(0),
+            tag: Some(chapter.tag.trim().to_string()).filter(|tag| !tag.is_empty()),
+        });
+        let Some((rules, transform)) = inner.as_ref().filter(|_| kept && !chapter.is_volume) else {
+            continue;
+        };
+        let Ok(raw) = fs::read_to_string(guard.online_chapter_path(book_id, chapter)) else {
+            continue;
+        };
+        for (offset, heading) in inner_headings(&title, &raw, transform, rules) {
+            entries.push(TocEntry {
+                ordinal: entries.len() as u64,
+                title: titles.title(&heading),
+                volume: false,
+                length: 1,
+                locator: locator(offset),
+                tag: None,
+            });
+        }
+    }
     Ok(TocListing {
         entries,
         rule_id: None,
         rule_name: String::new(),
-        settings: Default::default(),
+        settings,
     })
+}
+
+/// The rules 章内分章 looks for headings with: the book's chosen rule, or
+/// every enabled one.
+fn inner_rules(
+    storage: &Storage,
+    settings: &crate::models::BookTocSettings,
+) -> Result<Vec<crate::txt_toc::RuleSpec>, AppError> {
+    Ok(storage
+        .list_txt_toc_rules()?
+        .into_iter()
+        .filter(|rule| match &settings.rule_id {
+            Some(id) => &rule.id == id,
+            None => rule.enabled,
+        })
+        .map(|rule| crate::txt_toc::RuleSpec {
+            id: rule.id,
+            name: rule.name,
+            pattern: rule.pattern,
+        })
+        .collect())
+}
+
+/// Headings inside one kept chapter, at their UTF-16 offsets in the text
+/// the reader shows (the title line, then the transformed body; a picture
+/// is one mark). Fewer than two is no chapter split, as a source's own
+/// chapter heading repeated in its text often is one.
+fn inner_headings(
+    title: &str,
+    raw: &str,
+    transform: &transform::TextTransform,
+    rules: &[crate::txt_toc::RuleSpec],
+) -> Vec<(u64, String)> {
+    let body: String = raw
+        .trim_matches('\n')
+        .split('\n')
+        .map(|line| {
+            if crate::sources::web_book::image_of_line(line).is_some() {
+                "\u{E000}"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = transform::apply(&body, transform).0;
+    let Some(rule) = crate::txt_toc::choose_rule(&body, rules) else {
+        return Vec::new();
+    };
+    let Ok(regex) = crate::txt_toc::compile_rule(&rule.pattern) else {
+        return Vec::new();
+    };
+    let padded = format!("\n{body}");
+    let mut found = Vec::new();
+    for heading in regex.find_iter(&padded) {
+        let Ok(heading) = heading else { break };
+        let start = heading.start().saturating_sub(1).min(body.len());
+        let line = body[start..].lines().next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        found.push((start, line.chars().take(120).collect::<String>()));
+    }
+    if found.len() < 2 {
+        return Vec::new();
+    }
+    // The title line and its newline come first in the shown text.
+    let lead = title.encode_utf16().count() as u64 + 1;
+    found
+        .into_iter()
+        .map(|(start, line)| {
+            let start = crate::txt_toc::floor_boundary(&body, start);
+            (lead + body[..start].encode_utf16().count() as u64, line)
+        })
+        .collect()
+}
+
+/// The 章内分章 question for an online book: a kept chapter (of the first
+/// twenty) whose text holds several headings.
+pub fn toc_suggestion(
+    storage: &Shared,
+    book_id: &str,
+) -> Result<Option<crate::models::TocSuggestion>, AppError> {
+    let guard = lock(storage)?;
+    let (settings, _) = guard.book_toc_settings(book_id)?;
+    if settings.asked || settings.inner_chapters {
+        return Ok(None);
+    }
+    let rules = inner_rules(&guard, &settings)?;
+    let transform = guard.book_transform(book_id)?;
+    let cached = guard.cached_online_chapters(book_id)?;
+    for chapter in guard.online_chapters(book_id)?.iter().take(20) {
+        if chapter.is_volume || !cached.contains(&chapter.index) {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(guard.online_chapter_path(book_id, chapter)) else {
+            continue;
+        };
+        let headings = inner_headings(&chapter.title, &raw, &transform, &rules);
+        if headings.len() >= 2 {
+            let rule = crate::txt_toc::choose_rule(&raw, &rules);
+            return Ok(Some(crate::models::TocSuggestion {
+                kind: "inner".into(),
+                rule_id: rule.map(|rule| rule.id.clone()).unwrap_or_default(),
+                rule_name: rule.map(|rule| rule.name.clone()).unwrap_or_default(),
+                titles: headings
+                    .into_iter()
+                    .take(5)
+                    .map(|(_, title)| title)
+                    .collect(),
+            }));
+        }
+    }
+    Ok(None)
 }
 
 /// In-book search over the chapters kept on the device.
@@ -1094,6 +1254,101 @@ mod tests {
         // Clearing the cache takes the pictures with the chapters.
         guard.clear_online_cache(&id).unwrap();
         assert!(guard.book_images(&id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn title_rules_change_titles_and_content_rules_the_text() {
+        let base = site();
+        let (_dir, storage, id) = library(&base);
+        let rule = |pattern: &str, replacement: &str, title: bool, content: bool| {
+            crate::models::ReplaceRule {
+                id: String::new(),
+                name: pattern.into(),
+                group: String::new(),
+                pattern: pattern.into(),
+                replacement: replacement.into(),
+                is_regex: false,
+                scope: String::new(),
+                scope_title: title,
+                scope_content: content,
+                enabled: true,
+                serial: 0,
+            }
+        };
+        {
+            let mut guard = storage.lock().unwrap();
+            guard
+                .save_replace_rule(&rule("惊蛰", "春分", true, false))
+                .unwrap();
+            guard
+                .save_replace_rule(&rule("第一段", "首段", false, true))
+                .unwrap();
+            assert!(guard
+                .save_replace_rule(&rule("x", "", false, false))
+                .is_err());
+        }
+        let listing = toc(&storage, &id).unwrap();
+        assert_eq!(listing.entries[1].title, "第一章 春分");
+        let window = read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        assert_eq!(window.text, "第一章 春分\n首段\n第二段");
+    }
+
+    #[test]
+    fn chapters_inside_a_chapter_are_offered_once_and_listed() {
+        let base = start(|request: &Request| match request.path.as_str() {
+            "/c/1.html" => Response::html(
+                r#"<div id="content">第一章 开端<br>甲的故事<br>第二章 转折<br>乙的故事</div>"#,
+            ),
+            _ => Response::not_found(),
+        });
+        let (_dir, storage, id) = library(&base);
+        // Nothing kept yet: nothing to ask.
+        assert_eq!(toc_suggestion(&storage, &id).unwrap(), None);
+        read_window(
+            &storage,
+            &request(&id, None, Some("chapter-1"), WindowDirection::Forward),
+        )
+        .unwrap();
+        let asked = toc_suggestion(&storage, &id).unwrap().unwrap();
+        assert_eq!(asked.kind, "inner");
+        assert_eq!(asked.titles, vec!["第一章 开端", "第二章 转折"]);
+        let (settings, _) = storage.lock().unwrap().book_toc_settings(&id).unwrap();
+        storage
+            .lock()
+            .unwrap()
+            .save_book_toc_settings(
+                &id,
+                &crate::models::BookTocSettings {
+                    asked: true,
+                    inner_chapters: true,
+                    ..settings
+                },
+            )
+            .unwrap();
+        assert_eq!(toc_suggestion(&storage, &id).unwrap(), None);
+        let listing = toc(&storage, &id).unwrap();
+        let inner: Vec<&TocEntry> = listing
+            .entries
+            .iter()
+            .filter(|entry| entry.locator.resource_id == "chapter-1" && entry.locator.offset > 0)
+            .collect();
+        assert_eq!(inner.len(), 2);
+        // Each entry opens where its heading is shown.
+        let shown = chapter_text(&storage, &id, 1).unwrap();
+        for entry in inner {
+            let at = entry.locator.offset as usize;
+            let text = String::from_utf16_lossy(&shown.units[at..]);
+            assert!(text.starts_with(&entry.title), "{text:?} at {at}");
+        }
+        let ordinals: Vec<u64> = listing.entries.iter().map(|entry| entry.ordinal).collect();
+        assert_eq!(
+            ordinals,
+            (0..listing.entries.len() as u64).collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -36,6 +36,7 @@ export type { TocEntry } from "./generated/TocEntry";
 export type { TxtTocRule } from "./generated/TxtTocRule";
 export type { BookTocSettings } from "./generated/BookTocSettings";
 export type { TocListing } from "./generated/TocListing";
+export type { TocSuggestion } from "./generated/TocSuggestion";
 export type { SaveBookTocSettingsRequest } from "./generated/SaveBookTocSettingsRequest";
 export type { SaveTxtTocRuleRequest } from "./generated/SaveTxtTocRuleRequest";
 export type { TxtTocRuleIdRequest } from "./generated/TxtTocRuleIdRequest";

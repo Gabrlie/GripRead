@@ -11,4 +11,24 @@ ruleId: string | null,
 /**
  * Split chapters longer than about 100 KB (Legado 拆分超长章节).
  */
-splitLongChapters: boolean, };
+splitLongChapters: boolean, 
+/**
+ * Titles of the pieces a text with no matching rule is cut into: a
+ * template where `{n}` is the piece's number and `{text}` its first
+ * words. `None` is Legado's `第N章(n)`.
+ */
+untitledTitle?: string, 
+/**
+ * The size of those pieces in KB; `None` is Legado's 10.
+ */
+chunkKb?: number, 
+/**
+ * The one-time question about this book's contents (a disabled rule
+ * that matches, or chapters inside an online chapter) was answered.
+ */
+asked: boolean, 
+/**
+ * An online book: headings found inside its chapters (by `rule_id`, or
+ * the enabled rules) are listed in the contents as well.
+ */
+innerChapters: boolean, };

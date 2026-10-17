@@ -34,6 +34,8 @@ describe("替换净化 import", () => {
       replacement: "",
       isRegex: false,
       scope: "",
+      scopeTitle: false,
+      scopeContent: true,
       enabled: true,
       serial: 0,
     };

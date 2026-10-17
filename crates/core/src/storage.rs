@@ -1160,7 +1160,17 @@ impl Storage {
             // in the cloud as it does for the WebDAV cloud bookshelf.
             let tx = self.conn.transaction()?;
             tx.execute_batch(
-                "CREATE TABLE server_books (
+                "ALTER TABLE book_toc_settings ADD COLUMN untitled_title TEXT;
+                 ALTER TABLE book_toc_settings ADD COLUMN chunk_kb INTEGER;
+                 ALTER TABLE book_toc_settings ADD COLUMN asked INTEGER NOT NULL DEFAULT 0
+                     CHECK(asked IN (0, 1));
+                 ALTER TABLE book_toc_settings ADD COLUMN inner_chapters INTEGER NOT NULL DEFAULT 0
+                     CHECK(inner_chapters IN (0, 1));
+                 ALTER TABLE replace_rules ADD COLUMN scope_title INTEGER NOT NULL DEFAULT 0
+                     CHECK(scope_title IN (0, 1));
+                 ALTER TABLE replace_rules ADD COLUMN scope_content INTEGER NOT NULL DEFAULT 1
+                     CHECK(scope_content IN (0, 1));
+                 CREATE TABLE server_books (
                      source_sha256 TEXT PRIMARY KEY,
                      seen_at INTEGER NOT NULL
                  ) WITHOUT ROWID;
@@ -2672,7 +2682,8 @@ impl Storage {
 
     pub fn list_replace_rules(&self) -> Result<Vec<ReplaceRule>, AppError> {
         let mut statement = self.conn.prepare(
-            "SELECT id, name, rule_group, pattern, replacement, is_regex, scope, enabled, serial
+            "SELECT id, name, rule_group, pattern, replacement, is_regex, scope, enabled, serial,
+                    scope_title, scope_content
              FROM replace_rules ORDER BY serial, rowid",
         )?;
         let rules = statement
@@ -2687,6 +2698,8 @@ impl Storage {
                     scope: row.get(6)?,
                     enabled: row.get(7)?,
                     serial: row.get(8)?,
+                    scope_title: row.get(9)?,
+                    scope_content: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2718,6 +2731,13 @@ impl Storage {
         if name.is_empty() || name.chars().count() > 64 {
             return Err(AppError::invalid_argument(
                 "replace rule names need 1 to 64 characters",
+            ));
+        }
+        if !rule.scope_title && !rule.scope_content {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "replaceRuleNoScope",
+                "替换规则至少要作用于标题或正文",
             ));
         }
         if rule.pattern.chars().count() > 4000 || rule.replacement.chars().count() > 4000 {
@@ -2756,13 +2776,14 @@ impl Storage {
         }
         self.conn.execute(
             "INSERT INTO replace_rules(id, name, rule_group, pattern, replacement, is_regex,
-                scope, enabled, serial, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                scope, enabled, serial, updated_at, scope_title, scope_content)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET name = excluded.name,
                 rule_group = excluded.rule_group, pattern = excluded.pattern,
                 replacement = excluded.replacement, is_regex = excluded.is_regex,
                 scope = excluded.scope, enabled = excluded.enabled,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at, scope_title = excluded.scope_title,
+                scope_content = excluded.scope_content",
             params![
                 saved.id,
                 saved.name,
@@ -2773,7 +2794,9 @@ impl Storage {
                 saved.scope.trim(),
                 saved.enabled,
                 saved.serial,
-                now_millis()
+                now_millis(),
+                saved.scope_title,
+                saved.scope_content
             ],
         )?;
         Ok(saved)
@@ -2839,8 +2862,9 @@ impl Storage {
                     .unwrap_or(default)
             };
             let pattern = text("pattern");
-            // Title-only rules have nothing to change in the stored text.
-            if pattern.is_empty() || !flag("scopeContent", true) {
+            let (scope_title, scope_content) =
+                (flag("scopeTitle", false), flag("scopeContent", true));
+            if pattern.is_empty() || !(scope_title || scope_content) {
                 skipped += 1;
                 continue;
             }
@@ -2857,6 +2881,8 @@ impl Storage {
                 replacement: text("replacement").to_string(),
                 is_regex: flag("isRegex", true),
                 scope: text("scope").to_string(),
+                scope_title,
+                scope_content,
                 enabled: flag("isEnabled", true),
                 serial: 0,
             });
@@ -2928,8 +2954,8 @@ impl Storage {
                     "replacement": rule.replacement,
                     "isRegex": rule.is_regex,
                     "scope": rule.scope,
-                    "scopeTitle": false,
-                    "scopeContent": true,
+                    "scopeTitle": rule.scope_title,
+                    "scopeContent": rule.scope_content,
                     "isEnabled": rule.enabled,
                     "order": rule.serial,
                 })
@@ -2950,6 +2976,36 @@ impl Storage {
     /// The transform a book's text should carry now: its enabled, in-scope
     /// replace rules (unless the book turned them off) and the reading
     /// style's Chinese conversion.
+    /// What chapter titles in the contents and the title line go through:
+    /// the book's 作用于标题 rules and 简繁转换.
+    pub(crate) fn title_transform(&self, book_id: &str) -> Result<TextTransform, AppError> {
+        let (title, use_rules): (String, bool) = self.conn.query_row(
+            "SELECT title, use_replace_rules FROM books WHERE id = ?1",
+            params![book_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let rules = if use_rules {
+            self.list_replace_rules()?
+                .into_iter()
+                .filter(|rule| {
+                    rule.enabled && rule.scope_title && rule_in_scope(&rule.scope, &title)
+                })
+                .map(|rule| TransformRule {
+                    pattern: rule.pattern,
+                    replacement: rule.replacement,
+                    regex: rule.is_regex,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(TextTransform {
+            rules,
+            chinese: self.get_settings()?.style.chinese_conversion,
+            translation: None,
+        })
+    }
+
     pub(crate) fn book_transform(&self, book_id: &str) -> Result<TextTransform, AppError> {
         let (title, use_rules): (String, bool) = self.conn.query_row(
             "SELECT title, use_replace_rules FROM books WHERE id = ?1",
@@ -2959,7 +3015,9 @@ impl Storage {
         let rules = if use_rules {
             self.list_replace_rules()?
                 .into_iter()
-                .filter(|rule| rule.enabled && rule_in_scope(&rule.scope, &title))
+                .filter(|rule| {
+                    rule.enabled && rule.scope_content && rule_in_scope(&rule.scope, &title)
+                })
                 .map(|rule| TransformRule {
                     pattern: rule.pattern,
                     replacement: rule.replacement,
@@ -2997,27 +3055,29 @@ impl Storage {
 
     pub fn book_toc_settings(&self, book_id: &str) -> Result<(BookTocSettings, i64), AppError> {
         self.get_book(book_id)?;
-        let saved: Option<(Option<String>, bool, i64)> = self
+        let saved: Option<(BookTocSettings, i64)> = self
             .conn
             .query_row(
-                "SELECT rule_id, split_long_chapters, revision FROM book_toc_settings
-                 WHERE book_id = ?1",
+                "SELECT rule_id, split_long_chapters, revision, untitled_title, chunk_kb, asked,
+                        inner_chapters
+                 FROM book_toc_settings WHERE book_id = ?1",
                 params![book_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok((
+                        BookTocSettings {
+                            rule_id: row.get(0)?,
+                            split_long_chapters: row.get(1)?,
+                            untitled_title: row.get(3)?,
+                            chunk_kb: row.get(4)?,
+                            asked: row.get(5)?,
+                            inner_chapters: row.get(6)?,
+                        },
+                        row.get(2)?,
+                    ))
+                },
             )
             .optional()?;
-        Ok(saved.map_or(
-            (BookTocSettings::default(), 0),
-            |(rule_id, split, revision)| {
-                (
-                    BookTocSettings {
-                        rule_id,
-                        split_long_chapters: split,
-                    },
-                    revision,
-                )
-            },
-        ))
+        Ok(saved.unwrap_or_default())
     }
 
     pub fn save_book_toc_settings(
@@ -3026,6 +3086,19 @@ impl Storage {
         settings: &BookTocSettings,
     ) -> Result<BookTocSettings, AppError> {
         self.get_book(book_id)?;
+        let untitled = settings
+            .untitled_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty());
+        if untitled.is_some_and(|title| title.chars().count() > 64) {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "untitledTooLong",
+                "标题样式最多 64 个字",
+            ));
+        }
+        let chunk_kb = settings.chunk_kb.map(|kb| kb.clamp(2, 200));
         let tx = self.conn.transaction()?;
         if let Some(rule_id) = settings.rule_id.as_deref() {
             let exists: Option<String> = tx
@@ -3040,15 +3113,31 @@ impl Storage {
             }
         }
         tx.execute(
-            "INSERT INTO book_toc_settings(book_id, rule_id, split_long_chapters, revision, updated_at)
-             VALUES (?1, ?2, ?3, 1, ?4)
+            "INSERT INTO book_toc_settings(book_id, rule_id, split_long_chapters, revision, updated_at,
+                untitled_title, chunk_kb, asked, inner_chapters)
+             VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(book_id) DO UPDATE SET rule_id = excluded.rule_id,
                 split_long_chapters = excluded.split_long_chapters,
-                revision = book_toc_settings.revision + 1, updated_at = excluded.updated_at",
-            params![book_id, settings.rule_id, settings.split_long_chapters, now_millis()],
+                revision = book_toc_settings.revision + 1, updated_at = excluded.updated_at,
+                untitled_title = excluded.untitled_title, chunk_kb = excluded.chunk_kb,
+                asked = excluded.asked, inner_chapters = excluded.inner_chapters",
+            params![
+                book_id,
+                settings.rule_id,
+                settings.split_long_chapters,
+                now_millis(),
+                untitled,
+                chunk_kb,
+                settings.asked,
+                settings.inner_chapters
+            ],
         )?;
         tx.commit()?;
-        Ok(settings.clone())
+        Ok(BookTocSettings {
+            untitled_title: untitled.map(str::to_string),
+            chunk_kb,
+            ..settings.clone()
+        })
     }
 
     /// The resolved build input: the selected rule, or every enabled rule for
@@ -3071,11 +3160,15 @@ impl Storage {
                 automatic: false,
                 rules: vec![spec(rule)],
                 split_long_chapters: settings.split_long_chapters,
+                untitled_title: settings.untitled_title.clone(),
+                chunk_bytes: settings.chunk_kb.map(|kb| kb as usize * 1024),
             },
             None => TocBuildRule {
                 automatic: true,
                 rules: rules.iter().filter(|rule| rule.enabled).map(spec).collect(),
                 split_long_chapters: settings.split_long_chapters,
+                untitled_title: settings.untitled_title.clone(),
+                chunk_bytes: settings.chunk_kb.map(|kb| kb as usize * 1024),
             },
         };
         Ok((build, revision))
@@ -5577,6 +5670,28 @@ pub(crate) fn build_toc_from_context(
     Ok(build)
 }
 
+/// A disabled rule that finds chapters in a TXT no enabled rule matched,
+/// with a few of the headings it finds.
+pub(crate) fn disabled_rule_for(
+    context: &ContentReadContext,
+    disabled: &[crate::txt_toc::RuleSpec],
+) -> Result<Option<(crate::txt_toc::RuleSpec, Vec<String>)>, AppError> {
+    if context.epub_toc.is_some() || disabled.is_empty() {
+        return Ok(None);
+    }
+    let verified = verify_content_context(context)?;
+    let text = read_verified_text(context, &verified)?;
+    let Some(rule) = crate::txt_toc::choose_rule(&text, disabled) else {
+        return Ok(None);
+    };
+    let sample = &text[..crate::txt_toc::floor_boundary(&text, 512_000)];
+    let titles = crate::txt_toc::test_rule(&rule.pattern, sample)?
+        .into_iter()
+        .take(5)
+        .collect();
+    Ok(Some((rule.clone(), titles)))
+}
+
 fn search_text_stream(
     context: &ContentReadContext,
     verified: &VerifiedContentIndex,
@@ -8039,6 +8154,7 @@ mod tests {
         let settings = BookTocSettings {
             rule_id: Some(rule.id.clone()),
             split_long_chapters: false,
+            ..Default::default()
         };
         storage
             .save_book_toc_settings(&imported.book.id, &settings)
@@ -8121,7 +8237,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -8340,7 +8456,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -8411,6 +8527,7 @@ mod tests {
                 &BookTocSettings {
                     rule_id: Some("legado-12".to_string()),
                     split_long_chapters: false,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -9389,6 +9506,8 @@ mod tests {
             replacement: String::new(),
             is_regex: true,
             scope: scope.into(),
+            scope_title: false,
+            scope_content: true,
             enabled: true,
             serial: 0,
         };
@@ -9783,7 +9902,7 @@ mod tests {
             .locator;
         storage.save_position(&locator).unwrap();
         // Recreate the exact v5 boundary: group schema did not exist yet.
-        storage.conn.execute_batch("DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
+        storage.conn.execute_batch("ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; DROP TABLE book_groups; DROP TABLE library_groups; DROP TABLE shelf_removals; DROP TABLE shelf_preferences; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 6;").unwrap();
         drop(storage);
         let reopened = Storage::open(&app_root).unwrap();
         let library = reopened.list_library_books().unwrap();
@@ -9851,7 +9970,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(
@@ -9944,6 +10063,52 @@ mod tests {
             &verified,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_disabled_rule_that_finds_the_chapters_is_offered() {
+        let root = TestRoot::new();
+        let text = (1..=6)
+            .map(|n| format!("〔{n}〕的章节\n{}", "正文内容。".repeat(400)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = write_source(&root.0, "odd.txt", text.as_bytes());
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let id = import(&mut storage, &source, "odd").book.id;
+        let saved = storage
+            .save_txt_toc_rule(&TxtTocRule {
+                id: String::new(),
+                name: "六角括号".into(),
+                pattern: "^〔\\d+〕.*$".into(),
+                example: String::new(),
+                serial: 0,
+                enabled: false,
+                builtin: false,
+            })
+            .unwrap();
+        let disabled: Vec<crate::txt_toc::RuleSpec> = storage
+            .list_txt_toc_rules()
+            .unwrap()
+            .into_iter()
+            .filter(|rule| !rule.enabled)
+            .map(|rule| crate::txt_toc::RuleSpec {
+                id: rule.id,
+                name: rule.name,
+                pattern: rule.pattern,
+            })
+            .collect();
+        let context = storage.content_read_context(&id).unwrap();
+        // Only the reader's rule: it is the one offered, with what it finds.
+        let own: Vec<_> = disabled
+            .iter()
+            .filter(|rule| rule.id == saved.id)
+            .cloned()
+            .collect();
+        let (rule, titles) = disabled_rule_for(&context, &own).unwrap().unwrap();
+        assert_eq!(rule.id, saved.id);
+        assert_eq!(titles[0], "〔1〕的章节");
+        // Every disabled rule: one that finds them is offered.
+        assert!(disabled_rule_for(&context, &disabled).unwrap().is_some());
     }
 
     #[test]
@@ -10043,6 +10208,8 @@ mod tests {
                 replacement: String::new(),
                 is_regex: false,
                 scope: String::new(),
+                scope_title: false,
+                scope_content: true,
                 enabled: true,
                 serial: 0,
             })

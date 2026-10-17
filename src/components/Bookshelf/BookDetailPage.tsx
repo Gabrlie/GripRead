@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
+import { TocSuggestionPrompt } from "../Reader/TocSuggestionPrompt";
 import { READING_GROUPS, shelfGroupOf } from "../../application/shelf";
 import type { BookInfo, DownloadJob, LibraryBook, ShelfPlacement } from "../../types/generated";
 import { ENCODING_NAMES } from "../Reader/dialogs/EncodingDialog";
@@ -539,6 +540,7 @@ export function BookDetailPage({
           }}
         />
       )}
+      {!removed && !inReader && <TocSuggestionPrompt bookId={id} />}
     </div>
   );
 }
