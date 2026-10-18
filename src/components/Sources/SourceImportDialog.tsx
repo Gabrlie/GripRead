@@ -11,6 +11,9 @@ import { describeError } from "../Cloud/format";
 
 export type ImportMethod = "network" | "file" | "paste";
 
+/** A single address or Legado import link (`yuedu://…?src=`), fetched rather than parsed. */
+const LINK = /^(?:https?|yuedu|legado):\/\/\S+$/i;
+
 const HISTORY_KEY = "gripread.sourceImportHistory";
 
 function readHistory(): string[] {
@@ -116,12 +119,12 @@ export function SourceImportDialog({
   const load = () => {
     setBusy(true);
     setError(null);
-    if (method === "network") {
+    if (method === "network" || LINK.test(input.trim())) {
       const url = input.trim();
       void service
         .fetchText(url)
         .then((text) => {
-          remember(url);
+          if (method === "network") remember(url);
           return showPreview(text);
         })
         .then(() => setBusy(false), fail);
@@ -188,6 +191,7 @@ export function SourceImportDialog({
               value={input}
               onChange={(event) => setInput(event.target.value)}
             />
+            <p className="text-[11px] text-secondary">{t("srcImport.linkHint")}</p>
             {history.length > 0 && (
               <ul className="space-y-1" aria-label={t("srcImport.history")}>
                 {history.map((url) => (

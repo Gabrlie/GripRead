@@ -249,13 +249,46 @@ pub async fn export_book_sources(
     .await
 }
 
-/// Downloads source JSON from an address, as 网络导入 does.
+/// The address an import link names. Legado's links carry it in `src`:
+/// `yuedu://booksource/importonline?src=…` and `legado://import/bookSource?src=…`
+/// (and the same for RSS sources and rules). Other text is returned trimmed.
+pub fn import_address(text: &str) -> String {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    if !(lower.starts_with("yuedu://") || lower.starts_with("legado://")) {
+        return text.to_string();
+    }
+    let Some(query) = text.split_once('?').map(|(_, query)| query) else {
+        return text.to_string();
+    };
+    let Some(value) = query
+        .split('&')
+        .position(|pair| pair.starts_with("src="))
+        .map(|index| query.split('&').skip(index).collect::<Vec<_>>().join("&"))
+        .map(|rest| rest["src=".len()..].to_string())
+    else {
+        return text.to_string();
+    };
+    // An address written out as is keeps its own `&…` parameters; an
+    // encoded one ends at the next parameter.
+    if value.contains("://") {
+        return value;
+    }
+    let encoded = value.split('&').next().unwrap_or_default();
+    url::form_urlencoded::parse(format!("src={encoded}").as_bytes())
+        .next()
+        .map(|(_, decoded)| decoded.into_owned())
+        .unwrap_or_default()
+}
+
+/// Downloads source JSON from an address, as 网络导入 does. Legado's import
+/// links are accepted too, see [`import_address`].
 pub async fn fetch_source_text(
     _state: &Arc<AppState>,
     request: FetchTextRequest,
 ) -> Result<String, AppError> {
     on_engine_thread(move || {
-        let url = request.url.trim().to_string();
+        let url = import_address(&request.url);
         if !crate::sources::util::is_absolute_url(&url) {
             return Err(AppError::invalid_argument(
                 "地址必须以 http:// 或 https:// 开头",
@@ -957,6 +990,34 @@ pub async fn check_book_sources(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legado_import_links_name_their_address() {
+        let address = "https://example.com/sources/comics.json";
+        assert_eq!(
+            super::import_address(&format!("yuedu://booksource/importonline?src={address}")),
+            address
+        );
+        assert_eq!(
+            super::import_address(
+                " legado://import/bookSource?src=https%3A%2F%2Fa.cn%2Fs.json%3Fv%3D1&x=2 "
+            ),
+            "https://a.cn/s.json?v=1"
+        );
+        // Written out, the address keeps its own parameters.
+        assert_eq!(
+            super::import_address("yuedu://rsssource/importonline?src=https://a.cn/r?a=1&b=2"),
+            "https://a.cn/r?a=1&b=2"
+        );
+        assert_eq!(
+            super::import_address(" https://a.cn/s.json "),
+            "https://a.cn/s.json"
+        );
+        assert_eq!(
+            super::import_address("yuedu://booksource"),
+            "yuedu://booksource"
+        );
+    }
+
     #[test]
     fn script_errors_read_without_their_place() {
         assert_eq!(

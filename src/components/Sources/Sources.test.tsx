@@ -115,6 +115,24 @@ describe("书源管理", () => {
     expect(service.fetchText).toHaveBeenLastCalledWith("https://list.example/s.json");
   });
 
+  it("fetches a Legado import link pasted in place of JSON", async () => {
+    const service = sourceServiceMocks(SOURCES);
+    const listed = JSON.stringify([{ bookSourceUrl: "https://c.com", bookSourceName: "丙站" }]);
+    service.fetchText = vi.fn(async () => listed);
+    render(<SourceManagePage service={service} onClose={() => undefined} />);
+    await screen.findByText("甲站");
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "粘贴导入" }));
+    const link = "yuedu://booksource/importonline?src=https://list.example/s.json";
+    fireEvent.change(screen.getByRole("textbox", { name: "书源 JSON" }), {
+      target: { value: ` ${link}\n` },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByRole("checkbox", { name: "导入 丙站" })).toBeTruthy();
+    expect(service.fetchText).toHaveBeenCalledWith(link);
+    expect(service.previewImport).toHaveBeenCalledWith(listed);
+  });
+
   it("checks sources and reports progress until done", async () => {
     const service = sourceServiceMocks(SOURCES);
     render(<SourceManagePage service={service} onClose={() => undefined} />);

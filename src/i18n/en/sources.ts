@@ -211,8 +211,10 @@ export const sources = {
   "srcImport.update": "Update",
   "srcImport.existing": "Existing",
   "srcImport.address": "Source address",
+  "srcImport.linkHint":
+    "Legado import links work too, such as yuedu://booksource/importonline?src=…",
   "srcImport.history": "Addresses used before",
-  "srcImport.placeholder": "Paste source JSON: one source or an array",
+  "srcImport.placeholder": "Paste source JSON (one source or an array), or a source address",
   "srcImport.reading": "Reading the file…",
   "srcImport.count": "{total} {total|source|sources}, {chosen} chosen",
   "srcImport.skipped": "; skipped {count} audio or file {count|source|sources}",
