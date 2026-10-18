@@ -153,6 +153,17 @@ pnpm check                   # formatting, docs, types, tests, lints, and the fr
 
 Start with [AGENTS.md](AGENTS.md) and the [documentation map](.ai/README.md). The [architecture](.ai/architecture.md) describes the modules and their dependencies, and the [workflow](.ai/engineering/workflow.md) covers branches, commits, versions, and releases. Changes go to `dev` and reach `main` once stable.
 
+## Roadmap
+
+Directions ahead, without promised dates:
+
+- **Comics:** online comic sources, local comics (CBZ, ZIP, image folders), and a dedicated comic reader (0.3.1, in progress).
+- **RSS:** feed management, article reading, full-text fetching, and read and favourite state synced across devices.
+- **AI retrieval and questions:** answers about a book's characters and plot bounded by how far you have read, without spoilers, and searching across books.
+- **Audio books and reading aloud:** more natural voices and audio book support.
+- **Desktop platforms:** Windows and Linux builds.
+- **The web version:** the same features as the apps.
+
 ## Disclaimer
 
 1. GripRead is free, open-source software, for learning and for reading content you have the right to read.

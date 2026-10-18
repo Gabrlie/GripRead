@@ -33,3 +33,13 @@ Completion requires evidence for the sync acceptance cases and initial release s
 ## Later: AI assistance
 
 After basic reading and data behavior are stable, plan the first [AIGC](../subsystems/aigc.md) feature as a separate task. Select the provider, embedding/index strategy, and generation interface then. Progress-bounded character events and recaps are the initial candidates; they are not part of M0 or a release dependency for basic reading.
+
+## Later: further directions
+
+These directions are listed in the READMEs' roadmap without dates; each needs its own plan before work starts.
+- **Comics:** online image sources, local comic files, and a comic reader ([0.3.1](2026-10-18-comics.md), in progress).
+- **RSS:** subscriptions and article reading, waiting on a local branch.
+- **AI retrieval and questions:** asking about a book's characters and plot within what has been read, and searching across books ([AIGC](../subsystems/aigc.md)).
+- **Audio books and better reading aloud.**
+- **Desktop platforms:** Windows and Linux builds.
+- **The web version:** catching up with the apps' features.
