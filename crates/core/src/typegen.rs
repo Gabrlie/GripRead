@@ -182,6 +182,15 @@ const IPC_TYPES: &[&str] = &[
     "NetworkState",
     "BookImage",
     "BookImageRequest",
+    "ComicChapter",
+    "ComicPage",
+    "ComicChapterRequest",
+    "ComicPageRequest",
+    "ComicPreferences",
+    "ComicMode",
+    "ComicDirection",
+    "ComicFit",
+    "ComicBackground",
     "SyncServerStatus",
     "UpdateChannel",
     "UpdateSource",
@@ -412,6 +421,11 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<NetworkState>(&config)?;
     export_all::<BookImage>(&config)?;
     export_all::<BookImageRequest>(&config)?;
+    export_all::<ComicChapter>(&config)?;
+    export_all::<ComicPage>(&config)?;
+    export_all::<ComicChapterRequest>(&config)?;
+    export_all::<ComicPageRequest>(&config)?;
+    export_all::<ComicPreferences>(&config)?;
     export_all::<SyncServerStatus>(&config)?;
     export_all::<UpdateChannel>(&config)?;
     export_all::<UpdateSource>(&config)?;

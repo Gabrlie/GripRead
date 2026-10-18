@@ -22,6 +22,7 @@ import type {
   LibraryBook,
   LibraryGroup,
   ReaderLocator,
+  ComicChapter,
   ReaderPreferences,
   ReadContentRequest,
   TxtEncodingInfo,
@@ -137,6 +138,10 @@ export interface LibraryService {
   /** An EPUB's image sizes by index (empty for other books). */
   listBookImages(bookId: string): Promise<BookImage[]>;
   readBookImage(bookId: string, index: number): Promise<ArrayBuffer>;
+  /** A comic chapter's pages, by its place in the contents. */
+  getComicChapter(bookId: string, index: number): Promise<ComicChapter>;
+  /** One page of a comic chapter, fetched through its source when not kept. */
+  readComicPage(bookId: string, chapter: number, page: number): Promise<ArrayBuffer>;
   /**
    * Re-derives the book's text when its replace rules or Chinese conversion
    * changed; `null` when the text is already current.

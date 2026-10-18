@@ -42,6 +42,8 @@ const library = (): LibraryService => ({
   onTxtDecodeProgress: vi.fn(async () => () => {}),
   listBookImages: vi.fn(async () => []),
   readBookImage: vi.fn(),
+  getComicChapter: vi.fn(),
+  readComicPage: vi.fn(),
   getBookInfo: vi.fn(),
   getTxtEncoding: vi.fn(),
   pickAndReassociateTxt: vi.fn(async () => null),

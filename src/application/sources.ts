@@ -10,6 +10,8 @@ export type SourceFilter =
   | { kind: "ungrouped" }
   | { kind: "exploreOn" }
   | { kind: "exploreOff" }
+  | { kind: "text" }
+  | { kind: "comic" }
   | { kind: "group"; name: string };
 
 /** Legado's 书源管理 sort orders. */
@@ -33,6 +35,8 @@ export const basicFilters = (): [SourceFilter, string][] => [
   [{ kind: "ungrouped" }, t("src.filter.ungrouped")],
   [{ kind: "exploreOn" }, t("src.filter.exploreOn")],
   [{ kind: "exploreOff" }, t("src.exploreOff")],
+  [{ kind: "text" }, t("onlineSearch.kind.text")],
+  [{ kind: "comic" }, t("onlineSearch.kind.comic")],
 ];
 
 /** Splits Legado's group text (`,` `;` separated) into names. */
@@ -71,6 +75,10 @@ function matchesFilter(source: BookSourceSummary, filter: SourceFilter): boolean
       return source.hasExplore && source.enabledExplore;
     case "exploreOff":
       return source.hasExplore && !source.enabledExplore;
+    case "text":
+      return !source.comic;
+    case "comic":
+      return source.comic;
     case "group":
       return splitGroups(source.group).includes(filter.name);
   }

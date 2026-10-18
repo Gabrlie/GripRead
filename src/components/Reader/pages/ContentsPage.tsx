@@ -44,6 +44,8 @@ interface ContentsPageProps {
   kind?: "txt" | "epub" | "online";
   /** The contents a converted book kept from its source. */
   fixed?: boolean;
+  /** A comic's chapters: no text tools. */
+  comic?: boolean;
   /** 章内分章 is on (online books). */
   innerChapters?: boolean;
   onToggleInner?: () => void;
@@ -89,6 +91,7 @@ export function ContentsPage({
   resourceId,
   kind = "txt",
   fixed = false,
+  comic = false,
   innerChapters = false,
   onToggleInner,
   onOpenUntitled,
@@ -96,7 +99,7 @@ export function ContentsPage({
   onUpdateToc,
 }: ContentsPageProps) {
   // A converted book's contents are its source's: no rule to pick or tune.
-  const txtTools = kind === "txt" && !fixed;
+  const txtTools = kind === "txt" && !fixed && !comic;
   const [tab, setTab] = useState<"toc" | "bookmarks">("toc");
   const [filter, setFilter] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
@@ -221,13 +224,13 @@ export function ContentsPage({
               <Icon name="more_vert" size={19} />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {txtTools || kind === "online" ? (
+              {txtTools || (kind === "online" && !comic) ? (
                 <DropdownMenuItem onClick={onOpenRules}>
                   <Icon name="toc_rule" size={15} />
                   {t("settings.toc")}
                 </DropdownMenuItem>
               ) : null}
-              {kind === "online" && onToggleInner && (
+              {kind === "online" && !comic && onToggleInner && (
                 <DropdownMenuItem disabled={busy} onClick={onToggleInner}>
                   <Icon name="call_split" size={15} />
                   {t("contents.innerChapters")}
@@ -264,7 +267,7 @@ export function ContentsPage({
                 {t("contents.reverse")}
                 <Checkmark on={reversed} />
               </DropdownMenuItem>
-              {kind === "txt" && (
+              {kind === "txt" && !comic && (
                 <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
                   <Icon name="format_list_numbered" size={15} />
                   {t("contents.lengths")}

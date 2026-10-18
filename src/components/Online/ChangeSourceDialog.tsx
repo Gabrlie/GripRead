@@ -81,7 +81,10 @@ export function ChangeSourceDialog({
       .onSearch((next) => {
         if (next.operationId !== operationId) return;
         for (const result of next.results)
-          found.current.set(`${result.name}\n${result.author}`, result);
+          found.current.set(
+            `${result.name}\n${result.author}\n${result.origins[0]?.comic ?? false}`,
+            result,
+          );
         setEvent({ ...next, results: [...found.current.values()] });
       })
       .then((unsubscribe) => {
@@ -93,7 +96,8 @@ export function ChangeSourceDialog({
         return service.search({
           operationId,
           key: book.book.title,
-          scope: ALL_SOURCES,
+          // A comic moves only to comic sources, a novel only to text ones.
+          scope: { ...ALL_SOURCES, comic: online.book.comic },
           precise: true,
           page: 1,
         });
@@ -104,7 +108,7 @@ export function ChangeSourceDialog({
       stop?.();
       void service.cancel(operationId);
     };
-  }, [service, book.book.title, round]);
+  }, [service, book.book.title, online.book.comic, round]);
 
   // Rows keep the order they first appeared in, so choosing one while the
   // search goes on never hits a row that moved.
@@ -119,6 +123,7 @@ export function ChangeSourceDialog({
           (!checkAuthor || !author || result.author.trim() === author),
       )
       .flatMap((result) => result.origins)
+      .filter((origin) => origin.comic === online.book.comic)
       .filter((origin) => !query || origin.sourceName.includes(query))
       .map((origin) => {
         const key = originKey(origin);

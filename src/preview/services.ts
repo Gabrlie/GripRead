@@ -342,6 +342,8 @@ export function previewServices(): AppServices {
       onTxtDecodeProgress: async () => () => undefined,
       listBookImages: async () => [],
       readBookImage: unsupported,
+      getComicChapter: unsupported,
+      readComicPage: unsupported,
       getBookInfo: async () => ({
         bookId: BOOK_ID,
         intro: "《云海问道》是一部关于少年求道、山河远行的长篇小说。",

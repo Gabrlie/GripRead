@@ -24,6 +24,6 @@ The initial platform targets are Android, Windows, and macOS. Local reading requ
 
 Local reading is completed before source compatibility implementation begins. AI assistance follows stable reading and data capabilities and is not a prerequisite for the initial reading experience. The [roadmap](../plans/roadmap.md) owns stage dependencies; it is not a schedule or permission to advance stages.
 
-Novel sources and standard RSS are separate features. Legado `rssSource` webpage rules, comics, audio books, text-to-speech, account services, iOS, and Linux are outside the initial scope.
+Novel sources and standard RSS are separate features. [Comics](../subsystems/comics.md) from image sources and local files were added in 0.3.1. Legado `rssSource` webpage rules, audio books, text-to-speech, account services, iOS, and Linux are outside the initial scope.
 
 Books and reading state remain usable during network and optional-service failures. Display compatibility limits and incomplete operations honestly. The [interaction specification](../design/interaction.md) owns presentation, while each subsystem owns observable behavior and acceptance scenarios.

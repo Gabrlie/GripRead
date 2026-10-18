@@ -817,6 +817,80 @@ pub struct ReaderPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub toc_chunk_kb: Option<u32>,
+    /// The comic reader's settings; `None` is their defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub comic: Option<ComicPreferences>,
+}
+
+/// How comics are read.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ComicMode {
+    /// One long strip of pages, chapter after chapter (条漫).
+    #[default]
+    Scroll,
+    /// One page at a time.
+    Paged,
+    /// Two pages side by side on a wide screen, one on a narrow one.
+    Double,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ComicDirection {
+    #[default]
+    LeftToRight,
+    /// Japanese manga: pages turn from right to left.
+    RightToLeft,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ComicFit {
+    #[default]
+    Width,
+    Height,
+    /// The whole page on screen.
+    Screen,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ComicBackground {
+    #[default]
+    Theme,
+    Black,
+    White,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ComicPreferences {
+    pub mode: ComicMode,
+    pub direction: ComicDirection,
+    pub fit: ComicFit,
+    /// Space between pages in the strip, in CSS pixels.
+    pub gap: u32,
+    /// Pages fetched ahead of the one shown.
+    pub preload: u32,
+    pub background: ComicBackground,
+    /// The page number at the bottom.
+    pub page_number: bool,
+}
+
+impl Default for ComicPreferences {
+    fn default() -> Self {
+        Self {
+            mode: ComicMode::Scroll,
+            direction: ComicDirection::LeftToRight,
+            fit: ComicFit::Width,
+            gap: 0,
+            preload: 5,
+            background: ComicBackground::Theme,
+            page_number: true,
+        }
+    }
 }
 
 /// A 界面样式 made from a main colour; the others, when empty, are derived
@@ -1268,6 +1342,7 @@ impl Default for ReaderPreferences {
             nav_autohide: None,
             toc_untitled_title: None,
             toc_chunk_kb: None,
+            comic: None,
         }
     }
 }
@@ -1292,6 +1367,13 @@ impl ReaderPreferences {
             return Err(AppError::invalid_argument(
                 "toc_chunk_kb must be between 2 and 200",
             ));
+        }
+        if let Some(comic) = &self.comic {
+            if comic.gap > 64 || !(1..=20).contains(&comic.preload) {
+                return Err(AppError::invalid_argument(
+                    "comic gap must be at most 64 and preload between 1 and 20",
+                ));
+            }
         }
         if !self.font_size.is_finite() || !(8.0..=96.0).contains(&self.font_size) {
             return Err(AppError::invalid_argument(
@@ -2027,6 +2109,11 @@ pub struct OnlineSearchResult {
 pub struct SearchScope {
     pub groups: Vec<String>,
     pub source_urls: Vec<String>,
+    /// Only comic (image) sources, or only text ones; `None` is both. A
+    /// source asked for by address is searched whatever its kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub comic: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

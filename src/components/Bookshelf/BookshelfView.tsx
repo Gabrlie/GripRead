@@ -29,6 +29,8 @@ import { formatDuration, localDay } from "../../application/reading-time";
 import { orderBooks } from "../../application/library";
 import { GroupManager } from "./GroupManager";
 import { LibraryCover } from "./LibraryCover";
+import { ComicMark } from "../ui/ComicMark";
+import { isComic } from "../../application/comic";
 import { DownloadManagerPage } from "./DownloadManagerPage";
 import { useLongPress } from "../ui/use-long-press";
 import { updateOnlineToc } from "../../application/online";
@@ -678,8 +680,9 @@ function BookCardList({
         {/* Right Content: Strictly 4 lines with identical, uniform spacing */}
         <div className="flex-1 min-w-0 flex flex-col justify-center gap-2 py-0.5 self-center">
           {/* Line 1: 书名（不手动添加书名号） */}
-          <h2 className="font-headline-sm text-sm sm:text-base text-on-surface font-medium truncate tracking-tight leading-snug">
-            {book.title}
+          <h2 className="flex items-center gap-1.5 font-headline-sm text-sm sm:text-base text-on-surface font-medium tracking-tight leading-snug min-w-0">
+            <span className="truncate">{book.title}</span>
+            {isComic(book.entry) && <ComicMark />}
           </h2>
 
           {/* Line 2: 作者名 */}
@@ -747,6 +750,7 @@ function BookCardGrid({
       <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-surface-container-high shadow-xs mb-1.5">
         <LibraryCover book={book.entry} title={book.title} />
         {book.entry.inCloud && <CloudMark />}
+        {isComic(book.entry) && <ComicMark onCover />}
         <NewChaptersMark book={book.entry} />
         <PausedMark book={book.entry} />
       </div>

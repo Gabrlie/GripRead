@@ -23,6 +23,13 @@ impl Storage {
         texts: &[String],
     ) -> Result<String, AppError> {
         let record = self.online_record(book_id)?;
+        if record.book.comic {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "comicStaysOnline",
+                "漫画不能转为本地书籍",
+            ));
+        }
         let chapters = self.online_chapters(book_id)?;
         if chapters.is_empty() || texts.len() != chapters.len() {
             return Err(AppError::keyed(

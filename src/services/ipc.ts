@@ -9,6 +9,9 @@ export type { LibraryService, ReaderService, SettingsService, AppServices } from
 import type {
   BookImage,
   BookImageRequest,
+  ComicChapter,
+  ComicChapterRequest,
+  ComicPageRequest,
   CheckUpdateRequest,
   InstallOutcome,
   InstallUpdateRequest,
@@ -385,6 +388,14 @@ export const tauriServices: AppServices = {
     readBookImage: (bookId, index) =>
       invokeCommand<ArrayBuffer>("read_book_image", {
         request: { bookId, index } satisfies BookImageRequest,
+      }),
+    getComicChapter: (bookId, index) =>
+      invokeCommand<ComicChapter>("get_comic_chapter", {
+        request: { bookId, index } satisfies ComicChapterRequest,
+      }),
+    readComicPage: (bookId, chapter, page) =>
+      invokeCommand<ArrayBuffer>("read_comic_page", {
+        request: { bookId, chapter, page } satisfies ComicPageRequest,
       }),
     getBookInfo: (bookId) =>
       invokeCommand<BookInfo>("get_book_info", { request: { bookId } satisfies BookRequest }),

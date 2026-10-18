@@ -20,6 +20,7 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
+import { ComicMark } from "../ui/ComicMark";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineBookPage } from "./OnlineBookPage";
 import { TitleTranslationChip, TranslatedMark } from "./TitleTranslationChip";
@@ -195,6 +196,18 @@ export function SearchPage({
         </button>
         <button
           type="button"
+          aria-label={t("onlineSearch.kind")}
+          onClick={() => setScope({ ...scope, comic: nextKind(scope.comic) })}
+          className={`h-7 px-3 rounded-full text-xs ${
+            scope.comic === undefined
+              ? "bg-surface-container-low text-secondary"
+              : "bg-primary text-on-primary"
+          }`}
+        >
+          {kindLabel(scope.comic)}
+        </button>
+        <button
+          type="button"
           aria-pressed={precise}
           onClick={() => setPrecise((value) => !value)}
           className={`h-7 px-3 rounded-full text-xs ${
@@ -356,6 +369,7 @@ export function SearchResultRow({
           <span className="flex items-center gap-1.5">
             <span className="text-sm font-medium truncate">{translatedName ?? result.name}</span>
             {translatedName && <TranslatedMark />}
+            {first?.comic && <ComicMark />}
             {result.origins.length > 1 && (
               <span className="shrink-0 rounded-full bg-primary/10 text-primary text-[10px] px-1.5 leading-4">
                 {t("onlineSearch.origins", { count: result.origins.length })}
@@ -379,6 +393,19 @@ export function SearchResultRow({
       </button>
     </li>
   );
+}
+
+/** 全部 → 小说 → 漫画 → 全部. */
+function nextKind(comic: boolean | undefined): boolean | undefined {
+  return comic === undefined ? false : comic === false ? true : undefined;
+}
+
+function kindLabel(comic: boolean | undefined): string {
+  return comic === undefined
+    ? t("onlineSearch.kind.all")
+    : comic
+      ? t("onlineSearch.kind.comic")
+      : t("onlineSearch.kind.text");
 }
 
 function ScopeDialog({
@@ -407,7 +434,11 @@ function ScopeDialog({
             {t("onlineSearch.scope")}
           </DialogTitle>
         </DialogHeader>
-        <Button variant="outline" size="sm" onClick={() => onChoose(ALL_SOURCES)}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChoose({ ...ALL_SOURCES, comic: scope.comic })}
+        >
           {t("onlineSearch.allEnabled")}
         </Button>
         {allGroups.length > 0 && (
@@ -436,7 +467,7 @@ function ScopeDialog({
             <Button
               size="sm"
               disabled={!groups.length}
-              onClick={() => onChoose({ groups, sourceUrls: [] })}
+              onClick={() => onChoose({ groups, sourceUrls: [], comic: scope.comic })}
             >
               {t("onlineSearch.searchGroups")}
             </Button>

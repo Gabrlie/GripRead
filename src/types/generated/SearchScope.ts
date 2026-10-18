@@ -3,4 +3,9 @@
 /**
  * Which sources a search asks; both empty means every enabled source.
  */
-export type SearchScope = { groups: Array<string>, sourceUrls: Array<string>, };
+export type SearchScope = { groups: Array<string>, sourceUrls: Array<string>, 
+/**
+ * Only comic (image) sources, or only text ones; `None` is both. A
+ * source asked for by address is searched whatever its kind.
+ */
+comic?: boolean, };

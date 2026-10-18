@@ -172,6 +172,8 @@ function runtime() {
       onTxtDecodeProgress: vi.fn(async () => () => {}),
       listBookImages: vi.fn(async () => []),
       readBookImage: vi.fn(),
+      getComicChapter: vi.fn(),
+      readComicPage: vi.fn(),
       getBookInfo: vi.fn(),
       getTxtEncoding: vi.fn(async () => ({
         detected: "utf8" as const,

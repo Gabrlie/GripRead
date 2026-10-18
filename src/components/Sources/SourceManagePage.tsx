@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Icon } from "../ui/Icon";
+import { ComicMark } from "../ui/ComicMark";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
@@ -379,6 +380,7 @@ export function SourceManagePage({
                       aria-label={source.enabledExplore ? t("src.hasExplore") : t("src.exploreOff")}
                     />
                   )}
+                  {source.comic && <ComicMark />}
                   {source.viaServer && (
                     <span
                       className="shrink-0 rounded px-1 text-[10px] leading-4 bg-surface-container text-secondary"

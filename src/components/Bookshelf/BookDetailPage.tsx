@@ -10,6 +10,8 @@ import { Icon } from "../ui/Icon";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
+import { ComicMark } from "../ui/ComicMark";
+import { isComic } from "../../application/comic";
 import { updateOnlineToc } from "../../application/online";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
 import { CacheRangeDialog } from "../Online/CacheRangeDialog";
@@ -245,6 +247,11 @@ export function BookDetailPage({
           <div className="min-w-0 flex-1 flex flex-col justify-center gap-1.5">
             <h1 className="font-title-editorial text-lg font-semibold text-on-surface break-words">
               {book.book.title}
+              {isComic(book) && (
+                <span className="ml-2 align-middle">
+                  <ComicMark />
+                </span>
+              )}
             </h1>
             <p className="text-sm text-secondary break-words">
               {book.book.author || t("shelf.unknownAuthor")}
@@ -809,7 +816,8 @@ function OnlineActions({
             <Icon name="delete" size={15} />
             {t("detail.clearCache")}
           </DropdownMenuItem>
-          {complete && onConverted && (
+          {/* A comic's pages are pictures: it stays online. */}
+          {complete && onConverted && !book.online?.book.comic && (
             <DropdownMenuItem onClick={() => setConverting("ask")}>
               <Icon name="collections_bookmark" size={15} />
               {t("detail.toLocal")}

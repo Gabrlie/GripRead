@@ -37,7 +37,7 @@ After basic reading and data behavior are stable, plan the first [AIGC](../subsy
 ## Later: further directions
 
 These directions are listed in the READMEs' roadmap without dates; each needs its own plan before work starts.
-- **Comics:** online image sources, local comic files, and a comic reader ([0.3.1](2026-10-18-comics.md), in progress).
+- **Comics:** after [0.3.1](2026-10-18-comics.md)'s image sources, CBZ and ZIP files, and comic reader, folders of images and RAR (CBR) archives.
 - **RSS:** subscriptions and article reading, waiting on a local branch.
 - **AI retrieval and questions:** asking about a book's characters and plot within what has been read, and searching across books ([AIGC](../subsystems/aigc.md)).
 - **Audio books and better reading aloud.**

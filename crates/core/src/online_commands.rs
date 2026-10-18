@@ -217,8 +217,15 @@ pub fn merge_results_by(
         let list = &mut tiers[tier];
         match list
             .iter_mut()
-            .find(|result| result.name == book.name && result.author == book.author)
-        {
+            // A comic and a novel of the same name stay apart.
+            .find(|result| {
+                result.name == book.name
+                    && result.author == book.author
+                    && result
+                        .origins
+                        .first()
+                        .is_some_and(|origin| origin.comic == book.comic)
+            }) {
             Some(result) => {
                 if !result
                     .origins
@@ -274,6 +281,12 @@ fn search_sources(
                 return scope.source_urls.contains(&source.url()) && has_search(source);
             }
             if !(source.enabled() && has_search(source)) {
+                return false;
+            }
+            if scope
+                .comic
+                .is_some_and(|comic| comic != (source.source_type() == 2))
+            {
                 return false;
             }
             scope.groups.is_empty()

@@ -88,6 +88,8 @@ function runtime(books: LibraryBook[] = []) {
       onTxtDecodeProgress: vi.fn(async () => () => {}),
       listBookImages: vi.fn(async () => []),
       readBookImage: vi.fn(),
+      getComicChapter: vi.fn(),
+      readComicPage: vi.fn(),
       getBookInfo: vi.fn(async (bookId: string) => ({
         bookId,
         intro: null,
