@@ -140,12 +140,16 @@ export function ComicReader() {
   const online = Boolean(book.online);
   const preferences: ComicPreferences = { ...DEFAULT_COMIC, ...settings.value?.comic };
   const style = settings.value?.style;
-  const pages = useMemo(() => new ComicPages(runtime.services.library, bookId), [runtime, bookId]);
+  // Reading again (a retry, or after 更新目录) starts a fresh set of pages.
+  const [revision, setRevision] = useState(0);
+  const pages = useMemo(
+    () => new ComicPages(runtime.services.library, bookId),
+    [runtime, bookId, revision],
+  );
   useEffect(() => () => pages.dispose(), [pages]);
 
   const [toc, setToc] = useState<TocEntry[] | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
   const chapters = useMemo(() => comicChapters(toc ?? []), [toc]);
   const [place, setPlace] = useState<ComicPlace | null>(null);
   const [loaded, setLoaded] = useState<Record<number, ComicChapter>>({});
@@ -402,7 +406,6 @@ export function ComicReader() {
   const updateToc = () => {
     void updateOnlineToc(runtime.services.sources, [bookId]).then(
       () => {
-        pages.dispose();
         setLoaded({});
         setRevision((value) => value + 1);
         toast({ text: t("comic.tocUpdated") });
