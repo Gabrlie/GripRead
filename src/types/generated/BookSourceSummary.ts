@@ -19,4 +19,8 @@ hasLogin: boolean, customOrder: number, weight: number, lastUpdateTime: number, 
 /**
  * 通过服务器访问 is on for it on this device.
  */
-viaServer: boolean, };
+viaServer: boolean, 
+/**
+ * An image (comic) source, Legado's `bookSourceType` 2.
+ */
+comic: boolean, };

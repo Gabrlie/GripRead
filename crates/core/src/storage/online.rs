@@ -937,6 +937,16 @@ impl Storage {
         Ok(index)
     }
 
+    /// Page `page` of a comic chapter, kept with the chapter it belongs to
+    /// (by its file name, so a contents update that moves it keeps it).
+    pub fn comic_page_path(&self, book_id: &str, chapter: &OnlineChapter, page: u32) -> PathBuf {
+        let name = chapter_file_name(chapter);
+        self.online_cache_dir(book_id)
+            .join("comic")
+            .join(name.trim_end_matches(".txt"))
+            .join(page.to_string())
+    }
+
     pub fn online_image_path(&self, book_id: &str, index: u32) -> PathBuf {
         self.online_cache_dir(book_id)
             .join("images")
@@ -1230,6 +1240,7 @@ mod tests {
             toc_url: String::new(),
             variables: String::new(),
             reverse_toc: false,
+            comic: false,
         }
     }
 

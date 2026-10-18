@@ -1156,6 +1156,7 @@ mod tests {
             toc_url: format!("{base}/book/7/"),
             variables: String::new(),
             reverse_toc: false,
+            comic: false,
         };
         let chapter = |index: u32, title: &str, url: &str, volume: bool| OnlineChapter {
             index,

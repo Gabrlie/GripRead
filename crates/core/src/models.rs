@@ -21,6 +21,9 @@ pub enum AssetKind {
     Txt,
     /// An EPUB converted to text at import (`crate::epub`).
     Epub,
+    /// A comic (a CBZ or ZIP of images, or a fixed-layout EPUB of
+    /// pictures), held as text of image marks as an EPUB is (`crate::comic`).
+    Comic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1664,6 +1667,9 @@ pub struct BookSourceSummary {
     /// 通过服务器访问 is on for it on this device.
     #[serde(default)]
     pub via_server: bool,
+    /// An image (comic) source, Legado's `bookSourceType` 2.
+    #[serde(default)]
+    pub comic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1928,6 +1934,9 @@ pub struct OnlineBook {
     pub variables: String,
     /// The details asked for the contents newest first.
     pub reverse_toc: bool,
+    /// A comic: its source is an image source, and it opens in the comic reader.
+    #[serde(default)]
+    pub comic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -2799,4 +2808,43 @@ pub struct SubscriptionRequest {
 pub struct SubscriptionImportedRequest {
     pub id: String,
     pub count: u32,
+}
+
+/// One page of a comic chapter: its size when known (0 until a page of an
+/// online comic is kept), and where it is for positions and bookmarks.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPage {
+    pub width: u32,
+    pub height: u32,
+    /// The locator offset of the page: its image line in a local comic's
+    /// text, or the page number in an online chapter.
+    pub offset: u64,
+}
+
+/// A comic chapter's pages, with what a locator into it needs.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicChapter {
+    pub index: u32,
+    pub title: String,
+    pub resource_id: String,
+    pub content_version: String,
+    pub pages: Vec<ComicPage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicChapterRequest {
+    pub book_id: String,
+    /// The chapter's place in the contents.
+    pub index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPageRequest {
+    pub book_id: String,
+    pub chapter: u32,
+    pub page: u32,
 }

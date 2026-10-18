@@ -461,6 +461,7 @@ describe("更新目录 on the shelf", () => {
         tocUrl: "",
         variables: "",
         reverseToc: false,
+        comic: false,
       },
       totalChapters: 20,
       newChapters: 0,

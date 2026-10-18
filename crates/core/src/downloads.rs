@@ -414,6 +414,17 @@ impl ChapterStore for LibraryChapters {
     }
 
     fn fetch(&self, book_id: &str, index: u32) -> Result<(), AppError> {
+        let comic = self
+            .0
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
+            .online_record(book_id)?
+            .book
+            .comic;
+        // A comic chapter is its pages; one that failed is fetched when read.
+        if comic {
+            return crate::comic::cache_online_chapter(&self.0, book_id, index).map(|_| ());
+        }
         // Pictures too, so a cached book shows them offline.
         let raw = crate::online_reader::raw_chapter(&self.0, book_id, index)?;
         crate::online_reader::with_image_marks(&self.0, book_id, &raw);

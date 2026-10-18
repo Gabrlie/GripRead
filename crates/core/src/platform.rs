@@ -140,7 +140,9 @@ impl Platform for Filesystem {}
 
 fn is_book_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".txt") || lower.ends_with(".epub")
+    [".txt", ".epub", ".cbz", ".zip"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
 }
 
 fn list_txt_files(root: &Path) -> Result<Vec<PickedFile>, AppError> {

@@ -605,6 +605,7 @@ fn debug_run(session: &SourceSession, key: &str, emit: &dyn Fn(String)) -> Resul
     let mut book = BookData {
         origin: base.clone(),
         origin_name: session.env().source.name(),
+        comic: session.env().source.source_type() == 2,
         ..Default::default()
     };
     let mut chapters = Vec::new();

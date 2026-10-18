@@ -887,6 +887,7 @@ describe("online books", () => {
         tocUrl: "",
         variables: "",
         reverseToc: false,
+        comic: false,
       },
       totalChapters: 2,
       newChapters: 0,

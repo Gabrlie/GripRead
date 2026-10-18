@@ -125,6 +125,8 @@ pub fn mutates(name: &str) -> bool {
 pub const COMMANDS: &[&str] = &[
     "list_book_images",
     "read_book_image",
+    "get_comic_chapter",
+    "read_comic_page",
     "check_update",
     "get_update_settings",
     "install_update",
@@ -323,6 +325,10 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         "backup_to_webdav" => reply(crate::commands::backup_to_webdav(state).await),
         "list_book_images" => reply(crate::commands::list_book_images(state, request(args)?).await),
         "read_book_image" => bytes(crate::commands::read_book_image(state, request(args)?).await),
+        "get_comic_chapter" => {
+            reply(crate::commands::get_comic_chapter(state, request(args)?).await)
+        }
+        "read_comic_page" => bytes(crate::commands::read_comic_page(state, request(args)?).await),
         "check_update" => reply(crate::update::check_update(state, request(args)?).await),
         "get_update_settings" => reply(crate::update::get_update_settings(state).await),
         "install_update" => reply(crate::update::install_update(state, request(args)?).await),

@@ -472,12 +472,12 @@ fn book_file_stem(title: &str, author: Option<&str>) -> String {
 /// Book files the cloud folder holds.
 fn is_book_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".txt") || lower.ends_with(".epub")
+    lower.ends_with(".txt") || lower.ends_with(".epub") || lower.ends_with(".cbz")
 }
 
 fn title_of(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
-    [".txt", ".epub"]
+    [".txt", ".epub", ".cbz"]
         .iter()
         .find(|extension| lower.ends_with(*extension))
         .map_or(name, |extension| &name[..name.len() - extension.len()])
@@ -635,11 +635,7 @@ pub fn upload_books(
             let taken = |name: &str| {
                 names.contains(name) || index.books.iter().any(|book| book.name == name)
             };
-            let extension = if crate::epub::is_epub_file(&path) {
-                "epub"
-            } else {
-                "txt"
-            };
+            let extension = crate::comic::book_extension(&path);
             let name = if taken(&format!("{stem}.{extension}")) {
                 format!("{stem}-{}.{extension}", &hash[..8.min(hash.len())])
             } else {
@@ -701,8 +697,11 @@ pub fn download_cloud_book(
         .join("document-staging")
         .join(format!("cloud-{}", Uuid::new_v4()));
     fs::create_dir_all(&directory)?;
-    let extension = if name.to_ascii_lowercase().ends_with(".epub") {
+    let lower = name.to_ascii_lowercase();
+    let extension = if lower.ends_with(".epub") {
         "epub"
+    } else if lower.ends_with(".cbz") {
+        "cbz"
     } else {
         "txt"
     };

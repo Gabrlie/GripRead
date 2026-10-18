@@ -16,4 +16,8 @@ variables: string,
 /**
  * The details asked for the contents newest first.
  */
-reverseToc: boolean, };
+reverseToc: boolean, 
+/**
+ * A comic: its source is an image source, and it opens in the comic reader.
+ */
+comic: boolean, };

@@ -119,6 +119,8 @@ pub(crate) struct EpubParts {
     toc: Vec<crate::epub::EpubTocEntry>,
     images: Vec<crate::epub::EpubImage>,
     cover: Option<String>,
+    /// Pages of images, read in the comic reader.
+    comic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1294,8 +1296,17 @@ impl Storage {
         }
 
         report(ImportPhase::Normalizing, bytes_read, total_bytes);
-        let (decoded, epub) = if crate::epub::is_epub(&input) {
-            let book = crate::epub::convert(&input)?;
+        let comic_archive = crate::comic::is_comic_archive(&input);
+        let (decoded, epub) = if comic_archive || crate::epub::is_epub(&input) {
+            let book = if comic_archive {
+                let stem = source
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                crate::comic::convert_archive(&input, &stem)?
+            } else {
+                crate::epub::convert(&input)?
+            };
             let decoded = crate::txt::DecodedTxt {
                 text: book.text,
                 detected: TxtEncoding::Utf8,
@@ -1309,6 +1320,7 @@ impl Storage {
                 toc: book.toc,
                 images: book.images,
                 cover: book.cover,
+                comic: book.comic,
             };
             (decoded, Some(parts))
         } else {
@@ -1537,7 +1549,11 @@ impl Storage {
                 Some(title) => (title, epub.and_then(|parts| parts.author.clone())),
                 None => (parsed_name.name, parsed_name.author),
             };
-            let kind = if epub.is_some() { "epub" } else { "txt" };
+            let kind = match epub {
+                Some(parts) if parts.comic => "comic",
+                Some(_) => "epub",
+                None => "txt",
+            };
             if !duplicate {
                 tx.execute(
                     "INSERT INTO books(id, title, author, content_version, created_at, updated_at)
@@ -1641,10 +1657,10 @@ impl Storage {
             let asset = BookAsset {
                 id: asset_id,
                 book_id: book_id.clone(),
-                kind: if prepared.epub.is_some() {
-                    AssetKind::Epub
-                } else {
-                    AssetKind::Txt
+                kind: match &prepared.epub {
+                    Some(parts) if parts.comic => AssetKind::Comic,
+                    Some(_) => AssetKind::Epub,
+                    None => AssetKind::Txt,
                 },
                 sha256: prepared.sha256,
                 byte_length: prepared.byte_length,
@@ -2488,7 +2504,7 @@ impl Storage {
         // An EPUB declares its own encoding.
         let info = self
             .txt_encoding_for_asset(&asset_id)?
-            .filter(|_| kind != "epub");
+            .filter(|_| kind == "txt");
         Ok(info.unwrap_or(TxtEncodingInfo {
             detected: TxtEncoding::Utf8,
             selected: TxtEncoding::Utf8,
@@ -4797,7 +4813,9 @@ impl Storage {
             .get(&record.asset.id)
             .cloned();
         let epub_toc = match record.asset.kind {
-            AssetKind::Epub => self.epub_parts(&record.asset.id)?.map(|(toc, _, _)| toc),
+            AssetKind::Epub | AssetKind::Comic => {
+                self.epub_parts(&record.asset.id)?.map(|(toc, _, _)| toc)
+            }
             AssetKind::Txt => None,
         };
         Ok(ContentReadContext {
@@ -4848,7 +4866,7 @@ impl Storage {
     ) -> Result<(PathBuf, Vec<crate::epub::EpubImage>, Option<String>), AppError> {
         let record = self.asset_for_book(book_id)?;
         let not_epub = || AppError::keyed(ErrorCode::NotFound, "notEpub", "这本书不是 EPUB");
-        if record.asset.kind != AssetKind::Epub {
+        if record.asset.kind == AssetKind::Txt {
             return Err(not_epub());
         }
         let (_, images, cover) = self.epub_parts(&record.asset.id)?.ok_or_else(not_epub)?;
@@ -4871,6 +4889,41 @@ impl Storage {
         Ok((managed_path(&self.root, &source, "sources")?, images, cover))
     }
 
+    /// A local book's asset.
+    pub(crate) fn book_asset(&self, book_id: &str) -> Result<BookAsset, AppError> {
+        Ok(self.asset_for_book(book_id)?.asset)
+    }
+
+    /// A local comic's text, asset, directory, images, and retained archive.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn comic_text(
+        &self,
+        book_id: &str,
+    ) -> Result<
+        (
+            String,
+            BookAsset,
+            Vec<crate::epub::EpubTocEntry>,
+            Vec<crate::epub::EpubImage>,
+            PathBuf,
+        ),
+        AppError,
+    > {
+        let context = self.content_read_context(book_id)?;
+        if context.record.asset.kind != AssetKind::Comic {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notComic",
+                "这本书不是漫画",
+            ));
+        }
+        let verified = verify_content_context(&context)?;
+        let text = read_verified_text(&context, &verified)?;
+        let (source, images, _) = self.epub_source(book_id)?;
+        let toc = context.epub_toc.clone().unwrap_or_default();
+        Ok((text, context.record.asset, toc, images, source))
+    }
+
     /// The sizes of an EPUB's images, by the index its text marks carry;
     /// empty for a TXT.
     pub fn book_images(&self, book_id: &str) -> Result<Vec<crate::models::BookImage>, AppError> {
@@ -4878,7 +4931,7 @@ impl Storage {
         if self.is_online_book(book_id)? {
             return self.online_images(book_id);
         }
-        if self.asset_for_book(book_id)?.asset.kind != AssetKind::Epub {
+        if self.asset_for_book(book_id)?.asset.kind == AssetKind::Txt {
             return Ok(Vec::new());
         }
         Ok(self
@@ -4909,7 +4962,7 @@ impl Storage {
     /// Gives an imported EPUB its own cover when the book has none yet.
     pub fn apply_epub_cover(&mut self, book_id: &str) -> Result<(), AppError> {
         if self.book_cover(book_id)?.is_some()
-            || self.asset_for_book(book_id)?.asset.kind != AssetKind::Epub
+            || self.asset_for_book(book_id)?.asset.kind == AssetKind::Txt
         {
             return Ok(());
         }
@@ -6725,6 +6778,7 @@ fn asset_from_columns(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Resul
     let kind = match kind.as_str() {
         "txt" => AssetKind::Txt,
         "epub" => AssetKind::Epub,
+        "comic" => AssetKind::Comic,
         _ => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 offset + 2,
@@ -10287,6 +10341,7 @@ mod tests {
             toc_url: String::new(),
             variables: String::new(),
             reverse_toc: false,
+            comic: false,
         };
         let first = phone.add_online_book(&book("甲"), &[], true).unwrap();
         let second = phone.add_online_book(&book("乙"), &[], true).unwrap();

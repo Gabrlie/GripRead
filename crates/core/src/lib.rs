@@ -7,6 +7,7 @@
 pub mod api;
 pub mod app_log;
 pub mod cloud;
+pub mod comic;
 pub mod commands;
 pub mod documents;
 pub mod downloads;

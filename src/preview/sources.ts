@@ -35,6 +35,7 @@ function summaryOf(raw: Raw): BookSourceSummary {
     respondTime: Number(raw.respondTime ?? 180000),
     comment: text(raw.bookSourceComment),
     viaServer: raw.__viaServer === true,
+    comic: Number(raw.bookSourceType ?? 0) === 2,
   };
 }
 
@@ -601,6 +602,7 @@ export const PREVIEW_BOOKS: OnlineBook[] = [
   tocUrl: "",
   variables: "",
   reverseToc: false,
+  comic: false,
 }));
 
 /** A few sources to show the management pages in the preview build. */

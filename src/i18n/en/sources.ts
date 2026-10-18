@@ -215,7 +215,7 @@ export const sources = {
   "srcImport.placeholder": "Paste source JSON: one source or an array",
   "srcImport.reading": "Reading the file…",
   "srcImport.count": "{total} {total|source|sources}, {chosen} chosen",
-  "srcImport.skipped": "; skipped {count} audio, image, or file {count|source|sources}",
+  "srcImport.skipped": "; skipped {count} audio or file {count|source|sources}",
   "srcImport.invalid": "; {count} not recognised",
   "srcImport.selectNone": "Select none",
   "srcImport.list": "Sources to import",

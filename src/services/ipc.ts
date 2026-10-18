@@ -253,7 +253,7 @@ export function invokeCommand<T>(command: string, args?: Record<string, unknown>
 }
 
 /** The books the library imports. */
-const BOOK_FILES = [{ name: "TXT / EPUB", extensions: ["txt", "epub"] }];
+const BOOK_FILES = [{ name: "TXT / EPUB / CBZ", extensions: ["txt", "epub", "cbz", "zip"] }];
 
 export const tauriServices: AppServices = {
   library: {

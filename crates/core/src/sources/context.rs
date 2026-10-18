@@ -35,6 +35,8 @@ pub struct BookData {
     pub toc_html: Option<String>,
     /// `book.setReverseToc(true)`: the contents come newest first.
     pub reverse_toc: bool,
+    /// Found through an image (comic) source.
+    pub comic: bool,
 }
 
 /// A chapter as Legado's `BookChapter` exposes it.

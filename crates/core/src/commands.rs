@@ -1840,6 +1840,48 @@ pub async fn list_book_images(
     with_storage(state, move |storage| storage.book_images(&request.book_id)).await
 }
 
+/// A comic chapter's pages.
+pub async fn get_comic_chapter(
+    state: &Arc<AppState>,
+    request: crate::models::ComicChapterRequest,
+) -> Result<crate::models::ComicChapter, AppError> {
+    let online = request.clone();
+    if let Some(chapter) = for_online_book(state, &request.book_id, move |storage| {
+        crate::comic::online_chapter(storage, &online.book_id, online.index)
+    })
+    .await?
+    {
+        return Ok(chapter);
+    }
+    let storage = Arc::clone(&state.storage);
+    tokio::task::spawn_blocking(move || {
+        crate::comic::local_chapter(&storage, &request.book_id, request.index)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+
+/// One page of a comic chapter.
+pub async fn read_comic_page(
+    state: &Arc<AppState>,
+    request: crate::models::ComicPageRequest,
+) -> Result<Vec<u8>, AppError> {
+    let online = request.clone();
+    if let Some(bytes) = for_online_book(state, &request.book_id, move |storage| {
+        crate::comic::online_page(storage, &online.book_id, online.chapter, online.page)
+    })
+    .await?
+    {
+        return Ok(bytes);
+    }
+    let storage = Arc::clone(&state.storage);
+    tokio::task::spawn_blocking(move || {
+        crate::comic::local_page(&storage, &request.book_id, request.chapter, request.page)
+    })
+    .await
+    .map_err(|error| AppError::new(ErrorCode::Io, error.to_string()))?
+}
+
 /// One image's bytes.
 pub async fn read_book_image(
     state: &Arc<AppState>,

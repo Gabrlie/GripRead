@@ -39,6 +39,7 @@ function onlineBook(id: string, title: string, readChapter: number | null): Libr
         tocUrl: "",
         variables: "",
         reverseToc: false,
+        comic: false,
       },
       totalChapters: 200,
       newChapters: 0,

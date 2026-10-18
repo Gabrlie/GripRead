@@ -26,6 +26,33 @@ pub const IMAGE_BASE: u32 = 0xE000;
 const IMAGE_LIMIT: usize = 0x1900;
 pub const MARK_BASE: u32 = 0xF0000;
 const MARK_LIMIT: usize = 0xFFFD;
+/// Images past the first [`IMAGE_LIMIT`] (comics only): `U+100000 + n`.
+const MORE_IMAGES_BASE: u32 = 0x100000;
+const MORE_IMAGES_LIMIT: usize = 0xFFFE;
+
+/// The mark of image `index`: `U+E000 + n`, then for comics with more
+/// pages, `U+100000 + (n - 6400)`.
+pub fn image_mark(index: usize) -> Option<char> {
+    if index < IMAGE_LIMIT {
+        char::from_u32(IMAGE_BASE + index as u32)
+    } else if index < IMAGE_LIMIT + MORE_IMAGES_LIMIT {
+        char::from_u32(MORE_IMAGES_BASE + (index - IMAGE_LIMIT) as u32)
+    } else {
+        None
+    }
+}
+
+/// The image a mark stands for.
+pub fn image_of_mark(character: char) -> Option<usize> {
+    let code = character as u32;
+    if (IMAGE_BASE..IMAGE_BASE + IMAGE_LIMIT as u32).contains(&code) {
+        Some((code - IMAGE_BASE) as usize)
+    } else if (MORE_IMAGES_BASE..MORE_IMAGES_BASE + MORE_IMAGES_LIMIT as u32).contains(&code) {
+        Some((code - MORE_IMAGES_BASE) as usize + IMAGE_LIMIT)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +80,9 @@ pub struct EpubBook {
     pub images: Vec<EpubImage>,
     /// The cover image's path inside the EPUB.
     pub cover: Option<String>,
+    /// Pages of images (a fixed-layout EPUB of pictures, or a comic
+    /// archive), read in the comic reader.
+    pub comic: bool,
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -254,6 +284,8 @@ struct Package {
     /// The navigation document (EPUB 3).
     nav: Option<String>,
     cover: Option<String>,
+    /// `rendition:layout` is `pre-paginated`.
+    fixed: bool,
 }
 
 fn read_package(archive: &mut Archive) -> Result<Package, AppError> {
@@ -285,9 +317,6 @@ fn read_package(archive: &mut Archive) -> Result<Package, AppError> {
             && node.attribute("property") == Some("rendition:layout")
             && node.text().map(str::trim) == Some("pre-paginated")
     });
-    if fixed {
-        return Err(invalid("暂不支持固定版式的 EPUB"));
-    }
 
     let mut manifest = HashMap::new();
     for item in opf.descendants().filter(|node| local_name(node) == "item") {
@@ -357,6 +386,7 @@ fn read_package(archive: &mut Archive) -> Result<Package, AppError> {
         ncx,
         nav,
         cover,
+        fixed,
     })
 }
 
@@ -571,7 +601,7 @@ impl Writer<'_> {
             }
         };
         self.end_line();
-        let mark = char::from_u32(IMAGE_BASE + index as u32).unwrap_or('\u{E000}');
+        let mark = image_mark(index).unwrap_or('\u{E000}');
         self.lines.push(mark.to_string());
     }
 
@@ -682,6 +712,19 @@ pub fn convert(bytes: &[u8]) -> Result<EpubBook, AppError> {
     if writer.lines.is_empty() {
         return Err(invalid("EPUB 没有可阅读的文字"));
     }
+    // Fixed-layout pages read only as pictures: one per page, with no more
+    // than a caption's worth of text.
+    if package.fixed {
+        let text: usize = writer
+            .lines
+            .iter()
+            .flat_map(|line| line.chars())
+            .filter(|character| !character.is_whitespace() && !is_mark(*character))
+            .count();
+        if writer.images.is_empty() || text > writer.images.len() * 20 {
+            return Err(invalid("暂不支持固定版式的 EPUB"));
+        }
+    }
 
     let mut targets = match &package.nav {
         Some(nav) => nav_toc(&mut archive, nav),
@@ -749,14 +792,14 @@ pub fn convert(bytes: &[u8]) -> Result<EpubBook, AppError> {
         toc,
         images: writer.images,
         cover: package.cover,
+        comic: package.fixed,
     })
 }
 
 /// Whether a character is an image or directory mark.
 pub fn is_mark(character: char) -> bool {
     let code = character as u32;
-    (IMAGE_BASE..IMAGE_BASE + IMAGE_LIMIT as u32).contains(&code)
-        || (MARK_BASE..MARK_BASE + MARK_LIMIT as u32).contains(&code)
+    image_of_mark(character).is_some() || (MARK_BASE..MARK_BASE + MARK_LIMIT as u32).contains(&code)
 }
 
 /// Removes the marks, for excerpts and read-aloud.
@@ -1067,6 +1110,38 @@ pub(crate) mod tests {
             ("OEBPS/a.html", b"<p>x</p>".as_slice()),
         ]);
         assert!(convert(&fixed).unwrap_err().message.contains("固定版式"));
+    }
+
+    #[test]
+    fn a_fixed_layout_book_of_pictures_is_a_comic() {
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend([0, 0, 0, 13]);
+        png.extend(b"IHDR");
+        png.extend(5u32.to_be_bytes());
+        png.extend(7u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0]);
+        let opf = r#"<package xmlns="http://www.idpf.org/2007/opf"><metadata><meta property="rendition:layout">pre-paginated</meta></metadata>
+<manifest><item id="a" href="a.html" media-type="application/xhtml+xml"/><item id="b" href="b.html" media-type="application/xhtml+xml"/>
+<item id="p1" href="1.png" media-type="image/png"/><item id="p2" href="2.png" media-type="image/png"/></manifest>
+<spine><itemref idref="a"/><itemref idref="b"/></spine></package>"#;
+        let bytes = build(&[
+            ("META-INF/container.xml", CONTAINER.as_bytes()),
+            ("OEBPS/content.opf", opf.as_bytes()),
+            (
+                "OEBPS/a.html",
+                br#"<body><img src="1.png"/></body>"#.as_slice(),
+            ),
+            (
+                "OEBPS/b.html",
+                br#"<body><img src="2.png"/><p>2</p></body>"#.as_slice(),
+            ),
+            ("OEBPS/1.png", &png),
+            ("OEBPS/2.png", &png),
+        ]);
+        let book = convert(&bytes).unwrap();
+        assert!(book.comic);
+        assert_eq!(book.images.len(), 2);
+        assert_eq!((book.images[1].width, book.images[1].height), (5, 7));
     }
 
     #[test]

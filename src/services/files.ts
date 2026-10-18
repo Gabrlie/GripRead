@@ -87,7 +87,9 @@ export async function pickTxtFolderFiles(): Promise<PickedFile[] | string | null
     const folder = await open({ multiple: false, directory: true });
     return typeof folder === "string" ? folder : null;
   }
-  const files = (await choose({ folder: true })).filter((file) => /\.(txt|epub)$/i.test(file.name));
+  const files = (await choose({ folder: true })).filter((file) =>
+    /\.(txt|epub|cbz|zip)$/i.test(file.name),
+  );
   files.sort((left, right) => left.name.localeCompare(right.name));
   return Promise.all(
     files.slice(0, 1000).map(async (file) => ({ path: await upload(file), name: file.name })),

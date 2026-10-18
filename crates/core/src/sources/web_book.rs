@@ -448,6 +448,7 @@ fn new_book(env: &Env, variables: VarMap) -> BookData {
     BookData {
         origin: env.source.url(),
         origin_name: env.source.name(),
+        comic: env.source.source_type() == 2,
         variables,
         ..Default::default()
     }

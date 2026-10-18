@@ -37,6 +37,9 @@ class CreateDocumentArgs {
  * Opens a picked document for the Rust import worker (src-tauri/src/documents.rs).
  * The descriptor is detached, so Rust owns and closes it.
  */
+/** The book files a folder import picks up. */
+private val BOOK_EXTENSIONS = listOf(".txt", ".epub", ".cbz", ".zip")
+
 @TauriPlugin
 class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
@@ -173,7 +176,7 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
-  /** Lists `.txt` and `.epub` documents in the picked tree, three folder levels deep. */
+  /** Lists `.txt`, `.epub`, `.cbz`, and `.zip` documents in the picked tree, three folder levels deep. */
   @ActivityCallback
   fun folderPicked(invoke: Invoke, result: ActivityResult) {
     val files = JSArray()
@@ -207,7 +210,7 @@ class DocumentPlugin(private val activity: Activity) : Plugin(activity) {
         if (name.startsWith(".")) continue
         if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
           if (depth < 3) listTxt(tree, id, depth + 1, found)
-        } else if (name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)) {
+        } else if (BOOK_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) }) {
           found.add(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString() to name)
         }
       }

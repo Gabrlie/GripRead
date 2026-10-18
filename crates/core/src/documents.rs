@@ -185,6 +185,8 @@ fn staged_file_name(display_name: Option<&str>) -> String {
     };
     let (stem, extension) = if ends_with(".epub") {
         (&name[..name.len() - 5], "epub")
+    } else if ends_with(".cbz") || ends_with(".zip") {
+        (&name[..name.len() - 4], "cbz")
     } else if ends_with(".txt") {
         (&name[..name.len() - 4], "txt")
     } else {

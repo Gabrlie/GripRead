@@ -115,6 +115,7 @@ pub fn online_book(book: &BookData) -> OnlineBook {
         toc_url: book.toc_url.clone(),
         variables: variables_json(&book.variables),
         reverse_toc: book.reverse_toc,
+        comic: book.comic,
     }
 }
 
@@ -136,6 +137,7 @@ pub fn book_data(book: &OnlineBook) -> BookData {
         info_html: None,
         toc_html: None,
         reverse_toc: book.reverse_toc,
+        comic: book.comic,
     }
 }
 
@@ -1563,6 +1565,7 @@ mod tests {
             toc_url: String::new(),
             variables: String::new(),
             reverse_toc: false,
+            comic: false,
         }
     }
 

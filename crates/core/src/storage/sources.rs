@@ -53,18 +53,19 @@ pub fn summary_of(source: &BookSource) -> BookSourceSummary {
         respond_time: source.respond_time(),
         comment: source.comment().unwrap_or_default(),
         via_server: false,
+        comic: source.source_type() == 2,
     }
 }
 
 /// Reads one source for saving: an object with an address and a name, of
-/// the text type GripRead reads.
+/// a type GripRead reads (text or image; audio and file sources are not).
 fn validated(value: Json) -> Result<BookSource, String> {
     let source = BookSource::from_value(value)?;
     if source.name().trim().is_empty() {
         return Err(format!("书源 {} 没有名称", source.url()));
     }
-    if source.source_type() != 0 {
-        return Err(format!("{} 不是文本书源", source.name()));
+    if !matches!(source.source_type(), 0 | 2) {
+        return Err(format!("{} 不是文字或漫画书源", source.name()));
     }
     Ok(source)
 }
@@ -190,7 +191,9 @@ impl Storage {
                         status,
                     });
                 }
-                Err(_) if typed.is_some_and(|kind| kind.as_i64().unwrap_or(0) != 0) => {
+                Err(_)
+                    if typed.is_some_and(|kind| !matches!(kind.as_i64().unwrap_or(0), 0 | 2)) =>
+                {
                     preview.skipped += 1
                 }
                 Err(error) => preview.invalid.push(error),
@@ -809,10 +812,17 @@ mod tests {
         assert_eq!(list[0].url, "https://new.com");
         assert!(storage
             .save_book_source(
-                r#"{"bookSourceUrl":"https://x.com","bookSourceName":"x","bookSourceType":2}"#,
+                r#"{"bookSourceUrl":"https://x.com","bookSourceName":"x","bookSourceType":1}"#,
                 None
             )
             .is_err());
+        // Image (comic) sources are kept.
+        storage
+            .save_book_source(
+                r#"{"bookSourceUrl":"https://m.com","bookSourceName":"m","bookSourceType":2}"#,
+                None,
+            )
+            .unwrap();
         storage.source_cache_put("k", "v", 0).unwrap();
         storage.source_cache_put("gone", "v", -1).unwrap();
         assert_eq!(storage.source_cache_get("k").unwrap().as_deref(), Some("v"));

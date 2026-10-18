@@ -209,7 +209,7 @@ export const sources = {
   "srcImport.placeholder": "粘贴书源 JSON，单个书源或数组都可以",
   "srcImport.reading": "正在读取文件…",
   "srcImport.count": "共 {total} 个书源，已选 {chosen} 个",
-  "srcImport.skipped": "；跳过 {count} 个音频、图片或文件书源",
+  "srcImport.skipped": "；跳过 {count} 个音频或文件书源",
   "srcImport.invalid": "；{count} 个无法识别",
   "srcImport.selectNone": "全不选",
   "srcImport.list": "待导入的书源",
