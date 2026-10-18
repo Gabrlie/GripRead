@@ -901,10 +901,9 @@ impl Storage {
         Ok(())
     }
 
-    /// The position record sync holds for this book (another device's, or
-    /// this device's own when it sent the latest).
-    pub fn synced_progress(&self, book_id: &str) -> Result<Option<Value>, AppError> {
-        let key = if self.is_online_book(book_id)? {
+    /// The key of the book's position record in sync.
+    pub fn synced_progress_key(&self, book_id: &str) -> Result<Option<String>, AppError> {
+        Ok(Some(if self.is_online_book(book_id)? {
             let book = self.get_book(book_id)?;
             format!(
                 "progress:online:{}",
@@ -915,6 +914,14 @@ impl Storage {
                 Ok((_, sha256, _)) => format!("progress:book:{sha256}"),
                 Err(_) => return Ok(None),
             }
+        }))
+    }
+
+    /// The position record sync holds for this book (another device's, or
+    /// this device's own when it sent the latest).
+    pub fn synced_progress(&self, book_id: &str) -> Result<Option<Value>, AppError> {
+        let Some(key) = self.synced_progress_key(book_id)? else {
+            return Ok(None);
         };
         let value: Option<String> = self
             .conn

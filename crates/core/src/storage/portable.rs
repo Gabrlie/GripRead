@@ -155,6 +155,9 @@ pub struct ProgressState {
     pub local_revision: u64,
     pub synced_version: Option<String>,
     pub synced_offset: Option<u64>,
+    /// Where the answered position was: its resource and offset.
+    pub handled_resource: Option<String>,
+    pub handled_offset: Option<u64>,
 }
 
 /// Book information from the cloud bookshelf index, applied when the
@@ -530,7 +533,8 @@ impl Storage {
         Ok(self
             .conn
             .query_row(
-                "SELECT handled_device, handled_revision, local_revision, synced_version, synced_offset
+                "SELECT handled_device, handled_revision, local_revision, synced_version, synced_offset,
+                        handled_resource, handled_offset
                  FROM progress_sync WHERE book_id = ?1",
                 params![book_id],
                 |row| {
@@ -540,6 +544,8 @@ impl Storage {
                         local_revision: row.get::<_, i64>(2)? as u64,
                         synced_version: row.get(3)?,
                         synced_offset: row.get::<_, Option<i64>>(4)?.map(|offset| offset as u64),
+                        handled_resource: row.get(5)?,
+                        handled_offset: row.get::<_, Option<i64>>(6)?.map(|offset| offset as u64),
                     })
                 },
             )
@@ -554,14 +560,17 @@ impl Storage {
     ) -> Result<(), AppError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO progress_sync(book_id, handled_device, handled_revision,
-                local_revision, synced_version, synced_offset) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                local_revision, synced_version, synced_offset, handled_resource, handled_offset)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 book_id,
                 state.handled_device,
                 state.handled_revision as i64,
                 state.local_revision as i64,
                 state.synced_version,
-                state.synced_offset.map(|offset| offset as i64)
+                state.synced_offset.map(|offset| offset as i64),
+                state.handled_resource,
+                state.handled_offset.map(|offset| offset as i64)
             ],
         )?;
         Ok(())

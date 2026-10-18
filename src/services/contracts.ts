@@ -242,7 +242,12 @@ export interface SyncService {
   uploadProgress(bookId: string, chapterTitle: string): Promise<boolean>;
   /** Another device's position for the book that has not been answered yet. */
   fetchProgress(bookId: string): Promise<ProgressPrompt | null>;
-  acknowledgeProgress(bookId: string, deviceId: string, revision: number): Promise<void>;
+  acknowledgeProgress(
+    bookId: string,
+    deviceId: string,
+    revision: number,
+    locator?: ReaderLocator,
+  ): Promise<void>;
   /** 设置 › 服务器: this device's connection to the GripRead server. */
   getServer(): Promise<SyncServerStatus>;
   /** Signs in with the server's password; the first sync starts at once. */

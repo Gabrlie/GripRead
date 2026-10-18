@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cloud::{connect, lock, now_millis};
 use crate::error::{AppError, ErrorCode};
-use crate::models::ProgressPrompt;
-use crate::storage::{ChapterPosition, PortableLocator, Storage};
+use crate::models::{ProgressPrompt, ReaderLocator};
+use crate::storage::{ChapterPosition, PortableLocator, ProgressState, Storage};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -234,6 +234,16 @@ fn prompt(
         Some(_) | None if guard.is_online_book(book_id)? => None,
         _ => guard.locator_from_portable(book_id, &record.locator)?,
     };
+    // The device answered about already, still reading nearby: one
+    // chapter on for an online book, about a chapter's text for a local one.
+    if located.as_ref().is_some_and(|located| {
+        state.handled_device == record.device_id && near_handled(&state, located)
+    }) {
+        // The answered place stays, so reading on far enough asks again.
+        state.handled_revision = record.revision;
+        guard.save_progress_state(book_id, &state)?;
+        return Ok(None);
+    }
     let current = guard.saved_position(book_id)?;
     let Some(located) = located.filter(|located| {
         current.as_ref().is_none_or(|current| {
@@ -261,16 +271,40 @@ fn prompt(
     }))
 }
 
-/// Records that the reader answered a cloud version, jumping or not.
+/// About a chapter of a local book's text, in UTF-16 units.
+const NEAR_UNITS: u64 = 10_000;
+
+/// Whether `located` is within a chapter of the answered position.
+fn near_handled(state: &ProgressState, located: &ReaderLocator) -> bool {
+    let (Some(resource), Some(offset)) = (&state.handled_resource, state.handled_offset) else {
+        return false;
+    };
+    match (
+        crate::storage::resource_chapter(resource),
+        crate::storage::resource_chapter(&located.resource_id),
+    ) {
+        (Some(handled), Some(now)) => handled.abs_diff(now) <= 1,
+        (None, None) => {
+            resource == &located.resource_id && offset.abs_diff(located.offset) <= NEAR_UNITS
+        }
+        _ => false,
+    }
+}
+
+/// Records that the reader answered a cloud version, jumping or not, and
+/// where that position was.
 pub fn acknowledge(
     storage: &Mutex<Storage>,
     book_id: &str,
     device_id: &str,
     revision: u64,
+    locator: Option<&ReaderLocator>,
 ) -> Result<(), AppError> {
     let guard = lock(storage)?;
     let mut state = guard.progress_state(book_id)?;
     state.handled_device = device_id.into();
     state.handled_revision = revision;
+    state.handled_resource = locator.map(|locator| locator.resource_id.clone());
+    state.handled_offset = locator.map(|locator| locator.offset);
     guard.save_progress_state(book_id, &state)
 }

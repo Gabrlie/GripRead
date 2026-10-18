@@ -936,9 +936,20 @@ impl SyncClient {
                 let mut storage = self.lock()?;
                 storage.sync_apply(&others)?;
                 applied = true;
-                // The open book's position from elsewhere is offered there.
+                // The open book's position from elsewhere is offered there,
+                // when this round brought a new one.
                 if let Some(book_id) = open {
-                    if let Ok(Some(value)) = storage.synced_progress(&book_id) {
+                    let arrived = storage
+                        .synced_progress_key(&book_id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|key| others.iter().any(|change| change.key == key));
+                    let value = if arrived {
+                        storage.synced_progress(&book_id).ok().flatten()
+                    } else {
+                        None
+                    };
+                    if let Some(value) = value {
                         if value["deviceId"].as_str() != Some(device.as_str()) {
                             self.inner
                                 .events

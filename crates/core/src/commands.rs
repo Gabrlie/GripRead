@@ -2502,6 +2502,7 @@ pub async fn acknowledge_book_progress(
             &request.book_id,
             &request.device_id,
             request.revision,
+            request.locator.as_ref(),
         )
     })
     .await

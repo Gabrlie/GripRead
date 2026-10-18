@@ -593,6 +593,59 @@ describe("reader directory and search operation ownership", () => {
     );
   });
 
+  it("does not ask again after the cloud progress is dismissed while fetches were queued", async () => {
+    const app = runtime();
+    const sync = app.services.sync;
+    vi.mocked(sync.getWebDav).mockResolvedValue({
+      ...unconfiguredWebDav(),
+      username: "reader",
+      configured: true,
+      syncProgress: true,
+    });
+    let arrived: ((bookId: string) => void) | undefined;
+    vi.mocked(sync.onSyncProgress).mockImplementation(async (listener) => {
+      arrived = listener;
+      return () => undefined;
+    });
+    // Each fetch answers slowly with the same, still unanswered version.
+    const answers: (() => void)[] = [];
+    vi.mocked(sync.fetchProgress).mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          answers.push(() =>
+            resolve({
+              deviceId: "other",
+              deviceName: "书房平板",
+              revision: 3,
+              writtenAt: 1,
+              chapterTitle: "Chapter 1",
+              excerpt: "Read a page.",
+              locator: locator(10),
+            }),
+          ),
+        ),
+    );
+    await view(app);
+    await waitFor(() => expect(answers.length).toBe(1));
+    answers.shift()!();
+    const dialog = await screen.findByRole("dialog", { name: "云端进度" });
+    // More sync rounds bring the book's position while the question is open.
+    await waitFor(() => expect(arrived).toBeDefined());
+    arrived!("reader-book");
+    arrived!("reader-book");
+    arrived!("reader-book");
+    await userEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    // The fetches queued before the answer still bring the same version.
+    await waitFor(() => {
+      answers.shift()?.();
+      expect(sync.acknowledgeProgress).toHaveBeenCalled();
+    });
+    // The three arrivals shared one fetch.
+    expect(sync.fetchProgress).toHaveBeenCalledTimes(2);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("dialog", { name: "云端进度" })).toBeNull();
+  });
+
   it("asks to jump to another device's progress and uploads its own on leaving", async () => {
     const app = runtime();
     const sync = app.services.sync;
@@ -621,7 +674,12 @@ describe("reader directory and search operation ownership", () => {
         target,
       ),
     );
-    expect(sync.acknowledgeProgress).toHaveBeenCalledWith("reader-book", "other", 3);
+    expect(sync.acknowledgeProgress).toHaveBeenCalledWith(
+      "reader-book",
+      "other",
+      3,
+      locator(target),
+    );
     await userEvent.click(screen.getByTestId("reader-close"));
     await waitFor(() =>
       expect(sync.uploadProgress).toHaveBeenCalledWith("reader-book", expect.any(String)),

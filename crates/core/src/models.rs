@@ -1628,6 +1628,10 @@ pub struct AcknowledgeProgressRequest {
     pub book_id: String,
     pub device_id: String,
     pub revision: u64,
+    /// The prompt's position, so reading on nearby is not asked about again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub locator: Option<ReaderLocator>,
 }
 
 // Book sources (Legado `BookSource`). The source JSON itself stays as text

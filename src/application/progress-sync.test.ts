@@ -37,4 +37,37 @@ describe("progress sync ordering", () => {
     await expect(sync.upload("book", "")).rejects.toThrow("offline");
     await expect(sync.fetch("book")).resolves.toBeNull();
   });
+
+  it("does not bring back a version answered while fetches were queued", async () => {
+    const service = syncServiceMocks();
+    const prompt = {
+      deviceId: "other",
+      deviceName: "",
+      revision: 3,
+      writtenAt: 1,
+      chapterTitle: "",
+      excerpt: "",
+      locator: {
+        bookId: "book",
+        contentVersion: "v",
+        resourceId: "r",
+        offset: 4,
+        contextBefore: "",
+        contextAfter: "",
+      },
+    };
+    vi.mocked(service.fetchProgress).mockResolvedValue(prompt);
+    const sync = new ProgressSync(service);
+    const first = sync.fetch("book");
+    expect(await first).toEqual(prompt);
+    const queued = sync.fetch("book");
+    // Waiting to start: shared.
+    expect(sync.fetch("book")).toBe(queued);
+    await sync.acknowledge(prompt, "book");
+    expect(await queued).toBeNull();
+    expect(service.acknowledgeProgress).toHaveBeenCalledWith("book", "other", 3, prompt.locator);
+    // A newer version is asked about.
+    vi.mocked(service.fetchProgress).mockResolvedValue({ ...prompt, revision: 4 });
+    expect((await sync.fetch("book"))?.revision).toBe(4);
+  });
 });

@@ -1313,7 +1313,8 @@ mod tests {
         let prompt = crate::progress_sync::fetch(&second, &b).unwrap().unwrap();
         assert_eq!(prompt.device_name, "A");
         assert!(prompt.excerpt.starts_with("第10段"));
-        crate::progress_sync::acknowledge(&second, &b, &prompt.device_id, prompt.revision).unwrap();
+        crate::progress_sync::acknowledge(&second, &b, &prompt.device_id, prompt.revision, None)
+            .unwrap();
         assert!(crate::progress_sync::fetch(&second, &b).unwrap().is_none());
 
         // A newer position from the first device is asked about again.
@@ -1335,6 +1336,66 @@ mod tests {
             .save_position(&latest.locator)
             .unwrap();
         assert!(crate::progress_sync::fetch(&second, &b).unwrap().is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_answered_device_reading_on_nearby_is_not_asked_about_again() {
+        let server = test_server::start();
+        let root = temp_root();
+        let source = root.join("远近.txt");
+        // About 30 000 UTF-16 units, so 第2500段 is chapters away from 第10段.
+        let text: String = (0..3000)
+            .map(|index| format!("第{index}段，云海翻涌。\n"))
+            .collect();
+        fs::write(&source, text.as_bytes()).unwrap();
+        let first = connected(&root.join("first"), &server.url);
+        let second = connected(&root.join("second"), &server.url);
+        let a = import(&first, &source);
+        let b = import(&second, &source);
+        let save_at = |storage: &Mutex<Storage>, id: &str, needle: &str| {
+            let guard = lock(storage).unwrap();
+            let window = guard.read_content_window(id, None, 100_000).unwrap();
+            let offset = window.text[..window.text.find(needle).unwrap()]
+                .encode_utf16()
+                .count() as u64;
+            let context = guard.content_read_context(id).unwrap();
+            let verified = crate::storage::verify_content_context(&context).unwrap();
+            let locator = crate::storage::resolve_offset_from_context(
+                &crate::models::ResolveOffsetRequest {
+                    book_id: id.into(),
+                    content_version: window.content_version.clone(),
+                    resource_id: window.resource_id.clone(),
+                    offset,
+                },
+                &context,
+                &verified,
+            )
+            .unwrap();
+            guard.save_position(&locator).unwrap();
+        };
+        save_at(&second, &b, "第0段");
+        save_at(&first, &a, "第10段");
+        crate::progress_sync::upload(&first, &a, "第一章", "A").unwrap();
+        let prompt = crate::progress_sync::fetch(&second, &b).unwrap().unwrap();
+        crate::progress_sync::acknowledge(
+            &second,
+            &b,
+            &prompt.device_id,
+            prompt.revision,
+            Some(&prompt.locator),
+        )
+        .unwrap();
+
+        // A few paragraphs on: still the place that was answered.
+        save_at(&first, &a, "第40段");
+        crate::progress_sync::upload(&first, &a, "第一章", "A").unwrap();
+        assert!(crate::progress_sync::fetch(&second, &b).unwrap().is_none());
+        // Far on: asked again.
+        save_at(&first, &a, "第2500段");
+        crate::progress_sync::upload(&first, &a, "第一章", "A").unwrap();
+        let far = crate::progress_sync::fetch(&second, &b).unwrap().unwrap();
+        assert!(far.excerpt.starts_with("第2500段"));
         let _ = fs::remove_dir_all(&root);
     }
 

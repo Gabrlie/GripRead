@@ -609,9 +609,9 @@ export const tauriServices: AppServices = {
       invokeCommand<ProgressPrompt | null>("fetch_book_progress", {
         request: { bookId } satisfies BookRequest,
       }),
-    acknowledgeProgress: (bookId, deviceId, revision) =>
+    acknowledgeProgress: (bookId, deviceId, revision, locator) =>
       invokeCommand<void>("acknowledge_book_progress", {
-        request: { bookId, deviceId, revision } satisfies AcknowledgeProgressRequest,
+        request: { bookId, deviceId, revision, locator } satisfies AcknowledgeProgressRequest,
       }),
     getServer: () => invokeCommand<SyncServerStatus>("get_sync_server"),
     connectServer: (request) =>

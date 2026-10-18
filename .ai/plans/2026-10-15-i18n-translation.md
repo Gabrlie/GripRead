@@ -1,6 +1,6 @@
 # 0.2.2: Interface languages and book translation
 
-Status: done
+Status: completed
 
 ## Outcome
 
@@ -74,4 +74,4 @@ Commands and results are recorded here per batch.
 
 ## Handoff
 
-Pending.
+Released as `v0.2.2` on 2026-10-18.

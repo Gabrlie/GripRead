@@ -55,7 +55,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 25;
+const CURRENT_SCHEMA_VERSION: i64 = 26;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1189,6 +1189,20 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (25, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 26 {
+            // Where an answered cloud position was, so the same device
+            // reading on nearby is not asked about again.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE progress_sync ADD COLUMN handled_resource TEXT;
+                 ALTER TABLE progress_sync ADD COLUMN handled_offset INTEGER;",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (26, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7233,7 +7247,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
     }
 
     #[test]
