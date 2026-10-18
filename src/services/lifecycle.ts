@@ -90,6 +90,15 @@ export async function listenForBack(steps: Array<() => boolean>) {
   return () => void listener.unregister();
 }
 
+/** Quits the app through the ordered-save handshake; false where a page cannot quit (the web version). */
+export function requestExit(): boolean {
+  if (!isTauri()) return false;
+  void invoke("request_exit").catch((error: unknown) =>
+    console.error("Exit request failed", error),
+  );
+  return true;
+}
+
 /** Dismisses an open dialog or the reader through its existing Escape handling. */
 export function dismissWithEscape(target: Element) {
   return target.dispatchEvent(

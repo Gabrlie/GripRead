@@ -153,6 +153,17 @@ pnpm check                   # formatting, docs, types, tests, lints, and the fr
 
 Start with [AGENTS.md](AGENTS.md) and the [documentation map](.ai/README.md). The [architecture](.ai/architecture.md) describes the modules and their dependencies, and the [workflow](.ai/engineering/workflow.md) covers branches, commits, versions, and releases. Changes go to `dev` and reach `main` once stable.
 
+## Disclaimer
+
+1. GripRead is free, open-source software, for learning and for reading content you have the right to read.
+2. GripRead provides and hosts no books and includes no book sources. Content from book sources and subscriptions comes from third-party websites that you add yourself, and has nothing to do with GripRead or its developers. Follow your local laws and the websites' terms of service, respect authors' copyright, and support the official releases.
+3. Translation sends text to the third-party translation services you configure; their fees, privacy, and output are governed by those services and their terms.
+4. The developers collect no personal data. Books, progress, and settings are kept on your devices and on the WebDAV or self-hosted server you choose; keep your own backups.
+5. GripRead is provided "as is", without any warranty. The developers are not liable for data loss or any other damage arising from its use.
+6. If you believe some content infringes your rights, contact the website that provides it.
+
+By using GripRead you confirm that you have read and agree to the above. The app shows this on first launch, and it can be read again under Settings › About.
+
 ## Acknowledgements
 
 - [Legado (阅读)](https://github.com/gedoor/legado) — GripRead's reading behavior and book source format follow it.

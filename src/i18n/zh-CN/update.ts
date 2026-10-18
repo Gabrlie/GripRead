@@ -14,6 +14,24 @@ export const update = {
   "about.releases": "发布页",
   "about.issues": "反馈问题",
   "about.linkFailed": "无法打开链接：{error}",
+  "about.disclaimer": "免责声明",
+  "disclaimer.title": "免责声明",
+  "disclaimer.intro": "使用前请阅读以下内容。",
+  "disclaimer.purpose": "手不释卷是开源免费软件，仅供学习交流和阅读你有权阅读的内容。",
+  "disclaimer.content":
+    "本软件不提供、不托管任何书籍内容，也不内置书源。书源、订阅中的内容来自第三方网站，由用户自行添加，与本软件及开发者无关。请遵守当地法律法规和网站的服务条款，尊重作者版权，支持正版。",
+  "disclaimer.translation":
+    "翻译会把文本发送给你配置的第三方翻译服务，相关费用、隐私和内容由该服务及其条款负责。",
+  "disclaimer.data":
+    "开发者不收集任何个人数据。书籍、进度和设置保存在你的设备，以及你自己选择的 WebDAV 或自建服务器上，请自行备份。",
+  "disclaimer.warranty":
+    "本软件按「现状」提供，不作任何担保；因使用本软件造成的数据丢失或其他损失，开发者不承担责任。",
+  "disclaimer.rights": "如认为某些内容侵犯了你的权利，请联系提供该内容的网站处理。",
+  "disclaimer.agreement": "使用本软件即表示你已阅读并同意以上内容。",
+  "disclaimer.accept": "同意",
+  "disclaimer.decline": "不同意",
+  "disclaimer.declineExit": "不同意并退出",
+  "disclaimer.closePage": "不同意时无法使用，可以直接关闭此页面。",
   "update.section": "更新",
   "update.found": "发现新版本 {version}",
   "update.current": "当前版本 {version}",

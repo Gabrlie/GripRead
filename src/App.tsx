@@ -36,6 +36,7 @@ import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
 import { UpdatePrompt } from "./components/Updates/UpdatePrompt";
+import { DisclaimerPrompt } from "./components/Layout/Disclaimer";
 import { t, useLocale } from "./i18n";
 
 interface ErrorBoundaryProps {
@@ -367,6 +368,7 @@ function MainContent() {
       <ImportModal />
       {showLogs && <LogPage layer="z-[70]" onClose={() => setShowLogs(false)} />}
       <UpdatePrompt />
+      <DisclaimerPrompt />
       <Toaster />
     </div>
   );

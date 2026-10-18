@@ -18,6 +18,7 @@ import { toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
+import { DisclaimerDialog } from "../Layout/Disclaimer";
 import { useUpdateInstall } from "../Updates/use-update-install";
 import { formatDate, useT, type MessageKey } from "../../i18n";
 import { t } from "../../i18n";
@@ -62,6 +63,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const install = useUpdateInstall(service);
+  const [disclaimer, setDisclaimer] = useState(false);
 
   const runCheck = () => {
     setChecking(true);
@@ -139,6 +141,15 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
             <Icon name="open_in_new" size={16} className="text-secondary shrink-0" />
           </button>
         ))}
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm"
+          onClick={() => setDisclaimer(true)}
+        >
+          <Icon name="description" size={18} className="text-secondary shrink-0" />
+          <span className="flex-1">{t("about.disclaimer")}</span>
+          <Icon name="chevron_right" size={16} className="text-secondary shrink-0" />
+        </button>
       </PageSection>
       <PageSection title={t("update.section")}>
         <div className="px-4 py-3 space-y-3">
@@ -319,6 +330,7 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
           </p>
         )}
       </PageSection>
+      {disclaimer && <DisclaimerDialog onClose={() => setDisclaimer(false)} />}
     </FullPage>
   );
 }

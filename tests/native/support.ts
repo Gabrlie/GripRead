@@ -141,6 +141,9 @@ export async function waitForAppReady(): Promise<void> {
   const marker = await browser.$('[data-testid="app-ready"]');
   await marker.waitForExist({ timeout: TEST_TIMEOUT });
   await marker.waitForDisplayed({ timeout: TEST_TIMEOUT });
+  // The first launch asks for the disclaimer before the app can be used.
+  const agree = await browser.$("button=同意");
+  if (await agree.isExisting()) await agree.click();
   // A hidden/occluded WKWebView suspends CSS transitions and automatic reading.
   // Bring the real isolated test window forward; do not spoof visibility state.
   await browser.tauri.execute(async ({ core }) => {

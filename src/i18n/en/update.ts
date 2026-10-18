@@ -16,6 +16,27 @@ export const update = {
   "about.releases": "Releases",
   "about.issues": "Report a problem",
   "about.linkFailed": "Could not open the link: {error}",
+  "about.disclaimer": "Disclaimer",
+  "disclaimer.title": "Disclaimer",
+  "disclaimer.intro": "Please read the following before you start.",
+  "disclaimer.purpose":
+    "GripRead is free, open-source software, for learning and for reading content you have the right to read.",
+  "disclaimer.content":
+    "GripRead provides and hosts no books and includes no book sources. Content from book sources and subscriptions comes from third-party websites that you add yourself, and has nothing to do with GripRead or its developers. Follow your local laws and the websites' terms of service, respect authors' copyright, and support the official releases.",
+  "disclaimer.translation":
+    "Translation sends text to the third-party translation services you configure; their fees, privacy, and output are governed by those services and their terms.",
+  "disclaimer.data":
+    "The developers collect no personal data. Books, progress, and settings are kept on your devices and on the WebDAV or self-hosted server you choose; keep your own backups.",
+  "disclaimer.warranty":
+    'GripRead is provided "as is", without any warranty. The developers are not liable for data loss or any other damage arising from its use.',
+  "disclaimer.rights":
+    "If you believe some content infringes your rights, contact the website that provides it.",
+  "disclaimer.agreement":
+    "By using GripRead you confirm that you have read and agree to the above.",
+  "disclaimer.accept": "Agree",
+  "disclaimer.decline": "Disagree",
+  "disclaimer.declineExit": "Disagree and quit",
+  "disclaimer.closePage": "GripRead cannot be used without agreeing; you can close this page.",
   "update.section": "Updates",
   "update.found": "New version {version}",
   "update.current": "Version {version}",
