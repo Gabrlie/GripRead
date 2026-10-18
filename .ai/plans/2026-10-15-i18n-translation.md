@@ -1,6 +1,6 @@
 # 0.2.2: Interface languages and book translation
 
-Status: in-progress
+Status: done
 
 ## Outcome
 
