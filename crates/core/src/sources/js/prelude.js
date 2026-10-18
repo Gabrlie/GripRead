@@ -108,6 +108,25 @@
   function listToString() {
     return "[" + Array.prototype.map.call(this, javaText).join(", ") + "]";
   }
+  // Java Map methods for parsed objects, as Rhino exposes Java maps; a key
+  // of the same name keeps its value.
+  var mapMethods = {
+    get: function (key) {
+      return Object.prototype.hasOwnProperty.call(this, key) ? this[key] : null;
+    },
+    containsKey: function (key) {
+      return Object.prototype.hasOwnProperty.call(this, key);
+    },
+    keySet: function () {
+      return Object.keys(this);
+    },
+    size: function () {
+      return Object.keys(this).length;
+    },
+    isEmpty: function () {
+      return Object.keys(this).length === 0;
+    },
+  };
   function javaJson(value) {
     if (value === null || typeof value !== "object") return value;
     if (Array.isArray(value)) {
@@ -115,6 +134,9 @@
       value.forEach(javaJson);
     } else {
       hide(value, "toString", mapToString);
+      Object.keys(mapMethods).forEach(function (name) {
+        if (!Object.prototype.hasOwnProperty.call(value, name)) hide(value, name, mapMethods[name]);
+      });
       Object.keys(value).forEach(function (key) {
         javaJson(value[key]);
       });
@@ -966,12 +988,35 @@
   });
 })(globalThis);
 
+// A script's `var Date = …` leaves Rhino's built-in Date in place until the
+// assignment runs, so `var Date = String(new Date())` works there; in a
+// function each `var` starts out undefined. Names a script declares that
+// are built-ins (non-enumerable globals) start out as the built-in.
+Object.defineProperty(globalThis, "__gr_builtin_vars", {
+  value: function (code) {
+    var pattern = /\bvar\s+([A-Za-z_$][\w$]*)/g;
+    var seen = {};
+    var prefix = "";
+    var match;
+    while ((match = pattern.exec(code))) {
+      var name = match[1];
+      // A local `eval` would turn the script's own direct evals indirect.
+      if (seen[name] || name === "eval") continue;
+      seen[name] = true;
+      var descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+      if (descriptor && !descriptor.enumerable) prefix += "var " + name + " = globalThis." + name + "; ";
+    }
+    return prefix;
+  },
+  enumerable: false,
+});
+
 // Runs a source script with Legado's bindings as locals, returning the
 // completion value Rhino would give. Direct eval keeps each script's
 // declarations to itself; this function is sloppy so `with` works.
 Object.defineProperty(globalThis, "__gr_eval", {
   value: function (java, source, book, chapter, result, src, baseUrl, title, nextChapterUrl, key, page, cookie, cache, __code) {
-    return eval(__code);
+    return eval(__gr_builtin_vars(__code) + __code);
   },
   enumerable: false,
 });

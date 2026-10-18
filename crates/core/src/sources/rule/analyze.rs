@@ -555,6 +555,7 @@ impl AnalyzeRule {
                             let scope = jsoup::parse_content(&result, &self.redirect_url());
                             xpath::get_string(&scope, &rule.rule)?.map_or(Val::Null, Val::Str)
                         }
+                        Mode::Default if is_object(&result) => object_key(&result, &rule.rule),
                         Mode::Default => {
                             let scope = jsoup::parse_content(&result, &self.redirect_url());
                             if is_url {
@@ -616,6 +617,7 @@ impl AnalyzeRule {
                             let scope = jsoup::parse_content(&result, &self.redirect_url());
                             strings(xpath::get_string_list(&scope, &rule.rule)?)
                         }
+                        Mode::Default if is_object(&result) => object_key(&result, &rule.rule),
                         Mode::Default => {
                             let scope = jsoup::parse_content(&result, &self.redirect_url());
                             strings(jsoup::get_string_list(&scope, &rule.rule)?)
@@ -718,7 +720,11 @@ impl AnalyzeRule {
             result = content;
             for mut rule in rules {
                 self.put_rules(scripts, &rule.put_map)?;
-                rule.make_up(self, scripts, &result)?;
+                // Legado runs a list script as written: `{{…}}` and `##` in
+                // it are the script's own text, such as a regex literal.
+                if rule.mode != Mode::Js {
+                    rule.make_up(self, scripts, &result)?;
+                }
                 if result.is_null() {
                     continue;
                 }
@@ -772,6 +778,25 @@ fn strings(list: Vec<String>) -> Val {
 }
 
 /// The text a chain step leaves: lists are joined line by line.
+/// Whether the content is an object a script made. Legado reads a plain rule
+/// on such an item (Rhino's NativeObject) as its key, `result[rule]`, so a
+/// list script's `{name: …}` items work with a `name` rule whatever the page
+/// around them was.
+fn is_object(value: &Val) -> bool {
+    matches!(value, Val::Json(serde_json::Value::Object(_)))
+}
+
+fn object_key(value: &Val, key: &str) -> Val {
+    let Val::Json(serde_json::Value::Object(map)) = value else {
+        return Val::Null;
+    };
+    match map.get(key) {
+        None | Some(serde_json::Value::Null) => Val::Null,
+        Some(serde_json::Value::String(text)) => Val::Str(text.clone()),
+        Some(other) => Val::Json(other.clone()),
+    }
+}
+
 fn string_of(value: &Val) -> String {
     match value {
         Val::List(items) => items

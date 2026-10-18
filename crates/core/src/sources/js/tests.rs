@@ -369,3 +369,48 @@ fn rule_json_and_the_source_read_like_java_objects() {
         "https://example.com|测试"
     );
 }
+
+#[test]
+fn a_script_var_named_like_a_built_in_starts_as_the_built_in() {
+    let env = env();
+    let host = JsHost::new(env.clone()).unwrap();
+    let rule = AnalyzeRule::new(env);
+    // As in Rhino: the built-in Date is there until the assignment, also
+    // for a function the script defined and called before it.
+    let value = eval(
+        &host,
+        &rule,
+        "function stamp() { return typeof new Date().getTime() } var early = stamp(); \
+         var Date = String(new Date().getTime()).length > 0 ? 'set' : ''; early + ',' + Date",
+        Val::Null,
+    )
+    .unwrap();
+    assert_eq!(value.to_text(), "number,set");
+    // A later script still has the built-in.
+    let value = eval(&host, &rule, "typeof Date.now()", Val::Null).unwrap();
+    assert_eq!(value.to_text(), "number");
+}
+
+#[test]
+fn login_info_is_a_java_map_or_null() {
+    let env = env();
+    let host = JsHost::new(env.clone()).unwrap();
+    let rule = AnalyzeRule::new(env);
+    let value = eval(&host, &rule, "source.getLoginInfoMap() === null", Val::Null).unwrap();
+    assert_eq!(value.to_text(), "true");
+    let value = eval(
+        &host,
+        &rule,
+        "source.putLoginInfo(JSON.stringify({ '代理：': 'a', size: 'kept' })); \
+         var map = source.getLoginInfoMap(); \
+         [map.get('代理：'), map['代理：'], map.get('无'), map.containsKey('代理：'), map.size, \
+          JSON.stringify(map)].join('|')",
+        Val::Null,
+    )
+    .unwrap();
+    // A key named like a method keeps its value, as Rhino's Java maps do.
+    assert_eq!(
+        value.to_text(),
+        "a|a||true|kept|{\"size\":\"kept\",\"代理：\":\"a\"}"
+    );
+}

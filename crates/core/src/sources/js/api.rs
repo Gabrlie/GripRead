@@ -1092,6 +1092,18 @@ pub(super) fn java_object<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> JsResult
         let found = rule
             .get_elements(&scope, &text(args, 0))
             .map_err(|error| source_failure(ctx, error))?;
+        // Selected elements are jsoup's Elements under Legado, so scripts
+        // call `.text()` or `.attr()` on the whole list.
+        if found.iter().all(|item| matches!(item, Val::Element(_))) {
+            let elements = found
+                .into_iter()
+                .filter_map(|item| match item {
+                    Val::Element(element) => Some(element),
+                    _ => None,
+                })
+                .collect();
+            return scope.to_js(&Val::Elements(elements));
+        }
         scope.to_js(&Val::List(found))
     })?;
     let st = state.clone();
@@ -1469,12 +1481,16 @@ pub(super) fn source_object<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> JsResu
     let st = state.clone();
     let info_key = login_info_key(&url);
     define(ctx, &source, "getLoginInfoMap", move |ctx, _| {
+        // Legado gives a Java map, or null without saved login info;
+        // scripts test for null and then call `.get(key)`.
         let info = st.env.store.cache_get(&info_key).unwrap_or_default();
-        let value = lenient_json::parse(&info)
-            .ok()
-            .filter(Json::is_object)
-            .unwrap_or_else(|| Json::Object(Map::new()));
-        json_value(ctx, &value)
+        match lenient_json::parse(&info).ok().filter(Json::is_object) {
+            Some(value) => {
+                let java: Function = ctx.globals().get("__gr_java_json")?;
+                java.call((json_value(ctx, &value)?,))
+            }
+            None => Ok(null(ctx)),
+        }
     })?;
     let st = state.clone();
     let info_key = login_info_key(&url);

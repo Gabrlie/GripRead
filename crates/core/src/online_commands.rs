@@ -1435,11 +1435,21 @@ mod tests {
                     let url = raw["bookSourceUrl"].as_str().unwrap_or("").to_string();
                     let source = load_source(&storage, &url).unwrap();
                     let session = session_for(&storage, source, Control::unlimited()).unwrap();
-                    let kinds = session.explore_kinds().unwrap_or_default();
+                    let kinds = match session.explore_kinds() {
+                        Ok(kinds) => kinds,
+                        Err(error) => {
+                            eprintln!("{name}: 发现分类失败 {}", error.message);
+                            continue;
+                        }
+                    };
                     let Some(kind) = kinds.iter().find_map(|kind| kind.url.clone()) else {
-                        eprintln!("{name}: 没有发现分类");
+                        eprintln!(
+                            "{name}: 没有发现分类 {:?}",
+                            kinds.first().map(|kind| &kind.title)
+                        );
                         continue;
                     };
+                    eprintln!("{name}: 分类地址 {kind}");
                     let books = match session.explore(&kind, 1) {
                         Ok(books) => books,
                         Err(error) => {
@@ -1449,6 +1459,9 @@ mod tests {
                     };
                     let Some(first) = books.into_iter().next() else {
                         eprintln!("{name}: 发现为空");
+                        for line in session.logs().iter().rev().take(8).rev() {
+                            eprintln!("    {}", line.chars().take(300).collect::<String>());
+                        }
                         continue;
                     };
                     let listed = online_book(&first);
@@ -1471,7 +1484,42 @@ mod tests {
                         Err(error) => eprintln!("{name}: 详情失败 {}", error.message),
                     }
                     match session.chapters(&book) {
-                        Ok(chapters) => eprintln!("{name}: 目录 {} 章", chapters.len()),
+                        Ok(chapters) => {
+                            eprintln!("{name}: 目录 {} 章", chapters.len());
+                            if let Some(chapter) = chapters.iter().find(|c| !c.is_volume) {
+                                match session.content(&book, chapter, None, &[]) {
+                                    Ok(content) => {
+                                        let pages = crate::comic::page_urls(&content.text);
+                                        if let Some(page) = pages.first() {
+                                            match content_image_bytes(&storage, &url, page) {
+                                                Ok(bytes) => eprintln!(
+                                                    "{name}: 第 1 页 {} 字节，图片 {}",
+                                                    bytes.len(),
+                                                    is_image(&bytes)
+                                                ),
+                                                Err(error) => {
+                                                    eprintln!(
+                                                        "{name}: 第 1 页失败 {}",
+                                                        error.message
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        eprintln!(
+                                            "{name}: 《{}》 {} 字，{} 页 {:?}",
+                                            chapter.title,
+                                            content.text.chars().count(),
+                                            pages.len(),
+                                            pages.first().map(|url| url
+                                                .chars()
+                                                .take(160)
+                                                .collect::<String>())
+                                        );
+                                    }
+                                    Err(error) => eprintln!("{name}: 正文失败 {}", error.message),
+                                }
+                            }
+                        }
                         Err(error) => eprintln!("{name}: 目录失败 {}", error.message),
                     }
                 }

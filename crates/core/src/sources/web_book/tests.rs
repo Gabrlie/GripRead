@@ -279,6 +279,47 @@ fn regex_lists_scripted_titles_and_reversed_contents() {
     assert_eq!(content.text, "正文壹");
 }
 
+/// Comic sources written for Legado: a jsLib `Map()` over the login info
+/// (null with none saved), a list script that builds objects from an HTML
+/// page with `java.getElements(...).text()`, `var Date` shadowing the
+/// built-in, and `{{name}}` in the script's own regex. The field rules then
+/// read the objects' keys, as Legado does for a script's objects.
+#[test]
+fn scripted_object_lists_on_html_pages_read_like_legado() {
+    let base = test_server::start(|request: &Request| match request.path.as_str() {
+        "/rank" => Response::html(
+            r#"<p class="date">2026</p><div class="card"><a href="/b/1"><b>海贼{{name}}</b></a></div><div class="card"><a href="/b/2"><b>火影</b></a></div>"#,
+        ),
+        _ => Response::not_found(),
+    });
+    let session = session(serde_json::json!({
+        "bookSourceUrl": base,
+        "bookSourceName": "漫画站",
+        "bookSourceType": 2,
+        "jsLib": "function Map(e) { var info = source.getLoginInfoMap(); \
+            return String(info !== null && info.get(e) ? info.get(e) : ''); }",
+        "exploreUrl": "<js>JSON.stringify([{title: '排行' + Map('代理'), url: '/rank'}])</js>",
+        "ruleExplore": {
+            "bookList": "<js>var Date = String(java.getElements('.date').text()) + new Date().getFullYear(); \
+                var list = java.getElements('.card'); var data = []; \
+                for (i in list) data.push({ name: String(list[i].select('b').text()).replace(/{{name}}/g, ''), \
+                    url: list[i].select('a').attr('href'), latest: Date }); \
+                JSON.parse(JSON.stringify(data));</js>",
+            "name": "name",
+            "bookUrl": "url",
+            "lastChapter": "latest"
+        }
+    }));
+    let kinds = session.explore_kinds().unwrap();
+    assert_eq!(kinds[0].title, "排行");
+    let books = session.explore("/rank", 1).unwrap();
+    let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
+    assert_eq!(names, ["海贼", "火影"], "{:?}", session.logs());
+    assert_eq!(books[0].book_url, format!("{base}/b/1"));
+    assert!(books[0].latest_chapter_title.starts_with("2026"));
+    assert!(books[0].comic);
+}
+
 #[test]
 fn missing_rules_and_unsupported_pages_report_their_kind() {
     let session = session(

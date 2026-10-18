@@ -53,6 +53,8 @@ enum Algorithm {
     Aes,
     Des,
     TripleDes,
+    /// A stream cipher: no mode, padding, or IV.
+    Rc4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -88,6 +90,18 @@ impl SymmetricCrypto {
             "AES" => Algorithm::Aes,
             "DES" => Algorithm::Des,
             "DESEDE" | "3DES" | "TRIPLEDES" => Algorithm::TripleDes,
+            "RC4" | "ARCFOUR" => {
+                if key.is_empty() || key.len() > 256 {
+                    return Err(format!("RC4 密钥长度 {} 字节无效", key.len()));
+                }
+                return Ok(Self {
+                    algorithm: Algorithm::Rc4,
+                    mode: BlockMode::Ecb,
+                    padding: Padding::None,
+                    key: key.to_vec(),
+                    iv: Vec::new(),
+                });
+            }
             other => return Err(format!("不支持的加密算法：{other}")),
         };
         let mode = match parts.get(1).map(String::as_str) {
@@ -124,6 +138,9 @@ impl SymmetricCrypto {
     }
 
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        if self.algorithm == Algorithm::Rc4 {
+            return Ok(rc4(&self.key, data));
+        }
         macro_rules! run {
             ($cipher:ty) => {{
                 match (self.mode, self.padding) {
@@ -173,6 +190,9 @@ impl SymmetricCrypto {
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         if data.is_empty() {
             return Err("密文为空".to_string());
+        }
+        if self.algorithm == Algorithm::Rc4 {
+            return Ok(rc4(&self.key, data));
         }
         macro_rules! run {
             ($cipher:ty) => {{
@@ -228,6 +248,26 @@ impl SymmetricCrypto {
     }
 }
 
+/// RC4, which encrypts and decrypts alike; `key` is 1 to 256 bytes.
+fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut state: Vec<u8> = (0..=255).collect();
+    let mut j = 0u8;
+    for i in 0..256 {
+        j = j.wrapping_add(state[i]).wrapping_add(key[i % key.len()]);
+        state.swap(i, j as usize);
+    }
+    let (mut i, mut j) = (0u8, 0u8);
+    data.iter()
+        .map(|byte| {
+            i = i.wrapping_add(1);
+            j = j.wrapping_add(state[i as usize]);
+            state.swap(i as usize, j as usize);
+            let k = state[state[i as usize].wrapping_add(state[j as usize]) as usize];
+            byte ^ k
+        })
+        .collect()
+}
+
 /// Hutool's `SecureUtil.decode`: hex when the text is hex, else Base64.
 pub fn decode_cipher_text(text: &str) -> Result<Vec<u8>, String> {
     let trimmed = text.trim();
@@ -270,6 +310,15 @@ pub fn base64_decode(text: &str, flags: i64) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc4_matches_the_known_vector() {
+        // RFC 6229's classic test: key "Key", plaintext "Plaintext".
+        let cipher = SymmetricCrypto::new("rc4", b"Key", None).unwrap();
+        let encrypted = cipher.encrypt(b"Plaintext").unwrap();
+        assert_eq!(hex::encode(&encrypted), "bbf316e8d940af0ad3");
+        assert_eq!(cipher.decrypt(&encrypted).unwrap(), b"Plaintext");
+    }
 
     #[test]
     fn aes_and_des_round_trip_with_known_vectors() {
