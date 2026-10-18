@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-[0.2.2](plans/2026-10-15-i18n-translation.md) is in progress on `dev`: interface languages and book translation. [Stage 7](plans/2026-10-14-stage7.md) delivered 0.2.1, released as `v0.2.1` on 2026-10-15; 0.2.2 is in testing as `v0.2.2-beta.1`.
+[0.2.2](plans/2026-10-15-i18n-translation.md) (interface languages, book translation, and the test rounds' fixes) was released as `v0.2.2` on 2026-10-18. No round is open; the next one raises the version on `dev`.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-The next unfinished batch of [0.2.2](plans/2026-10-15-i18n-translation.md). RSS waits on a local branch for its release as 0.3.1.
+The next round the user assigns. RSS waits on a local branch for its release as 0.3.1.
