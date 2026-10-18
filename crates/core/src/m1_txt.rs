@@ -175,6 +175,7 @@ mod tests {
                 split_long_chapters: false,
                 untitled_title: None,
                 chunk_bytes: None,
+                titles: Vec::new(),
             };
             let built = crate::txt_toc::build_toc(&text, "book", "version", &rule).unwrap();
             for entry in built.entries {

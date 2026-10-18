@@ -113,4 +113,46 @@ describe("ContentsPage", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: /更新目录/ }));
     expect(update).toHaveBeenCalledOnce();
   });
+
+  it("offers no rule tools for the contents a converted book kept", async () => {
+    render(
+      <ContentsPage
+        bookTitle="书"
+        toc={[
+          tocEntry(0, "春日", {
+            bookId: "b",
+            contentVersion: "v",
+            resourceId: "a",
+            offset: 0,
+            contextBefore: "",
+            contextAfter: "",
+          }),
+        ]}
+        ruleName="书源目录"
+        splitLongChapters={false}
+        position={0}
+        loading={false}
+        error={null}
+        busy={false}
+        bookmarks={[]}
+        contentVersion="v"
+        onReload={() => undefined}
+        onSeek={() => undefined}
+        onOpenBookmark={() => undefined}
+        onDeleteBookmark={() => undefined}
+        onEditBookmark={() => undefined}
+        onOpenRules={() => undefined}
+        onToggleSplit={() => undefined}
+        onOpenUntitled={() => undefined}
+        onClose={() => undefined}
+        kind="txt"
+        fixed
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "目录选项" }));
+    expect(await screen.findByRole("menuitem", { name: /显示字数/ })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /目录规则/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /拆分超长章节/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /未命中规则时的标题/ })).toBeNull();
+  });
 });

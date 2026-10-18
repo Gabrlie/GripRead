@@ -42,6 +42,8 @@ interface ContentsPageProps {
    * uses) and 更新目录; every book 替换净化.
    */
   kind?: "txt" | "epub" | "online";
+  /** The contents a converted book kept from its source. */
+  fixed?: boolean;
   /** 章内分章 is on (online books). */
   innerChapters?: boolean;
   onToggleInner?: () => void;
@@ -86,13 +88,15 @@ export function ContentsPage({
   onClose,
   resourceId,
   kind = "txt",
+  fixed = false,
   innerChapters = false,
   onToggleInner,
   onOpenUntitled,
   onOpenReplace,
   onUpdateToc,
 }: ContentsPageProps) {
-  const txtTools = kind === "txt";
+  // A converted book's contents are its source's: no rule to pick or tune.
+  const txtTools = kind === "txt" && !fixed;
   const [tab, setTab] = useState<"toc" | "bookmarks">("toc");
   const [filter, setFilter] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
@@ -260,7 +264,7 @@ export function ContentsPage({
                 {t("contents.reverse")}
                 <Checkmark on={reversed} />
               </DropdownMenuItem>
-              {txtTools && (
+              {kind === "txt" && (
                 <DropdownMenuItem onClick={() => setShowLength((value) => !value)}>
                   <Icon name="format_list_numbered" size={15} />
                   {t("contents.lengths")}
@@ -400,7 +404,7 @@ export function ContentsPage({
           {tab === "toc" && rows.length > 0 && <div style={{ height: windowed.after }} />}
           {tab === "toc" && !loading && !error && toc.length === 0 && (
             <p className="m-4 text-sm text-secondary">
-              {txtTools ? t("contents.noChapters") : t("contents.empty")}
+              {kind === "txt" ? t("contents.noChapters") : t("contents.empty")}
             </p>
           )}
           {tab === "bookmarks" &&

@@ -112,6 +112,9 @@ pub struct PortableBook {
     pub use_replace_rules: bool,
     #[serde(default)]
     pub toc: BookTocSettings,
+    /// A converted online book's contents (`Storage::book_source_titles`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_titles: Vec<String>,
     #[serde(default)]
     pub position: Option<PortableLocator>,
     #[serde(default)]
@@ -767,6 +770,7 @@ impl Storage {
             group,
             use_replace_rules: use_rules,
             toc: self.book_toc_settings(&shelf.book_id)?.0,
+            source_titles: self.book_source_titles(&shelf.book_id)?,
             position,
             position_updated_at,
             bookmarks,
@@ -1519,6 +1523,11 @@ impl Storage {
             };
             if toc != self.book_toc_settings(book_id)?.0 {
                 self.save_book_toc_settings(book_id, &toc)?;
+            }
+            if !book.source_titles.is_empty()
+                && book.source_titles != self.book_source_titles(book_id)?
+            {
+                self.set_book_source_titles(book_id, &book.source_titles)?;
             }
             if let Some(cover) = &book.cover {
                 self.apply_cover(book_id, cover)?;

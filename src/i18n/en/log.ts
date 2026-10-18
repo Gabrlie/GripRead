@@ -6,6 +6,8 @@ export const log = {
   "log.searchFailed": "{source}: search failed: {error}",
   "log.sourceFailed": "{source} ({url}): {error}",
   "log.coverFailed": "Cover download failed {url}: {error}",
+  "log.placeholderTitles":
+    "{count} chapters came without titles in a contents update; their earlier names were kept",
   "log.imageFailed": "Chapter image download failed {url}: {error}",
   "log.sourceChangedMoved":
     'Changed source: "{title}" moved to {source}, position moved to chapter {chapter}',

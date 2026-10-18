@@ -171,6 +171,7 @@ fn bare_book(source_sha256: &str) -> PortableBook {
         group: None,
         use_replace_rules: true,
         toc: BookTocSettings::default(),
+        source_titles: Vec::new(),
         position: None,
         position_updated_at: 0,
         bookmarks: Vec::new(),

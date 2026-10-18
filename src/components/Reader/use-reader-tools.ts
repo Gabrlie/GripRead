@@ -17,6 +17,7 @@ const NO_LISTING: TocListing = {
   ruleId: null,
   ruleName: "",
   settings: { ruleId: null, splitLongChapters: false, asked: false, innerChapters: false },
+  fixed: false,
 };
 
 /**
@@ -179,6 +180,8 @@ export function useReaderTools(
     tocRuleId: listing.ruleId,
     tocRuleName: listing.ruleName,
     tocSettings: listing.settings,
+    /** A converted book's contents, kept from its source: no rule applies. */
+    fixedToc: listing.fixed,
     rules,
     busy,
     bookmarks,

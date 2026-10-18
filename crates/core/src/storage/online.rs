@@ -693,6 +693,17 @@ impl Storage {
     ) -> Result<u32, AppError> {
         let before = self.online_chapter_count(book_id)?;
         let position = self.online_position(book_id)?;
+        let (chapters, kept) = keep_known_titles(&self.online_chapters(book_id)?, chapters);
+        if kept > 0 {
+            crate::log_keyed!(
+                Warn,
+                "online",
+                "placeholderTitles",
+                format!("目录更新中有 {kept} 个章节没有标题，保留了原来的章节名"),
+                count = kept,
+            );
+        }
+        let chapters = chapters.as_slice();
         let tx = self.conn.transaction()?;
         store_book_json(&tx, book_id, book)?;
         store_chapters(&tx, book_id, chapters)?;
@@ -1077,6 +1088,47 @@ fn store_book_json(
         ],
     )?;
     Ok(())
+}
+
+/// A title a source made up for a chapter it got no title for, as
+/// `#12` (a source's `'#' + order` fallback) or nothing.
+pub fn is_placeholder_title(title: &str) -> bool {
+    let title = title.trim();
+    let digits = title.strip_prefix('#').unwrap_or(title);
+    title.is_empty()
+        || (title.starts_with('#')
+            && !digits.is_empty()
+            && digits.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// `chapters`, with the titles known before kept where they now come
+/// without one: a source that names chapters only for a signed-in reader
+/// (the server has no sign-in) must not wipe the names out. The count
+/// says how many were kept.
+fn keep_known_titles(
+    known: &[OnlineChapter],
+    chapters: &[OnlineChapter],
+) -> (Vec<OnlineChapter>, usize) {
+    let titles: HashMap<&str, &str> = known
+        .iter()
+        .filter(|chapter| !is_placeholder_title(&chapter.title))
+        .map(|chapter| (chapter.url.as_str(), chapter.title.as_str()))
+        .collect();
+    let mut kept = 0;
+    let chapters = chapters
+        .iter()
+        .map(|chapter| {
+            let mut chapter = chapter.clone();
+            if is_placeholder_title(&chapter.title) {
+                if let Some(title) = titles.get(chapter.url.as_str()) {
+                    chapter.title = (*title).to_string();
+                    kept += 1;
+                }
+            }
+            chapter
+        })
+        .collect();
+    (chapters, kept)
 }
 
 fn store_chapters(
@@ -1477,6 +1529,33 @@ mod tests {
     }
 
     #[test]
+    fn a_converted_book_keeps_the_source_contents() {
+        let (_dir, mut storage) = storage();
+        // Titles no rule would find, and one a rule would read as prose.
+        let names = ["春日", "夏夜", "第三节课后"];
+        let id = storage
+            .add_online_book(&book("a"), &chapters(&names, "a"), true)
+            .unwrap();
+        let texts: Vec<String> = (0..3).map(|n| format!("第{n}段正文。\n")).collect();
+        let local = storage.convert_online_to_local(&id, &texts).unwrap();
+        assert_eq!(storage.book_source_titles(&local).unwrap(), names);
+        let (rule, _) = storage.toc_rule_snapshot(&local).unwrap();
+        let context = storage.content_read_context(&local).unwrap();
+        let verified = crate::storage::verify_content_context(&context).unwrap();
+        let build =
+            crate::storage::build_toc_from_context(&context, &verified, &local, &rule).unwrap();
+        let titles: Vec<_> = build
+            .entries
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, names);
+        // Backups carry them.
+        let portable = storage.export_backup("test").unwrap();
+        assert!(serde_json::to_string(&portable).unwrap().contains("夏夜"));
+    }
+
+    #[test]
     fn a_cached_online_book_becomes_a_local_book_with_its_records() {
         let (_dir, mut storage) = storage();
         let toc = chapters(&["第1章 惊蛰", "第2章 开门"], "a");
@@ -1521,6 +1600,56 @@ mod tests {
         let stats = storage.reading_stats("2026-10-12").unwrap();
         assert_eq!(stats.books[0].book_id, local);
         assert_eq!(stats.total_seconds, 600);
+    }
+
+    #[test]
+    fn contents_without_titles_keep_the_names_known_before() {
+        let (_dir, mut storage) = storage();
+        let id = storage
+            .add_online_book(
+                &book("a"),
+                &chapters(&["第1章 惊蛰", "第2章 开门"], "a"),
+                true,
+            )
+            .unwrap();
+        // The server, without the source's sign-in, gets `'#' + order`.
+        storage
+            .replace_online_toc(&id, &book("a"), &chapters(&["#1", "#2", "#3"], "a"))
+            .unwrap();
+        let titles = |storage: &Storage| {
+            storage
+                .online_chapters(&id)
+                .unwrap()
+                .into_iter()
+                .map(|chapter| chapter.title)
+                .collect::<Vec<_>>()
+        };
+        // A new chapter with no name known keeps what it came with.
+        assert_eq!(titles(&storage), ["第1章 惊蛰", "第2章 开门", "#3"]);
+        // Real names replace placeholders.
+        storage
+            .replace_online_toc(
+                &id,
+                &book("a"),
+                &chapters(&["第1章 惊蛰", "第2章 开门", "第3章 立春"], "a"),
+            )
+            .unwrap();
+        assert_eq!(titles(&storage), ["第1章 惊蛰", "第2章 开门", "第3章 立春"]);
+        // A record synced from the server goes the same way.
+        let key = storage.online_sync_key(&id).unwrap();
+        storage
+            .sync_apply(&[crate::storage::SyncChange {
+                key: format!("chapters:online:{key}"),
+                value: Some(serde_json::to_value(chapters(&["#1", "#2", "#3"], "a")).unwrap()),
+            }])
+            .unwrap();
+        assert_eq!(titles(&storage), ["第1章 惊蛰", "第2章 开门", "第3章 立春"]);
+        assert!(is_placeholder_title("#12") && is_placeholder_title(" "));
+        assert!(
+            !is_placeholder_title("#")
+                && !is_placeholder_title("#1 序")
+                && !is_placeholder_title("12")
+        );
     }
 
     #[test]

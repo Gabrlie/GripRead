@@ -368,6 +368,7 @@ export function previewServices(): AppServices {
         ruleId: settings.ruleId ?? "legado-1",
         ruleName: RULES.find((rule) => rule.id === (settings.ruleId ?? "legado-1"))!.name,
         settings,
+        fixed: false,
       }),
       tocSuggestion: async () => null,
       listTxtTocRules: async () => RULES,

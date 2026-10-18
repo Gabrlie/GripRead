@@ -1350,7 +1350,7 @@ export function ReaderView() {
           onAddBookmark={addBookmark}
           onRefreshDirectory={refreshDirectory}
           txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
-          tocRules={activeBook.asset?.kind !== "epub"}
+          tocRules={activeBook.asset?.kind !== "epub" && !tools.fixedToc}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           onCache={activeBook.online ? () => setCachingRange(true) : undefined}
           replaceEnabled={useReplaceRules}
@@ -1607,6 +1607,7 @@ export function ReaderView() {
           }
           resourceId={activeBook.online ? state.contentWindow?.resourceId : undefined}
           kind={activeBook.online ? "online" : activeBook.asset?.kind === "epub" ? "epub" : "txt"}
+          fixed={tools.fixedToc}
           innerChapters={tools.tocSettings.innerChapters}
           onToggleInner={() =>
             void tools.saveTocSettings({

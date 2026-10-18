@@ -898,11 +898,12 @@ pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<Toc
     let builds = Arc::clone(&state.toc_builds);
     tokio::task::spawn_blocking(move || {
         let build = list_toc_current(&storage, &builds, &request.book_id)?;
-        let (settings, titles) = {
+        let (settings, titles, fixed) = {
             let guard = lock_storage(&storage)?;
             (
                 guard.book_toc_settings(&request.book_id)?.0,
                 guard.title_transform(&request.book_id)?,
+                !guard.book_source_titles(&request.book_id)?.is_empty(),
             )
         };
         // Built from the text, which the content rules already changed;
@@ -916,6 +917,7 @@ pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<Toc
             rule_id: build.rule_id,
             rule_name: build.rule_name,
             settings,
+            fixed,
         })
     })
     .await
@@ -940,8 +942,14 @@ pub async fn toc_suggestion(
     let storage = Arc::clone(&state.storage);
     let builds = Arc::clone(&state.toc_builds);
     tokio::task::spawn_blocking(move || {
-        let (settings, _) = lock_storage(&storage)?.book_toc_settings(&request.book_id)?;
-        if settings.asked || settings.rule_id.is_some() {
+        let (settings, fixed) = {
+            let guard = lock_storage(&storage)?;
+            (
+                guard.book_toc_settings(&request.book_id)?.0,
+                !guard.book_source_titles(&request.book_id)?.is_empty(),
+            )
+        };
+        if settings.asked || settings.rule_id.is_some() || fixed {
             return Ok(None);
         }
         let build = list_toc_current(&storage, &builds, &request.book_id)?;

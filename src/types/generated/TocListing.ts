@@ -9,4 +9,9 @@ export type TocListing = { entries: Array<TocEntry>,
 /**
  * `None` when no rule matched and the text was split by size.
  */
-ruleId: string | null, ruleName: string, settings: BookTocSettings, };
+ruleId: string | null, ruleName: string, settings: BookTocSettings, 
+/**
+ * The contents are the source's titles a converted book kept, so no
+ * rule or size splitting applies.
+ */
+fixed: boolean, };

@@ -66,6 +66,10 @@ pub struct TocBuildRule {
     /// Size-split pieces in bytes, when not Legado's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_bytes: Option<usize>,
+    /// A converted online book's chapter titles: its chapters start at
+    /// these lines, found in order, and no rule is used.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub titles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -252,6 +256,9 @@ pub fn build_toc(
     content_version: &str,
     rule: &TocBuildRule,
 ) -> Result<TocBuild, AppError> {
+    if !rule.titles.is_empty() {
+        return Ok(build_from_titles(text, book_id, content_version, rule));
+    }
     let chosen = if rule.automatic {
         choose_rule(text, &rule.rules)
     } else {
@@ -328,6 +335,66 @@ pub fn build_toc(
         rule_name: chosen.map_or_else(|| "按字数分章".to_string(), |rule| rule.name.clone()),
         intro,
     })
+}
+
+/// The contents of a converted online book: each kept title, as a line
+/// of its own, in order. Titles not found (a replace rule changed the
+/// line) are skipped; the text before the first is 前言.
+fn build_from_titles(
+    text: &str,
+    book_id: &str,
+    content_version: &str,
+    rule: &TocBuildRule,
+) -> TocBuild {
+    let mut headings: Vec<(usize, usize, String)> = Vec::new();
+    let mut wanted = rule.titles.iter().map(|title| title.trim()).peekable();
+    let mut start = 0;
+    for line in text.split_inclusive('\n') {
+        let end = start + line.len();
+        // A later title may be found when an earlier one was not.
+        let trimmed = line.trim();
+        let found = (!trimmed.is_empty())
+            .then(|| wanted.clone().take(9).position(|title| title == trimmed))
+            .flatten();
+        if let Some(skipped) = found {
+            for _ in 0..=skipped {
+                wanted.next();
+            }
+            headings.push((start, start + line.trim_end().len(), trimmed.to_string()));
+        }
+        if wanted.peek().is_none() {
+            break;
+        }
+        start = end;
+    }
+    let mut builder = Builder::new(text, book_id, content_version);
+    if let Some(&(first, _, _)) = headings.first() {
+        if !text[..first].trim().is_empty() {
+            builder.push(0, first, "前言".to_string(), false, false);
+        }
+    }
+    for (index, (start, end, title)) in headings.iter().enumerate() {
+        let next = headings
+            .get(index + 1)
+            .map_or(text.len(), |heading| heading.0);
+        let volume = index + 1 < headings.len() && text[*end..next].trim().is_empty();
+        builder.push(
+            *start,
+            next,
+            title.clone(),
+            volume,
+            rule.split_long_chapters && !volume,
+        );
+    }
+    if headings.is_empty() {
+        builder.split_by_size(0, text.len(), None);
+    }
+    TocBuild {
+        entries: builder.entries,
+        rule_id: None,
+        rule_name: "书源目录".to_string(),
+        intro: None,
+    }
 }
 
 struct Builder<'a> {
@@ -606,6 +673,7 @@ mod tests {
             split_long_chapters: false,
             untitled_title: Some(template.into()),
             chunk_bytes: Some(1024),
+            titles: Vec::new(),
         };
         let numbered = build_toc(&text, "b", "v", &rule("第{n}节")).unwrap();
         assert!(numbered.entries.len() > 1);
@@ -645,6 +713,7 @@ mod tests {
             split_long_chapters: false,
             untitled_title: None,
             chunk_bytes: None,
+            titles: Vec::new(),
         }
     }
 
@@ -797,6 +866,7 @@ mod tests {
             split_long_chapters: false,
             untitled_title: None,
             chunk_bytes: None,
+            titles: Vec::new(),
         };
         let build = build_toc(text, "b", "v", &rule).unwrap();
         assert_eq!(titles(&build), ["前言", "第二章 乙"]);
@@ -885,6 +955,7 @@ mod timing {
             split_long_chapters: false,
             untitled_title: None,
             chunk_bytes: None,
+            titles: Vec::new(),
         };
         let started = std::time::Instant::now();
         let build = build_toc(&text, "b", "v", &fixed).unwrap();

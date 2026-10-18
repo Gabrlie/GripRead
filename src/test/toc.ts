@@ -10,6 +10,7 @@ export function tocListing(entries: TocEntry[] = [], ruleName = "目录"): TocLi
     ruleId: entries.length ? "legado-2" : null,
     ruleName,
     settings: { ruleId: null, splitLongChapters: false, asked: false, innerChapters: false },
+    fixed: false,
   };
 }
 

@@ -352,6 +352,10 @@ pub struct TocListing {
     pub rule_id: Option<String>,
     pub rule_name: String,
     pub settings: BookTocSettings,
+    /// The contents are the source's titles a converted book kept, so no
+    /// rule or size splitting applies.
+    #[serde(default)]
+    pub fixed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

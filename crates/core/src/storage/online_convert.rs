@@ -64,6 +64,12 @@ impl Storage {
         let _ = fs::remove_file(&path);
         let imported = imported?;
         let local = imported.book.id.clone();
+        // Its contents stay the source's, not what a rule finds in the text.
+        let titles: Vec<String> = chapters
+            .iter()
+            .map(|chapter| chapter.title.trim().to_string())
+            .collect();
+        self.set_book_source_titles(&local, &titles)?;
         let total = units.len() as u64;
         // A chapter position becomes the same place in the TXT, found again
         // by its context in case replace rules changed the text on import.

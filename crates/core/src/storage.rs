@@ -43,8 +43,8 @@ mod sources;
 mod sync;
 mod translation;
 pub use online::{
-    chapter_resource, chapter_version, forget_cached_chapters, map_chapter, mark_chapter_cached,
-    online_key, resource_chapter, ChapterPosition, OnlineRecord,
+    chapter_resource, chapter_version, forget_cached_chapters, is_placeholder_title, map_chapter,
+    mark_chapter_cached, online_key, resource_chapter, ChapterPosition, OnlineRecord,
 };
 pub use online_cache::{book_cache_key, cover_key, CachedCover};
 pub use portable::{
@@ -55,7 +55,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 26;
+const CURRENT_SCHEMA_VERSION: i64 = 27;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1203,6 +1203,17 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (26, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 27 {
+            // A book converted from an online one keeps the source's chapter
+            // titles, found again as lines of its text.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch("ALTER TABLE book_toc_settings ADD COLUMN source_titles TEXT;")?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (27, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -3095,6 +3106,37 @@ impl Storage {
         Ok(saved.unwrap_or_default())
     }
 
+    /// The source's chapter titles a converted book keeps; empty otherwise.
+    pub fn book_source_titles(&self, book_id: &str) -> Result<Vec<String>, AppError> {
+        let titles: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT source_titles FROM book_toc_settings WHERE book_id = ?1",
+                params![book_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(titles
+            .and_then(|titles| serde_json::from_str(&titles).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn set_book_source_titles(&self, book_id: &str, titles: &[String]) -> Result<(), AppError> {
+        let titles = (!titles.is_empty())
+            .then(|| serde_json::to_string(titles))
+            .transpose()?;
+        self.conn.execute(
+            "INSERT INTO book_toc_settings(book_id, rule_id, split_long_chapters, revision, updated_at,
+                source_titles)
+             VALUES (?1, NULL, 0, 1, ?2, ?3)
+             ON CONFLICT(book_id) DO UPDATE SET source_titles = excluded.source_titles,
+                revision = book_toc_settings.revision + 1, updated_at = excluded.updated_at",
+            params![book_id, now_millis(), titles],
+        )?;
+        Ok(())
+    }
+
     pub fn save_book_toc_settings(
         &mut self,
         book_id: &str,
@@ -3173,6 +3215,7 @@ impl Storage {
         let (untitled_title, chunk_kb) =
             untitled_style(&settings, &self.get_settings().unwrap_or_default());
         let build = TocBuildRule {
+            titles: self.book_source_titles(book_id)?,
             automatic: selected.is_none(),
             rules: match selected {
                 Some(rule) => vec![spec(rule)],
@@ -7247,7 +7290,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 27);
     }
 
     #[test]
@@ -8501,7 +8544,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     ALTER TABLE book_toc_settings DROP COLUMN source_titles; ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
