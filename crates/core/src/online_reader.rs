@@ -72,9 +72,10 @@ pub fn refresh_toc(
 
 /// A book restored from a backup has no contents yet; they are fetched
 /// before it is first read.
-/// Contents made only of placeholder titles (from a server without the
-/// source's sign-in, before titles were kept) are fetched again from the
-/// source here, once a session, and kept as they are when that fails.
+/// Contents with placeholder titles (from a server without the source's
+/// sign-in, before titles were kept; a series may show some chapters to
+/// everyone) are fetched again from the source here, once a session, and
+/// kept as they are when that fails.
 pub fn ensure_toc(storage: &Shared, book_id: &str) -> Result<(), AppError> {
     static REPAIRED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let chapters = lock(storage)?.online_chapters(book_id)?;
@@ -84,7 +85,7 @@ pub fn ensure_toc(storage: &Shared, book_id: &str) -> Result<(), AppError> {
     let placeholders = chapters
         .iter()
         .filter(|chapter| !chapter.is_volume)
-        .all(|chapter| crate::storage::is_placeholder_title(&chapter.title));
+        .any(|chapter| crate::storage::is_placeholder_title(&chapter.title));
     let first_try = REPAIRED.lock().is_ok_and(|mut tried| {
         let first = !tried.iter().any(|id| id == book_id);
         if first {
@@ -1679,7 +1680,7 @@ mod tests {
     fn contents_of_placeholder_titles_are_fetched_again_once() {
         let base = start(|request: &Request| match request.path.as_str() {
             "/book/7/" => Response::html(
-                r#"<h1>剑来</h1><div class="toc"><a href="/c/1.html">第一章 惊蛰</a><a href="/c/2.html">第二章 开门</a></div>"#,
+                r#"<h1>剑来</h1><div class="toc"><a href="/c/1.html">第一章 惊蛰</a><a href="/c/2.html">第二章 开门</a><a href="/c/3.html">第三章 下山</a></div>"#,
             ),
             _ => Response::not_found(),
         });
@@ -1699,14 +1700,19 @@ mod tests {
                 None,
             )
             .unwrap();
-        // What an earlier server update left: `'#' + order` everywhere.
+        // What an earlier server update left: `'#' + order` for the chapters
+        // only a signed-in reader sees, the real name for the one shown to all.
         {
             let mut guard = storage.lock().unwrap();
             let record = guard.online_record(&id).unwrap();
-            let placeholders: Vec<OnlineChapter> = (1..=2)
+            let placeholders: Vec<OnlineChapter> = (1..=3)
                 .map(|n| OnlineChapter {
                     index: n - 1,
-                    title: format!("#{n}"),
+                    title: if n == 2 {
+                        "第二章 开门".to_string()
+                    } else {
+                        format!("#{n}")
+                    },
                     url: format!("{base}/old/{n}"),
                     base_url: base.clone(),
                     is_volume: false,
@@ -1726,7 +1732,7 @@ mod tests {
             .iter()
             .map(|entry| entry.title.as_str())
             .collect();
-        assert_eq!(titles, ["第一章 惊蛰", "第二章 开门"]);
+        assert_eq!(titles, ["第一章 惊蛰", "第二章 开门", "第三章 下山"]);
     }
 
     /// Reads two chapters of a live book from `GRIPREAD_SOURCES` /
