@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-[0.3.1](plans/2026-10-18-comics.md) is in progress on `dev`: comic reading, with fixes for the cloud progress prompt and online chapter titles. [0.2.2](plans/2026-10-15-i18n-translation.md) was released as `v0.2.2` on 2026-10-18.
+[0.3.1](plans/2026-10-18-comics.md) (comic reading, the cloud progress prompt and online chapter title fixes, and the test rounds' fixes) was released as `v0.3.1` on 2026-10-19. No round is open; the next one raises the version on `dev`.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-The next unfinished batch of [0.3.1](plans/2026-10-18-comics.md). RSS waits on a local branch; its version and schema (27) are set when it is merged.
+The next round the user assigns. RSS waits on a local branch; its version and schema are set when it is merged.
