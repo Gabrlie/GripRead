@@ -30,6 +30,8 @@ import { ServerAccountPage } from "./ServerAccountPage";
 import { ServerSyncPage } from "./ServerSyncPage";
 import { TranslationSettingsPage } from "./TranslationSettingsPage";
 import { AppearancePage } from "./AppearancePage";
+import { FeedManagePage } from "../Rss/FeedManagePage";
+import { RssSettingsPage } from "../Rss/RssSettingsPage";
 import { StyleSwatch, choose, chosenStyle, pinnedChoices } from "./interface-styles";
 import { native } from "../../services/transport";
 import { useT, type MessageKey } from "../../i18n";
@@ -51,7 +53,9 @@ type Page =
   | "account"
   | "server"
   | "translation"
-  | "appearance";
+  | "appearance"
+  | "feeds"
+  | "rss";
 
 const THEMES: [ThemeMode, MessageKey][] = [
   ["system", "common.followSystem"],
@@ -289,6 +293,21 @@ export function SettingsView() {
           />
         </PageSection>
 
+        <PageSection title={t("nav.feeds")}>
+          <PageLink
+            icon="rss_feed"
+            label={t("rss.settings")}
+            detail={t("rss.settings.note")}
+            onClick={() => setPage("rss")}
+          />
+          <PageLink
+            icon="tune"
+            label={t("rss.manage")}
+            detail={t("settings.feeds.note")}
+            onClick={() => setPage("feeds")}
+          />
+        </PageSection>
+
         {/* The web version is the server: it neither backs up nor syncs. */}
         {native && (
           <PageSection title={t("settings.cloud")}>
@@ -388,6 +407,8 @@ export function SettingsView() {
       {page === "network" && <NetworkSettingsPage onClose={close} />}
       {page === "translation" && <TranslationSettingsPage onClose={close} />}
       {page === "appearance" && <AppearancePage onClose={close} />}
+      {page === "rss" && <RssSettingsPage onClose={close} />}
+      {page === "feeds" && <FeedManagePage onClose={close} />}
       {page === "cloud" && <CloudShelfPage onClose={close} onSetUp={() => setPage("backup")} />}
     </div>
   );

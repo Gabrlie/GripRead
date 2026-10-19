@@ -730,7 +730,7 @@ async fn shelf_jobs_are_set_run_and_answered() {
     let jobs = json_of(&body);
     assert_eq!(
         jobs["settings"],
-        json!({ "intervalHours": 6, "prefetch": 5 })
+        json!({ "intervalHours": 6, "prefetch": 5, "rssIntervalMinutes": 60 })
     );
     assert!(jobs["status"]["nextRun"].is_i64());
 
@@ -739,7 +739,8 @@ async fn shelf_jobs_are_set_run_and_answered() {
         authorized(Request::put("/api/jobs"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({ "intervalHours": 0, "prefetch": 99 }).to_string(),
+                json!({ "intervalHours": 0, "prefetch": 99, "rssIntervalMinutes": 99_999 })
+                    .to_string(),
             ))
             .unwrap(),
     )
@@ -747,7 +748,7 @@ async fn shelf_jobs_are_set_run_and_answered() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         json_of(&body),
-        json!({ "intervalHours": 0, "prefetch": 50 })
+        json!({ "intervalHours": 0, "prefetch": 50, "rssIntervalMinutes": 1440 })
     );
     assert!(folder.0.join("data/jobs.json").is_file());
 
@@ -804,4 +805,75 @@ async fn shelf_jobs_are_set_run_and_answered() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_connected_device_refreshes_its_feeds_through_the_server() {
+    // A feed that grows by one article each time it is fetched.
+    let fetched = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count = fetched.clone();
+    let site = Router::new().route(
+        "/feed",
+        get(move || {
+            let round = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            let items: String = (1..=round)
+                .map(|n| format!("<item><title>第{n}篇</title><guid>p{n}</guid><link>https://a.example/{n}</link></item>"))
+                .collect();
+            async move {
+                (
+                    [(header::CONTENT_TYPE, "application/rss+xml")],
+                    format!("<rss version=\"2.0\"><channel><title>博客</title>{items}</channel></rss>"),
+                )
+            }
+        }),
+    );
+    let site_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let feed = format!("http://{}/feed", site_listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(site_listener, site).await.unwrap() });
+
+    let folder = Folder::new();
+    let app = server(&folder, Some("secret1"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let phone = AppState::open(
+        folder.0.join("phone"),
+        Arc::new(api::NoEvents),
+        Arc::new(gripread_core::platform::Filesystem),
+    )
+    .unwrap();
+    let sync = phone.sync.clone();
+    let storage = phone.storage.clone();
+    let url = feed.clone();
+    tokio::task::spawn_blocking(move || {
+        sync.connect(&gripread_core::models::ConnectSyncServerRequest {
+            address,
+            password: "secret1".into(),
+            device_name: "手机".into(),
+        })
+        .unwrap();
+        // Subscribing fetches once here; the subscription goes to the server.
+        gripread_core::rss::subscribe(&storage, &url, None, None).unwrap();
+        sync.now();
+        sync.sync_and_wait(std::time::Duration::from_secs(20));
+    })
+    .await
+    .unwrap();
+
+    // The phone's refresh asks the server, which fetches and hands over
+    // the new article.
+    gripread_core::rss_commands::refresh_feeds(
+        &phone,
+        gripread_core::models::RefreshFeedsRequest {
+            operation_id: "rss-test".into(),
+            urls: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let guard = phone.storage.lock().unwrap();
+    let feeds = guard.list_feeds().unwrap();
+    assert_eq!((feeds[0].title.as_str(), feeds[0].total), ("博客", 2));
+    assert!(guard.feed_server_cursor(&feed).unwrap() > 0);
+    assert_eq!(fetched.load(std::sync::atomic::Ordering::SeqCst), 2);
 }

@@ -41,6 +41,7 @@ pub use usage::DEFAULT_CLEARED;
 mod portable;
 mod privacy;
 pub use privacy::PRIVATE_TITLE;
+mod rss;
 mod sources;
 mod sync;
 mod translation;
@@ -53,11 +54,12 @@ pub use portable::{
     backup_digest, parse_backup, BackupDocument, CloudMetadata, CoverRef, PortableLocator,
     ProgressState, StoredWebDav,
 };
+pub use rss::{article_id, FeedFetchState, FetchedArticle, FetchedFeed};
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 28;
+const CURRENT_SCHEMA_VERSION: i64 = 29;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1234,6 +1236,16 @@ impl Storage {
             )?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (28, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 29 {
+            // 订阅: feeds and their articles.
+            let tx = self.conn.transaction()?;
+            Self::create_rss_tables(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (29, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7393,7 +7405,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 28);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 29);
     }
 
     #[test]
@@ -10375,6 +10387,130 @@ mod tests {
             &verified,
         )
         .unwrap()
+    }
+
+    fn rss_fetch(ids: &[&str]) -> FetchedFeed {
+        FetchedFeed {
+            title: "博客".into(),
+            articles: ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| FetchedArticle {
+                    id: crate::storage::article_id("https://a.example/feed", id),
+                    title: format!("文章 {id}"),
+                    published_at: 1_000 + index as i64,
+                    content: format!("<p>{id}</p>"),
+                    ..FetchedArticle::default()
+                })
+                .collect(),
+            ..FetchedFeed::default()
+        }
+    }
+
+    #[test]
+    fn subscriptions_read_and_starred_articles_sync_between_devices() {
+        let root = TestRoot::new();
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut desktop = Storage::open(&root.0.join("desktop")).unwrap();
+        let (mut phone_at, mut desktop_at) = (0, 0);
+        let url = "https://a.example/feed";
+        let id = |name: &str| crate::storage::article_id(url, name);
+        phone.add_feed(url, "", Some("技术"), None).unwrap();
+        phone
+            .store_feed_fetch(url, &rss_fetch(&["1", "2", "3"]))
+            .unwrap();
+        phone
+            .set_article_state(&[id("1")], Some(true), None)
+            .unwrap();
+        phone
+            .set_article_state(&[id("2")], None, Some(true))
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+
+        // The desktop has the subscription, and the starred article with its
+        // text before it fetches the feed.
+        let feeds = desktop.list_feeds().unwrap();
+        assert_eq!(
+            (feeds[0].title.as_str(), feeds[0].group.as_deref()),
+            ("博客", Some("技术"))
+        );
+        let starred = desktop.rss_article(&id("2")).unwrap();
+        assert!(starred.summary.starred && starred.content == "<p>2</p>");
+        // Fetching it, what the phone read arrives read.
+        desktop
+            .store_feed_fetch(url, &rss_fetch(&["1", "2", "3", "4"]))
+            .unwrap();
+        let read =
+            |storage: &Storage, name: &str| storage.rss_article(&id(name)).unwrap().summary.read;
+        assert!(read(&desktop, "1") && !read(&desktop, "3"));
+
+        // Both change marks at once; neither loses the other's.
+        phone
+            .set_article_state(&[id("3")], Some(true), None)
+            .unwrap();
+        desktop
+            .set_article_state(&[id("1")], Some(false), None)
+            .unwrap();
+        desktop
+            .set_article_state(&[id("4")], Some(true), None)
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        phone
+            .store_feed_fetch(url, &rss_fetch(&["1", "2", "3", "4"]))
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        for device in [&phone, &desktop] {
+            assert_eq!(
+                ["1", "3", "4"].map(|name| read(device, name)),
+                [false, true, true]
+            );
+        }
+
+        // Unstarring and unsubscribing travel too; 同步排除 keeps them local.
+        desktop
+            .set_article_state(&[id("2")], None, Some(false))
+            .unwrap();
+        desktop.remove_feeds(&[url.to_string()]).unwrap();
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        assert!(phone.list_feeds().unwrap().is_empty());
+        assert!(phone.rss_article(&id("2")).is_err());
+        let mut settings = phone.stored_webdav().unwrap();
+        settings.restore_ignore = vec![crate::models::RestoreCategory::Rss];
+        phone.save_stored_webdav(&settings).unwrap();
+        phone
+            .add_feed("https://b.example/feed", "乙", None, None)
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        assert!(desktop.list_feeds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn backups_carry_subscriptions_and_starred_articles() {
+        let root = TestRoot::new();
+        let mut first = Storage::open(&root.0.join("first")).unwrap();
+        let url = "https://a.example/feed";
+        first.add_feed(url, "博客", Some("组"), None).unwrap();
+        first
+            .store_feed_fetch(url, &rss_fetch(&["1", "2"]))
+            .unwrap();
+        let starred = crate::storage::article_id(url, "2");
+        first
+            .set_article_state(std::slice::from_ref(&starred), None, Some(true))
+            .unwrap();
+        let document =
+            parse_backup(&serde_json::to_vec(&first.export_backup("Linux").unwrap()).unwrap())
+                .unwrap();
+        let mut second = Storage::open(&root.0.join("second")).unwrap();
+        assert_eq!(second.restore_backup(&document).unwrap().feeds_restored, 1);
+        assert_eq!(second.list_feeds().unwrap()[0].group.as_deref(), Some("组"));
+        assert!(second.rss_article(&starred).unwrap().summary.starred);
     }
 
     #[test]

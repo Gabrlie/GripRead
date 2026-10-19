@@ -9,6 +9,7 @@ import { settings } from "./settings";
 import { system } from "./system";
 import { update } from "./update";
 import { log } from "./log";
+import { rss } from "./rss";
 
 export const en = {
   ...common,
@@ -22,4 +23,5 @@ export const en = {
   ...system,
   ...update,
   ...log,
+  ...rss,
 };

@@ -41,4 +41,4 @@ Commands and results are recorded here per batch.
 
 ## Handoff
 
-Pending.
+Released as `v0.3.2` on 2026-10-19 after `v0.3.2-beta.1`; the user's device test of beta.1 found only small issues, left for later.

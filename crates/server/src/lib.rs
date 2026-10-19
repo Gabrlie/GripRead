@@ -6,6 +6,7 @@
 pub mod auth;
 mod jobs;
 mod paths;
+mod rss;
 mod sync;
 mod update;
 
@@ -199,6 +200,7 @@ pub fn app(config: Config) -> Result<Router, String> {
     sync::watch_edits(server.clone(), edits);
     sync::daily_backups(server.clone());
     jobs::schedule(server.clone());
+    rss::schedule(server.clone());
     let api = Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/setup", post(setup))
@@ -214,6 +216,7 @@ pub fn app(config: Config) -> Result<Router, String> {
         .merge(sync::routes())
         .merge(update::routes())
         .merge(jobs::routes())
+        .merge(rss::routes())
         // An API route this server lacks is an error, not the page.
         .route("/api/{*rest}", axum::routing::any(unknown_api))
         .layer(axum::extract::DefaultBodyLimit::max(64 << 20))

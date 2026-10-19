@@ -4,6 +4,7 @@
  * without Tauri. Production builds never import this module.
  */
 import { memoryTranslation } from "./translation";
+import { memoryFeeds } from "./feeds";
 import type { AppServices } from "../services/contracts";
 import type {
   SyncServerStatus,
@@ -581,6 +582,7 @@ export function previewServices(): AppServices {
         bookmarksAdded: 4,
         recoveryPoint: "recovery-1.json",
         webdavRestored: false,
+        feedsRestored: 0,
         sourcesRestored: 0,
         onlineBooksRestored: 0,
       }),
@@ -617,6 +619,7 @@ export function previewServices(): AppServices {
       onSyncProgress: async () => () => undefined,
     },
     sources: createMemorySourceService(PREVIEW_SOURCES, PREVIEW_BOOKS),
+    feeds: memoryFeeds(),
     updates: {
       getSettings: async () => updates,
       saveSettings: async (request) => (updates = { ...updates, ...request }),

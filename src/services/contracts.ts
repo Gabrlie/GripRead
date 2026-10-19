@@ -1,5 +1,15 @@
 import type {
   SaveGroupPrivacyRequest,
+  Article,
+  ArticlePage,
+  ArticleQuery,
+  Feed,
+  FeedCandidate,
+  OpmlImportReport,
+  RssRefreshEvent,
+  RssSettings,
+} from "../types/generated";
+import type {
   BookImage,
   BookTranslation,
   BookTranslationEvent,
@@ -414,6 +424,31 @@ export interface TranslationService {
   onChapterProgress(listener: (event: ChapterTranslationEvent) => void): Promise<() => void>;
 }
 
+/** 订阅: RSS/Atom subscriptions, their articles, and article state. */
+export interface FeedService {
+  listFeeds(): Promise<Feed[]>;
+  /** The feeds at an address: itself, or the ones a page names. */
+  discover(url: string): Promise<FeedCandidate[]>;
+  addFeed(url: string, title: string | null, group: string | null): Promise<Feed>;
+  updateFeed(url: string, title: string, group: string | null): Promise<void>;
+  removeFeeds(urls: string[]): Promise<void>;
+  /** Refreshes the feeds (all when empty); progress comes through `onRefresh`. */
+  refresh(operationId: string, urls: string[]): Promise<void>;
+  onRefresh(listener: (event: RssRefreshEvent) => void): Promise<Unsubscribe>;
+  listArticles(query: ArticleQuery): Promise<ArticlePage>;
+  getArticle(id: string): Promise<Article>;
+  /** 全文: the page's main text, kept with the article. */
+  fetchFullText(id: string): Promise<string>;
+  setArticleState(ids: string[], state: { read?: boolean; starred?: boolean }): Promise<void>;
+  markAllRead(scope: { feed?: string | null; group?: string | null }): Promise<number>;
+  image(url: string, referer: string | null): Promise<ArrayBuffer>;
+  /** Picks an OPML file and subscribes to its feeds; `null` when cancelled. */
+  importOpml(): Promise<OpmlImportReport | null>;
+  /** Saves the subscriptions as OPML; `false` when cancelled. */
+  exportOpml(): Promise<boolean>;
+  getSettings(): Promise<RssSettings>;
+  saveSettings(settings: RssSettings): Promise<RssSettings>;
+}
 export interface AppServices {
   library: LibraryService;
   reader: ReaderService;
@@ -422,4 +457,5 @@ export interface AppServices {
   sources: SourceService;
   updates: UpdateService;
   translation: TranslationService;
+  feeds: FeedService;
 }

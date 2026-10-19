@@ -1,0 +1,301 @@
+//! 订阅's commands: subscriptions, refreshing with progress events,
+//! articles and their state, OPML, and article images. Network work runs
+//! on blocking threads; storage work goes through `with_storage`.
+
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+
+use crate::commands::{with_storage, AppState};
+use crate::error::{AppError, ErrorCode};
+use crate::models::{
+    AddFeedRequest, Article, ArticleIdRequest, ArticlePage, ArticleQuery, ArticleStateRequest,
+    DiscoverFeedRequest, Feed, FeedCandidate, FeedUrlsRequest, MarkAllReadRequest,
+    OpmlImportReport, OpmlImportRequest, OptionalPathRequest, RefreshFeedsRequest, RssImageRequest,
+    RssRefreshEvent, RssSettings, SaveRssSettingsRequest, UpdateFeedRequest,
+};
+use crate::source_commands::SourceOperations;
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| AppError::new(ErrorCode::Io, format!("rss worker stopped: {error}")))?
+}
+
+pub async fn list_feeds(state: &Arc<AppState>) -> Result<Vec<Feed>, AppError> {
+    with_storage(state, |storage| storage.list_feeds()).await
+}
+
+pub async fn discover_feed(
+    _state: &Arc<AppState>,
+    request: DiscoverFeedRequest,
+) -> Result<Vec<FeedCandidate>, AppError> {
+    blocking(move || crate::rss::discover(&request.url)).await
+}
+
+pub async fn add_feed(state: &Arc<AppState>, request: AddFeedRequest) -> Result<Feed, AppError> {
+    let storage = state.storage.clone();
+    let url = request.url.trim().to_string();
+    blocking(move || {
+        crate::rss::subscribe(
+            &storage,
+            &url,
+            request.title.as_deref(),
+            request.group.as_deref(),
+        )?;
+        let guard = storage
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?;
+        guard
+            .list_feeds()?
+            .into_iter()
+            .max_by_key(|feed| feed.added_at)
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "rssNotSaved", "订阅没有保存"))
+    })
+    .await
+}
+
+pub async fn update_feed(
+    state: &Arc<AppState>,
+    request: UpdateFeedRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.update_feed(&request.url, &request.title, request.group.as_deref())
+    })
+    .await
+}
+
+pub async fn remove_feeds(state: &Arc<AppState>, request: FeedUrlsRequest) -> Result<(), AppError> {
+    with_storage(state, move |storage| storage.remove_feeds(&request.urls)).await
+}
+
+/// Refreshes feeds a few at a time, sending `rss-refresh` for each and
+/// once when done; answers when all are done. While connected, the server
+/// refreshes and this device takes its articles; feeds the server cannot
+/// give are fetched here.
+pub async fn refresh_feeds(
+    state: &Arc<AppState>,
+    request: RefreshFeedsRequest,
+) -> Result<(), AppError> {
+    let urls = if request.urls.is_empty() {
+        with_storage(state, |storage| storage.feed_urls()).await?
+    } else {
+        request.urls.clone()
+    };
+    let root = state.data_root.clone();
+    // A proxy turned off since the last check is noticed first.
+    blocking(move || {
+        crate::network::refresh(&root);
+        Ok(())
+    })
+    .await?;
+    let cancel = state.operations.register(&request.operation_id);
+    let cancels = state.operations.cancels();
+    let total = urls.len() as u32;
+    let refreshed = Arc::new(AtomicU32::new(0));
+    let storage = state.storage.clone();
+    let events = state.events.clone();
+    let sync = state.sync.clone();
+    let operation_id = request.operation_id.clone();
+    let counted = refreshed.clone();
+    blocking(move || {
+        let report = |url: &str, result: Result<u32, AppError>| {
+            let done = counted.fetch_add(1, Ordering::AcqRel) + 1;
+            let event = RssRefreshEvent {
+                operation_id: operation_id.clone(),
+                url: url.to_string(),
+                refreshed: done,
+                total,
+                new_articles: *result.as_ref().unwrap_or(&0),
+                error: result.err().map(|error| error.message),
+                done: false,
+            };
+            events.emit(
+                "rss-refresh",
+                serde_json::to_value(event).unwrap_or_default(),
+            );
+        };
+        let here = if sync.connected() {
+            through_server(&storage, &sync, urls, &report)
+        } else {
+            urls
+        };
+        crate::rss::refresh_all(&storage, here, &cancel, &report);
+        Ok(())
+    })
+    .await?;
+    SourceOperations::finish(&cancels, &request.operation_id);
+    state.events.emit(
+        "rss-refresh",
+        serde_json::to_value(RssRefreshEvent {
+            operation_id: request.operation_id,
+            url: String::new(),
+            refreshed: refreshed.load(Ordering::Acquire),
+            total,
+            new_articles: 0,
+            error: None,
+            done: true,
+        })
+        .unwrap_or_default(),
+    );
+    Ok(())
+}
+
+/// The server refreshes the feeds and sends what it fetched; returns the
+/// feeds it could not give, to fetch here.
+fn through_server(
+    storage: &Mutex<crate::storage::Storage>,
+    sync: &crate::sync_client::SyncClient,
+    urls: Vec<String>,
+    report: &dyn Fn(&str, Result<u32, AppError>),
+) -> Vec<String> {
+    let reply = match sync.rss_refresh(urls.clone()) {
+        Ok(Some(reply)) => reply,
+        Ok(None) => {
+            crate::log_keyed!(
+                Info,
+                "rss",
+                "serverTooOldToRefreshFeeds",
+                "服务器版本较旧，不能代为刷新订阅，在本机刷新"
+            );
+            return urls;
+        }
+        Err(error) => {
+            crate::log_keyed!(
+                Warn,
+                "rss",
+                "serverFeedRefreshFailed",
+                format!("服务器刷新订阅失败，改为本机刷新：{}", error.message),
+                @error error,
+            );
+            return urls;
+        }
+    };
+    let mut here = Vec::new();
+    for url in urls {
+        let failed = reply
+            .feeds
+            .iter()
+            .find(|feed| feed.url == url)
+            .is_none_or(|feed| feed.error.is_some());
+        if failed {
+            here.push(url);
+            continue;
+        }
+        let taken = (|| {
+            let since = lock(storage)?.feed_server_cursor(&url)?;
+            let Some(page) = sync.rss_articles(&url, since)? else {
+                return Ok(None);
+            };
+            lock(storage)?
+                .store_server_articles(&url, page.articles, page.cursor)
+                .map(Some)
+        })();
+        match taken {
+            Ok(Some(added)) => report(&url, Ok(added)),
+            _ => here.push(url),
+        }
+    }
+    here
+}
+
+fn lock(
+    storage: &Mutex<crate::storage::Storage>,
+) -> Result<std::sync::MutexGuard<'_, crate::storage::Storage>, AppError> {
+    storage
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))
+}
+
+pub async fn list_articles(
+    state: &Arc<AppState>,
+    request: ArticleQuery,
+) -> Result<ArticlePage, AppError> {
+    with_storage(state, move |storage| storage.list_articles(&request)).await
+}
+
+pub async fn get_article(
+    state: &Arc<AppState>,
+    request: ArticleIdRequest,
+) -> Result<Article, AppError> {
+    with_storage(state, move |storage| storage.rss_article(&request.id)).await
+}
+
+/// 全文: the article's page, read for its main text and kept.
+pub async fn fetch_full_text(
+    state: &Arc<AppState>,
+    request: ArticleIdRequest,
+) -> Result<String, AppError> {
+    let storage = state.storage.clone();
+    blocking(move || crate::rss::full_text(&storage, &request.id)).await
+}
+
+pub async fn set_article_state(
+    state: &Arc<AppState>,
+    request: ArticleStateRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.set_article_state(&request.ids, request.read, request.starred)
+    })
+    .await
+}
+
+pub async fn mark_all_read(
+    state: &Arc<AppState>,
+    request: MarkAllReadRequest,
+) -> Result<u32, AppError> {
+    with_storage(state, move |storage| {
+        storage.mark_all_read(request.feed.as_deref(), request.group.as_deref())
+    })
+    .await
+}
+
+pub async fn rss_image(
+    state: &Arc<AppState>,
+    request: RssImageRequest,
+) -> Result<Vec<u8>, AppError> {
+    let storage = state.storage.clone();
+    blocking(move || crate::rss::image(&storage, &request.url, request.referer.as_deref())).await
+}
+
+pub async fn import_opml(
+    state: &Arc<AppState>,
+    request: OpmlImportRequest,
+) -> Result<OpmlImportReport, AppError> {
+    let storage = state.storage.clone();
+    blocking(move || crate::rss::import_opml(&storage, &request.text)).await
+}
+
+/// Saves the subscriptions as an OPML file; `false` when cancelled.
+pub async fn export_opml_file(
+    state: &Arc<AppState>,
+    request: OptionalPathRequest,
+) -> Result<bool, AppError> {
+    let app = state.clone();
+    let text = with_storage(state, |storage| crate::rss::export_opml(storage)).await?;
+    blocking(move || {
+        crate::documents::save_document(
+            &*app.platform,
+            request.path.as_deref(),
+            "GripRead-subscriptions.opml",
+            "text/x-opml",
+            text.as_bytes(),
+        )
+    })
+    .await
+}
+
+pub async fn get_rss_settings(state: &Arc<AppState>) -> Result<RssSettings, AppError> {
+    with_storage(state, |storage| Ok(storage.rss_settings())).await
+}
+
+pub async fn save_rss_settings(
+    state: &Arc<AppState>,
+    request: SaveRssSettingsRequest,
+) -> Result<RssSettings, AppError> {
+    with_storage(state, move |storage| {
+        storage.save_rss_settings(&request.settings)
+    })
+    .await
+}

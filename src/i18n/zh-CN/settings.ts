@@ -73,6 +73,7 @@ export const settings = {
   "settings.replace.note": "替换或删除正文中的文字，所有书共用",
   "settings.toc": "目录规则",
   "settings.toc.note": "识别章节标题的规则",
+  "settings.feeds.note": "订阅列表、分组和 OPML",
   "settings.cloud": "备份与云端",
   "settings.server": "服务器",
   "settings.server.failed": "同步失败：{error}",

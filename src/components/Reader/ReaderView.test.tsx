@@ -20,6 +20,7 @@ import type {
 } from "../../types/generated";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
 import { DEFAULT_READING_STYLE } from "../../types/generated";
+import { feedServiceMocks } from "../../test/rss";
 import { updateServiceMocks } from "../../test/updates";
 import { syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
 import { sourceServiceMocks } from "../../test/sources";
@@ -255,6 +256,7 @@ function runtime() {
     sources: sourceServiceMocks(),
     updates: updateServiceMocks(),
     translation: translationServiceMocks(),
+    feeds: feedServiceMocks(false),
   } satisfies AppServices);
 }
 

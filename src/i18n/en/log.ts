@@ -17,6 +17,15 @@ export const log = {
   "log.serverTooOldToUpdate": "The server is too old to update the shelf; updating on this device",
   "log.serverUpdateFailed":
     "The server could not update the shelf; updating on this device: {error}",
+  "log.serverTooOldToRefreshFeeds":
+    "The server is too old to refresh feeds; refreshing on this device",
+  "log.serverFeedRefreshFailed":
+    "The server could not refresh feeds; refreshing on this device: {error}",
+  "log.rssFeedFailed": "Refreshing {title} failed: {error}",
+  "log.rssNewFeedUnreadable": "The new feed cannot be read yet: {error}",
+  "log.feedsRefreshed": "Feeds refreshed: {feeds} feeds, {articles} new articles",
+  "log.feedsRefreshedFailed":
+    "Feeds refreshed: {feeds} feeds, {articles} new articles, {failed} failed",
   "log.tocUpdateFailed": 'Updating the contents of "{title}" failed: {error}',
   "log.convertedToLocal": "Online book converted to a local book: {title}",
   "log.serverSettingsUnsaved": "Could not save the server sync settings",

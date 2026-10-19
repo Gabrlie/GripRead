@@ -36,6 +36,7 @@ export const restoreCategories = (): [RestoreCategory, string, string][] => [
   ["reading-time", t("detail.readingTime"), ""],
   ["sources", t("settings.sources"), t("backup.cat.sources.note")],
   ["online-books", t("downloads.books"), t("backup.cat.online.note")],
+  ["rss", t("backup.cat.rss"), t("backup.cat.rss.note")],
 ];
 
 type Draft = Omit<SaveWebDavRequest, "password"> & { password: string };
@@ -673,6 +674,9 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
                 {report.preferencesRestored ? t("backup.report.prefs") : ""}
               </li>
               {report.webdavRestored && <li>{t("backup.report.webdav")}</li>}
+              {report.feedsRestored > 0 && (
+                <li>{t("backup.report.feeds", { count: report.feedsRestored })}</li>
+              )}
             </ul>
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setReport(null)}>

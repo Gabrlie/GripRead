@@ -18,14 +18,14 @@ The application icon is an open hardcover book with a visible page block and a b
 
 ## Navigation and screens
 
-Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. The current desktop RSS shell retains its channel and article columns; a reading pane is planned.
+Phone navigation has Library, Find Books, RSS, and Settings tabs, displayed in the product's default locale. Desktop uses the same destinations in a sidebar. Novel reading hides global navigation; returning restores the previous selection and list position. On the desktop, RSS shows subscriptions, articles, and the article in three columns that scroll on their own.
 
 | Screen | Phone | Desktop |
 | --- | --- | --- |
 | Library | Continue-reading card, cover grid/list, long-press management | Recent reading, grid/list, multi-select, file drop |
 | Find Books | Search, source scope, progressive grouped results, detail navigation | Results and selected book details side by side |
 | RSS | Groups, subscriptions, articles, and article view through successive screens | Subscription, article list, and content columns; collapsible side panels |
-| Settings | Reading overview (opens 阅读记录), appearance (theme, 界面样式 with up to four pinned styles, OLED black, and 更多外观设置 for the language, every style, and custom styles made from a main colour whose other colours are derived unless set; night colours are always derived; the page lists styles one per row with their colours, 使用中, a pin, and edit (a built-in tone saves an override of its colours, with 恢复默认); it also holds 默认封面 (a day and a night image, kept on the device, and whether the default cover shows the title and author), 仅在 Wi‑Fi 下加载网络封面 (Android's metered networks; kept covers still show), the page the app opens on, whether 发现 and 订阅 show, and the bottom navigation's labels and hiding while the shelf scrolls), rules (书源管理, 替换净化, 目录规则 with the default 未命中规则时的标题 at the top and import and export in More), backup and cloud (备份与恢复, 云书架), 日志 (level filter, 详细日志, copy, share, clear), about | Category navigation beside settings |
+| Settings | Reading overview (opens 阅读记录), appearance (theme, 界面样式 with up to four pinned styles, OLED black, and 更多外观设置 for the language, every style, and custom styles made from a main colour whose other colours are derived unless set; night colours are always derived; the page lists styles one per row with their colours, 使用中, a pin, and edit (a built-in tone saves an override of its colours, with 恢复默认); it also holds 默认封面 (a day and a night image, kept on the device, and whether the default cover shows the title and author), 仅在 Wi‑Fi 下加载网络封面 (Android's metered networks; kept covers still show), the page the app opens on, whether 发现 and 订阅 show, and the bottom navigation's labels and hiding while the shelf scrolls), rules (书源管理, 替换净化, 目录规则 with the default 未命中规则时的标题 at the top and import and export in More), 订阅 (订阅设置 and 管理订阅), backup and cloud (备份与恢复, 云书架), 日志 (level filter, 详细日志, copy, share, clear), about | Category navigation beside settings |
 
 Use shadcn/ui controls and accessible primitives. Phone actions normally use a Drawer; desktop uses a Dialog or side panel. Closing a panel restores focus and reading context rather than reopening the book. The Android back action closes the topmost dialog or reader panel, then hides visible reader toolbars, then leaves the reader, then returns to Library, and finally exits after pending saves finish.
 
@@ -35,7 +35,7 @@ Show a single continue-reading entry before the shelf. Support custom groups and
 
 Find Books retains successful results when one source fails. Book details show source, title, author, cover, introduction, latest chapter, and a contents entry. Offer add-to-shelf, read, update check, chapter cache, and source switching according to available capabilities. Unsupported operations explain their cause.
 
-Empty Library offers local file import; discovery, RSS feed URLs, and OPML controls remain disabled until their services are delivered. Do not require cloud setup before these actions.
+Empty Library offers local file import; an empty 订阅 offers 添加订阅 and OPML import. Do not require cloud setup before these actions.
 
 书源管理 follows Legado 3.26.7's source list with GripRead styling: a search field (name, address, group, comment), filter chips (全部, 已启用, 已禁用, 需登录, 未分组, 已启用发现, 已禁用发现, then each group), a sort menu with 反序, and rows showing the name, explore and login marks, groups, address, and the response time or the last check error. Each row has an enable switch and a menu (编辑, 置顶, 置底, 登录, 调试, 启用/禁用发现, 校验, 删除). The header adds 新建, sort, and More (网络导入 with remembered addresses, 本地导入, 粘贴导入, 多选, 校验显示的书源, 导出全部). Imports list each source as 新增, 更新, or 已有 with checkboxes and options to keep local names, groups, and switches. Multi-select shows a bottom bar of batch actions. A check runs in the background with a progress card and a stop button; its dialog's 按结果启用或禁用 (on by default) switches off a source whose search, details, contents, or text fail, only its explore when just 发现 fails, and switches a source that passes back on. The editor has tabs 基本, 搜索, 发现, 详情, 目录, 正文, and JSON, a save button, and More (保存并调试, 登录, 复制源, 粘贴源, 设置源变量, 清除 Cookie), and asks before discarding changes. 调试 streams each step of search → details → contents → first chapter. 登录 shows the source's `loginUi` form; web-page logins report that WebView is not supported yet.
 
@@ -47,7 +47,7 @@ Phone novels default to one page. Desktop defaults to a centered single page and
 
 A contents selection navigates to that chapter. Reader layout changes follow the [locator contract](../subsystems/reader.md). Loading and sync indicators remain outside the text; remote progress produces a user-selectable action instead of an automatic jump.
 
-RSS articles scroll continuously and show title, source, date, original link, and content. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
+RSS articles scroll continuously and show title, source, date, author, and content, with a bar for the previous and next article, 全文, read, star, and 原文. On a phone, subscriptions (全部文章, folding groups, unread counts), a list's articles (全部, 未读, 星标, search, a long press for read and star), and the article open one over another. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
 
 ## States and accessibility
 

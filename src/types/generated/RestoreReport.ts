@@ -20,4 +20,8 @@ recoveryPoint: string,
 /**
  * The backup file's WebDAV account was taken (this device had none).
  */
-webdavRestored: boolean, };
+webdavRestored: boolean, 
+/**
+ * Subscriptions restored (added or brought up to date).
+ */
+feedsRestored: number, };

@@ -9,6 +9,7 @@ import { settings } from "./settings";
 import { system } from "./system";
 import { update } from "./update";
 import { log } from "./log";
+import { rss } from "./rss";
 
 /** The interface texts in 简体中文, which define the keys. */
 export const zhCN = {
@@ -23,6 +24,7 @@ export const zhCN = {
   ...system,
   ...update,
   ...log,
+  ...rss,
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

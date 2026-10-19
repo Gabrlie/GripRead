@@ -59,6 +59,7 @@ chrono = { version = "0.4.42", default-features = false, features = ["clock", "s
 ego-tree = "0.11"
 tokio = { version = "1.53", features = ["rt"] }
 whatlang = "0.16"
+feed-rs = "3.0.0"
 
 # rquickjs ships no pregenerated bindings for Android; generate them there.
 [target.'cfg(target_os = "android")'.dependencies]

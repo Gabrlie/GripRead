@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-[0.3.2](plans/2026-10-19-private-groups.md) (private shelf groups) was released as `v0.3.2` on 2026-10-19. No round is open; the next one raises the version on `dev`.
+[0.4.1](plans/2026-10-14-rss.md) is in progress on `dev`: the RSS reader, merged from its branch, with 订阅设置. [0.3.2](plans/2026-10-19-private-groups.md) (private shelf groups) was released as `v0.3.2` on 2026-10-19.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-The next round the user assigns. RSS waits on a local branch; its version is set when it is merged, and its schema becomes 29.
+The user's device test of the 0.4.1 beta.

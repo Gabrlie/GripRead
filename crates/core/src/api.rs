@@ -119,12 +119,30 @@ pub fn mutates(name: &str) -> bool {
         "server_api",
         // Opening a private group changes nothing.
         "unlock_group",
+        "discover_",
+        "rss_image",
     ];
     !READS.iter().any(|read| name.starts_with(read))
 }
 
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
+    "list_feeds",
+    "discover_feed",
+    "add_feed",
+    "update_feed",
+    "remove_feeds",
+    "refresh_feeds",
+    "list_articles",
+    "get_article",
+    "fetch_full_text",
+    "set_article_state",
+    "mark_all_read",
+    "rss_image",
+    "import_opml",
+    "export_opml_file",
+    "get_rss_settings",
+    "save_rss_settings",
     "list_book_images",
     "read_book_image",
     "get_comic_chapter",
@@ -722,6 +740,30 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
             reply(crate::commands::connect_sync_server(state, request(args)?).await)
         }
         "disconnect_sync_server" => reply(crate::commands::disconnect_sync_server(state).await),
+        "list_feeds" => reply(crate::rss_commands::list_feeds(state).await),
+        "discover_feed" => reply(crate::rss_commands::discover_feed(state, request(args)?).await),
+        "add_feed" => reply(crate::rss_commands::add_feed(state, request(args)?).await),
+        "update_feed" => reply(crate::rss_commands::update_feed(state, request(args)?).await),
+        "remove_feeds" => reply(crate::rss_commands::remove_feeds(state, request(args)?).await),
+        "refresh_feeds" => reply(crate::rss_commands::refresh_feeds(state, request(args)?).await),
+        "list_articles" => reply(crate::rss_commands::list_articles(state, request(args)?).await),
+        "get_article" => reply(crate::rss_commands::get_article(state, request(args)?).await),
+        "fetch_full_text" => {
+            reply(crate::rss_commands::fetch_full_text(state, request(args)?).await)
+        }
+        "set_article_state" => {
+            reply(crate::rss_commands::set_article_state(state, request(args)?).await)
+        }
+        "mark_all_read" => reply(crate::rss_commands::mark_all_read(state, request(args)?).await),
+        "rss_image" => bytes(crate::rss_commands::rss_image(state, request(args)?).await),
+        "import_opml" => reply(crate::rss_commands::import_opml(state, request(args)?).await),
+        "export_opml_file" => {
+            reply(crate::rss_commands::export_opml_file(state, request(args)?).await)
+        }
+        "get_rss_settings" => reply(crate::rss_commands::get_rss_settings(state).await),
+        "save_rss_settings" => {
+            reply(crate::rss_commands::save_rss_settings(state, request(args)?).await)
+        }
         "server_api" => {
             let request: crate::models::ServerApiRequest = request(args)?;
             let sync = state.sync.clone();

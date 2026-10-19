@@ -6,7 +6,7 @@ use super::*;
 use crate::models::{DataPart, DataUsage, ShelfBookCache};
 
 /// Parts cleared by default and by 退出时清理缓存.
-pub const DEFAULT_CLEARED: &[&str] = &["unshelved", "covers", "requests", "logs"];
+pub const DEFAULT_CLEARED: &[&str] = &["unshelved", "covers", "requests", "rss-images", "logs"];
 
 fn folder_size(path: &Path) -> u64 {
     let Ok(entries) = fs::read_dir(path) else {
@@ -105,6 +105,7 @@ impl Storage {
                     requests.max(0) as u64,
                     true,
                 ),
+                part("rss-images", "订阅文章图片", size(&["rss-images"]), true),
                 part("logs", "日志", size(&["logs"]), true),
                 part(
                     "translations",
@@ -141,6 +142,13 @@ impl Storage {
                 }
             }
             self.conn.execute("DELETE FROM online_cover_cache", [])?;
+        }
+        if wants("rss-images") {
+            match fs::remove_dir_all(self.rss_image_cache()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         if wants("requests") {
             self.conn.execute("DELETE FROM online_book_cache", [])?;

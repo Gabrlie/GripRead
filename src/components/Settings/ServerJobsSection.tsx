@@ -5,6 +5,7 @@ import { PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { toast } from "../ui/toast";
 import { formatDateTime, t } from "../../i18n";
+import { refreshIntervals } from "../Rss/format";
 
 const intervals = (): [number, string][] => [
   [0, t("common.off")],
@@ -153,6 +154,13 @@ export function JobsSection() {
             </ul>
           </details>
         ) : null}
+        {settings.rssIntervalMinutes !== undefined &&
+          choice(
+            t("jobs.rssInterval"),
+            refreshIntervals([0, 30, 60, 180]),
+            settings.rssIntervalMinutes,
+            (rssIntervalMinutes) => save({ rssIntervalMinutes }),
+          )}
         <p className="text-[11px] text-secondary">{t("jobs.note")}</p>
       </div>
     </PageSection>

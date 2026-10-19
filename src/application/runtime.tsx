@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import type { ReaderPreferences, ShelfPreferences } from "../types/generated";
+import { FeedStore } from "./rss";
 import type { AppServices } from "../services/contracts";
 import { LibraryStore } from "./library";
 import { ShelfStore } from "./shelf";
@@ -19,6 +20,7 @@ export class AppRuntime {
   readonly shelfPreferences: SettingsStore<ShelfPreferences>;
   readonly fonts: FontLoader;
   readonly images: ImageLoader;
+  readonly feeds: FeedStore;
   readerFlush: (() => Promise<void>) | null = null;
   private readerWrites = new Map<() => Promise<void>, Promise<void>>();
   private failedReaderWrites = new Set<() => Promise<void>>();
@@ -70,6 +72,7 @@ export class AppRuntime {
     this.progressSync = new ProgressSync(services.sync);
     this.fonts = new FontLoader(services.settings);
     this.images = new ImageLoader(services.library);
+    this.feeds = new FeedStore(services.feeds);
     this.shelfPreferences = new SettingsStore({
       getSettings: services.settings.getShelfPreferences,
       saveSettings: services.settings.saveShelfPreferences,
@@ -118,6 +121,11 @@ export function useSettings() {
 
 export function useShelf() {
   const store = useRuntime().shelf;
+  return { state: useSyncExternalStore(store.subscribe, store.getSnapshot), store };
+}
+
+export function useFeeds() {
+  const store = useRuntime().feeds;
   return { state: useSyncExternalStore(store.subscribe, store.getSnapshot), store };
 }
 

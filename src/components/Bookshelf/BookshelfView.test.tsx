@@ -13,6 +13,7 @@ import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
 import type { ImportStatus, LibraryBook } from "../../types/generated";
 import { ruleServiceMocks, tocEntry, tocListing, fontServiceMocks } from "../../test/toc";
+import { feedServiceMocks } from "../../test/rss";
 import { updateServiceMocks } from "../../test/updates";
 import { syncServiceMocks } from "../../test/sync";
 import { sourceServiceMocks } from "../../test/sources";
@@ -145,6 +146,7 @@ function runtime(books: LibraryBook[] = []) {
     sources: sourceServiceMocks(),
     updates: updateServiceMocks(),
     translation: translationServiceMocks(),
+    feeds: feedServiceMocks(false),
   } satisfies AppServices);
 }
 function view(app: AppRuntime) {

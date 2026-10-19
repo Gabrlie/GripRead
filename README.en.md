@@ -51,6 +51,7 @@ A lightweight, local-first reader built with Tauri 2, with an optional self-host
 - **Bring your own** — GripRead ships no sources; import a source list from a URL, a file, or the clipboard
 - **Follow and cache** — add online books to the shelf, cache chapters for offline reading, and refresh the shelf with a pull or automatically
 - **Comics** — image sources and local CBZ and ZIP comics, read as a strip, one page, or two, right to left when wanted
+- **RSS** — RSS, Atom, and OPML, unread, starred, and full text, pictures kept offline, read and starred state synced across devices
 
 </td>
 </tr>
@@ -159,7 +160,6 @@ Start with [AGENTS.md](AGENTS.md) and the [documentation map](.ai/README.md). Th
 Directions ahead, without promised dates:
 
 - **Comics:** beyond the online sources, CBZ and ZIP files, and comic reader of 0.3.1, importing folders of images and RAR (CBR) archives.
-- **RSS:** feed management, article reading, full-text fetching, and read and favourite state synced across devices.
 - **AI retrieval and questions:** answers about a book's characters and plot bounded by how far you have read, without spoilers, and searching across books.
 - **Audio books and reading aloud:** more natural voices and audio book support.
 - **Desktop platforms:** Windows and Linux builds.

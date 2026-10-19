@@ -16,6 +16,7 @@ Configuration comes from the environment: `GRIPREAD_DATA` (the data folder, `/da
 - `POST /api/sync/push` (`{ device, changes }`) and `GET /api/sync/pull?since=` carry sync records ([decision](../notes/implemented/2026-10-13-native-sync-records.md)); a push answers the book files and covers the server lacks, and every new record is announced on the event socket as `sync { head }`.
 - An `/api/` path the server does not have answers a JSON 404 rather than the page.
 - `GET /api/sync/wait?since=` answers `{ head }` once a record past `since` is logged, or after 25 seconds; devices before 0.2.1-beta.2 long-poll it, later ones sync on events instead.
+- `POST /api/rss/refresh` (`{ urls }`, all when empty) refreshes 订阅 feeds and reports each; `GET /api/rss/articles?feed=&since=` gives a feed's articles fetched after `since` (the server's clock) with the cursor to send next, or 404 for a feed the server lacks. The server also refreshes every feed on the interval in `jobs.json` (`rssIntervalMinutes`, 1 hour by default), set on 服务器账号/服务器管理.
 - `GET /api/cloud/books` lists the shelf's local books whose files the server keeps (SHA-256, title, author, size, added, EPUB or not), for 云书架 on connected devices.
 - `PUT`/`GET /api/blobs/book/{sha256}` and `/api/blobs/cover/{sha256}.{ext}` send and fetch original book files and covers, checked against their hash.
 - `/api/auth/status`, `setup`, `login`, `logout`, `password`, and `sessions` manage the account; everything else under `/api` needs a session.

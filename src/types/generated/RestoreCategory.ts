@@ -3,4 +3,4 @@
 /**
  * Parts of a backup that a restore can skip (Legado 恢复忽略列表).
  */
-export type RestoreCategory = "reading-settings" | "theme" | "shelf-layout" | "replace-rules" | "toc-rules" | "groups" | "progress" | "bookmarks" | "reading-time" | "book-info" | "sources" | "online-books";
+export type RestoreCategory = "reading-settings" | "theme" | "shelf-layout" | "replace-rules" | "toc-rules" | "groups" | "progress" | "bookmarks" | "reading-time" | "book-info" | "sources" | "online-books" | "rss";

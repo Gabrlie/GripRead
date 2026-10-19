@@ -69,6 +69,37 @@ pub fn server_books(storage: &Storage) -> Result<Vec<ServerBook>, AppError> {
     Ok(books)
 }
 
+/// 订阅 refreshed on the server (`POST /api/rss/refresh`): the feeds
+/// named, every feed of the server's when empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RssRefreshRequest {
+    pub urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RssFeedUpdate {
+    pub url: String,
+    pub added: u32,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RssRefreshReply {
+    pub feeds: Vec<RssFeedUpdate>,
+}
+
+/// A feed's articles the server fetched since the device's cursor
+/// (`GET /api/rss/articles?feed=&since=`), and the cursor to send next.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RssArticlesReply {
+    pub articles: Vec<crate::storage::FetchedArticle>,
+    pub cursor: i64,
+}
+
 /// 更新书架 through the server (`POST /api/jobs/update`): the books by
 /// their sync keys, all of the server's updatable books when empty.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
