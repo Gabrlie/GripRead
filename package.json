@@ -2,7 +2,7 @@
   "name": "gripread",
   "private": true,
   "license": "GPL-3.0-only",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "packageManager": "pnpm@11.5.2",
   "engines": {
     "node": ">=22"
