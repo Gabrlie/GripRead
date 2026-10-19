@@ -22,6 +22,8 @@ export const errors = {
   "error.authState": "The account changed; refresh the page",
   "error.badHash": "Invalid checksum",
   "error.badPassword": "Wrong password",
+  "error.groupPasswordLength": "Passwords have 4 to 64 characters",
+  "error.groupPasswordMissing": "Set a password",
   "error.badProxy": "Invalid proxy settings: {error}",
   "error.badRegex": "Invalid regular expression: {error}",
   "error.badRoute": "Unsupported server request",

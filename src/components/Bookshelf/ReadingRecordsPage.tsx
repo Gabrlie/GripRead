@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLongPress } from "../ui/use-long-press";
-import { useLibrary, useRuntime } from "../../application/runtime";
+import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
+import { hiddenBookIds } from "../../application/shelf";
 import type { BookReadingTime, LibraryBook, ReadingStats } from "../../types/generated";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ActivityMatrix } from "./ActivityMatrix";
@@ -39,13 +40,19 @@ export function ReadingRecordsPage({
       cancelled = true;
     };
   }, [runtime.services.library, revision]);
+  // Books in a locked private group are left out of the list; the totals
+  // and the heatmap still count their time.
+  const { state: shelf } = useShelf();
+  const hidden = hiddenBookIds(shelf.groups, shelf.unlocked);
   // Deleted books and online books read without adding them keep their time.
-  const books = (stats?.books ?? []).map((record) => ({
-    record,
-    book: [...library.books, ...library.removedBooks].find(
-      (entry) => entry.book.id === record.bookId,
-    ),
-  }));
+  const books = (stats?.books ?? [])
+    .filter((record) => !hidden.has(record.bookId))
+    .map((record) => ({
+      record,
+      book: [...library.books, ...library.removedBooks].find(
+        (entry) => entry.book.id === record.bookId,
+      ),
+    }));
   const [gone, setGone] = useState<BookReadingTime | null>(null);
   const [removing, setRemoving] = useState<BookReadingTime | null>(null);
   return (

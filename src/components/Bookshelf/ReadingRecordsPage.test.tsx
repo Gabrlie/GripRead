@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
@@ -93,5 +93,54 @@ describe("删除阅读记录", () => {
     await userEvent.click(await screen.findByRole("button", { name: "删除" }));
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("retired:abc"));
     await vi.waitFor(() => expect(stats).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("private groups in 阅读记录", () => {
+  it("leaves out a locked private group's books and lists them once it is opened", async () => {
+    const record = (bookId: string, title: string) => ({
+      bookId,
+      seconds: 600,
+      lastDay: "2026-10-01",
+      title,
+      author: null,
+      deleted: true,
+      lastReadAt: 1,
+    });
+    const runtime = new AppRuntime({
+      library: {
+        listBooks: vi.fn(async () => []),
+        listRemovedBooks: vi.fn(async () => []),
+        onImportProgress: vi.fn(async () => () => undefined),
+        listGroups: vi.fn(async () => [
+          {
+            id: "p",
+            name: "私密",
+            bookIds: ["secret"],
+            privacy: { lock: "mask", sync: true },
+          },
+        ]),
+        readingStats: vi.fn(async () => ({
+          totalSeconds: 1200,
+          todaySeconds: 0,
+          days: [{ day: "2026-10-01", seconds: 1200 }],
+          books: [record("plain", "普通的书"), record("secret", "秘密之书")],
+        })),
+      },
+      reader: { listToc: vi.fn() },
+      settings: {},
+      sync: {},
+      sources: sourceServiceMocks(),
+    } as unknown as AppServices);
+    await runtime.shelf.load([]);
+    render(
+      <RuntimeContext.Provider value={runtime}>
+        <ReadingRecordsPage onClose={() => undefined} onOpenBook={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    expect(await screen.findByRole("button", { name: /普通的书/ })).toBeTruthy();
+    expect(screen.queryByText("秘密之书")).toBeNull();
+    await act(() => runtime.shelf.unlock("p"));
+    expect(await screen.findByRole("button", { name: /秘密之书/ })).toBeTruthy();
   });
 });

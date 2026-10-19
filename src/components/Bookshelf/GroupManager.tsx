@@ -1,5 +1,9 @@
 import { useState } from "react";
 import { useLibrary, useShelf } from "../../application/runtime";
+import type { GroupLock, LibraryGroup } from "../../types/generated";
+import { Switch } from "../ui/switch";
+import { toast } from "../ui/toast";
+import { describeError } from "../Cloud/format";
 import {
   Dialog,
   DialogContent,
@@ -84,21 +88,14 @@ export function GroupManager({
               </Button>
             </form>
             <p className="text-secondary">{t("groups.moveNote")}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs text-error h-7"
-              disabled={state.saving}
-              onClick={() =>
-                run(async () => {
-                  await store.remove(selected.id);
-                  setSelectedId(null);
-                  setName("");
-                })
-              }
-            >
-              {t("groups.delete")}
-            </Button>
+            <PrivacySettings
+              key={`${selected.id}:${selected.privacy?.lock ?? ""}:${selected.privacy?.sync ?? ""}`}
+              group={selected}
+              onDeleted={() => {
+                setSelectedId(null);
+                setName("");
+              }}
+            />
           </div>
         ) : (
           <>
@@ -112,7 +109,12 @@ export function GroupManager({
                   }}
                   className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-surface-container"
                 >
-                  <span className="text-on-surface font-medium">{group.name}</span>
+                  <span className="flex items-center gap-1.5 text-on-surface font-medium">
+                    {group.privacy && (
+                      <Icon name="lock" size={12} aria-label={t("groups.private")} />
+                    )}
+                    {group.name}
+                  </span>
                   <span className="text-secondary text-[11px]">
                     {
                       group.bookIds.filter((id) =>
@@ -159,5 +161,146 @@ export function GroupManager({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * A group's privacy: private or not, how it opens, its password, and
+ * whether its books sync; then deleting it, which a password group allows
+ * only with its password.
+ */
+function PrivacySettings({ group, onDeleted }: { group: LibraryGroup; onDeleted: () => void }) {
+  const { state, store } = useShelf();
+  const [isPrivate, setPrivate] = useState(Boolean(group.privacy));
+  const [lock, setLock] = useState<GroupLock>(group.privacy?.lock ?? "mask");
+  const [noSync, setNoSync] = useState(group.privacy ? !group.privacy.sync : true);
+  const [password, setPassword] = useState("");
+  const [current, setCurrent] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const hasPassword = group.privacy?.lock === "password";
+  const attempt = (action: () => Promise<void>, done?: string) => {
+    setBusy(true);
+    setError(null);
+    action().then(
+      () => {
+        setBusy(false);
+        if (done) toast(done);
+      },
+      (failure: unknown) => {
+        setBusy(false);
+        setError(describeError(failure));
+      },
+    );
+  };
+  const field = "h-8 text-xs bg-surface-container";
+  return (
+    <div className="space-y-3 border-t border-surface-variant/30 pt-3">
+      <label className="flex items-center justify-between gap-3">
+        <span>
+          <span className="flex items-center gap-1.5 text-on-surface font-medium">
+            <Icon name="lock" size={13} />
+            {t("groups.private")}
+          </span>
+          <span className="block text-[11px] text-secondary">{t("groups.privateNote")}</span>
+        </span>
+        <Switch checked={isPrivate} onCheckedChange={setPrivate} />
+      </label>
+      {isPrivate && (
+        <>
+          <div role="radiogroup" aria-label={t("groups.lock")} className="grid grid-cols-2 gap-2">
+            {(["mask", "password"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={lock === value}
+                onClick={() => setLock(value)}
+                className={`rounded-xl border px-3 py-2 text-left ${lock === value ? "border-primary bg-primary/10" : "border-surface-variant/50"}`}
+              >
+                <span className="block font-medium text-on-surface">
+                  {t(`groups.lock.${value}`)}
+                </span>
+                <span className="block text-[11px] text-secondary">
+                  {t(`groups.lock.${value}Note`)}
+                </span>
+              </button>
+            ))}
+          </div>
+          {lock === "password" && (
+            <Input
+              type="password"
+              autoComplete="new-password"
+              aria-label={hasPassword ? t("groups.password.keep") : t("groups.password.new")}
+              placeholder={hasPassword ? t("groups.password.keep") : t("groups.password.new")}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className={field}
+            />
+          )}
+          <label className="flex items-center justify-between gap-3">
+            <span>
+              <span className="block text-on-surface font-medium">{t("groups.noSync")}</span>
+              <span className="block text-[11px] text-secondary">{t("groups.noSyncNote")}</span>
+            </span>
+            <Switch checked={noSync} onCheckedChange={setNoSync} />
+          </label>
+          {lock === "password" && (
+            <p className="text-[11px] text-secondary">{t("groups.password.forgot")}</p>
+          )}
+        </>
+      )}
+      {hasPassword && (
+        <Input
+          type="password"
+          autoComplete="current-password"
+          aria-label={t("groups.password.current")}
+          placeholder={t("groups.password.current")}
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+          className={field}
+        />
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-error">
+          {error}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          className="h-7 text-xs"
+          disabled={busy || state.saving}
+          onClick={() =>
+            attempt(
+              () =>
+                store.savePrivacy({
+                  id: group.id,
+                  privacy: isPrivate ? { lock, sync: !noSync } : undefined,
+                  password: isPrivate && lock === "password" && password ? password : undefined,
+                  currentPassword: hasPassword ? current : undefined,
+                }),
+              t("groups.privacySaved"),
+            )
+          }
+        >
+          {t("groups.savePrivacy")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs text-error h-7"
+          disabled={busy || state.saving}
+          onClick={() =>
+            attempt(async () => {
+              await store.remove(group.id, hasPassword ? current : undefined);
+              onDeleted();
+            })
+          }
+        >
+          {t("groups.delete")}
+        </Button>
+      </div>
+    </div>
   );
 }

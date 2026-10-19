@@ -11,9 +11,11 @@ import type { LibraryBook } from "../../types/generated";
 import {
   READING_GROUPS,
   gainedChapters,
+  privateBookIds,
   shelfGroupOf,
   type ShelfChapterLabels,
 } from "../../application/shelf";
+import { PrivateGroupLock } from "./PrivateGroup";
 import { Header } from "../Layout/Header";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
@@ -91,16 +93,37 @@ export function BookshelfView() {
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const tabsListRef = useRef<HTMLDivElement>(null);
   const groups = [
-    ...READING_GROUPS.map((group) => ({ id: group.id as string, label: group.name })),
-    ...groupState.groups.map((group) => ({ id: group.id, label: group.name })),
+    ...READING_GROUPS.map((group) => ({
+      id: group.id as string,
+      label: group.name,
+      private: false,
+    })),
+    ...groupState.groups.map((group) => ({
+      id: group.id,
+      label: group.name,
+      private: Boolean(group.privacy),
+    })),
   ];
   const selectedGroup = groups.find((group) => group.id === shelf.groupId);
   const selectedGroupId = selectedGroup?.id ?? "all";
+  // A private group's books show only in that group, and only once opened.
+  const privateIds = privateBookIds(groupState.groups);
+  const lockedGroup = groupState.groups.find(
+    (group) =>
+      group.id === selectedGroupId && group.privacy && !groupState.unlocked.includes(group.id),
+  );
+  // Leaving a private group locks it again.
+  const shownGroup = useRef(selectedGroupId);
+  useEffect(() => {
+    if (shownGroup.current !== selectedGroupId) groupStore.lock(shownGroup.current);
+    shownGroup.current = selectedGroupId;
+  }, [selectedGroupId, groupStore]);
   const layoutMode = shelf.layout;
   const searchQuery = shelf.query;
   const filteredBooks: ShelfBook[] = orderBooks(state.books, shelf.sort)
     .filter(
       (entry) =>
+        (selectedGroupId === "all" ? !privateIds.has(entry.book.id) : true) &&
         (selectedGroupId === "all" ||
           shelfGroupOf(
             entry,
@@ -441,7 +464,16 @@ export function BookshelfView() {
                           : "text-secondary hover:text-on-surface"
                       }`}
                     >
-                      <span>{cat.label}</span>
+                      <span className="inline-flex items-center gap-1">
+                        {cat.private && (
+                          <Icon
+                            name={groupState.unlocked.includes(cat.id) ? "lock_open" : "lock"}
+                            size={12}
+                            aria-label={t("groups.private")}
+                          />
+                        )}
+                        {cat.label}
+                      </span>
                       {isSelected && (
                         <div className="absolute -bottom-1 left-0 right-0 h-[2px] bg-primary rounded-full transition-all duration-300" />
                       )}
@@ -565,7 +597,16 @@ export function BookshelfView() {
             <p role="status" className="text-xs text-secondary py-10 text-center">
               {t("shelf.loading")}
             </p>
-          ) : state.error ? null : filteredBooks.length === 0 ? (
+          ) : state.error ? null : lockedGroup ? (
+            <PrivateGroupLock group={lockedGroup} count={filteredBooks.length}>
+              <BookList
+                books={filteredBooks}
+                layout={layoutMode}
+                onOpen={() => undefined}
+                onInfo={() => undefined}
+              />
+            </PrivateGroupLock>
+          ) : filteredBooks.length === 0 ? (
             <div className="bg-surface-container-low rounded-2xl p-10 text-center my-6 space-y-3 border border-surface-variant/30">
               <div className="w-12 h-12 rounded-full bg-surface-container mx-auto flex items-center justify-center text-secondary">
                 <Icon name="auto_stories" size={24} />
@@ -583,28 +624,13 @@ export function BookshelfView() {
                 {t("shelf.import")}
               </Button>
             </div>
-          ) : layoutMode === "list" ? (
-            <div className="flex flex-col gap-3">
-              {filteredBooks.map((book) => (
-                <BookCardList
-                  key={book.entry.book.id}
-                  book={book}
-                  onOpen={() => openReader(book.entry)}
-                  onInfo={() => setInfoBook(book.entry)}
-                />
-              ))}
-            </div>
           ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3.5">
-              {filteredBooks.map((book) => (
-                <BookCardGrid
-                  key={book.entry.book.id}
-                  book={book}
-                  onOpen={() => openReader(book.entry)}
-                  onInfo={() => setInfoBook(book.entry)}
-                />
-              ))}
-            </div>
+            <BookList
+              books={filteredBooks}
+              layout={layoutMode}
+              onOpen={(book) => openReader(book)}
+              onInfo={(book) => setInfoBook(book)}
+            />
           )}
         </section>
       </div>
@@ -643,6 +669,42 @@ export function BookshelfView() {
     </div>
   );
 }
+function BookList({
+  books,
+  layout,
+  onOpen,
+  onInfo,
+}: {
+  books: ShelfBook[];
+  layout: "list" | "grid";
+  onOpen: (book: LibraryBook) => void;
+  onInfo: (book: LibraryBook) => void;
+}) {
+  return layout === "list" ? (
+    <div className="flex flex-col gap-3">
+      {books.map((book) => (
+        <BookCardList
+          key={book.entry.book.id}
+          book={book}
+          onOpen={() => onOpen(book.entry)}
+          onInfo={() => onInfo(book.entry)}
+        />
+      ))}
+    </div>
+  ) : (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3.5">
+      {books.map((book) => (
+        <BookCardGrid
+          key={book.entry.book.id}
+          book={book}
+          onOpen={() => onOpen(book.entry)}
+          onInfo={() => onInfo(book.entry)}
+        />
+      ))}
+    </div>
+  );
+}
+
 // 1. List View Card (Requirement 3: 封面固定比例4:3，无放大动画，无左上序号；右侧严格4行均等间距：书名、作者名、读至目录章节、最新目录与更新时间)
 function BookCardList({
   book,

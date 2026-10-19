@@ -94,6 +94,8 @@ import {
   Scissors,
   Split,
   ListOrdered,
+  Lock,
+  LockOpen,
 } from "lucide-react";
 const icons = {
   auto_stories: BookOpen,
@@ -134,6 +136,8 @@ const icons = {
   import_contacts: BookOpen,
   visibility: Eye,
   visibility_off: EyeOff,
+  lock: Lock,
+  lock_open: LockOpen,
   rocket_launch: Rocket,
   fort: Castle,
   potted_plant: Sprout,

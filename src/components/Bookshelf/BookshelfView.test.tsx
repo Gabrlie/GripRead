@@ -7,6 +7,7 @@ import { setLanguage } from "../../i18n";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BookshelfView } from "./BookshelfView";
 import { ImportModal } from "./ImportModal";
+import { GroupManager } from "./GroupManager";
 import { AppProvider } from "../../context/AppContext";
 import { AppRuntime, RuntimeContext } from "../../application/runtime";
 import type { AppServices } from "../../services/contracts";
@@ -60,6 +61,8 @@ function runtime(books: LibraryBook[] = []) {
       createGroup: vi.fn(),
       renameGroup: vi.fn(),
       deleteGroup: vi.fn(),
+      saveGroupPrivacy: vi.fn(),
+      unlockGroup: vi.fn(),
       moveBook: vi.fn(async () => undefined),
       ensureTextTransforms: vi.fn(async () => null),
       setBookReplaceRules: vi.fn(async () => undefined),
@@ -549,5 +552,127 @@ describe("更新目录 on the shelf", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await waitFor(() => expect(app.services.sources.updateToc).toHaveBeenCalledTimes(2));
     clock.mockRestore();
+  });
+});
+
+describe("private groups", () => {
+  const secret: LibraryBook = {
+    ...entry,
+    book: { ...entry.book, id: "secret-book", title: "秘密之书" },
+    asset: { ...entry.asset!, id: "s", bookId: "secret-book" },
+  };
+  const privateShelf = async (lock: "mask" | "password") => {
+    const app = runtime([entry, secret]);
+    vi.mocked(app.services.library.listGroups).mockResolvedValue([
+      { id: "p", name: "私密", bookIds: ["secret-book"], privacy: { lock, sync: false } },
+    ]);
+    vi.mocked(app.services.library.unlockGroup).mockImplementation(async (_id, password) => {
+      if (password !== "1234") throw new Error("invalid_argument: 密码不对");
+    });
+    await app.library.refresh();
+    view(app);
+    await screen.findByTestId("library-book-real-book");
+    await screen.findByRole("tab", { name: /私密/ });
+    return app;
+  };
+  const tab = (name: RegExp) => screen.getByRole("tab", { name });
+  // A book on screen and reachable: not under the mask's hidden copy.
+  const shown = (id: string) => {
+    const card = screen.queryByTestId(`library-book-${id}`);
+    return Boolean(card && !card.closest('[aria-hidden="true"]'));
+  };
+  const choose = async (name: RegExp) => {
+    await userEvent.click(tab(name));
+    await waitFor(() => expect(tab(name).getAttribute("aria-selected")).toBe("true"));
+  };
+
+  it("keeps its books out of 全部 and behind a mask that a tap lifts until the group is left", async () => {
+    await privateShelf("mask");
+    // 全部 lists only the other book.
+    expect(screen.queryByTestId("library-book-secret-book")).toBeNull();
+    await choose(/私密/);
+    // Masked: drawn blurred under the lock, but not reachable.
+    expect(screen.getByTestId("private-group-lock")).toBeTruthy();
+    expect(screen.getByTestId("library-book-secret-book")).toBeTruthy();
+    expect(shown("secret-book")).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: /显示书单/ }));
+    await waitFor(() => expect(shown("secret-book")).toBe(true));
+    // Leaving the group locks it again.
+    await choose(/全部/);
+    expect(screen.queryByTestId("library-book-secret-book")).toBeNull();
+    await choose(/私密/);
+    expect(shown("secret-book")).toBe(false);
+    // So does the app going to the background.
+    await userEvent.click(screen.getByRole("button", { name: /显示书单/ }));
+    await waitFor(() => expect(shown("secret-book")).toBe(true));
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    await waitFor(() => expect(shown("secret-book")).toBe(false));
+  });
+
+  it("opens a password group only with its password and draws nothing before", async () => {
+    const app = await privateShelf("password");
+    await choose(/私密/);
+    expect(screen.queryByTestId("library-book-secret-book")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /输入密码/ }));
+    const dialog = await screen.findByRole("dialog", { name: /打开「私密」/ });
+    const field = within(dialog).getByLabelText("密码");
+    await userEvent.type(field, "0000");
+    await userEvent.click(within(dialog).getByRole("button", { name: "打开" }));
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(screen.queryByTestId("library-book-secret-book")).toBeNull();
+    await userEvent.clear(field);
+    await userEvent.type(field, "1234");
+    await userEvent.click(within(dialog).getByRole("button", { name: "打开" }));
+    await waitFor(() => expect(shown("secret-book")).toBe(true));
+    expect(app.services.library.unlockGroup).toHaveBeenLastCalledWith("p", "1234");
+  });
+
+  it("makes a group private with a password and asks for it to change or delete the group", async () => {
+    const app = runtime([entry]);
+    const groups = [{ id: "g", name: "收藏", bookIds: ["real-book"] }];
+    vi.mocked(app.services.library.listGroups).mockImplementation(async () => groups);
+    vi.mocked(app.services.library.saveGroupPrivacy).mockImplementation(async (request) => {
+      Object.assign(groups[0], { privacy: request.privacy });
+      return groups[0];
+    });
+    vi.mocked(app.services.library.deleteGroup).mockImplementation(async (_id, password) => {
+      if (password !== "1234") throw new Error("invalid_argument: 密码不对");
+    });
+    await app.library.refresh();
+    await app.shelf.load([entry]);
+    render(
+      <RuntimeContext.Provider value={app}>
+        <GroupManager open onOpenChange={() => undefined} />
+      </RuntimeContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /收藏/ }));
+    await userEvent.click(screen.getByRole("switch", { name: /隐私分组/ }));
+    await userEvent.click(screen.getByRole("radio", { name: /密码/ }));
+    await userEvent.type(screen.getByLabelText("新密码（4–64 个字符）"), "1234");
+    // Kept out of sync and backups unless turned on.
+    expect(
+      screen.getByRole("switch", { name: /不同步到云端和备份/ }).getAttribute("aria-checked"),
+    ).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: "保存隐私设置" }));
+    await waitFor(() =>
+      expect(app.services.library.saveGroupPrivacy).toHaveBeenCalledWith({
+        id: "g",
+        privacy: { lock: "password", sync: false },
+        password: "1234",
+        currentPassword: undefined,
+      }),
+    );
+    // Now deleting it needs the password.
+    await userEvent.click(await screen.findByRole("button", { name: /删除分组/ }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("当前密码"), "1234");
+    await userEvent.click(screen.getByRole("button", { name: /删除分组/ }));
+    await waitFor(() =>
+      expect(app.services.library.deleteGroup).toHaveBeenLastCalledWith("g", "1234"),
+    );
   });
 });

@@ -11,6 +11,7 @@ import type {
   BookTocSettings,
   ContentWindow,
   LibraryBook,
+  LibraryGroup,
   ReaderLocator,
   ReaderPreferences,
   ShelfPreferences,
@@ -203,6 +204,21 @@ export function previewServices(): AppServices {
     innerChapters: false,
   };
   let shelfState: ShelfState | null = null;
+  // A private group holding the preview comic; its password, when set, is kept as given.
+  let groups: LibraryGroup[] = [
+    {
+      id: "preview-private",
+      name: "私密书架",
+      bookIds: [PREVIEW_COMIC_ID],
+      privacy: { lock: "mask", sync: false },
+    },
+  ];
+  const passwords = new Map<string, string>();
+  const checkPassword = (id: string, password: string | undefined) => {
+    const kept = passwords.get(id);
+    if (kept !== undefined && kept !== password)
+      throw { code: "invalid_argument", key: "badPassword", message: "密码不对" };
+  };
   let readingSeconds = 1260;
   let replaceRules: ReplaceRule[] = [
     {
@@ -293,12 +309,38 @@ export function previewServices(): AppServices {
       removeBook: unsupported,
       deleteBook: unsupported,
       restoreBook: unsupported,
-      listGroups: async () => [],
-      createGroup: unsupported,
-      renameGroup: unsupported,
-      deleteGroup: unsupported,
-      moveBook: async (_bookId, placement) => {
-        shelfState = placement.kind === "state" ? placement.value : null;
+      listGroups: async () => groups,
+      createGroup: async (name) => {
+        const group: LibraryGroup = { id: `preview-${groups.length}`, name, bookIds: [] };
+        groups = [...groups, group];
+        return group;
+      },
+      renameGroup: async (id, name) => {
+        groups = groups.map((group) => (group.id === id ? { ...group, name } : group));
+        return groups.find((group) => group.id === id)!;
+      },
+      deleteGroup: async (id, password) => {
+        checkPassword(id, password);
+        groups = groups.filter((group) => group.id !== id);
+      },
+      saveGroupPrivacy: async ({ id, privacy, password, currentPassword }) => {
+        checkPassword(id, currentPassword);
+        if (privacy?.lock === "password" && password) passwords.set(id, password);
+        if (privacy?.lock !== "password") passwords.delete(id);
+        groups = groups.map((group) => (group.id === id ? { ...group, privacy } : group));
+        return groups.find((group) => group.id === id)!;
+      },
+      unlockGroup: async (id, password) => checkPassword(id, password),
+      moveBook: async (bookId, placement) => {
+        if (bookId !== PREVIEW_COMIC_ID)
+          shelfState = placement.kind === "state" ? placement.value : null;
+        groups = groups.map((group) => ({
+          ...group,
+          bookIds: [
+            ...group.bookIds.filter((id) => id !== bookId),
+            ...(placement.kind === "group" && placement.value === group.id ? [bookId] : []),
+          ],
+        }));
       },
       pickTxtFiles: async () => [],
       pickTxtFolder: async () => [],

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useLibrary, useRuntime } from "../../application/runtime";
+import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
+import { hiddenBookIds } from "../../application/shelf";
 import type { DownloadJob, LibraryBook } from "../../types/generated";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { presetRange } from "../Online/CacheRangeDialog";
@@ -24,9 +25,12 @@ export function DownloadManagerPage({ onClose }: { onClose: () => void }) {
   const runtime = useRuntime();
   const service = runtime.services.sources;
   const { state } = useLibrary();
+  // Books in a locked private group are not offered.
+  const { state: shelf } = useShelf();
+  const hidden = hiddenBookIds(shelf.groups, shelf.unlocked);
   const books = state.books.filter(
     (book): book is LibraryBook & { online: NonNullable<LibraryBook["online"]> } =>
-      Boolean(book.online?.onShelf),
+      Boolean(book.online?.onShelf) && !hidden.has(book.book.id),
   );
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [adding, setAdding] = useState(false);

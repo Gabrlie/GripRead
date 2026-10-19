@@ -160,7 +160,12 @@ export function BookDetailPage({
     : book.locator && book.totalLength
       ? `${Math.min(100, (book.locator.offset / book.totalLength) * 100).toFixed(1)}%`
       : t("detail.unread");
-  const placements: { key: string; label: string; placement: ShelfPlacement }[] = [
+  const placements: {
+    key: string;
+    label: string;
+    private?: boolean;
+    placement: ShelfPlacement;
+  }[] = [
     { key: "automatic", label: t("detail.automatic"), placement: { kind: "automatic" } },
     ...READING_GROUPS.slice(1).map((group) => ({
       key: group.id,
@@ -170,6 +175,7 @@ export function BookDetailPage({
     ...shelf.groups.map((group) => ({
       key: group.id,
       label: group.name,
+      private: Boolean(group.privacy),
       placement: { kind: "group", value: group.id } as ShelfPlacement,
     })),
   ];
@@ -427,7 +433,12 @@ export function BookDetailPage({
                       : "border-surface-variant text-on-surface hover:bg-surface-container"
                   }`}
                 >
-                  {item.label}
+                  <span className="inline-flex items-center gap-1">
+                    {item.private && (
+                      <Icon name="lock" size={11} aria-label={t("groups.private")} />
+                    )}
+                    {item.label}
+                  </span>
                 </button>
               ))}
             </div>

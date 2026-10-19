@@ -1,6 +1,7 @@
 import type {
   LibraryBook,
   LibraryGroup,
+  SaveGroupPrivacyRequest,
   ShelfPlacement,
   ShelfState,
   TocEntry,
@@ -181,8 +182,32 @@ export function shelfGroupOf(
   return group?.id ?? book.shelfState ?? automatic;
 }
 
+/**
+ * Books of private groups not opened now: left out of every list but
+ * their group's own. A private group's books are never in 全部 or the
+ * reading states; `unlocked` only shows them where lists name books
+ * (records, downloads).
+ */
+export function hiddenBookIds(
+  groups: LibraryGroup[],
+  unlocked: readonly string[] = [],
+): Set<string> {
+  return new Set(
+    groups
+      .filter((group) => group.privacy && !unlocked.includes(group.id))
+      .flatMap((group) => group.bookIds),
+  );
+}
+
+/** Books of every private group, opened or not: never in 全部. */
+export function privateBookIds(groups: LibraryGroup[]): Set<string> {
+  return hiddenBookIds(groups);
+}
+
 interface ShelfSnapshot {
   groups: LibraryGroup[];
+  /** Private groups opened since they were last locked (in memory only). */
+  unlocked: string[];
   /** Reading states derived from progress, by book id. */
   automatic: Record<string, ShelfState>;
   chapters: Record<string, ShelfChapterLabels>;
@@ -195,6 +220,7 @@ interface ShelfSnapshot {
 export class ShelfStore {
   private snapshot: ShelfSnapshot = {
     groups: [],
+    unlocked: [],
     automatic: {},
     chapters: {},
     chapterErrors: {},
@@ -401,7 +427,34 @@ export class ShelfStore {
   };
   rename = (id: string, name: string) =>
     this.change(`group:${id}:rename`, () => this.library.renameGroup(id, name));
-  remove = (id: string) => this.change(`group:${id}:remove`, () => this.library.deleteGroup(id));
+  remove = (id: string, password?: string) =>
+    this.groupLock(id) === "password"
+      ? this.checked(() => this.library.deleteGroup(id, password))
+      : this.change(`group:${id}:remove`, () => this.library.deleteGroup(id));
+  /**
+   * Makes a group private, changes how it opens, or makes it ordinary. A
+   * refused password is the caller's to show, not a shelf error to retry.
+   */
+  savePrivacy = (request: SaveGroupPrivacyRequest) =>
+    this.checked(() => this.library.saveGroupPrivacy(request));
+  private groupLock = (id: string) =>
+    this.snapshot.groups.find((item) => item.id === id)?.privacy?.lock;
+  private checked = (action: () => Promise<unknown>) =>
+    this.enqueueGroups(async () => {
+      await action();
+      await this.refreshGroups();
+    });
+  /** Opens a private group: a mask at once, a password group when its password is right. */
+  unlock = async (id: string, password?: string) => {
+    if (this.groupLock(id) === "password") await this.library.unlockGroup(id, password ?? "");
+    if (!this.snapshot.unlocked.includes(id))
+      this.update({ unlocked: [...this.snapshot.unlocked, id] });
+  };
+  /** Locks one private group again, or every one (leaving the app). */
+  lock = (id?: string) => {
+    const unlocked = id === undefined ? [] : this.snapshot.unlocked.filter((item) => item !== id);
+    if (unlocked.length !== this.snapshot.unlocked.length) this.update({ unlocked });
+  };
   /** A manual move holds until the book is moved again; automatic restores derivation. */
   move = (bookId: string, placement: ShelfPlacement) =>
     this.change(`book:${bookId}:groups`, async () => {

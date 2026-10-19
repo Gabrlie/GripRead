@@ -20,6 +20,8 @@ export const errors = {
   "error.authState": "账号状态已变化，请刷新",
   "error.badHash": "校验值无效",
   "error.badPassword": "密码不对",
+  "error.groupPasswordLength": "密码需要 4 到 64 个字符",
+  "error.groupPasswordMissing": "请设置密码",
   "error.badProxy": "代理设置无效：{error}",
   "error.badRegex": "正则表达式无效：{error}",
   "error.badRoute": "不支持的服务器接口",

@@ -39,6 +39,7 @@ mod online_convert;
 mod usage;
 pub use usage::DEFAULT_CLEARED;
 mod portable;
+mod privacy;
 mod sources;
 mod sync;
 mod translation;
@@ -55,7 +56,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 27;
+const CURRENT_SCHEMA_VERSION: i64 = 28;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1220,6 +1221,22 @@ impl Storage {
             )?;
             tx.commit()?;
         }
+        if current < 28 {
+            // Private groups: hidden from other lists until opened by a tap
+            // or a password, optionally kept out of sync and backups.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE library_groups ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE library_groups ADD COLUMN lock TEXT;
+                 ALTER TABLE library_groups ADD COLUMN password_hash TEXT;
+                 ALTER TABLE library_groups ADD COLUMN sync INTEGER NOT NULL DEFAULT 1;",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (28, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
 
         Ok(())
     }
@@ -2033,7 +2050,7 @@ impl Storage {
 
     pub fn list_groups(&self) -> Result<Vec<LibraryGroup>, AppError> {
         let mut statement = self.conn.prepare(
-            "SELECT g.id, g.name, m.book_id FROM library_groups g
+            "SELECT g.id, g.name, m.book_id, g.private, g.lock, g.sync FROM library_groups g
              LEFT JOIN book_groups m ON m.group_id = g.id ORDER BY g.rowid, m.book_id",
         )?;
         let mut rows = statement.query([])?;
@@ -2042,10 +2059,20 @@ impl Storage {
             let id: String = row.get(0)?;
             let book_id: Option<String> = row.get(2)?;
             if groups.last().is_none_or(|group| group.id != id) {
+                let private: bool = row.get(3)?;
+                let lock: Option<String> = row.get(4)?;
                 groups.push(LibraryGroup {
                     id,
                     name: row.get(1)?,
                     book_ids: Vec::new(),
+                    privacy: if private {
+                        Some(crate::models::GroupPrivacy {
+                            lock: privacy::parse_lock(lock.as_deref().unwrap_or_default()),
+                            sync: row.get(5)?,
+                        })
+                    } else {
+                        None
+                    },
                 });
             }
             if let Some(book_id) = book_id {
@@ -2068,6 +2095,7 @@ impl Storage {
             id,
             name,
             book_ids: Vec::new(),
+            privacy: None,
         })
     }
 
@@ -2089,7 +2117,16 @@ impl Storage {
             .ok_or_else(|| AppError::new(ErrorCode::NotFound, "library group was not found"))
     }
 
-    pub fn delete_group(&self, id: &str) -> Result<(), AppError> {
+    /// Deletes a group, its books returning to automatic grouping; a
+    /// password group needs its password.
+    pub fn delete_group(&self, id: &str, password: Option<&str>) -> Result<(), AppError> {
+        self.check_group_password(id, password)?;
+        self.drop_group(id)
+    }
+
+    /// Deletes a group without asking for its password (sync applies a
+    /// deletion another device already allowed).
+    pub(crate) fn drop_group(&self, id: &str) -> Result<(), AppError> {
         if self
             .conn
             .execute("DELETE FROM library_groups WHERE id = ?1", params![id])?
@@ -7355,7 +7392,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 27);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 28);
     }
 
     #[test]
@@ -8417,7 +8454,7 @@ mod tests {
             storage
                 .conn
                 .execute_batch(
-                    "ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
+                    "ALTER TABLE library_groups DROP COLUMN private; ALTER TABLE library_groups DROP COLUMN lock; ALTER TABLE library_groups DROP COLUMN password_hash; ALTER TABLE library_groups DROP COLUMN sync; ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets;
                      ALTER TABLE books DROP COLUMN intro;
                      UPDATE books SET author = NULL;
                      CREATE TABLE book_toc_rules (
@@ -8636,7 +8673,7 @@ mod tests {
                 .conn
                 .execute_batch(
                     "UPDATE books SET author = '（校对版全本） 作者_零下十九度';
-                     ALTER TABLE book_toc_settings DROP COLUMN source_titles; ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
+                     ALTER TABLE library_groups DROP COLUMN private; ALTER TABLE library_groups DROP COLUMN lock; ALTER TABLE library_groups DROP COLUMN password_hash; ALTER TABLE library_groups DROP COLUMN sync; ALTER TABLE book_toc_settings DROP COLUMN source_titles; ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; 
                      DELETE FROM schema_migrations WHERE version >= 10;",
                 )
                 .unwrap();
@@ -9196,6 +9233,100 @@ mod tests {
     }
 
     #[test]
+    fn a_private_group_keeps_its_lock_and_asks_for_its_password() {
+        use crate::models::{GroupLock, GroupPrivacy, SaveGroupPrivacyRequest};
+        let root = TestRoot::new();
+        let app_root = root.0.join("data");
+        let storage = Storage::open(&app_root).unwrap();
+        let group = storage.create_group("私密").unwrap();
+        let request =
+            |privacy: Option<GroupPrivacy>, password: Option<&str>, current: Option<&str>| {
+                SaveGroupPrivacyRequest {
+                    id: group.id.clone(),
+                    privacy,
+                    password: password.map(str::to_string),
+                    current_password: current.map(str::to_string),
+                }
+            };
+        let masked = GroupPrivacy {
+            lock: GroupLock::Mask,
+            sync: false,
+        };
+        let saved = storage
+            .save_group_privacy(&request(Some(masked.clone()), None, None))
+            .unwrap();
+        assert_eq!(saved.privacy, Some(masked.clone()));
+        // A mask needs no password to open or change.
+        storage.unlock_group(&group.id, "").unwrap();
+        let locked = GroupPrivacy {
+            lock: GroupLock::Password,
+            sync: true,
+        };
+        let key = |error: AppError| error.key.unwrap_or_default();
+        assert_eq!(
+            key(storage
+                .save_group_privacy(&request(Some(locked.clone()), None, None))
+                .unwrap_err()),
+            "groupPasswordMissing"
+        );
+        assert_eq!(
+            key(storage
+                .save_group_privacy(&request(Some(locked.clone()), Some("123"), None))
+                .unwrap_err()),
+            "groupPasswordLength"
+        );
+        storage
+            .save_group_privacy(&request(Some(locked.clone()), Some("1234"), None))
+            .unwrap();
+        // The hash stays in the core.
+        let stored = storage.group_privacy(&group.id).unwrap();
+        assert!(stored
+            .password_hash
+            .as_deref()
+            .unwrap()
+            .starts_with("$argon2"));
+        assert!(!serde_json::to_string(&storage.list_groups().unwrap())
+            .unwrap()
+            .contains("argon2"));
+        assert_eq!(
+            key(storage.unlock_group(&group.id, "4321").unwrap_err()),
+            "badPassword"
+        );
+        storage.unlock_group(&group.id, "1234").unwrap();
+        // Changing it, or deleting the group, needs the password; the old
+        // one keeps working when only the sync choice changes.
+        assert_eq!(
+            key(storage
+                .save_group_privacy(&request(Some(masked.clone()), None, None))
+                .unwrap_err()),
+            "badPassword"
+        );
+        let unsynced = GroupPrivacy {
+            sync: false,
+            ..locked.clone()
+        };
+        storage
+            .save_group_privacy(&request(Some(unsynced.clone()), None, Some("1234")))
+            .unwrap();
+        storage.unlock_group(&group.id, "1234").unwrap();
+        assert_eq!(
+            key(storage.delete_group(&group.id, None).unwrap_err()),
+            "badPassword"
+        );
+        drop(storage);
+        let reopened = Storage::open(&app_root).unwrap();
+        assert_eq!(reopened.list_groups().unwrap()[0].privacy, Some(unsynced));
+        reopened
+            .save_group_privacy(&request(None, None, Some("1234")))
+            .unwrap();
+        assert_eq!(
+            reopened.group_privacy(&group.id).unwrap(),
+            Default::default()
+        );
+        reopened.delete_group(&group.id, None).unwrap();
+    }
+
+    #[test]
     fn groups_persist_memberships_and_deletion_preserves_reading_data() {
         let root = TestRoot::new();
         let source = write_source(&root.0, "groups.txt", "第一章\n阅读分组😀".as_bytes());
@@ -9241,7 +9372,7 @@ mod tests {
             None
         );
         // Deleting the group returns the book to automatic grouping.
-        storage.delete_group(&group.id).unwrap();
+        storage.delete_group(&group.id, None).unwrap();
         assert_eq!(storage.list_books().unwrap(), vec![imported.book.clone()]);
         assert_eq!(
             storage.saved_position(&imported.book.id).unwrap(),
@@ -9810,7 +9941,7 @@ mod tests {
             ErrorCode::NotFound
         );
         assert_eq!(
-            storage.delete_group("absent").unwrap_err().code,
+            storage.delete_group("absent", None).unwrap_err().code,
             ErrorCode::NotFound
         );
         storage
@@ -9930,7 +10061,7 @@ mod tests {
         storage.remove_book(&first.book.id).unwrap();
         storage.restore_book(&first.book.id).unwrap();
         assert_eq!(storage.list_library_books().unwrap().len(), 1);
-        storage.delete_group(&group.id).unwrap();
+        storage.delete_group(&group.id, None).unwrap();
         assert_eq!(storage.get_shelf_preferences().unwrap().group_id, "all");
         for tab in ["reading", "unread", "finished"] {
             let saved = ShelfPreferences {
@@ -10150,7 +10281,7 @@ mod tests {
             .conn
             .execute("UPDATE toc_cache SET entries_json = '[]'", [])
             .unwrap();
-        storage.conn.execute_batch("ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
+        storage.conn.execute_batch("ALTER TABLE library_groups DROP COLUMN private; ALTER TABLE library_groups DROP COLUMN lock; ALTER TABLE library_groups DROP COLUMN password_hash; ALTER TABLE library_groups DROP COLUMN sync; ALTER TABLE book_toc_settings DROP COLUMN untitled_title; ALTER TABLE book_toc_settings DROP COLUMN chunk_kb; ALTER TABLE book_toc_settings DROP COLUMN asked; ALTER TABLE book_toc_settings DROP COLUMN inner_chapters; ALTER TABLE replace_rules DROP COLUMN scope_title; ALTER TABLE replace_rules DROP COLUMN scope_content; DROP TABLE online_images; DROP TABLE server_books; DROP TABLE translations; DROP TABLE book_translation; DROP TABLE online_cover_cache; DROP TABLE online_book_cache; DROP TABLE retired_books; DROP TABLE online_chapters; DROP TABLE online_books; DROP TABLE source_cookies; DROP TABLE source_cache; DROP TABLE book_sources; DROP TABLE retired_reading_time; DROP TABLE progress_sync; DROP TABLE cloud_books; DROP TABLE pending_book_metadata; DROP TABLE pending_book_restores; DROP TABLE sync_settings; DROP TABLE replace_rules; ALTER TABLE txt_assets DROP COLUMN transform_json; ALTER TABLE books DROP COLUMN use_replace_rules; DROP TABLE reading_time; ALTER TABLE books DROP COLUMN shelf_state; ALTER TABLE books DROP COLUMN cover_asset_id; ALTER TABLE bookmarks DROP COLUMN note; DROP TABLE book_toc_settings; DROP TABLE txt_toc_rules; DROP TABLE reader_assets; ALTER TABLE books DROP COLUMN intro; ALTER TABLE toc_cache DROP COLUMN rule_identity; ALTER TABLE toc_cache DROP COLUMN rule_revision; DELETE FROM schema_migrations WHERE version >= 8;").unwrap();
         drop(storage);
         let mut reopened = Storage::open(&app_root).unwrap();
         assert_eq!(

@@ -111,6 +111,8 @@ import type {
   ImportOperationRequest,
   BookRequest,
   ListTocRequest,
+  SaveGroupPrivacyRequest,
+  UnlockGroupRequest,
   ResolveLocatorRequest,
   SaveLocatorRequest,
   SaveSettingsRequest,
@@ -303,9 +305,17 @@ export const tauriServices: AppServices = {
       invokeCommand<LibraryGroup>("rename_group", {
         request: { id, name } satisfies RenameGroupRequest,
       }),
-    deleteGroup: (id) =>
+    deleteGroup: (id, password) =>
       invokeCommand<void>("delete_group", {
-        request: { id } satisfies GroupRequest,
+        request: { id, password } satisfies GroupRequest,
+      }),
+    saveGroupPrivacy: (request) =>
+      invokeCommand<LibraryGroup>("save_group_privacy", {
+        request: request satisfies SaveGroupPrivacyRequest,
+      }),
+    unlockGroup: (id, password) =>
+      invokeCommand<void>("unlock_group", {
+        request: { id, password } satisfies UnlockGroupRequest,
       }),
     moveBook: (bookId, placement: ShelfPlacement) =>
       invokeCommand<void>("move_book", {

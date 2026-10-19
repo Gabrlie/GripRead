@@ -594,13 +594,30 @@ pub async fn rename_group(
     })?
 }
 
+pub async fn save_group_privacy(
+    state: &Arc<AppState>,
+    request: crate::models::SaveGroupPrivacyRequest,
+) -> Result<LibraryGroup, AppError> {
+    with_storage(state, move |storage| storage.save_group_privacy(&request)).await
+}
+
+pub async fn unlock_group(
+    state: &Arc<AppState>,
+    request: crate::models::UnlockGroupRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.unlock_group(&request.id, &request.password)
+    })
+    .await
+}
+
 pub async fn delete_group(state: &Arc<AppState>, request: GroupRequest) -> Result<(), AppError> {
     let storage = Arc::clone(&state.storage);
     tokio::task::spawn_blocking(move || {
         storage
             .lock()
             .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))?
-            .delete_group(&request.id)
+            .delete_group(&request.id, request.password.as_deref())
     })
     .await
     .map_err(|error| {

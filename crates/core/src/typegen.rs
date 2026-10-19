@@ -111,6 +111,10 @@ const IPC_TYPES: &[&str] = &[
     "CreateGroupRequest",
     "RenameGroupRequest",
     "GroupRequest",
+    "GroupLock",
+    "GroupPrivacy",
+    "SaveGroupPrivacyRequest",
+    "UnlockGroupRequest",
     "ThemeMode",
     "PaperTone",
     "ReaderFont",
@@ -477,6 +481,10 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<SetOnlineBookFlagRequest>(&config)?;
     export_all::<RenameGroupRequest>(&config)?;
     export_all::<GroupRequest>(&config)?;
+    export_all::<GroupLock>(&config)?;
+    export_all::<GroupPrivacy>(&config)?;
+    export_all::<SaveGroupPrivacyRequest>(&config)?;
+    export_all::<UnlockGroupRequest>(&config)?;
     export_all::<ThemeMode>(&config)?;
     export_all::<PaperTone>(&config)?;
     export_all::<ReaderFont>(&config)?;

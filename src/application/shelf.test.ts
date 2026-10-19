@@ -71,6 +71,8 @@ function setup() {
     createGroup: vi.fn(async () => created),
     renameGroup: vi.fn(async (id, name) => ({ id, name, bookIds: [] })),
     deleteGroup: vi.fn(async () => {}),
+    saveGroupPrivacy: vi.fn(),
+    unlockGroup: vi.fn(async () => {}),
     moveBook: vi.fn(async () => undefined),
     ensureTextTransforms: vi.fn(async () => null),
     setBookReplaceRules: vi.fn(async () => undefined),

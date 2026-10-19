@@ -1846,6 +1846,7 @@ version = "0.3.2"
 dependencies = [
  "aes",
  "aho-corasick",
+ "argon2",
  "base64 0.22.1",
  "cbc",
  "chardetng",
@@ -1861,6 +1862,7 @@ dependencies = [
  "hmac",
  "imagesize",
  "md-5",
+ "password-hash",
  "regex",
  "roxmltree",
  "rquickjs",

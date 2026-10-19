@@ -144,6 +144,8 @@ function runtime() {
       createGroup: vi.fn(),
       renameGroup: vi.fn(),
       deleteGroup: vi.fn(),
+      saveGroupPrivacy: vi.fn(),
+      unlockGroup: vi.fn(),
       moveBook: vi.fn(async () => undefined),
       ensureTextTransforms: vi.fn(async () => null),
       setBookReplaceRules: vi.fn(async () => undefined),

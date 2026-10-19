@@ -518,7 +518,7 @@ impl Storage {
                     .into_iter()
                     .find(|group| group.name == rest)
                 {
-                    self.delete_group(&group.id)?;
+                    self.drop_group(&group.id)?;
                 }
             }
             ("replace", Some(value)) => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLibrary, useRuntime } from "../../application/runtime";
+import { useLibrary, useRuntime, useShelf } from "../../application/runtime";
+import { hiddenBookIds } from "../../application/shelf";
 import type { CloudBook } from "../../types/generated";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
@@ -26,7 +27,12 @@ export function CloudShelfPage({
   const runtime = useRuntime();
   const { state: library } = useLibrary();
   const sync = runtime.services.sync;
-  const [books, setBooks] = useState<CloudBook[] | null>(null);
+  const [listed, setBooks] = useState<CloudBook[] | null>(null);
+  // Copies of books in a locked private group are not named here.
+  const { state: shelf } = useShelf();
+  const hidden = hiddenBookIds(shelf.groups, shelf.unlocked);
+  const books =
+    listed && listed.filter((book) => !book.localBookId || !hidden.has(book.localBookId));
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [removing, setRemoving] = useState<CloudBook | null>(null);
@@ -73,7 +79,7 @@ export function CloudShelfPage({
     }
   };
   // Online books are not uploaded, so only local books count.
-  const localBooks = library.books.filter((book) => !book.online);
+  const localBooks = library.books.filter((book) => !book.online && !hidden.has(book.book.id));
   const localCount = localBooks.length;
   const uploadedLocal = new Set(books?.map((book) => book.localBookId).filter(Boolean));
   const notUploaded = localBooks.filter(

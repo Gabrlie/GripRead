@@ -117,6 +117,8 @@ pub fn mutates(name: &str) -> bool {
         "install_update",
         "forget_sync_server_login",
         "server_api",
+        // Opening a private group changes nothing.
+        "unlock_group",
     ];
     !READS.iter().any(|read| name.starts_with(read))
 }
@@ -167,6 +169,8 @@ pub const COMMANDS: &[&str] = &[
     "delete_bookmark",
     "delete_cloud_book",
     "delete_group",
+    "save_group_privacy",
+    "unlock_group",
     "delete_reader_font",
     "delete_reading_record",
     "delete_remote_backup",
@@ -399,6 +403,10 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
             reply(crate::commands::delete_cloud_book(state, request(args)?).await)
         }
         "delete_group" => reply(crate::commands::delete_group(state, request(args)?).await),
+        "save_group_privacy" => {
+            reply(crate::commands::save_group_privacy(state, request(args)?).await)
+        }
+        "unlock_group" => reply(crate::commands::unlock_group(state, request(args)?).await),
         "delete_reader_font" => {
             reply(crate::commands::delete_reader_font(state, request(args)?).await)
         }

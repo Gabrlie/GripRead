@@ -220,6 +220,53 @@ pub struct LibraryGroup {
     pub id: String,
     pub name: String,
     pub book_ids: Vec<String>,
+    /// A private group: its books are left out of other lists until it
+    /// is opened. The password hash never leaves the core.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub privacy: Option<GroupPrivacy>,
+}
+
+/// How a private group is opened: a tap on its mask, or its password.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GroupLock {
+    Mask,
+    Password,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPrivacy {
+    pub lock: GroupLock,
+    /// Its books sync and go into backups; when off, they sync only
+    /// which group they are in.
+    pub sync: bool,
+}
+
+/// Makes a group private, changes its lock or password, or makes it
+/// ordinary again (`privacy` absent). A group with a password needs it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveGroupPrivacyRequest {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub privacy: Option<GroupPrivacy>,
+    /// A new password; a password group keeps its own when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_password: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockGroupRequest {
+    pub id: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -239,6 +286,10 @@ pub struct RenameGroupRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GroupRequest {
     pub id: String,
+    /// Deleting a group with a password needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

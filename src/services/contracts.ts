@@ -1,4 +1,5 @@
 import type {
+  SaveGroupPrivacyRequest,
   BookImage,
   BookTranslation,
   BookTranslationEvent,
@@ -109,7 +110,11 @@ export interface LibraryService {
   listGroups(): Promise<LibraryGroup[]>;
   createGroup(name: string): Promise<LibraryGroup>;
   renameGroup(id: string, name: string): Promise<LibraryGroup>;
-  deleteGroup(id: string): Promise<void>;
+  /** A group with a password needs it. */
+  deleteGroup(id: string, password?: string): Promise<void>;
+  saveGroupPrivacy(request: SaveGroupPrivacyRequest): Promise<LibraryGroup>;
+  /** Rejects a wrong password. */
+  unlockGroup(id: string, password: string): Promise<void>;
   /** Moves a book to automatic grouping, a reading state, or one user group. */
   moveBook(bookId: string, placement: ShelfPlacement): Promise<void>;
   /** Picks TXT files (several at once); an empty list when cancelled. */

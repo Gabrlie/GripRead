@@ -60,6 +60,11 @@ export class AppRuntime {
   constructor(readonly services: AppServices) {
     this.library = new LibraryStore(services.library);
     this.shelf = new ShelfStore(services.library, services.reader, () => this.library.refresh());
+    // Private groups lock again whenever the app goes to the background.
+    if (typeof document !== "undefined")
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") this.shelf.lock();
+      });
     this.settings = new SettingsStore(services.settings, READER_SETTINGS_SAVE_DELAY_MS);
     this.positions = new ReaderPositions(services.reader);
     this.progressSync = new ProgressSync(services.sync);
