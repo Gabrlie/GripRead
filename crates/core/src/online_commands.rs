@@ -1031,13 +1031,16 @@ fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<St
         let keyed = {
             let ids = ids.clone();
             with_storage(&state, move |storage| {
-                ids.iter()
+                let private = storage.private_book_ids()?;
+                let keyed = ids
+                    .iter()
                     .map(|id| Ok((storage.online_sync_key(id)?, id.clone())))
-                    .collect::<Result<Vec<(String, String)>, AppError>>()
+                    .collect::<Result<Vec<(String, String)>, AppError>>()?;
+                Ok((keyed, private))
             })
             .await
         };
-        let keyed = match keyed {
+        let (keyed, private) = match keyed {
             Ok(keyed) => keyed,
             Err(_) => {
                 let _ = update_here(&state, operation_id, ids).await;
@@ -1045,7 +1048,13 @@ fn update_through_server(state: Arc<AppState>, operation_id: String, ids: Vec<St
             }
         };
         let sync = state.sync.clone();
-        let keys = keyed.iter().map(|(key, _)| key.clone()).collect();
+        // Books in private groups are not the server's to update: they
+        // are missing from its reply and update here.
+        let keys = keyed
+            .iter()
+            .filter(|(_, id)| !private.contains(id))
+            .map(|(key, _)| key.clone())
+            .collect();
         let reply = tokio::task::spawn_blocking(move || {
             let reply = sync.update_shelf(keys)?;
             if reply.is_some() {
@@ -1193,8 +1202,10 @@ async fn update_here(
                         let title = storage
                             .lock()
                             .ok()
-                            .and_then(|guard| guard.get_book(&book_id).ok())
-                            .map(|book| book.title)
+                            .and_then(|guard| {
+                                let title = guard.get_book(&book_id).ok()?.title;
+                                Some(guard.log_title(&book_id, &title))
+                            })
                             .unwrap_or_default();
                         crate::log_keyed!(
                             Warn,

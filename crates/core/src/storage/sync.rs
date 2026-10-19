@@ -6,13 +6,18 @@
 //!   directory updated on the server or another device arrives without
 //!   asking the source
 //! - `progress:`, `bookmarks:`, `time:` + `book:<sha256>` or `online:<key>`
-//! - `group:<name>`, `replace:<id>`, `toc:<id>`, `source:<url>`
+//! - `group:<name>` (with its privacy and password hash), `replace:<id>`,
+//!   `toc:<id>`, `source:<url>`
 //! - `prefs:reading`, `prefs:theme`, `prefs:shelf`
 //!
 //! A device finds its changes by comparing the records it builds now with
 //! the last ones it synced (`sync_records`), and applies others' records
 //! through the restore paths. The 恢复忽略列表 doubles as the exclusion list:
-//! excluded records are neither sent nor applied. The server keeps the
+//! excluded records are neither sent nor applied. A book in a private group
+//! that keeps its books out of sync sends only which group it is in: its
+//! book record goes out as last synced with that one field changed, its
+//! other records neither go out nor come in, and it is never sent as
+//! removed. The server keeps the
 //! latest record per key in `sync_log`, numbered in the order it took them.
 
 use super::portable::{
@@ -137,6 +142,17 @@ fn book_of(key: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// The book record (`book:<sha>`, `online:<key>`) a record belongs to.
+fn owning_book(key: &str) -> Option<&str> {
+    if key.starts_with("book:") || key.starts_with("online:") {
+        return Some(key);
+    }
+    let (kind, rest) = key.split_once(':')?;
+    (matches!(kind, "progress" | "bookmarks" | "time" | "chapters")
+        && (rest.starts_with("book:") || rest.starts_with("online:")))
+    .then_some(rest)
+}
+
 /// The order records apply in: what others refer to comes first.
 fn apply_order(key: &str) -> u8 {
     match key.split(':').next().unwrap_or_default() {
@@ -247,6 +263,40 @@ impl Storage {
             .any(|category| settings.ignores(category)))
     }
 
+    /// Books a private group keeps out of sync, by their book record
+    /// key: the book's id and its group's name.
+    fn unsynced_books(&self) -> Result<HashMap<String, (String, String)>, AppError> {
+        let unsynced = self.private_books()?.1;
+        if unsynced.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let group_of = |book_id: &str| -> Result<String, AppError> {
+            Ok(self.conn.query_row(
+                "SELECT g.name FROM book_groups m JOIN library_groups g ON g.id = m.group_id
+                 WHERE m.book_id = ?1 LIMIT 1",
+                params![book_id],
+                |row| row.get(0),
+            )?)
+        };
+        let mut books = HashMap::new();
+        for shelf in self.shelf_books_with_sources()? {
+            if unsynced.contains(&shelf.book_id) {
+                let group = group_of(&shelf.book_id)?;
+                books.insert(
+                    format!("book:{}", shelf.source_sha256),
+                    (shelf.book_id, group),
+                );
+            }
+        }
+        for (key, book_id) in self.online_ids_by_key()? {
+            if unsynced.contains(&book_id) {
+                let group = group_of(&book_id)?;
+                books.insert(format!("online:{key}"), (book_id, group));
+            }
+        }
+        Ok(books)
+    }
+
     /// Every record this library has now, minus excluded ones.
     pub fn sync_snapshot(&self) -> Result<BTreeMap<String, Value>, AppError> {
         let mut records = BTreeMap::new();
@@ -316,7 +366,7 @@ impl Storage {
         for group in self.list_groups()? {
             records.insert(
                 format!("group:{}", group.name),
-                json!({ "name": group.name }),
+                json!({ "name": group.name, "private": self.privacy_record(&group.id)? }),
             );
         }
         for rule in self.list_replace_rules()? {
@@ -340,6 +390,28 @@ impl Storage {
                 .into_iter()
                 .any(|category| settings.ignores(category))
         });
+        // Books kept private send only their group, on the record last synced.
+        let unsynced = self.unsynced_books()?;
+        if !unsynced.is_empty() {
+            let synced = self.synced_records()?;
+            records.retain(|key, _| {
+                owning_book(key).is_none_or(|book| key == book || !unsynced.contains_key(book))
+            });
+            for (book, (_, group)) in &unsynced {
+                if !records.contains_key(book) {
+                    continue;
+                }
+                match synced.get(book).and_then(|(_, value)| value.clone()) {
+                    Some(mut frozen) => {
+                        frozen["group"] = json!(group);
+                        records.insert(book.clone(), frozen);
+                    }
+                    None => {
+                        records.remove(book);
+                    }
+                }
+            }
+        }
         Ok(records)
     }
 
@@ -392,7 +464,12 @@ impl Storage {
                 value: Some(value.clone()),
             })
             .collect();
+        let unsynced = self.unsynced_books()?;
         for key in synced.keys() {
+            // A private book's records are kept back, not gone.
+            if owning_book(key).is_some_and(|book| unsynced.contains_key(book)) {
+                continue;
+            }
             // A book whose file never came here only waits for it; its
             // records are not gone.
             let waiting = match book_of(key) {
@@ -406,7 +483,11 @@ impl Storage {
                 });
             }
         }
-        changes.sort_by(|left, right| left.key.cmp(&right.key));
+        // In the order they apply, so a server taking them one by one has a
+        // new group before the books moved into it.
+        changes.sort_by(|left, right| {
+            (apply_order(&left.key), &left.key).cmp(&(apply_order(&right.key), &right.key))
+        });
         Ok(changes)
     }
 
@@ -465,9 +546,23 @@ impl Storage {
         } else {
             BTreeMap::new()
         };
+        let mut unsynced = self.unsynced_books()?;
         let mut applied = 0;
         for change in ordered {
             if self.sync_excluded(&change.key)? {
+                continue;
+            }
+            // A book kept private here takes only a move to another group.
+            if let Some((book_id, _)) = owning_book(&change.key).and_then(|book| unsynced.get(book))
+            {
+                if owning_book(&change.key) == Some(change.key.as_str()) {
+                    if let Some(value) = &change.value {
+                        self.apply_group_only(book_id, value)?;
+                    }
+                    self.sync_mark(change)?;
+                    applied += 1;
+                    unsynced = self.unsynced_books()?;
+                }
                 continue;
             }
             let base = synced
@@ -483,6 +578,11 @@ impl Storage {
                 Ok(()) => {
                     applied += 1;
                     self.sync_mark(change)?;
+                    // A group or a book's group may have changed which books
+                    // the records after it are kept back for.
+                    if apply_order(&change.key) <= 2 {
+                        unsynced = self.unsynced_books()?;
+                    }
                 }
                 // Not marked: marking would make the record look removed
                 // here and send that removal on; this device keeps its own.
@@ -507,9 +607,18 @@ impl Storage {
     ) -> Result<(), AppError> {
         let (kind, rest) = key.split_once(':').unwrap_or((key, ""));
         match (kind, value) {
-            ("group", Some(_)) => {
-                if !self.list_groups()?.iter().any(|group| group.name == rest) {
-                    self.create_group(rest)?;
+            ("group", Some(value)) => {
+                let id = match self
+                    .list_groups()?
+                    .into_iter()
+                    .find(|group| group.name == rest)
+                {
+                    Some(group) => group.id,
+                    None => self.create_group(rest)?.id,
+                };
+                // Records from versions before private groups leave it as is.
+                if let Some(privacy) = value.get("private") {
+                    self.apply_privacy_record(&id, privacy)?;
                 }
             }
             ("group", None) => {
@@ -571,6 +680,24 @@ impl Storage {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Moves a book kept private into the group another device put it in.
+    fn apply_group_only(&mut self, book_id: &str, value: &Value) -> Result<(), AppError> {
+        let wanted = value.get("group").and_then(Value::as_str);
+        let groups = self.list_groups()?;
+        let current = groups
+            .iter()
+            .find(|group| group.book_ids.iter().any(|id| id == book_id));
+        if current.map(|group| group.name.as_str()) == wanted {
+            return Ok(());
+        }
+        let placement = match wanted.and_then(|name| groups.iter().find(|group| group.name == name))
+        {
+            Some(group) => ShelfPlacement::Group(group.id.clone()),
+            None => ShelfPlacement::Automatic,
+        };
+        self.move_book(book_id, &placement)
     }
 
     fn upsert_toc_rule(&mut self, rule: &TxtTocRule) -> Result<(), AppError> {
@@ -773,7 +900,7 @@ impl Storage {
 
     /// The online book on the shelf with this name key.
     /// Shelf online books by their sync key.
-    fn online_ids_by_key(&self) -> Result<Vec<(String, String)>, AppError> {
+    pub(super) fn online_ids_by_key(&self) -> Result<Vec<(String, String)>, AppError> {
         let mut statement = self.conn.prepare(
             "SELECT o.book_id, b.title, b.author FROM online_books o JOIN books b ON b.id = o.book_id
              WHERE o.on_shelf = 1

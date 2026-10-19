@@ -35,6 +35,10 @@ Release 0.3.2 with private shelf groups ([library](../subsystems/library.md), [s
 
 Commands and results are recorded here per batch.
 
+**Core and shelf (batches 1–2):** a storage test covers the lock, password checks, the hash staying in the core, and persistence; shelf tests cover 全部 leaving private books out, the mask, a password group drawing nothing until opened, locking on leaving the group and on the app going to the background, and the group manager's settings and password-guarded delete; a records test covers the hidden list. Screenshots at 390 px (preview build, headless Chromium) checked the locked mask, the revealed list, the group settings, and the password dialog. `pnpm check` passed.
+
+**Sync, backups, server (batches 3–4):** a three-library sync test (phone, desktop, server) covers the group and password reaching the other device, the book moving into the group there without being deleted, progress and renames no longer travelling, no echo, the backup leaving the book out, and moving it out syncing again; it found that records went out in key order, so a server took a book before its new group, now fixed. Other tests cover a restored private group and the schedule and logs leaving private books out.
+
 ## Handoff
 
 Pending.

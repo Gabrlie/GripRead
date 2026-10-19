@@ -829,6 +829,17 @@ impl Storage {
         Ok(rows)
     }
 
+    /// Books the server updates on its schedule: those 更新目录 covers,
+    /// less the books in private groups.
+    pub fn scheduled_online_books(&self) -> Result<Vec<String>, AppError> {
+        let private = self.private_book_ids()?;
+        Ok(self
+            .updatable_online_books()?
+            .into_iter()
+            .filter(|id| !private.contains(id))
+            .collect())
+    }
+
     pub fn online_cache_dir(&self, book_id: &str) -> PathBuf {
         self.root.join("online").join(book_id)
     }
@@ -1333,6 +1344,42 @@ mod tests {
             storage.updatable_online_books().unwrap(),
             vec![kept.clone()]
         );
+    }
+
+    #[test]
+    fn the_schedule_leaves_books_in_private_groups_to_their_devices() {
+        use crate::models::{GroupLock, GroupPrivacy, SaveGroupPrivacyRequest};
+        let (_dir, mut storage) = storage();
+        let chapters = chapters(&["第一章"], "a");
+        let open = storage
+            .add_online_book(&book("a"), &chapters, true)
+            .unwrap();
+        let mut hidden = book("b");
+        hidden.name = "另一本".into();
+        let hidden = storage.add_online_book(&hidden, &chapters, true).unwrap();
+        let group = storage.create_group("私密").unwrap();
+        storage
+            .save_group_privacy(&SaveGroupPrivacyRequest {
+                id: group.id.clone(),
+                // Even a private group that syncs is not updated on schedule.
+                privacy: Some(GroupPrivacy {
+                    lock: GroupLock::Mask,
+                    sync: true,
+                }),
+                password: None,
+                current_password: None,
+            })
+            .unwrap();
+        storage
+            .move_book(&hidden, &ShelfPlacement::Group(group.id))
+            .unwrap();
+        assert_eq!(storage.updatable_online_books().unwrap().len(), 2);
+        assert_eq!(
+            storage.scheduled_online_books().unwrap(),
+            vec![open.clone()]
+        );
+        assert_eq!(storage.log_title(&hidden, "另一本"), PRIVATE_TITLE);
+        assert_eq!(storage.log_title(&open, "剑来"), "剑来");
     }
 
     #[test]

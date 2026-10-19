@@ -210,8 +210,10 @@ fn update_books(
         let Ok(guard) = storage.lock() else {
             return ShelfUpdateReply::default();
         };
+        // Books in private groups are left to their devices.
+        let private = guard.private_book_ids().unwrap_or_default();
         let found = if keys.is_empty() {
-            guard.updatable_online_books().map(|ids| {
+            guard.scheduled_online_books().map(|ids| {
                 ids.into_iter()
                     .filter_map(|id| Some((guard.online_sync_key(&id).ok()?, id)))
                     .collect()
@@ -220,6 +222,7 @@ fn update_books(
             Ok(keys
                 .iter()
                 .filter_map(|key| Some((key.clone(), guard.online_book_id_for_key(key).ok()??)))
+                .filter(|(_, id)| !private.contains(id))
                 .collect())
         };
         found.unwrap_or_default()
@@ -238,8 +241,10 @@ fn update_books(
                         let title = storage
                             .lock()
                             .ok()
-                            .and_then(|guard| guard.online_record(&id).ok())
-                            .map(|record| record.title)
+                            .and_then(|guard| {
+                                let title = guard.online_record(&id).ok()?.title;
+                                Some(guard.log_title(&id, &title))
+                            })
                             .unwrap_or_default();
                         if let Ok(mut results) = results.lock() {
                             results.push(match result {
@@ -286,7 +291,7 @@ fn update_book(
                 let _ = guard.record_online_update_error(id, &error.message);
                 let title = guard
                     .online_record(id)
-                    .map(|record| record.title)
+                    .map(|record| guard.log_title(id, &record.title))
                     .unwrap_or_default();
                 gripread_core::log_keyed!(
                     Warn,

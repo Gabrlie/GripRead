@@ -95,7 +95,8 @@ pub fn upload(
     let (settings, source, position, mut state) = {
         let guard = lock(storage)?;
         let settings = guard.stored_webdav()?;
-        if !settings.configured() || !settings.sync_progress {
+        // A private group may keep its books' progress on the device.
+        if !settings.configured() || !settings.sync_progress || guard.keeps_book_private(book_id)? {
             return Ok(false);
         }
         let Some((source, portable, chapter)) = book_position(&guard, book_id)? else {
@@ -152,6 +153,10 @@ pub fn fetch_synced(
     book_id: &str,
 ) -> Result<Option<Option<ProgressPrompt>>, AppError> {
     let guard = lock(storage)?;
+    // A book a private group keeps on the device has no other device's place.
+    if guard.keeps_book_private(book_id)? {
+        return Ok(Some(None));
+    }
     let Some(value) = guard.synced_progress(book_id)? else {
         return Ok(None);
     };
@@ -193,7 +198,7 @@ pub fn fetch(storage: &Mutex<Storage>, book_id: &str) -> Result<Option<ProgressP
     let (settings, source) = {
         let guard = lock(storage)?;
         let settings = guard.stored_webdav()?;
-        if !settings.configured() || !settings.sync_progress {
+        if !settings.configured() || !settings.sync_progress || guard.keeps_book_private(book_id)? {
             return Ok(None);
         }
         (settings, book_key(&guard, book_id)?)

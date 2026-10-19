@@ -40,6 +40,7 @@ mod usage;
 pub use usage::DEFAULT_CLEARED;
 mod portable;
 mod privacy;
+pub use privacy::PRIVATE_TITLE;
 mod sources;
 mod sync;
 mod translation;
@@ -10649,6 +10650,156 @@ mod tests {
             .unwrap()
             .iter()
             .all(|change| change.key != "prefs:shelf"));
+    }
+
+    #[test]
+    fn a_private_group_kept_out_of_sync_sends_only_its_books_group() {
+        use crate::models::{GroupLock, GroupPrivacy, SaveGroupPrivacyRequest};
+        let root = TestRoot::new();
+        let text = "第一章 开始\n头发里的云\n第二章 结束\n后来门开了。";
+        let source = write_source(&root.0, "private.txt", text.as_bytes());
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut desktop = Storage::open(&root.0.join("desktop")).unwrap();
+        let (mut phone_at, mut desktop_at) = (0, 0);
+        import(&mut server, &source, "server");
+        let on_phone = import(&mut phone, &source, "phone").book.id;
+        let on_desktop = import(&mut desktop, &source, "desktop").book.id;
+        let first = offset_of(&phone, &on_phone, "头发");
+        phone.save_position(&first).unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        assert_eq!(
+            desktop.saved_position(&on_desktop).unwrap().unwrap().offset,
+            first.offset
+        );
+
+        // The phone makes a private group with a password, kept out of sync,
+        // and moves the book into it.
+        let group = phone.create_group("私密").unwrap();
+        phone
+            .save_group_privacy(&SaveGroupPrivacyRequest {
+                id: group.id.clone(),
+                privacy: Some(GroupPrivacy {
+                    lock: GroupLock::Password,
+                    sync: false,
+                }),
+                password: Some("1234".into()),
+                current_password: None,
+            })
+            .unwrap();
+        phone
+            .move_book(&on_phone, &ShelfPlacement::Group(group.id.clone()))
+            .unwrap();
+        for _ in 0..2 {
+            sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+            sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        }
+        // The other device has the same private group, password and book in it.
+        let shared = desktop
+            .list_groups()
+            .unwrap()
+            .into_iter()
+            .find(|group| group.name == "私密")
+            .unwrap();
+        assert_eq!(
+            shared.privacy,
+            Some(GroupPrivacy {
+                lock: GroupLock::Password,
+                sync: false
+            })
+        );
+        assert_eq!(shared.book_ids, std::slice::from_ref(&on_desktop));
+        desktop.unlock_group(&shared.id, "1234").unwrap();
+        let on_server = server.book_for_source(&book_sha(&server)).unwrap().unwrap();
+        assert!(server.is_private_book(&on_server).unwrap());
+        assert_eq!(server.log_title(&on_server, "书名"), PRIVATE_TITLE);
+
+        // Reading on and renaming no longer travel, either way.
+        phone
+            .save_position(&offset_of(&phone, &on_phone, "后来"))
+            .unwrap();
+        desktop
+            .update_book(&UpdateBookRequest {
+                book_id: on_desktop.clone(),
+                title: "改名".into(),
+                author: None,
+                intro: None,
+            })
+            .unwrap();
+        for _ in 0..2 {
+            sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+            sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        }
+        assert_eq!(
+            desktop.saved_position(&on_desktop).unwrap().unwrap().offset,
+            first.offset
+        );
+        assert_ne!(phone.get_book(&on_phone).unwrap().title, "改名");
+        // Nothing echoes, and nothing was sent as removed.
+        assert!(phone.sync_pending().unwrap().is_empty());
+        assert!(desktop.sync_pending().unwrap().is_empty());
+        assert!(server.sync_pending().unwrap().is_empty());
+        assert_eq!(desktop.list_library_books().unwrap().len(), 1);
+        assert_eq!(server.list_library_books().unwrap().len(), 1);
+
+        // Backups leave the book out and keep the group's privacy.
+        let backup = phone.export_backup("phone").unwrap();
+        assert!(backup.books.is_empty());
+        assert_eq!(backup.private_groups["私密"]["lock"], "password");
+
+        // Moved out on the phone, it is out everywhere and syncs again.
+        phone
+            .move_book(&on_phone, &ShelfPlacement::Automatic)
+            .unwrap();
+        // Its progress goes out again (another device is asked about it).
+        assert!(phone
+            .sync_pending()
+            .unwrap()
+            .iter()
+            .any(|change| change.key.starts_with("progress:book:")));
+        for _ in 0..2 {
+            sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+            sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        }
+        assert!(desktop.list_groups().unwrap()[0].book_ids.is_empty());
+        assert!(phone.sync_pending().unwrap().is_empty());
+        assert!(desktop.sync_pending().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_restored_private_group_hides_its_books_as_before() {
+        use crate::models::{GroupLock, GroupPrivacy, SaveGroupPrivacyRequest};
+        let root = TestRoot::new();
+        let source = write_source(&root.0, "kept.txt", "第一章 开始\n内容\n".as_bytes());
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let book = import(&mut phone, &source, "kept").book.id;
+        let group = phone.create_group("私密").unwrap();
+        let private = GroupPrivacy {
+            lock: GroupLock::Password,
+            sync: true,
+        };
+        phone
+            .save_group_privacy(&SaveGroupPrivacyRequest {
+                id: group.id.clone(),
+                privacy: Some(private.clone()),
+                password: Some("1234".into()),
+                current_password: None,
+            })
+            .unwrap();
+        phone
+            .move_book(&book, &ShelfPlacement::Group(group.id))
+            .unwrap();
+        // A group that syncs keeps its books in backups.
+        let backup = phone.export_backup("phone").unwrap();
+        assert_eq!(backup.books.len(), 1);
+        let mut tablet = Storage::open(&root.0.join("tablet")).unwrap();
+        import(&mut tablet, &source, "kept");
+        tablet.restore_backup(&backup).unwrap();
+        let restored = tablet.list_groups().unwrap().remove(0);
+        assert_eq!(restored.privacy, Some(private));
+        assert_eq!(restored.book_ids.len(), 1);
+        tablet.unlock_group(&restored.id, "1234").unwrap();
     }
 
     #[test]

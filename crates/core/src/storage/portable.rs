@@ -13,6 +13,7 @@ use crate::models::{
     BackupPreview, RestoreCategory, RestoreReport, WebDavSettings, DEFAULT_WEBDAV_FOLDER,
     DEFAULT_WEBDAV_URL,
 };
+use std::collections::BTreeMap;
 
 pub const BACKUP_FORMAT: &str = "gripread-backup";
 pub const BACKUP_VERSION: u32 = 1;
@@ -36,6 +37,10 @@ pub struct BackupDocument {
     pub books: Vec<PortableBook>,
     #[serde(default)]
     pub groups: Vec<String>,
+    /// Private groups' privacy by name (lock, sync, password hash), so a
+    /// restored group hides its books as before.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub private_groups: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub replace_rules: Vec<ReplaceRule>,
     #[serde(default)]
@@ -781,11 +786,25 @@ impl Storage {
     /// The portable records of the whole library. Device files (fonts and
     /// background images) are not part of it.
     pub fn export_backup(&self, device: &str) -> Result<BackupDocument, AppError> {
+        // Books a private group keeps out of sync stay out of backups too.
+        let kept = self.private_books()?.1;
         let books = self
             .shelf_books_with_sources()?
             .iter()
+            .filter(|shelf| !kept.contains(&shelf.book_id))
             .map(|shelf| self.portable_book(shelf))
             .collect::<Result<Vec<_>, _>>()?;
+        let kept_online: std::collections::HashSet<String> = self
+            .online_ids_by_key()?
+            .into_iter()
+            .filter(|(_, id)| kept.contains(id))
+            .map(|(key, _)| key)
+            .collect();
+        let groups = self.list_groups()?;
+        let mut private_groups = BTreeMap::new();
+        for group in groups.iter().filter(|group| group.privacy.is_some()) {
+            private_groups.insert(group.name.clone(), self.privacy_record(&group.id)?);
+        }
         let mut preferences = self.get_settings()?;
         strip_device_assets(&mut preferences);
         Ok(BackupDocument {
@@ -794,17 +813,23 @@ impl Storage {
             created_at: now_millis(),
             device: device.into(),
             books,
-            groups: self
-                .list_groups()?
-                .into_iter()
-                .map(|group| group.name)
-                .collect(),
+            groups: groups.into_iter().map(|group| group.name).collect(),
+            private_groups,
             replace_rules: self.list_replace_rules()?,
             toc_rules: self.list_txt_toc_rules()?,
             preferences: Some(preferences),
             shelf_preferences: Some(self.get_shelf_preferences()?),
             book_sources: serde_json::from_str(&self.export_book_sources(&[])?)?,
-            online_books: self.portable_online_books()?,
+            online_books: self
+                .portable_online_books()?
+                .into_iter()
+                .filter(|book| {
+                    !kept_online.contains(&online_key(
+                        &book.title,
+                        book.author.as_deref().unwrap_or(""),
+                    ))
+                })
+                .collect(),
             webdav: None,
         })
     }
@@ -1212,6 +1237,14 @@ impl Storage {
             report.rules_restored += 1;
         }
         tx.commit()?;
+        // A restored private group hides its books as it did.
+        if !groups.is_empty() {
+            for group in self.list_groups()? {
+                if let Some(record) = document.private_groups.get(&group.name) {
+                    self.apply_privacy_record(&group.id, record)?;
+                }
+            }
+        }
         for rule in &document.replace_rules {
             if rule.id.is_empty() || skip(RestoreCategory::ReplaceRules) {
                 continue;

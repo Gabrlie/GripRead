@@ -59,7 +59,7 @@ A lightweight, local-first reader built with Tauri 2, with an optional self-host
 
 ### 📚 Library
 
-- **Shelf** — groups, reading states, sorting, and a recycle bin
+- **Shelf** — groups (private ones hidden behind a mask or a password, optionally kept out of sync and backups), reading states, sorting, and a recycle bin
 - **Reading records** — reading time per book and a daily activity calendar
 - **Backups** — portable backups that restore item by item, with categories you can skip
 

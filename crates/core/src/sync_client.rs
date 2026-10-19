@@ -1026,6 +1026,19 @@ impl SyncClient {
             }
         }
         for sha in self.config().uploads {
+            // A book a private group keeps on the device is never sent,
+            // even when the server asks for its file.
+            let kept = {
+                let storage = self.lock()?;
+                match storage.book_for_source(&sha)? {
+                    Some(id) => storage.keeps_book_private(&id)?,
+                    None => false,
+                }
+            };
+            if kept {
+                self.update(|config| config.uploads.retain(|pending| pending != &sha));
+                continue;
+            }
             let file = protocol::book_file(&*self.lock()?, &sha)?;
             if let Some(file) = file {
                 http.upload(&format!("/api/blobs/book/{sha}"), &file)?;

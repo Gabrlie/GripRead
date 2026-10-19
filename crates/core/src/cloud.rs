@@ -563,7 +563,9 @@ pub fn upload_books(
         book_ids.to_vec()
     };
     let mut report = CloudUploadReport::default();
-    for id in ids {
+    // Books a private group keeps on the device are not sent.
+    let kept = lock(storage)?.private_books()?.1;
+    for id in ids.into_iter().filter(|id| !kept.contains(id)) {
         let source = {
             let guard = lock(storage)?;
             guard.book_source_file(&id).and_then(|(path, hash, title)| {
@@ -1457,12 +1459,17 @@ pub mod server {
             .into_iter()
             .map(|book| book.sha256)
             .collect();
-        let wanted: Vec<String> = lock(storage)?
+        let guard = lock(storage)?;
+        // Books a private group keeps on the device are not sent.
+        let kept = guard.private_books()?.1;
+        let wanted: Vec<String> = guard
             .shelf_book_sources()?
             .into_iter()
             .filter(|(id, _)| book_ids.is_empty() || book_ids.contains(id))
+            .filter(|(id, _)| !kept.contains(id))
             .map(|(_, sha)| sha)
             .collect();
+        drop(guard);
         let (present, missing): (Vec<String>, Vec<String>) =
             wanted.into_iter().partition(|sha| on_server.contains(sha));
         sync.queue_uploads(&missing);

@@ -16,6 +16,9 @@ pub(crate) struct StoredPrivacy {
     pub password_hash: Option<String>,
 }
 
+/// What logs and job reports call a book in a private group.
+pub const PRIVATE_TITLE: &str = "隐私书籍";
+
 const PASSWORD_CHARS: std::ops::RangeInclusive<usize> = 4..=64;
 
 pub(crate) fn hash_password(password: &str) -> Result<String, AppError> {
@@ -157,5 +160,97 @@ impl Storage {
     /// Opens a password group; a wrong password is an error.
     pub fn unlock_group(&self, id: &str, password: &str) -> Result<(), AppError> {
         self.check_group_password(id, Some(password))
+    }
+}
+
+impl Storage {
+    /// Books in private groups, and of those the ones whose group keeps
+    /// them out of sync and backups.
+    pub(crate) fn private_books(
+        &self,
+    ) -> Result<
+        (
+            std::collections::HashSet<String>,
+            std::collections::HashSet<String>,
+        ),
+        AppError,
+    > {
+        let mut statement = self.conn.prepare(
+            "SELECT m.book_id, g.sync FROM book_groups m
+             JOIN library_groups g ON g.id = m.group_id WHERE g.private = 1",
+        )?;
+        let mut private = std::collections::HashSet::new();
+        let mut unsynced = std::collections::HashSet::new();
+        for row in statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+        })? {
+            let (book_id, sync) = row?;
+            if !sync {
+                unsynced.insert(book_id.clone());
+            }
+            private.insert(book_id);
+        }
+        Ok((private, unsynced))
+    }
+
+    /// Books in private groups.
+    pub fn private_book_ids(&self) -> Result<std::collections::HashSet<String>, AppError> {
+        Ok(self.private_books()?.0)
+    }
+
+    /// How logs name a book: a book in a private group only as such.
+    pub fn log_title(&self, book_id: &str, title: &str) -> String {
+        if self.is_private_book(book_id).unwrap_or(false) {
+            PRIVATE_TITLE.to_string()
+        } else {
+            title.to_string()
+        }
+    }
+
+    /// Whether a book's private group keeps it out of sync and backups.
+    pub fn keeps_book_private(&self, book_id: &str) -> Result<bool, AppError> {
+        Ok(self.private_books()?.1.contains(book_id))
+    }
+
+    /// Whether a book is in a private group (the server does not update
+    /// it on schedule or name it in logs).
+    pub fn is_private_book(&self, book_id: &str) -> Result<bool, AppError> {
+        Ok(self.private_books()?.0.contains(book_id))
+    }
+
+    /// A group's privacy as a sync or backup record: absent for an
+    /// ordinary group, with the password hash so every device opens it alike.
+    pub(crate) fn privacy_record(&self, id: &str) -> Result<serde_json::Value, AppError> {
+        let stored = self.group_privacy(id)?;
+        Ok(match stored.privacy {
+            None => serde_json::Value::Bool(false),
+            Some(privacy) => serde_json::json!({
+                "lock": lock_name(privacy.lock),
+                "sync": privacy.sync,
+                "passwordHash": stored.password_hash,
+            }),
+        })
+    }
+
+    /// Applies a group's privacy from a sync or backup record.
+    pub(crate) fn apply_privacy_record(
+        &self,
+        id: &str,
+        record: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        let stored = match record.as_object() {
+            Some(fields) => StoredPrivacy {
+                privacy: Some(GroupPrivacy {
+                    lock: parse_lock(fields.get("lock").and_then(|v| v.as_str()).unwrap_or("")),
+                    sync: fields.get("sync").and_then(|v| v.as_bool()).unwrap_or(true),
+                }),
+                password_hash: fields
+                    .get("passwordHash")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            },
+            None => StoredPrivacy::default(),
+        };
+        self.write_group_privacy(id, &stored)
     }
 }

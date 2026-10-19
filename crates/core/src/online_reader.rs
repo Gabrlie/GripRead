@@ -123,9 +123,12 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     }
     let (record, chapters, relay) = {
         let guard = lock(storage)?;
+        // A book a private group keeps on the device is not asked of the server.
         let relay = match guard.chapter_relay() {
-            Some(relay) => Some((relay, guard.online_sync_key(book_id)?)),
-            None => None,
+            Some(relay) if !guard.keeps_book_private(book_id)? => {
+                Some((relay, guard.online_sync_key(book_id)?))
+            }
+            _ => None,
         };
         (
             guard.online_record(book_id)?,
@@ -158,17 +161,26 @@ pub fn raw_chapter(storage: &Shared, book_id: &str, index: u32) -> Result<String
     let content = session
         .content(&book, &chapter_data(&chapter), next.as_deref(), &urls)
         .map_err(|error| {
+            // A book in a private group is not named, nor its chapter.
+            let private = lock(storage)
+                .and_then(|guard| guard.is_private_book(book_id))
+                .unwrap_or(false);
+            let (title, chapter_title) = if private {
+                (crate::storage::PRIVATE_TITLE.to_string(), String::new())
+            } else {
+                (record.title.clone(), chapter.title.clone())
+            };
             crate::log_keyed!(
                 Error,
                 "reader",
                 "chapterFailed",
                 format!(
                     "《{}》{} 读取失败（{}）：{}",
-                    record.title, chapter.title, record.book.source_name, error.message
+                    title, chapter_title, record.book.source_name, error.message
                 ),
                 @error engine_error(error.clone()),
-                title = record.title,
-                chapter = chapter.title,
+                title = title,
+                chapter = chapter_title,
                 source = record.book.source_name,
             );
             engine_error(error)
