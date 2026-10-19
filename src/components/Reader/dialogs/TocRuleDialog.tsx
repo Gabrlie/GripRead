@@ -66,11 +66,9 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      {/* The editor fills a fixed height; the list and import views are as
-          tall as their content, up to the same height. */}
-      <DialogContent
-        className={`bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg flex flex-col gap-2.5 p-4 ${view.kind === "edit" ? "h-[70dvh]" : "max-h-[70dvh]"}`}
-      >
+      {/* Every view is as tall as its content, up to 80% of the screen;
+          the rule list scrolls within about half of it. */}
+      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg max-h-[80dvh] flex flex-col gap-2.5 p-4">
         <DialogHeader>
           <DialogTitle>
             {view.kind === "edit"
@@ -175,7 +173,7 @@ function RuleList({
   return (
     <>
       <div
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
+        className="max-h-[min(44dvh,24rem)] min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
         role="radiogroup"
         aria-label={t("tocRule.bookRule")}
       >
@@ -336,7 +334,7 @@ export function TocRuleEditor({
   const area =
     "w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50";
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
+    <div className="min-h-0 overflow-y-auto space-y-3">
       <label className="block space-y-1 text-xs text-secondary">
         {t("style.name")}
         <Input

@@ -30,6 +30,7 @@ const IPC_TYPES: &[&str] = &[
     "ResolveLocatorRequest",
     "ResolveOffsetRequest",
     "BookRequest",
+    "ListTocRequest",
     "TxtEncodingRequest",
     "TxtSourceRequest",
     "TxtDecodeTask",
@@ -284,6 +285,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<ResolveLocatorRequest>(&config)?;
     export_all::<ResolveOffsetRequest>(&config)?;
     export_all::<BookRequest>(&config)?;
+    export_all::<ListTocRequest>(&config)?;
     export_all::<TxtEncodingRequest>(&config)?;
     export_all::<TxtSourceRequest>(&config)?;
     export_all::<TxtDecodeTask>(&config)?;

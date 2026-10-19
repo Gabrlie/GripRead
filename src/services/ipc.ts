@@ -110,6 +110,7 @@ import type {
   StartImportRequest,
   ImportOperationRequest,
   BookRequest,
+  ListTocRequest,
   ResolveLocatorRequest,
   SaveLocatorRequest,
   SaveSettingsRequest,
@@ -416,8 +417,10 @@ export const tauriServices: AppServices = {
       invokeCommand<ReaderLocator | null>("get_saved_reader_locator", {
         request: { bookId } satisfies BookRequest,
       }),
-    listToc: (bookId) =>
-      invokeCommand<TocListing>("list_toc", { request: { bookId } satisfies BookRequest }),
+    listToc: (bookId, options) =>
+      invokeCommand<TocListing>("list_toc", {
+        request: { bookId, rebuild: options?.rebuild } satisfies ListTocRequest,
+      }),
     tocSuggestion: (bookId) =>
       invokeCommand<TocSuggestion | null>("toc_suggestion", {
         request: { bookId } satisfies BookRequest,

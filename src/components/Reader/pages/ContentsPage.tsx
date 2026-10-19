@@ -39,7 +39,7 @@ interface ContentsPageProps {
   /**
    * What the More menu offers: a TXT its rule, 拆分超长章节, and the titles
    * of pieces no rule names; an online book 章内分章 (with the rule it
-   * uses) and 更新目录; every book 替换净化.
+   * uses); both 更新目录; every book 替换净化.
    */
   kind?: "txt" | "epub" | "online";
   /** The contents a converted book kept from its source. */
@@ -55,6 +55,8 @@ interface ContentsPageProps {
 }
 
 const CHAPTER_ROW = 46;
+/** A chapter with its update time or length on a second line. */
+const DETAILED_ROW = 56;
 const VOLUME_ROW = 40;
 
 /** Chapter counts in the form Legado shows, e.g. 3256字 or 1.2万字. */
@@ -149,9 +151,22 @@ export function ContentsPage({
     (entry: TocEntry | undefined) => Boolean(entry?.volume && !filter?.trim()),
     [filter],
   );
+  /** A chapter's second line: the source's update time, then its length when shown. */
+  const rowDetails = useCallback(
+    (entry: TocEntry) =>
+      [chapterTag(entry.tag), showLength ? formatLength(entry.length) : ""]
+        .filter(Boolean)
+        .join(" · "),
+    [showLength],
+  );
   const heightOf = useCallback(
-    (index: number) => (volumeRow(rows[index]) ? VOLUME_ROW : CHAPTER_ROW),
-    [rows, volumeRow],
+    (index: number) =>
+      volumeRow(rows[index])
+        ? VOLUME_ROW
+        : rows[index] && rowDetails(rows[index])
+          ? DETAILED_ROW
+          : CHAPTER_ROW,
+    [rows, volumeRow, rowDetails],
   );
   const windowed = useWindowedList(list, tab === "toc" ? rows.length : 0, heightOf);
   const currentRow = rows.findIndex((entry) => entry.ordinal === toc[currentIndex]?.ordinal);
@@ -256,7 +271,7 @@ export function ContentsPage({
                   {t("settings.replace")}
                 </DropdownMenuItem>
               )}
-              {kind === "online" && onUpdateToc && (
+              {(kind === "online" || txtTools) && onUpdateToc && (
                 <DropdownMenuItem disabled={busy} onClick={onUpdateToc}>
                   <Icon name="refresh" size={15} />
                   {t("shelf.menu.update")}
@@ -373,33 +388,29 @@ export function ContentsPage({
                     </button>
                   </div>
                 );
+              const details = rowDetails(entry);
               return (
                 <button
                   key={entry.ordinal}
                   ref={isCurrent ? current : undefined}
                   aria-current={isCurrent ? "location" : undefined}
                   className={`w-full flex items-center gap-3 px-4 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
-                  style={{ height: CHAPTER_ROW }}
+                  style={{ height: details ? DETAILED_ROW : CHAPTER_ROW }}
                   onClick={() => onSeek(entry.locator)}
                 >
                   <span
-                    className={`flex-1 min-w-0 truncate ${
+                    className={`flex-1 min-w-0 ${
                       // Found inside an online chapter: under it.
                       kind === "online" && entry.locator.offset > 0 ? "pl-4 text-[13px]" : ""
                     }`}
                   >
-                    {entry.title}
+                    <span className="block truncate">{entry.title}</span>
+                    {details && (
+                      <span className="block mt-0.5 text-[11px] font-normal text-secondary tabular-nums truncate">
+                        {details}
+                      </span>
+                    )}
                   </span>
-                  {entry.tag && (
-                    <span className="text-[11px] text-secondary tabular-nums shrink-0 max-w-[40%] truncate">
-                      {chapterTag(entry.tag)}
-                    </span>
-                  )}
-                  {showLength && (
-                    <span className="text-[11px] text-secondary tabular-nums shrink-0">
-                      {formatLength(entry.length)}
-                    </span>
-                  )}
                   {isCurrent && <Icon name="my_location" size={14} className="shrink-0" />}
                 </button>
               );

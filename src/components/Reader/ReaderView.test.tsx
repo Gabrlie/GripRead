@@ -399,9 +399,13 @@ describe("reader directory and search operation ownership", () => {
     // The rule dialog sits on the contents, and closing it returns there.
     await openFromMenu("目录规则");
     const rules = await screen.findByRole("dialog", { name: "目录规则" });
-    // The rule list is as tall as its rules, not a fixed share of the screen.
-    expect(rules.className).toContain("max-h-[70dvh]");
-    expect(rules.className).not.toMatch(/(^|\s)h-\[70dvh\]/);
+    // The dialog is as tall as its content; the rule list scrolls within a
+    // part of the screen instead of filling it or leaving space below.
+    expect(rules.className).toContain("max-h-[80dvh]");
+    expect(rules.className).not.toMatch(/(^|\s)h-\[\d+dvh\]/);
+    expect(screen.getByRole("radiogroup", { name: "本书目录规则" }).className).toContain(
+      "max-h-[min(44dvh,24rem)]",
+    );
     expect(screen.getByRole("dialog", { name: "目录", hidden: true })).toBeTruthy();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "目录规则" })).toBeNull());
@@ -416,6 +420,30 @@ describe("reader directory and search operation ownership", () => {
     // Leaving the contents then goes back to the detail page.
     fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(navigation.closeReader).toHaveBeenCalledWith(true));
+  });
+
+  it("finds a local book's chapters again from 更新目录 in the contents and the top bar", async () => {
+    const app = runtime();
+    await view(app);
+    await userEvent.click(screen.getByRole("button", { name: "目录" }));
+    vi.mocked(app.services.reader.listToc).mockResolvedValue(
+      tocListing([chapter("重新识别的章节")]),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "目录选项" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "更新目录" }));
+    expect(await screen.findByRole("button", { name: /重新识别的章节/ })).toBeTruthy();
+    expect(app.services.reader.listToc).toHaveBeenLastCalledWith(entry.book.id, {
+      rebuild: true,
+    });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "目录" })).toBeNull());
+    vi.mocked(app.services.reader.listToc).mockClear();
+    tapSurface();
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "更新目录" }));
+    await waitFor(() =>
+      expect(app.services.reader.listToc).toHaveBeenCalledWith(entry.book.id, { rebuild: true }),
+    );
   });
 
   it("stays in the reader after a place is chosen in contents the detail page opened", async () => {

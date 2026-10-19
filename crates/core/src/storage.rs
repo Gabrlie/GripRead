@@ -3342,6 +3342,17 @@ impl Storage {
         Ok(build)
     }
 
+    /// Drops a local book's kept directory, so the next listing finds its
+    /// chapters again.
+    pub fn forget_toc(&self, book_id: &str) -> Result<(), AppError> {
+        let record = self.asset_for_book(book_id)?;
+        self.conn.execute(
+            "DELETE FROM toc_cache WHERE asset_id = ?1",
+            params![record.asset.id],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn cached_toc(
         &self,
         context: &ContentReadContext,
@@ -6931,7 +6942,7 @@ fn encoding_name(encoding: &TxtEncoding) -> &'static str {
 }
 
 /// Bumped when the chapter algorithm changes, so cached directories rebuild.
-const TOC_ALGORITHM: u32 = 2;
+const TOC_ALGORITHM: u32 = 3;
 
 fn toc_rule_identity(rule: &TocBuildRule) -> Result<String, AppError> {
     Ok(format!("v{TOC_ALGORITHM}:{}", serde_json::to_string(rule)?))
@@ -8256,6 +8267,33 @@ mod tests {
         assert_eq!(info.selected, TxtEncoding::Utf16Le);
         assert_eq!(info.state, TxtDecodeState::Clean);
         assert!(info.can_change);
+    }
+
+    #[test]
+    fn forgetting_a_kept_directory_finds_the_chapters_again() {
+        let root = TestRoot::new();
+        let source = write_source(
+            &root.0,
+            "kept.txt",
+            "第一章 开始\n内容\n第二章 继续\n内容\n".as_bytes(),
+        );
+        let mut storage = Storage::open(&root.0.join("data")).unwrap();
+        let imported = import(&mut storage, &source, "kept");
+        let found = storage.list_toc(&imported.book.id).unwrap();
+        assert_eq!(found.entries.len(), 2);
+        // A directory kept by an older build, under the current rules.
+        let mut stale = found.clone();
+        stale.entries.truncate(1);
+        storage
+            .conn
+            .execute(
+                "UPDATE toc_cache SET entries_json = ?1",
+                params![serde_json::to_string(&stale).unwrap()],
+            )
+            .unwrap();
+        assert_eq!(storage.list_toc(&imported.book.id).unwrap(), stale);
+        storage.forget_toc(&imported.book.id).unwrap();
+        assert_eq!(storage.list_toc(&imported.book.id).unwrap(), found);
     }
 
     #[test]

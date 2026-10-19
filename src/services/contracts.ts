@@ -155,7 +155,8 @@ export interface ReaderService {
   resolveOffset(request: ResolveOffsetRequest): Promise<ReaderLocator>;
   saveReaderLocator(locator: ReaderLocator): Promise<ReaderLocator>;
   getSavedReaderLocator(bookId: string): Promise<ReaderLocator | null>;
-  listToc(bookId: string): Promise<TocListing>;
+  /** `rebuild` finds a local book's chapters again instead of reading the kept ones. */
+  listToc(bookId: string, options?: { rebuild?: boolean }): Promise<TocListing>;
   /** The one-time question about the book's contents, if there is one. */
   tocSuggestion(bookId: string): Promise<TocSuggestion | null>;
   /** Chapter rules shared by all books, ordered as automatic detection tries them. */

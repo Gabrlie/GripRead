@@ -758,7 +758,7 @@ export function ReaderView() {
     }
     refreshingDirectory.current = true;
     toast(t("shelf.updating"));
-    reloadTools();
+    reloadTools({ rebuild: true });
     if (comic) comicSession.reload(comicSession.locator());
   };
   const useTool = (tool: ReaderTool) => {
@@ -1765,7 +1765,7 @@ export function ReaderView() {
           busy={tools.busy}
           bookmarks={tools.bookmarks}
           contentVersion={state.contentWindow?.contentVersion}
-          onReload={reloadTools}
+          onReload={() => reloadTools()}
           onSeek={seekTo}
           onOpenBookmark={(bookmark) => {
             if (bookmark.contentVersion !== state.contentWindow?.contentVersion) {

@@ -28,6 +28,7 @@ export type { ReadContentRequest } from "./generated/ReadContentRequest";
 export type { ResolveLocatorRequest } from "./generated/ResolveLocatorRequest";
 export type { ResolveOffsetRequest } from "./generated/ResolveOffsetRequest";
 export type { BookRequest } from "./generated/BookRequest";
+export type { ListTocRequest } from "./generated/ListTocRequest";
 export type { TxtEncodingRequest } from "./generated/TxtEncodingRequest";
 export type { TxtSourceRequest } from "./generated/TxtSourceRequest";
 export type { TxtDecodeTask } from "./generated/TxtDecodeTask";

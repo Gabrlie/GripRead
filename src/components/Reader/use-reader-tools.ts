@@ -48,17 +48,26 @@ export function useReaderTools(
   const online = Boolean(activeBook?.online);
   const comic = isComic(activeBook);
 
-  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  // 更新目录 on a local book finds its chapters again, once.
+  const rebuildNext = useRef(false);
+  const reload = useCallback((options?: { rebuild?: boolean }) => {
+    if (options?.rebuild) rebuildNext.current = true;
+    setRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     if (!bookId) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
+    const rebuild = rebuildNext.current;
+    rebuildNext.current = false;
     void Promise.all([
       // Online books and comics have no TXT file and so no encoding.
       online || comic ? Promise.resolve(null) : runtime.services.library.getTxtEncoding(bookId),
-      runtime.services.reader.listToc(bookId),
+      rebuild
+        ? runtime.services.reader.listToc(bookId, { rebuild })
+        : runtime.services.reader.listToc(bookId),
       runtime.services.reader.listBookmarks(bookId),
       runtime.services.reader.listTxtTocRules(),
     ])

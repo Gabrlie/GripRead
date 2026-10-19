@@ -203,6 +203,17 @@ pub struct BookRequest {
     pub book_id: String,
 }
 
+/// A book's contents; `rebuild` finds a local book's chapters again
+/// instead of reading the kept directory (更新目录).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTocRequest {
+    pub book_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rebuild: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryGroup {

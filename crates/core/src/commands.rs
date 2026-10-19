@@ -885,7 +885,10 @@ pub async fn set_txt_encoding(
     .map_err(|error| AppError::new(ErrorCode::Io, format!("encoding worker stopped: {error}")))?
 }
 
-pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<TocListing, AppError> {
+pub async fn list_toc(
+    state: &Arc<AppState>,
+    request: crate::models::ListTocRequest,
+) -> Result<TocListing, AppError> {
     let book_id = request.book_id.clone();
     if let Some(listing) = for_online_book(state, &request.book_id, move |storage| {
         crate::online_reader::toc(storage, &book_id)
@@ -897,6 +900,9 @@ pub async fn list_toc(state: &Arc<AppState>, request: BookRequest) -> Result<Toc
     let storage = Arc::clone(&state.storage);
     let builds = Arc::clone(&state.toc_builds);
     tokio::task::spawn_blocking(move || {
+        if request.rebuild == Some(true) {
+            lock_storage(&storage)?.forget_toc(&request.book_id)?;
+        }
         let build = list_toc_current(&storage, &builds, &request.book_id)?;
         let (settings, titles, fixed) = {
             let guard = lock_storage(&storage)?;

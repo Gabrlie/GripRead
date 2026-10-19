@@ -59,8 +59,10 @@ export function OnlineTocPage({
   }, [chapters, filter, collapsed, reversed]);
 
   // Thousands of chapters render only the rows near the screen.
+  // A chapter with an update time shows it on a second line, as in the reader's contents.
   const heightOf = useCallback(
-    (row: number) => (rows[row]?.chapter.isVolume && !filter?.trim() ? 40 : 46),
+    (row: number) =>
+      rows[row]?.chapter.isVolume && !filter?.trim() ? 40 : rows[row]?.chapter.tag.trim() ? 56 : 46,
     [rows, filter],
   );
   const windowed = useWindowedList(list, rows.length, heightOf);
@@ -191,15 +193,17 @@ export function OnlineTocPage({
                 key={index}
                 aria-current={isCurrent ? "location" : undefined}
                 className={`w-full flex items-center gap-3 px-4 text-left text-sm border-b border-surface-variant/20 transition-colors ${isCurrent ? "text-primary bg-surface-container font-medium" : "hover:bg-surface-container/60"}`}
-                style={{ height: 46 }}
+                style={{ height: chapter.tag.trim() ? 56 : 46 }}
                 onClick={() => onChoose(index)}
               >
-                <span className="flex-1 min-w-0 truncate">{chapter.title}</span>
-                {chapter.tag.trim() && (
-                  <span className="text-[11px] text-secondary tabular-nums shrink-0 max-w-[40%] truncate">
-                    {chapterTag(chapter.tag)}
-                  </span>
-                )}
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate">{chapter.title}</span>
+                  {chapter.tag.trim() && (
+                    <span className="block mt-0.5 text-[11px] font-normal text-secondary tabular-nums truncate">
+                      {chapterTag(chapter.tag)}
+                    </span>
+                  )}
+                </span>
                 {chapter.isVip && (
                   <span className="text-[10px] text-secondary shrink-0">
                     {chapter.isPay ? t("onlineToc.bought") : "VIP"}
