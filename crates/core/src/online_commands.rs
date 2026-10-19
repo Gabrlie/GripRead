@@ -595,18 +595,20 @@ pub async fn online_chapter_content(
     .await
 }
 
-/// Waits for one of the cover fetch slots.
-struct CoverSlot;
+/// Waits for one of the image fetch slots: covers and chapter pictures
+/// (comic pages, pictures in text) have a pool each, so a list's covers
+/// never hold up the page being read.
+struct ImageSlot(bool);
 
-fn cover_slots() -> &'static (Mutex<usize>, std::sync::Condvar) {
-    static SLOTS: std::sync::OnceLock<(Mutex<usize>, std::sync::Condvar)> =
-        std::sync::OnceLock::new();
-    SLOTS.get_or_init(|| (Mutex::new(0), std::sync::Condvar::new()))
+fn image_slots(content: bool) -> &'static (Mutex<usize>, std::sync::Condvar) {
+    static SLOTS: [std::sync::OnceLock<(Mutex<usize>, std::sync::Condvar)>; 2] =
+        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    SLOTS[usize::from(content)].get_or_init(|| (Mutex::new(0), std::sync::Condvar::new()))
 }
 
-impl CoverSlot {
-    fn take() -> Self {
-        let (count, ready) = cover_slots();
+impl ImageSlot {
+    fn take(content: bool) -> Self {
+        let (count, ready) = image_slots(content);
         let mut taken = count.lock().unwrap_or_else(|poison| poison.into_inner());
         while *taken >= COVER_WORKERS {
             taken = ready
@@ -614,13 +616,13 @@ impl CoverSlot {
                 .unwrap_or_else(|poison| poison.into_inner());
         }
         *taken += 1;
-        CoverSlot
+        ImageSlot(content)
     }
 }
 
-impl Drop for CoverSlot {
+impl Drop for ImageSlot {
     fn drop(&mut self) {
-        let (count, ready) = cover_slots();
+        let (count, ready) = image_slots(self.0);
         if let Ok(mut taken) = count.lock() {
             *taken = taken.saturating_sub(1);
         }
@@ -691,7 +693,7 @@ fn source_image(
             "移动网络下不加载网络封面",
         ));
     }
-    let _slot = CoverSlot::take();
+    let _slot = ImageSlot::take(content);
     let source = load_source(storage, source_url)?;
     let decode = if content {
         source.rule("ruleContent", "imageDecode")

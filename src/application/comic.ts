@@ -20,6 +20,17 @@ export const DEFAULT_COMIC: ComicPreferences = {
   preload: 5,
   background: "theme",
   pageNumber: true,
+  tapZones: [
+    "previous",
+    "previous",
+    "next",
+    "previous",
+    "menu",
+    "next",
+    "previous",
+    "next",
+    "next",
+  ],
 };
 
 /** A place in a comic: the chapter (its position in [`comicChapters`]) and page. */
@@ -83,15 +94,42 @@ export function pageLocator(bookId: string, chapter: ComicChapter, page: number)
 /** How many page images stay decoded at once; older ones are released. */
 const KEPT_PAGES = 40;
 
+/** Page images downloading at once. */
+export const PAGE_DOWNLOADS = 3;
+
+/** Waiting pages further than this from the place read are not fetched. */
+const FAR_PAGES = 12;
+
+/** A page that stopped waiting because the reader moved away from it. */
+export class PageCancelled extends Error {
+  constructor() {
+    super("cancelled");
+  }
+}
+
+interface Waiting {
+  chapter: number;
+  page: number;
+  start: () => void;
+  cancel: () => void;
+}
+
 /**
  * A comic's chapters and page images for one reading session. Chapters
- * are asked for once (a failure is asked again); page images become object
- * URLs, the oldest released past [`KEPT_PAGES`], and all on [`dispose`].
+ * are asked for once (a failure is asked again). Pages download
+ * [`PAGE_DOWNLOADS`] at a time, nearest the place being read first
+ * ([`focus`]); waiting pages the reader moved far from are dropped. Images
+ * become object URLs: those on screen ([`hold`]) are kept, the oldest others
+ * released past [`KEPT_PAGES`], and all on [`dispose`].
  */
 export class ComicPages {
   private chapters = new Map<number, Promise<ComicChapter>>();
   private pages = new Map<string, Promise<string>>();
   private urls = new Map<string, string>();
+  private held = new Map<string, number>();
+  private waiting: Waiting[] = [];
+  private running = 0;
+  private place = { chapter: 0, page: 0 };
   private disposed = false;
 
   constructor(
@@ -108,6 +146,14 @@ export class ComicPages {
     return loading;
   }
 
+  /** The place being read (core chapter index and page): nearer pages go first. */
+  focus(chapter: number, page: number) {
+    this.place = { chapter, page };
+    const far = this.waiting.filter((item) => this.distance(item) > FAR_PAGES);
+    this.waiting = this.waiting.filter((item) => this.distance(item) <= FAR_PAGES);
+    for (const item of far) item.cancel();
+  }
+
   /** The page's image as an object URL. */
   page(chapter: number, page: number): Promise<string> {
     const key = `${chapter}:${page}`;
@@ -118,7 +164,24 @@ export class ComicPages {
       this.pages.set(key, known);
       return known;
     }
-    const loading = this.service.readComicPage(this.bookId, chapter, page).then((bytes) => {
+    const loading = new Promise<ArrayBuffer>((resolve, reject) => {
+      this.waiting.push({
+        chapter,
+        page,
+        start: () => {
+          this.running += 1;
+          this.service
+            .readComicPage(this.bookId, chapter, page)
+            .then(resolve, reject)
+            .finally(() => {
+              this.running -= 1;
+              this.next();
+            });
+        },
+        cancel: () => reject(new PageCancelled()),
+      });
+      this.next();
+    }).then((bytes) => {
       const url = URL.createObjectURL(new Blob([bytes]));
       if (this.disposed) {
         URL.revokeObjectURL(url);
@@ -138,20 +201,54 @@ export class ComicPages {
     for (const page of pages) void this.page(chapter, page).catch(() => undefined);
   }
 
+  /** A page on screen keeps its image until [`release`]d. */
+  hold(chapter: number, page: number) {
+    const key = `${chapter}:${page}`;
+    this.held.set(key, (this.held.get(key) ?? 0) + 1);
+  }
+
+  release(chapter: number, page: number) {
+    const key = `${chapter}:${page}`;
+    const count = (this.held.get(key) ?? 0) - 1;
+    if (count > 0) this.held.set(key, count);
+    else this.held.delete(key);
+    this.trim();
+  }
+
+  /** Pages from the place read; another chapter's count from beyond this one. */
+  private distance(item: { chapter: number; page: number }) {
+    if (item.chapter === this.place.chapter) return Math.abs(item.page - this.place.page);
+    return FAR_PAGES / 2 + Math.abs(item.chapter - this.place.chapter) * 1000 + item.page;
+  }
+
+  private next() {
+    while (!this.disposed && this.running < PAGE_DOWNLOADS && this.waiting.length) {
+      let nearest = 0;
+      this.waiting.forEach((item, index) => {
+        if (this.distance(item) < this.distance(this.waiting[nearest])) nearest = index;
+      });
+      const [item] = this.waiting.splice(nearest, 1);
+      item.start();
+    }
+  }
+
   private trim() {
-    while (this.pages.size > KEPT_PAGES) {
-      const oldest = this.pages.keys().next().value as string;
-      this.pages.delete(oldest);
-      const url = this.urls.get(oldest);
+    for (const key of [...this.pages.keys()]) {
+      if (this.pages.size <= KEPT_PAGES) break;
+      if (this.held.has(key)) continue;
+      this.pages.delete(key);
+      const url = this.urls.get(key);
       if (url) {
         URL.revokeObjectURL(url);
-        this.urls.delete(oldest);
+        this.urls.delete(key);
       }
     }
   }
 
   dispose() {
     this.disposed = true;
+    for (const item of this.waiting) item.cancel();
+    this.waiting = [];
     for (const url of this.urls.values()) URL.revokeObjectURL(url);
     this.urls.clear();
     this.pages.clear();

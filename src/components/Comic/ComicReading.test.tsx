@@ -11,7 +11,8 @@ import type {
   ReaderPreferences,
 } from "../../types/generated";
 import { tocEntry, tocListing } from "../../test/toc";
-import { ComicReader } from "./ComicReader";
+import { ReaderView } from "../Reader/ReaderView";
+import { DEFAULT_COMIC } from "../../application/comic";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -19,6 +20,7 @@ const navigation = vi.hoisted(() => ({
   takeReaderPage: vi.fn((): "contents" | null => null),
 }));
 vi.mock("../../context/AppContext", () => ({ useApp: () => navigation }));
+vi.mock("motion/react", () => ({ useReducedMotion: () => false }));
 
 const at = (offset: number): ReaderLocator => ({
   bookId: "comic",
@@ -65,14 +67,23 @@ async function view(app: AppRuntime) {
   await app.settings.load();
   render(
     <RuntimeContext.Provider value={app}>
-      <ComicReader />
+      <ReaderView />
     </RuntimeContext.Provider>,
   );
   await screen.findByTestId("comic-reader");
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.scrollBy = vi.fn();
   let next = 0;
   URL.createObjectURL = vi.fn(() => `blob:page-${(next += 1)}`);
   URL.revokeObjectURL = vi.fn();
@@ -82,11 +93,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ComicReader", () => {
+describe("comics in the reader", () => {
   it("opens at the saved page and turns pages across chapters, saving the place", async () => {
     const app = setup(
       {
         comic: {
+          ...DEFAULT_COMIC,
           mode: "paged",
           direction: "left_to_right",
           fit: "screen",
@@ -119,6 +131,7 @@ describe("ComicReader", () => {
   it("turns the other way for right-to-left manga", async () => {
     const app = setup({
       comic: {
+        ...DEFAULT_COMIC,
         mode: "paged",
         direction: "right_to_left",
         fit: "screen",
@@ -137,6 +150,7 @@ describe("ComicReader", () => {
   it("offers a retry for a page that failed, and for a chapter that could not open", async () => {
     const app = setup({
       comic: {
+        ...DEFAULT_COMIC,
         mode: "paged",
         direction: "left_to_right",
         fit: "screen",
@@ -158,7 +172,7 @@ describe("ComicReader", () => {
     await broken.settings.load();
     render(
       <RuntimeContext.Provider value={broken}>
-        <ComicReader />
+        <ReaderView />
       </RuntimeContext.Provider>,
     );
     expect(await screen.findByText(/漫画打开失败/)).toBeTruthy();
@@ -172,6 +186,7 @@ describe("ComicReader", () => {
   it("shows the strip with only pages near the screen loaded, and saves settings", async () => {
     const app = setup({
       comic: {
+        ...DEFAULT_COMIC,
         mode: "scroll",
         direction: "left_to_right",
         fit: "width",
@@ -199,8 +214,127 @@ describe("ComicReader", () => {
       }) as DOMRect;
     fireEvent.pointerDown(surface, { pointerId: 1, clientX: 150, clientY: 300 });
     fireEvent.pointerUp(surface, { pointerId: 1, clientX: 150, clientY: 300 });
-    await userEvent.click(await screen.findByRole("button", { name: /漫画设置/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "界面" }));
+    expect(await screen.findByRole("dialog", { name: "漫画设置" })).toBeTruthy();
     await userEvent.click(await screen.findByRole("radio", { name: "单页" }));
     await waitFor(() => expect(app.settings.getSnapshot().value?.comic?.mode).toBe("paged"));
+  });
+
+  /** The pages' element, sized 300×600 for the tap zones. */
+  function pagesBox() {
+    const box = screen.getByTestId("comic-reader").firstElementChild as HTMLElement;
+    box.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        width: 300,
+        height: 600,
+        right: 300,
+        bottom: 600,
+        x: 0,
+        y: 0,
+      }) as DOMRect;
+    return box;
+  }
+
+  function tap(box: HTMLElement, x: number, y: number) {
+    fireEvent.pointerDown(box, { pointerId: 1, clientX: x, clientY: y });
+    fireEvent.pointerUp(box, { pointerId: 1, clientX: x, clientY: y });
+  }
+
+  const paged = (patch: Partial<typeof DEFAULT_COMIC> = {}) => ({
+    comic: { ...DEFAULT_COMIC, mode: "paged" as const, fit: "screen" as const, ...patch },
+  });
+
+  it("reads under the reader's own menus and theme", async () => {
+    const app = setup(paged());
+    await view(app);
+    expect(await screen.findByText("1/3")).toBeTruthy();
+    // The page is the reader's, its colour from the 界面 preset.
+    const root = screen.getByTestId("comic-reader").closest(".reader-paper");
+    expect(root).toBeTruthy();
+    tap(pagesBox(), 150, 300);
+    await screen.findByRole("button", { name: "下一话" });
+    expect(screen.getByTestId("reader-close")).toBeTruthy();
+    // Text tools are not offered for a comic.
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(await screen.findByRole("menuitem", { name: "漫画设置" })).toBeTruthy();
+    for (const name of ["替换净化", "简繁转换", "翻译"])
+      expect(screen.queryByRole("menuitem", { name })).toBeNull();
+    expect(screen.queryByRole("button", { name: "朗读" })).toBeNull();
+    expect(screen.getByRole("button", { name: "目录" })).toBeTruthy();
+  });
+
+  it("turns by its own tap zones, mirrored for right-to-left manga", async () => {
+    const app = setup(paged({ direction: "right_to_left" }));
+    await view(app);
+    expect(await screen.findByText("1/3")).toBeTruthy();
+    // The left column turns on in a manga, after waiting out a double tap.
+    tap(pagesBox(), 30, 300);
+    expect(await screen.findByText("2/3", undefined, { timeout: 2000 })).toBeTruthy();
+    cleanup();
+    const zoned = setup(
+      paged({
+        tapZones: ["next-chapter", "next", "next", "next", "menu", "next", "next", "next", "next"],
+      }),
+    );
+    await view(zoned);
+    expect(await screen.findByText("1/3")).toBeTruthy();
+    tap(pagesBox(), 30, 30);
+    await waitFor(() =>
+      expect(zoned.services.library.getComicChapter).toHaveBeenCalledWith("comic", 1),
+    );
+  });
+
+  it("centres a single page and never turns on a cancelled touch", async () => {
+    const app = setup(paged({ fit: "width" }), at(20));
+    await view(app);
+    expect(await screen.findByText("2/3")).toBeTruthy();
+    const box = pagesBox();
+    expect(box.firstElementChild?.className).toMatch(/min-h-full.*items-center/);
+    // The browser took the touch for scrolling: no tap, no turn.
+    fireEvent.pointerDown(box, { pointerId: 1, clientX: 280, clientY: 300 });
+    fireEvent.pointerCancel(box, { pointerId: 1, clientX: 0, clientY: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(screen.getByText("2/3")).toBeTruthy();
+  });
+
+  it("asks for the page being read first, a few at a time", async () => {
+    let running = 0;
+    let most = 0;
+    const app = setup(paged({ preload: 8 }), at(120));
+    const asked: string[] = [];
+    vi.mocked(app.services.library.getComicChapter).mockImplementation(async (_book, index) => ({
+      ...chapter(index),
+      pages: Array.from({ length: 12 }, (_, page) => ({
+        width: 3,
+        height: 4,
+        offset: index * 100 + 10 + page * 10,
+      })),
+    }));
+    vi.mocked(app.services.library.readComicPage).mockImplementation(async (_book, index, page) => {
+      asked.push(`${index}:${page}`);
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      return new ArrayBuffer(4);
+    });
+    await view(app);
+    await waitFor(() => expect(asked.length).toBeGreaterThan(5));
+    expect(asked[0]).toBe("1:1");
+    expect(most).toBeLessThanOrEqual(3);
+  });
+
+  it("opens the contents over the pages and goes to a chapter", async () => {
+    const app = setup(paged());
+    await view(app);
+    expect(await screen.findByText("1/3")).toBeTruthy();
+    tap(pagesBox(), 150, 300);
+    await userEvent.click(await screen.findByRole("button", { name: "目录" }));
+    await userEvent.click(await screen.findByRole("button", { name: /第2话/ }));
+    await waitFor(() =>
+      expect(app.services.reader.saveReaderLocator).toHaveBeenLastCalledWith(at(110)),
+    );
   });
 });

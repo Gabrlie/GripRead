@@ -47,6 +47,8 @@ interface ReaderTopBarProps {
   onChangeSource?: () => void;
   /** 缓存 a chapter range, for an online book. */
   onCache?: () => void;
+  /** A comic: More keeps the bookmark, 更新目录, 界面 and the book's details. */
+  comic?: boolean;
 }
 
 const CONVERSION_LABELS: Record<ChineseConversion, string> = {
@@ -83,6 +85,7 @@ export function ReaderTopBar({
   tocRules = txtTools,
   onChangeSource,
   onCache,
+  comic = false,
 }: ReaderTopBarProps) {
   const action = (panel: ReaderPanel, label: string, icon: string) => (
     <Button
@@ -171,31 +174,40 @@ export function ReaderTopBar({
                 {t("settings.toc")}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={() => onOpenPanel("style")}>
-              <Icon name="swap_vert" size={15} />
-              {t("style.effect")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onToggleReplace}>
-              <Icon name={replaceEnabled ? "check" : "find_replace"} size={15} />
-              {t("reader.replaceState", {
-                state: replaceEnabled ? t("common.on") : t("common.off"),
-              })}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onOpenPanel("replace")}>
-              <Icon name="find_replace" size={15} />
-              {t("settings.replace")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenConversion}>
-              <Icon name="translate" size={15} />
-              {t("reader.conversion")}
-              <span className="ml-auto pl-3 text-[11px] text-secondary">
-                {CONVERSION_LABELS[conversion]}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenTranslation}>
-              <Icon name="translate" size={15} />
-              {t("translation.title")}
-            </DropdownMenuItem>
+            {comic ? (
+              <DropdownMenuItem onClick={() => onOpenPanel("style")}>
+                <Icon name="tune" size={15} />
+                {t("comic.settings")}
+              </DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onClick={() => onOpenPanel("style")}>
+                  <Icon name="swap_vert" size={15} />
+                  {t("style.effect")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onToggleReplace}>
+                  <Icon name={replaceEnabled ? "check" : "find_replace"} size={15} />
+                  {t("reader.replaceState", {
+                    state: replaceEnabled ? t("common.on") : t("common.off"),
+                  })}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onOpenPanel("replace")}>
+                  <Icon name="find_replace" size={15} />
+                  {t("settings.replace")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onOpenConversion}>
+                  <Icon name="translate" size={15} />
+                  {t("reader.conversion")}
+                  <span className="ml-auto pl-3 text-[11px] text-secondary">
+                    {CONVERSION_LABELS[conversion]}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onOpenTranslation}>
+                  <Icon name="translate" size={15} />
+                  {t("translation.title")}
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onClick={onOpenTools}>
               <Icon name="tune" size={15} />
               {t("reader.bottomTools")}
@@ -224,6 +236,8 @@ interface ReaderBottomBarProps {
   tools: readonly ReaderTool[];
   onTool: (tool: ReaderTool) => void;
   night: boolean;
+  /** The chapter buttons' names, when not 上一章 and 下一章 (a comic's 话). */
+  labels?: { previous: string; next: string };
 }
 
 /**
@@ -242,6 +256,7 @@ export function ReaderBottomBar({
   tools,
   onTool,
   night,
+  labels,
 }: ReaderBottomBarProps) {
   const [draft, setDraft] = useState<number | null>(null);
   const tool = (label: string, icon: string, onClick: () => void) => (
@@ -271,7 +286,7 @@ export function ReaderBottomBar({
             disabled={previous.disabled}
             onClick={previous.onClick}
           >
-            {t("style.tap.previousChapter")}
+            {labels?.previous ?? t("style.tap.previousChapter")}
           </Button>
           <Slider
             data-testid="reader-progress"
@@ -299,7 +314,7 @@ export function ReaderBottomBar({
             disabled={next.disabled}
             onClick={next.onClick}
           >
-            {t("style.tap.nextChapter")}
+            {labels?.next ?? t("style.tap.nextChapter")}
           </Button>
         </div>
         <div className="flex items-center justify-around">

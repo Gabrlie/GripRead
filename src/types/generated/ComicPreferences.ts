@@ -3,6 +3,7 @@ import type { ComicBackground } from "./ComicBackground";
 import type { ComicDirection } from "./ComicDirection";
 import type { ComicFit } from "./ComicFit";
 import type { ComicMode } from "./ComicMode";
+import type { TapAction } from "./TapAction";
 
 export type ComicPreferences = { mode: ComicMode, direction: ComicDirection, fit: ComicFit, 
 /**
@@ -16,4 +17,9 @@ preload: number, background: ComicBackground,
 /**
  * The page number at the bottom.
  */
-pageNumber: boolean, };
+pageNumber: boolean, 
+/**
+ * The nine tap zones, row by row, as `ReadingStyle::tap_zones`; read
+ * mirrored left to right while turning right to left.
+ */
+tapZones: Array<TapAction>, };

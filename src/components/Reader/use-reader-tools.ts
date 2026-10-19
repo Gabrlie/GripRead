@@ -1,6 +1,7 @@
 import { describeError } from "../Cloud/format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppRuntime } from "../../application/runtime";
+import { isComic } from "../../application/comic";
 import type {
   Bookmark,
   BookTocSettings,
@@ -45,6 +46,7 @@ export function useReaderTools(
   const failedSettings = useRef<{ bookId: string; settings: BookTocSettings } | null>(null);
   const bookId = activeBook?.book.id;
   const online = Boolean(activeBook?.online);
+  const comic = isComic(activeBook);
 
   const reload = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -54,8 +56,8 @@ export function useReaderTools(
     setLoading(true);
     setError(null);
     void Promise.all([
-      // Online books have no TXT file and so no encoding.
-      online ? Promise.resolve(null) : runtime.services.library.getTxtEncoding(bookId),
+      // Online books and comics have no TXT file and so no encoding.
+      online || comic ? Promise.resolve(null) : runtime.services.library.getTxtEncoding(bookId),
       runtime.services.reader.listToc(bookId),
       runtime.services.reader.listBookmarks(bookId),
       runtime.services.reader.listTxtTocRules(),

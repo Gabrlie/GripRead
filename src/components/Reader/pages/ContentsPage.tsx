@@ -475,7 +475,9 @@ export function ContentsPage({
             <div className="flex-1 min-w-0">
               <p className="text-xs truncate">{currentEntry?.title ?? t("shelf.wholeText")}</p>
               <p className="text-[11px] text-secondary">
-                {currentIndex + 1}/{toc.length} · {ruleName || t("reader.encoding.auto")}
+                {currentIndex + 1}/{toc.length}
+                {/* A comic has no chapter rule; an online one names its source. */}
+                {comic && !ruleName ? "" : ` · ${ruleName || t("reader.encoding.auto")}`}
               </p>
             </div>
             <Button

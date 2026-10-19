@@ -877,10 +877,14 @@ pub struct ComicPreferences {
     pub background: ComicBackground,
     /// The page number at the bottom.
     pub page_number: bool,
+    /// The nine tap zones, row by row, as `ReadingStyle::tap_zones`; read
+    /// mirrored left to right while turning right to left.
+    pub tap_zones: Vec<TapAction>,
 }
 
 impl Default for ComicPreferences {
     fn default() -> Self {
+        use TapAction::{Menu, Next, Previous};
         Self {
             mode: ComicMode::Scroll,
             direction: ComicDirection::LeftToRight,
@@ -889,6 +893,9 @@ impl Default for ComicPreferences {
             preload: 5,
             background: ComicBackground::Theme,
             page_number: true,
+            tap_zones: vec![
+                Previous, Previous, Next, Previous, Menu, Next, Previous, Next, Next,
+            ],
         }
     }
 }
@@ -1372,6 +1379,11 @@ impl ReaderPreferences {
             if comic.gap > 64 || !(1..=20).contains(&comic.preload) {
                 return Err(AppError::invalid_argument(
                     "comic gap must be at most 64 and preload between 1 and 20",
+                ));
+            }
+            if comic.tap_zones.len() != 9 {
+                return Err(AppError::invalid_argument(
+                    "comic tap zones need nine actions",
                 ));
             }
         }

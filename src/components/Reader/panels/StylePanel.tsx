@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type {
+  ComicPreferences,
   InfoBar,
   InfoSlot,
   ReaderAsset,
@@ -25,6 +26,7 @@ import {
 } from "../../ui/dialog";
 import { t } from "../../../i18n";
 import { describeError } from "../../Cloud/format";
+import { DEFAULT_TAP_ZONES } from "../../../reader/gestures";
 
 interface StylePanelProps {
   /** The view shown first; the bottom bar's 设置 tool opens 更多设置. */
@@ -36,6 +38,11 @@ interface StylePanelProps {
   onChange: (patch: Partial<ReaderPreferences>) => void;
   fonts: Pick<SettingsService, "pickAndImportFont" | "listFonts" | "deleteFont">;
   onClose: () => void;
+  /** A comic: its settings replace the text ones, and its own tap zones. */
+  comic?: {
+    preferences: ComicPreferences;
+    onChange: (patch: Partial<ComicPreferences>) => void;
+  };
 }
 
 type View = "main" | "text" | "margins" | "info" | "title" | "more" | { preset: number };
@@ -94,6 +101,7 @@ function Range({
   step,
   format,
   onChange,
+  wide,
 }: {
   label: string;
   value: number;
@@ -102,10 +110,12 @@ function Range({
   step: number;
   format: (value: number) => string;
   onChange: (value: number) => void;
+  /** A label longer than the text settings' short ones. */
+  wide?: boolean;
 }) {
   return (
     <label className="flex items-center gap-3 text-xs">
-      <span className="w-14 shrink-0 text-secondary">{label}</span>
+      <span className={`${wide ? "w-24" : "w-14"} shrink-0 text-secondary`}>{label}</span>
       <input
         aria-label={label}
         type="range"
@@ -179,6 +189,7 @@ export function StylePanel({
   fonts,
   onClose,
   onPreview,
+  comic,
 }: StylePanelProps) {
   const [view, setView] = useState<View>(initialView);
   useEffect(() => {
@@ -194,7 +205,7 @@ export function StylePanel({
     typeof view === "object"
       ? t("style.editPreset")
       : {
-          main: t("style.main"),
+          main: comic ? t("comic.settings") : t("style.main"),
           text: t("style.text"),
           margins: t("style.margins"),
           info: t("style.info"),
@@ -219,15 +230,25 @@ export function StylePanel({
           <DialogTitle className="text-sm">{title}</DialogTitle>
           <DialogDescription className="sr-only">{t("style.note")}</DialogDescription>
         </DialogHeader>
-        {view === "main" && (
-          <MainView
-            preferences={preferences}
-            night={night}
-            onChange={onChange}
-            setStyle={setStyle}
-            onOpen={setView}
-          />
-        )}
+        {view === "main" &&
+          (comic ? (
+            <ComicView
+              comic={comic.preferences}
+              onComic={comic.onChange}
+              style={style}
+              night={night}
+              setStyle={setStyle}
+              onOpen={setView}
+            />
+          ) : (
+            <MainView
+              preferences={preferences}
+              night={night}
+              onChange={onChange}
+              setStyle={setStyle}
+              onOpen={setView}
+            />
+          ))}
         {view === "text" && (
           <TextView
             preferences={preferences}
@@ -282,8 +303,10 @@ export function StylePanel({
           <MoreView
             style={style}
             setStyle={setStyle}
-            preDownload={preferences.preDownloadChapters ?? 10}
+            preDownload={comic ? null : (preferences.preDownloadChapters ?? 10)}
             onPreDownload={(preDownloadChapters) => onChange({ preDownloadChapters })}
+            zones={comic ? comic.preferences.tapZones : style.tapZones}
+            onZones={(tapZones) => (comic ? comic.onChange({ tapZones }) : setStyle({ tapZones }))}
           />
         )}
         {typeof view === "object" && (
@@ -390,54 +413,184 @@ function MainView({
           <p className="text-[11px] text-secondary">{t("style.doubleNote")}</p>
         )}
       </Section>
-      <Section title={t("style.presets", { time: night ? t("style.night") : t("style.day") })}>
-        <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
-          {style.presets.map((preset, index) => (
-            <div key={index} className="flex flex-col items-center gap-1 shrink-0">
-              <button
-                aria-label={t("style.preset", { name: preset.name })}
-                aria-pressed={style.selected === index}
-                className={`h-11 w-11 rounded-full border text-sm font-medium flex items-center justify-center transition-shadow ${style.selected === index ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : "border-black/10"}`}
-                style={{
-                  background: night ? preset.nightBackground : preset.background,
-                  color: night ? preset.nightText : preset.text,
-                }}
-                onClick={() => setStyle({ selected: index })}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  onOpen({ preset: index });
-                }}
-              >
-                {t("style.sample")}
-              </button>
-              <button
-                aria-label={t("style.editNamed", { name: preset.name })}
-                className="text-[10px] text-secondary flex items-center gap-0.5"
-                onClick={() => onOpen({ preset: index })}
-              >
-                {preset.name}
-                <Icon name="edit" size={10} />
-              </button>
-            </div>
-          ))}
-          {style.presets.length < 32 && (
+      <Presets style={style} night={night} setStyle={setStyle} onOpen={onOpen} />
+      <Button variant="outline" className="w-full h-9 text-xs" onClick={() => onOpen("more")}>
+        <Icon name="settings" size={14} />
+        {t("style.more")}
+      </Button>
+    </div>
+  );
+}
+
+/** The colour presets for day or night; a long press or the name edits one. */
+function Presets({
+  style,
+  night,
+  setStyle,
+  onOpen,
+}: {
+  style: ReadingStyle;
+  night: boolean;
+  setStyle: (patch: Partial<ReadingStyle>) => void;
+  onOpen: (view: View) => void;
+}) {
+  return (
+    <Section title={t("style.presets", { time: night ? t("style.night") : t("style.day") })}>
+      <div className="flex gap-2.5 overflow-x-auto scrollbar-none py-2 -mx-1 px-2">
+        {style.presets.map((preset, index) => (
+          <div key={index} className="flex flex-col items-center gap-1 shrink-0">
             <button
-              aria-label={t("style.newPreset")}
-              className="h-11 w-11 shrink-0 rounded-full border border-dashed border-surface-variant flex items-center justify-center text-secondary"
-              onClick={() => {
-                const copy: StylePreset = {
-                  ...style.presets[style.selected],
-                  name: t("style.custom"),
-                };
-                setStyle({ presets: [...style.presets, copy], selected: style.presets.length });
-                onOpen({ preset: style.presets.length });
+              aria-label={t("style.preset", { name: preset.name })}
+              aria-pressed={style.selected === index}
+              className={`h-11 w-11 rounded-full border text-sm font-medium flex items-center justify-center transition-shadow ${style.selected === index ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : "border-black/10"}`}
+              style={{
+                background: night ? preset.nightBackground : preset.background,
+                color: night ? preset.nightText : preset.text,
+              }}
+              onClick={() => setStyle({ selected: index })}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onOpen({ preset: index });
               }}
             >
-              <Icon name="add" size={18} />
+              {t("style.sample")}
             </button>
-          )}
-        </div>
+            <button
+              aria-label={t("style.editNamed", { name: preset.name })}
+              className="text-[10px] text-secondary flex items-center gap-0.5"
+              onClick={() => onOpen({ preset: index })}
+            >
+              {preset.name}
+              <Icon name="edit" size={10} />
+            </button>
+          </div>
+        ))}
+        {style.presets.length < 32 && (
+          <button
+            aria-label={t("style.newPreset")}
+            className="h-11 w-11 shrink-0 rounded-full border border-dashed border-surface-variant flex items-center justify-center text-secondary"
+            onClick={() => {
+              const copy: StylePreset = {
+                ...style.presets[style.selected],
+                name: t("style.custom"),
+              };
+              setStyle({ presets: [...style.presets, copy], selected: style.presets.length });
+              onOpen({ preset: style.presets.length });
+            }}
+          >
+            <Icon name="add" size={18} />
+          </button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/** A comic's 界面: how pages are laid out and turned, then the shared presets. */
+function ComicView({
+  comic,
+  onComic,
+  style,
+  night,
+  setStyle,
+  onOpen,
+}: {
+  comic: ComicPreferences;
+  onComic: (patch: Partial<ComicPreferences>) => void;
+  style: ReadingStyle;
+  night: boolean;
+  setStyle: (patch: Partial<ReadingStyle>) => void;
+  onOpen: (view: View) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <Section title={t("comic.mode")}>
+        <Choice
+          label={t("comic.mode")}
+          options={[
+            ["scroll", t("comic.mode.scroll")],
+            ["paged", t("comic.mode.paged")],
+            ["double", t("comic.mode.double")],
+          ]}
+          value={comic.mode}
+          onChange={(mode) => onComic({ mode })}
+        />
+        {comic.mode === "double" && (
+          <p className="text-[11px] text-secondary">{t("comic.mode.note")}</p>
+        )}
       </Section>
+      {comic.mode !== "scroll" && (
+        <>
+          <Section title={t("comic.direction")}>
+            <Choice
+              label={t("comic.direction")}
+              options={[
+                ["left_to_right", t("comic.direction.left_to_right")],
+                ["right_to_left", t("comic.direction.right_to_left")],
+              ]}
+              value={comic.direction}
+              onChange={(direction) => onComic({ direction })}
+            />
+          </Section>
+          <Section title={t("comic.fit")}>
+            <Choice
+              label={t("comic.fit")}
+              options={[
+                ["width", t("comic.fit.width")],
+                ["height", t("comic.fit.height")],
+                ["screen", t("comic.fit.screen")],
+              ]}
+              value={comic.fit}
+              onChange={(fit) => onComic({ fit })}
+            />
+          </Section>
+        </>
+      )}
+      {comic.mode === "scroll" && (
+        <Range
+          label={t("comic.gap")}
+          wide
+          min={0}
+          max={32}
+          step={1}
+          value={comic.gap}
+          format={(value) => `${value}`}
+          onChange={(gap) => onComic({ gap })}
+        />
+      )}
+      <Range
+        label={t("comic.preload")}
+        wide
+        min={1}
+        max={20}
+        step={1}
+        value={comic.preload}
+        format={(value) => `${value}`}
+        onChange={(preload) => onComic({ preload })}
+      />
+      <Section title={t("comic.background")}>
+        <Choice
+          label={t("comic.background")}
+          options={[
+            ["theme", t("comic.background.theme")],
+            ["black", t("comic.background.black")],
+            ["white", t("comic.background.white")],
+          ]}
+          value={comic.background}
+          onChange={(background) => onComic({ background })}
+        />
+      </Section>
+      <label className="flex items-center justify-between gap-3 text-xs">
+        <span>{t("comic.pageNumber")}</span>
+        <Switch
+          aria-label={t("comic.pageNumber")}
+          checked={comic.pageNumber}
+          onCheckedChange={(pageNumber) => onComic({ pageNumber })}
+        />
+      </label>
+      {comic.background === "theme" && (
+        <Presets style={style} night={night} setStyle={setStyle} onOpen={onOpen} />
+      )}
       <Button variant="outline" className="w-full h-9 text-xs" onClick={() => onOpen("more")}>
         <Icon name="settings" size={14} />
         {t("style.more")}
@@ -646,12 +799,17 @@ function MoreView({
   setStyle,
   preDownload,
   onPreDownload,
+  zones,
+  onZones,
 }: {
   style: ReadingStyle;
   setStyle: (patch: Partial<ReadingStyle>) => void;
-  /** Legado's 预下载章节数, for online books. */
-  preDownload: number;
+  /** Legado's 预下载章节数, for online books; `null` hides it (comics preload pages). */
+  preDownload: number | null;
   onPreDownload: (chapters: number) => void;
+  /** The tap zones edited here: the text's, or a comic's own. */
+  zones: readonly TapAction[];
+  onZones: (zones: TapAction[]) => void;
 }) {
   const toggle = (
     label: string,
@@ -687,39 +845,45 @@ function MoreView({
         style.menuFollowsPage,
         (menuFollowsPage) => setStyle({ menuFollowsPage }),
       )}
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span>
-          {t("style.preDownload")}
-          <span className="block text-[11px] text-secondary">{t("downloads.books")}</span>
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label={t("style.preDownload.less")}
-            className="h-7 w-7 rounded-full border border-surface-variant"
-            onClick={() => onPreDownload(Math.max(0, preDownload - 5))}
-          >
-            −
-          </button>
-          <span className="w-8 text-center tabular-nums" aria-label={t("style.preDownload")}>
-            {preDownload}
+      {preDownload !== null && (
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span>
+            {t("style.preDownload")}
+            <span className="block text-[11px] text-secondary">{t("downloads.books")}</span>
           </span>
-          <button
-            type="button"
-            aria-label={t("style.preDownload.more")}
-            className="h-7 w-7 rounded-full border border-surface-variant"
-            onClick={() => onPreDownload(Math.min(50, preDownload + 5))}
-          >
-            +
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label={t("style.preDownload.less")}
+              className="h-7 w-7 rounded-full border border-surface-variant"
+              onClick={() => onPreDownload(Math.max(0, preDownload - 5))}
+            >
+              −
+            </button>
+            <span className="w-8 text-center tabular-nums" aria-label={t("style.preDownload")}>
+              {preDownload}
+            </span>
+            <button
+              type="button"
+              aria-label={t("style.preDownload.more")}
+              className="h-7 w-7 rounded-full border border-surface-variant"
+              onClick={() => onPreDownload(Math.min(50, preDownload + 5))}
+            >
+              +
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs">
+        <span className="min-w-0">
           {t("style.orientation")}
           <span className="block text-[11px] text-secondary">{t("style.orientation.note")}</span>
         </span>
-        <div role="radiogroup" aria-label={t("style.orientation")} className="flex gap-1">
+        <div
+          role="radiogroup"
+          aria-label={t("style.orientation")}
+          className="flex flex-wrap justify-end gap-1 ml-auto"
+        >
           {(
             [
               ["auto", t("common.followSystem")],
@@ -740,57 +904,56 @@ function MoreView({
           ))}
         </div>
       </div>
-      <Section title={t("style.tapZones")}>
-        <div className="grid grid-cols-3 gap-1.5">
-          {style.tapZones.map((action, index) => (
-            <label
-              key={index}
-              className="flex flex-col gap-1 rounded-lg bg-surface-container px-2 py-1.5 text-[10px] text-secondary"
-            >
-              {zoneNames()[index]}
-              <select
-                aria-label={t("style.zoneTap", { zone: zoneNames()[index] })}
-                className="bg-transparent text-xs text-on-surface outline-none"
-                value={action}
-                onChange={(event) => {
-                  const tapZones = [...style.tapZones];
-                  tapZones[index] = event.target.value as TapAction;
-                  setStyle({ tapZones });
-                }}
-              >
-                {tapActions().map(([value, text]) => (
-                  <option key={value} value={value}>
-                    {text}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-[11px]"
-          onClick={() =>
-            setStyle({
-              tapZones: [
-                "previous",
-                "previous",
-                "next",
-                "previous",
-                "menu",
-                "next",
-                "previous",
-                "next",
-                "next",
-              ],
-            })
-          }
-        >
-          {t("detail.resetCover")}
-        </Button>
-      </Section>
+      <TapZonesEditor zones={zones} onChange={onZones} />
     </div>
+  );
+}
+
+/** 点击区域: the action of each of the nine zones, with Legado's defaults to return to. */
+function TapZonesEditor({
+  zones,
+  onChange,
+}: {
+  zones: readonly TapAction[];
+  onChange: (zones: TapAction[]) => void;
+}) {
+  return (
+    <Section title={t("style.tapZones")}>
+      <div className="grid grid-cols-3 gap-1.5">
+        {zones.map((action, index) => (
+          <label
+            key={index}
+            className="flex flex-col gap-1 min-w-0 rounded-lg bg-surface-container px-2 py-1.5 text-[10px] text-secondary"
+          >
+            {zoneNames()[index]}
+            <select
+              aria-label={t("style.zoneTap", { zone: zoneNames()[index] })}
+              className="bg-transparent text-xs text-on-surface outline-none min-w-0 w-full"
+              value={action}
+              onChange={(event) => {
+                const next = [...zones];
+                next[index] = event.target.value as TapAction;
+                onChange(next);
+              }}
+            >
+              {tapActions().map(([value, text]) => (
+                <option key={value} value={value}>
+                  {text}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-[11px]"
+        onClick={() => onChange([...DEFAULT_TAP_ZONES])}
+      >
+        {t("detail.resetCover")}
+      </Button>
+    </Section>
   );
 }
 

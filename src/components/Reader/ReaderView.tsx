@@ -68,11 +68,15 @@ import { useReaderTools } from "./use-reader-tools";
 import { ReaderPageText } from "./ReaderPageText";
 import { ReaderScrollText } from "./ReaderScrollText";
 import { ReaderSurface, interactiveTarget, selectionActive } from "./ReaderSurface";
-import type { GestureHandlers, TapZones } from "../../reader/gestures";
+import type { GestureHandlers, TapAction, TapZones } from "../../reader/gestures";
 import { currentPreset, readingAppearance, useNight } from "./reading-style";
 import { ReaderInfoBar } from "./ReaderInfoBar";
 import { copyText, system } from "../../services/system";
 import { ReaderBottomBar, ReaderBrightnessBar, ReaderTopBar } from "./ReaderToolbar";
+import { comicTools } from "./reader-tools";
+import { DEFAULT_COMIC, coreIndex, isComic } from "../../application/comic";
+import { useComicSession } from "../Comic/use-comic-session";
+import { ComicSurface, wide } from "../Comic/ComicSurface";
 import { StylePanel } from "./panels/StylePanel";
 import { ContentsPage } from "./pages/ContentsPage";
 import { SearchPage, SearchResultBar } from "./pages/SearchPage";
@@ -94,7 +98,7 @@ import { rememberChaptersWhenRead } from "../../application/shelf";
 import { appLog } from "../../services/log";
 import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { ChangeSourceDialog } from "../Online/ChangeSourceDialog";
-import type { ContentWindow, TranslationStyle } from "../../types/generated";
+import type { ComicPreferences, ContentWindow, TranslationStyle } from "../../types/generated";
 import { describeError } from "../Cloud/format";
 
 const empty: ReaderSnapshot = { ...emptyReaderSnapshot(), loading: true };
@@ -115,6 +119,13 @@ function bookProgressOf(
   return within * 100;
 }
 const noopSubscribe = () => () => {};
+
+/** A comic's place in its chapter, 0–100, for the bottom bar's slider. */
+function comicProgress(session: ReturnType<typeof useComicSession>): number {
+  const { place, current } = session;
+  if (!place || !current || current.pages.length < 2) return 0;
+  return Math.round((place.page / (current.pages.length - 1)) * 100);
+}
 
 function safeExcerpt(source: string, maxUnits = 160): string {
   // EPUB image and directory marks are not part of what was read.
@@ -162,6 +173,20 @@ export function ReaderView() {
   }));
   const preferences = settings.value;
   const bookId = activeBook?.book.id;
+  // A comic reads its pages in place of the text, under the same menus,
+  // panels, theme, and settings.
+  const comic = isComic(activeBook);
+  const comicPreferences: ComicPreferences = { ...DEFAULT_COMIC, ...preferences?.comic };
+  const comicSession = useComicSession(
+    comic && bookId ? bookId : null,
+    runtime,
+    comicPreferences.preload,
+  );
+  const comicStep = comicPreferences.mode === "double" && wide() ? 2 : 1;
+  /** Turns a comic in the direction read: by most of a screen in the strip. */
+  const stripTurn = useRef<((direction: "next" | "previous") => void) | null>(null);
+  const comicRtl =
+    comic && comicPreferences.mode !== "scroll" && comicPreferences.direction === "right_to_left";
   const effectiveMode =
     preferences?.readingMode === "double" && !canShowSpread(viewport.width, viewport.height)
       ? "single"
@@ -484,6 +509,11 @@ export function ReaderView() {
    */
   const progressSyncOn = useRef(false);
   const progressSyncPlus = useRef(false);
+  /** The chapter read, named with the uploaded progress. */
+  const comicTitle = useRef("");
+  comicTitle.current = comicSession.current?.title ?? "";
+  const currentChapterTitle = () =>
+    comic ? comicTitle.current : (controller?.getSnapshot().chapter?.title ?? "");
   const [cloudProgress, setCloudProgress] = useState<ProgressPrompt | null>(null);
   const checkCloudProgress = useCallback(() => {
     if (!bookId || !progressSyncOn.current) return;
@@ -531,7 +561,7 @@ export function ReaderView() {
       if (!progressSyncPlus.current) return;
       if (document.visibilityState === "visible") checkCloudProgress();
       else {
-        const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
+        const chapterTitle = currentChapterTitle();
         void runtime.positions
           .flush()
           .then(() => runtime.progressSync.upload(bookId, chapterTitle))
@@ -569,6 +599,11 @@ export function ReaderView() {
   }, [pauseAutomatic, startAutomatic]);
   const turn = useCallback(
     (direction: "next" | "previous", point?: { x: number; y: number }) => {
+      if (comic) {
+        if (comicPreferences.mode === "scroll") stripTurn.current?.(direction);
+        else comicSession.turn(direction, comicStep);
+        return;
+      }
       const resume = interruptAutomatic();
       adapter.current?.aim(point ?? null);
       if (effectiveMode === "scroll") {
@@ -584,7 +619,16 @@ export function ReaderView() {
           resume();
         });
     },
-    [controller, effectiveMode, interruptAutomatic, run],
+    [
+      controller,
+      effectiveMode,
+      interruptAutomatic,
+      run,
+      comic,
+      comicPreferences.mode,
+      comicSession,
+      comicStep,
+    ],
   );
 
   // A book read from search is only kept if the reader adds it (Legado
@@ -611,7 +655,7 @@ export function ReaderView() {
       runtime.finishReaderWrite(settingsStore.flush);
       closeReader(toDetail);
       const leaving = bookId;
-      const chapterTitle = controller?.getSnapshot().chapter?.title ?? "";
+      const chapterTitle = currentChapterTitle();
       void runtime.positions
         .flush()
         .then(() => {
@@ -650,6 +694,21 @@ export function ReaderView() {
 
   const { setBookmarks, setEncodingInfo, reload: reloadTools } = tools;
   const addBookmark = useCallback(() => {
+    if (comic) {
+      const locator = comicSession.locator();
+      const { current: chapter, place } = comicSession;
+      if (!bookId || !locator || !chapter || !place) return;
+      run(async () => {
+        const created = await runtime.services.reader.addBookmark({
+          bookId,
+          locator,
+          excerpt: t("comic.bookmarkExcerpt", { chapter: chapter.title, page: place.page + 1 }),
+        });
+        setBookmarks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+        toast(t("reader.bookmarkAdded"));
+      });
+      return;
+    }
     const page = state.page;
     if (!bookId || !page || !state.contentWindow) return;
     const epoch = sessionEpoch.current;
@@ -671,6 +730,8 @@ export function ReaderView() {
     setBookmarks,
     state.contentWindow,
     state.page,
+    comic,
+    comicSession,
   ]);
 
   /** 更新目录: an online book asks its source; a local one reads its file again. */
@@ -688,6 +749,7 @@ export function ReaderView() {
           else {
             refreshingDirectory.current = true;
             reloadTools();
+            if (comic) comicSession.reload(comicSession.locator());
           }
         },
         (failure: unknown) => toast({ text: describeError(failure), error: true }),
@@ -697,6 +759,7 @@ export function ReaderView() {
     refreshingDirectory.current = true;
     toast(t("shelf.updating"));
     reloadTools();
+    if (comic) comicSession.reload(comicSession.locator());
   };
   const useTool = (tool: ReaderTool) => {
     const panels: Partial<Record<ReaderTool, ReaderPanel>> = {
@@ -755,7 +818,10 @@ export function ReaderView() {
     setCloudProgress(null);
     if (!prompt || !bookId) return;
     void runtime.progressSync.acknowledge(prompt, bookId).catch(() => undefined);
-    if (jump && controller) {
+    if (jump && comic) {
+      comicSession.seek(prompt.locator);
+      toast(t("reader.progressSynced", { device: prompt.deviceName || t("reader.otherDevice") }));
+    } else if (jump && controller) {
       void pauseAutomatic();
       run(async () => {
         await controller.seek(prompt.locator);
@@ -840,10 +906,10 @@ export function ReaderView() {
   const [replaceDraft, setReplaceDraft] = useState<ReplaceRule | null>(null);
   // The reader's selection menu replaces the WebView's own toolbar.
   useEffect(() => {
-    if (!bookId) return;
+    if (!bookId || comic) return;
     system.setSelectionMenu(true);
     return () => system.setSelectionMenu(false);
-  }, [bookId]);
+  }, [bookId, comic]);
 
   const { clearResults } = search;
   /**
@@ -917,7 +983,7 @@ export function ReaderView() {
   applyTransformsRef.current = applyTransforms;
   // A translated local book: each new snapshot of its translations is
   // applied like a changed rule, and the job resumes when the book opens.
-  const localBook = Boolean(bookId) && !activeBook?.online;
+  const localBook = Boolean(bookId) && !activeBook?.online && !comic;
   // 译文样式 from 设置 › 翻译, read when the book opens and when 翻译 closes.
   const [translationLook, setTranslationLook] = useState<{
     style: TranslationStyle;
@@ -942,7 +1008,7 @@ export function ReaderView() {
     total: number;
   } | null>(null);
   useEffect(() => {
-    if (!bookId || localBook) return;
+    if (!bookId || localBook || comic) return;
     let unlisten: (() => void) | undefined;
     let active = true;
     void runtime.services.translation
@@ -958,7 +1024,7 @@ export function ReaderView() {
       unlisten?.();
       setChapterTranslation(null);
     };
-  }, [bookId, localBook, runtime]);
+  }, [bookId, localBook, runtime, comic]);
   const [translating, setTranslating] = useState<number | null>(null);
   useEffect(() => {
     if (!bookId || !localBook) return;
@@ -1019,7 +1085,7 @@ export function ReaderView() {
   const imagesReady = useRef<Promise<void>>(Promise.resolve());
   const bookImageSet = useRef<ReturnType<typeof bookImages> | null>(null);
   useLayoutEffect(() => {
-    if (!bookId) return;
+    if (!bookId || comic) return;
     let images: ReturnType<typeof bookImages> | null = null;
     let active = true;
     imagesReady.current = runtime.services.library.listBookImages(bookId).then(
@@ -1039,10 +1105,17 @@ export function ReaderView() {
       bookImageSet.current = null;
       setReaderImages(null);
     };
-  }, [bookId, runtime]);
+  }, [bookId, runtime, comic]);
 
   useLayoutEffect(() => {
-    if (!bookId || !preferences || !measureBox.current || !pageBox.current || !animationBox.current)
+    if (
+      !bookId ||
+      comic ||
+      !preferences ||
+      !measureBox.current ||
+      !pageBox.current ||
+      !animationBox.current
+    )
       return;
     syncMeasureBox(pageBox.current, measureBox.current, effectiveMode === "double" ? 2 : 1);
     const presentation = new PageTurnAdapter(animationBox.current, {
@@ -1106,7 +1179,7 @@ export function ReaderView() {
       adapter.current = null;
       if (runtime.readerFlush === flushReader) runtime.readerFlush = null;
     };
-  }, [bookId, pauseAutomatic, flushDirectory, runtime, Boolean(preferences)]);
+  }, [bookId, comic, pauseAutomatic, flushDirectory, runtime, Boolean(preferences)]);
   useEffect(() => {
     void pauseAutomatic();
   }, [bookId, state.contentWindow?.contentVersion, pauseAutomatic]);
@@ -1180,15 +1253,16 @@ export function ReaderView() {
         else void close();
       } else if (["ArrowRight", "PageDown", " "].includes(event.key)) {
         event.preventDefault();
-        turn("next");
+        // A manga's right arrow goes back, as its pages turn.
+        turn(comicRtl && event.key === "ArrowRight" ? "previous" : "next");
       } else if (["ArrowLeft", "PageUp"].includes(event.key)) {
         event.preventDefault();
-        turn("previous");
+        turn(comicRtl && event.key === "ArrowLeft" ? "next" : "previous");
       }
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [panel, backPanel, closing, close, turn, controls, autoPanel]);
+  }, [panel, backPanel, closing, close, turn, controls, autoPanel, comicRtl]);
 
   // Volume keys turn pages while a book is open (Legado 音量键翻页). With the
   // reading menu or a tool open, or while reading aloud, they change the
@@ -1218,24 +1292,30 @@ export function ReaderView() {
 
   /** The direction of a swipe for effects that turn only on release. */
   const swipe = useRef<"next" | "previous" | null>(null);
-  const gestures: GestureHandlers = {
-    tap: (action, point) => {
-      // Legado: with the menu open, a tap anywhere on the page closes it.
-      if (controls) {
-        setControls(false);
+  /** A tap zone's action, on the text or a comic's pages. */
+  const tapAction = (action: TapAction, point?: { x: number; y: number }) => {
+    // Legado: with the menu open, a tap anywhere on the page closes it.
+    if (controls) {
+      setControls(false);
+      return;
+    }
+    if (action === "menu" && autoSession) setAutoPanel((shown) => !shown);
+    else if (action === "menu") setControls(true);
+    else if (action === "next" || action === "previous") {
+      turn(action, point);
+    } else if (action === "next-chapter" || action === "previous-chapter") {
+      const step = action === "next-chapter" ? 1 : -1;
+      if (comic) {
+        if (comicSession.place) comicSession.go(comicSession.place.chapter + step, 0);
         return;
       }
-      if (action === "menu" && autoSession) setAutoPanel((shown) => !shown);
-      else if (action === "menu") setControls(true);
-      else if (action === "next" || action === "previous") {
-        turn(action, point);
-      } else if (action === "next-chapter" || action === "previous-chapter") {
-        void pauseAutomatic();
-        if (controller)
-          run(() => controller.seekChapter(action === "next-chapter" ? "next" : "previous"));
-      } else if (action === "contents" || action === "search") openPanel(action);
-      else if (action === "bookmark") addBookmark();
-    },
+      void pauseAutomatic();
+      if (controller) run(() => controller.seekChapter(step > 0 ? "next" : "previous"));
+    } else if (action === "contents" || (action === "search" && !comic)) openPanel(action);
+    else if (action === "bookmark") addBookmark();
+  };
+  const gestures: GestureHandlers = {
+    tap: tapAction,
     dragStart: (direction, start) => {
       if (controls) {
         setControls(false);
@@ -1297,7 +1377,8 @@ export function ReaderView() {
     fromDetail.current = false;
     closePanel();
     setControls(false);
-    if (controller) run(() => controller.seek(locator));
+    if (comic) comicSession.seek(locator);
+    else if (controller) run(() => controller.seek(locator));
   };
   const highlightIn = (resourceId: string | undefined) => {
     const mark = search.highlight;
@@ -1343,15 +1424,20 @@ export function ReaderView() {
         <ReaderTopBar
           visible={controls && !previewing}
           title={activeBook.book.title}
-          subtitle={state.chapter?.title ?? t("shelf.wholeText")}
+          subtitle={
+            comic
+              ? (comicSession.current?.title ?? "")
+              : (state.chapter?.title ?? t("shelf.wholeText"))
+          }
           closing={closing}
           onBack={() => void close()}
           onOpenPanel={openPanel}
-          canBookmark={Boolean(page) && !closing}
+          canBookmark={(comic ? Boolean(comicSession.current) : Boolean(page)) && !closing}
+          comic={comic}
           onAddBookmark={addBookmark}
           onRefreshDirectory={refreshDirectory}
-          txtTools={!activeBook.online && activeBook.asset?.kind !== "epub"}
-          tocRules={activeBook.asset?.kind !== "epub" && !tools.fixedToc}
+          txtTools={!comic && !activeBook.online && activeBook.asset?.kind !== "epub"}
+          tocRules={!comic && activeBook.asset?.kind !== "epub" && !tools.fixedToc}
           onChangeSource={activeBook.online ? () => setChangingSource(true) : undefined}
           onCache={activeBook.online ? () => setCachingRange(true) : undefined}
           replaceEnabled={useReplaceRules}
@@ -1366,97 +1452,110 @@ export function ReaderView() {
           }}
         />
       </div>
-      <ReaderSurface
-        double={effectiveMode === "double"}
-        scroll={effectiveMode === "scroll"}
-        pageBox={pageBox}
-        gestureBox={gestureBox}
-        animationBox={animationBox}
-        style={typeStyle}
-        acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}
-        onInteract={() => {
-          // Showing or hiding the automatic panel does not stop turning.
-          if (!autoSession) void pauseAutomatic();
-        }}
-        gestures={gestures}
-        zones={style?.tapZones as TapZones | undefined}
-        margins={style?.margins}
-        header={
-          style && effectiveMode !== "scroll" ? (
-            <ReaderInfoBar
-              bar={style.header}
-              values={info}
-              margins={style.headerMargins}
-              line={style.headerLine}
-              position="header"
+      {comic ? (
+        <ComicSurface
+          session={comicSession}
+          preferences={comicPreferences}
+          controls={controls}
+          onAction={tapAction}
+          onBack={() => void close()}
+          stripTurn={stripTurn}
+        />
+      ) : (
+        <ReaderSurface
+          double={effectiveMode === "double"}
+          scroll={effectiveMode === "scroll"}
+          pageBox={pageBox}
+          gestureBox={gestureBox}
+          animationBox={animationBox}
+          style={typeStyle}
+          acceptsGestures={() => panelRef.current === null && !closing && Boolean(controller)}
+          onInteract={() => {
+            // Showing or hiding the automatic panel does not stop turning.
+            if (!autoSession) void pauseAutomatic();
+          }}
+          gestures={gestures}
+          zones={style?.tapZones as TapZones | undefined}
+          margins={style?.margins}
+          header={
+            style && effectiveMode !== "scroll" ? (
+              <ReaderInfoBar
+                bar={style.header}
+                values={info}
+                margins={style.headerMargins}
+                line={style.headerLine}
+                position="header"
+              />
+            ) : undefined
+          }
+          footer={
+            style && effectiveMode !== "scroll" ? (
+              <ReaderInfoBar
+                bar={style.footer}
+                values={info}
+                margins={style.footerMargins}
+                line={style.footerLine}
+                position="footer"
+              />
+            ) : undefined
+          }
+        >
+          {state.scroll && state.scroll.totalLength > 0 && controller ? (
+            <ReaderScrollText
+              key={state.scrollRevision}
+              window={state.scroll}
+              controller={controller}
+              viewport={scrollBox}
+              synchronize={synchronizeScroll}
+              before={state.scrollBefore}
+              after={state.scrollAfter}
+              highlight={highlightIn(state.scroll.resourceId)}
+              headings={headings}
+              onInteract={() => {
+                // Showing or hiding the automatic panel does not stop turning.
+                if (!autoSession) void pauseAutomatic();
+              }}
+              onUserScroll={() => {
+                if (panelRef.current === null) setControls(false);
+              }}
+              run={run}
             />
-          ) : undefined
-        }
-        footer={
-          style && effectiveMode !== "scroll" ? (
-            <ReaderInfoBar
-              bar={style.footer}
-              values={info}
-              margins={style.footerMargins}
-              line={style.footerLine}
-              position="footer"
-            />
-          ) : undefined
-        }
-      >
-        {state.scroll && state.scroll.totalLength > 0 && controller ? (
-          <ReaderScrollText
-            key={state.scrollRevision}
-            window={state.scroll}
-            controller={controller}
-            viewport={scrollBox}
-            synchronize={synchronizeScroll}
-            before={state.scrollBefore}
-            after={state.scrollAfter}
-            highlight={highlightIn(state.scroll.resourceId)}
-            headings={headings}
-            onInteract={() => {
-              // Showing or hiding the automatic panel does not stop turning.
-              if (!autoSession) void pauseAutomatic();
-            }}
-            onUserScroll={() => {
-              if (panelRef.current === null) setControls(false);
-            }}
-            run={run}
-          />
-        ) : (
-          page && (
-            <div className={`h-full ${effectiveMode === "double" ? "grid grid-cols-2 gap-8" : ""}`}>
-              {state.pages.map((visible) => (
-                <ReaderPageText
-                  key={visible.startOffset}
-                  page={visible}
-                  bookId={state.bookId}
-                  highlight={highlightIn(state.contentWindow?.resourceId)}
-                  headings={headings}
-                  layout={layoutSignature}
-                />
-              ))}
+          ) : (
+            page && (
+              <div
+                className={`h-full ${effectiveMode === "double" ? "grid grid-cols-2 gap-8" : ""}`}
+              >
+                {state.pages.map((visible) => (
+                  <ReaderPageText
+                    key={visible.startOffset}
+                    page={visible}
+                    bookId={state.bookId}
+                    highlight={highlightIn(state.contentWindow?.resourceId)}
+                    headings={headings}
+                    layout={layoutSignature}
+                  />
+                ))}
+              </div>
+            )
+          )}
+          {/* Until the first page is laid out (fetching a chapter, translating
+              it, or measuring), not a blank page. */}
+          {!page && !state.error && !(!state.loading && state.contentWindow?.totalLength === 0) && (
+            <div
+              role="status"
+              className="fixed inset-0 z-10 flex flex-col items-center justify-center gap-3 pointer-events-none text-sm text-secondary"
+            >
+              <Icon name="progress_activity" size={28} className="animate-spin text-primary" />
+              {chapterTranslation
+                ? t("translation.chapterProgress", chapterTranslation)
+                : t("reader.loadingText")}
             </div>
-          )
-        )}
-        {/* Until the first page is laid out (fetching a chapter, translating
-            it, or measuring), not a blank page. */}
-        {!page && !state.error && !(!state.loading && state.contentWindow?.totalLength === 0) && (
-          <div
-            role="status"
-            className="fixed inset-0 z-10 flex flex-col items-center justify-center gap-3 pointer-events-none text-sm text-secondary"
-          >
-            <Icon name="progress_activity" size={28} className="animate-spin text-primary" />
-            {chapterTranslation
-              ? t("translation.chapterProgress", chapterTranslation)
-              : t("reader.loadingText")}
-          </div>
-        )}
-        {!state.loading && state.contentWindow?.totalLength === 0 && (
-          <p className="text-sm text-secondary">{t("reader.noText")}</p>
-        )}
-      </ReaderSurface>
+          )}
+          {!state.loading && state.contentWindow?.totalLength === 0 && (
+            <p className="text-sm text-secondary">{t("reader.noText")}</p>
+          )}
+        </ReaderSurface>
+      )}
       {translationLook.style === "custom" && (
         <style>{translationStyleSheet(translationLook.css)}</style>
       )}
@@ -1519,40 +1618,72 @@ export function ReaderView() {
         )}
       </div>
       <div className="contents" style={appearance.menu}>
-        <ReaderBottomBar
-          visible={controls && searchIndex === null && !previewing}
-          previous={{
-            // A book read chapter by chapter also moves into the resource before.
-            disabled:
-              !state.chapter ||
-              (state.chapter === state.chapters[0] && !state.contentWindow?.previousResourceId) ||
-              closing,
-            onClick: () => {
+        {comic ? (
+          <ReaderBottomBar
+            visible={controls && !previewing}
+            previous={{
+              disabled: !comicSession.place || comicSession.place.chapter === 0 || closing,
+              onClick: () =>
+                comicSession.place && comicSession.go(comicSession.place.chapter - 1, 0),
+            }}
+            next={{
+              disabled:
+                !comicSession.place ||
+                comicSession.place.chapter + 1 >= comicSession.chapters.length ||
+                closing,
+              onClick: () =>
+                comicSession.place && comicSession.go(comicSession.place.chapter + 1, 0),
+            }}
+            progress={comicProgress(comicSession)}
+            progressDisabled={!comicSession.current}
+            onProgressDraft={() => undefined}
+            onProgressCommit={(percent) => {
+              const { place, current } = comicSession;
+              if (!place || !current) return;
+              const last = Math.max(0, current.pages.length - 1);
+              comicSession.setPlace({ ...place, page: Math.round((percent / 100) * last) });
+            }}
+            tools={comicTools(style?.bottomTools ?? [])}
+            labels={{ previous: t("comic.previousChapter"), next: t("comic.nextChapter") }}
+            onTool={useTool}
+            night={night}
+          />
+        ) : (
+          <ReaderBottomBar
+            visible={controls && searchIndex === null && !previewing}
+            previous={{
+              // A book read chapter by chapter also moves into the resource before.
+              disabled:
+                !state.chapter ||
+                (state.chapter === state.chapters[0] && !state.contentWindow?.previousResourceId) ||
+                closing,
+              onClick: () => {
+                void pauseAutomatic();
+                if (controller) run(() => controller.seekChapter("previous"));
+              },
+            }}
+            next={{
+              disabled:
+                !state.chapter ||
+                (state.chapter === state.chapters.at(-1) && !state.contentWindow?.nextResourceId) ||
+                closing,
+              onClick: () => {
+                void pauseAutomatic();
+                if (controller) run(() => controller.seekChapter("next"));
+              },
+            }}
+            progress={state.chapterProgress}
+            progressDisabled={!state.chapter}
+            onProgressDraft={() => void pauseAutomatic()}
+            onProgressCommit={(target) => {
               void pauseAutomatic();
-              if (controller) run(() => controller.seekChapter("previous"));
-            },
-          }}
-          next={{
-            disabled:
-              !state.chapter ||
-              (state.chapter === state.chapters.at(-1) && !state.contentWindow?.nextResourceId) ||
-              closing,
-            onClick: () => {
-              void pauseAutomatic();
-              if (controller) run(() => controller.seekChapter("next"));
-            },
-          }}
-          progress={state.chapterProgress}
-          progressDisabled={!state.chapter}
-          onProgressDraft={() => void pauseAutomatic()}
-          onProgressCommit={(target) => {
-            void pauseAutomatic();
-            if (controller) run(() => controller.seekChapterProgress(target / 100));
-          }}
-          tools={style?.bottomTools ?? []}
-          onTool={useTool}
-          night={night}
-        />
+              if (controller) run(() => controller.seekChapterProgress(target / 100));
+            }}
+            tools={style?.bottomTools ?? []}
+            onTool={useTool}
+            night={night}
+          />
+        )}
       </div>
       {searchIndex !== null && panel === null && (
         <SearchResultBar
@@ -1576,9 +1707,53 @@ export function ReaderView() {
           fonts={runtime.services.settings}
           onPreview={setPreviewing}
           onClose={closePanel}
+          comic={
+            comic
+              ? {
+                  preferences: comicPreferences,
+                  onChange: (patch) =>
+                    settingsStore.set({ comic: { ...comicPreferences, ...patch } }),
+                }
+              : undefined
+          }
         />
       )}
-      {panels.isOpen("contents") && (
+      {panels.isOpen("contents") && comic && (
+        <ContentsPage
+          bookTitle={activeBook.book.title}
+          toc={comicSession.toc ?? []}
+          ruleName={activeBook.online?.book.sourceName ?? ""}
+          splitLongChapters={false}
+          position={
+            comicSession.place
+              ? (comicSession.current?.pages[comicSession.place.page]?.offset ?? 0)
+              : 0
+          }
+          resourceId={comicSession.current?.resourceId}
+          loading={!comicSession.toc && !comicSession.opening}
+          error={comicSession.toc ? null : comicSession.opening}
+          busy={false}
+          bookmarks={tools.bookmarks}
+          contentVersion={comicSession.current?.contentVersion}
+          kind={activeBook.online ? "online" : "epub"}
+          comic
+          onReload={() => comicSession.reload(comicSession.locator())}
+          onSeek={seekTo}
+          onOpenBookmark={(bookmark) => seekTo(bookmark.locator)}
+          onEditBookmark={(bookmark) => setNoteDraft({ excerpt: bookmark.excerpt, bookmark })}
+          onDeleteBookmark={(bookmark) =>
+            run(async () => {
+              await runtime.services.reader.deleteBookmark({ bookmarkId: bookmark.id });
+              setBookmarks((current) => current.filter((item) => item.id !== bookmark.id));
+            })
+          }
+          onOpenRules={() => undefined}
+          onToggleSplit={() => undefined}
+          onUpdateToc={activeBook.online ? refreshDirectory : undefined}
+          onClose={closePanel}
+        />
+      )}
+      {panels.isOpen("contents") && !comic && (
         <ContentsPage
           bookTitle={activeBook.book.title}
           toc={tools.toc}
@@ -1631,7 +1806,9 @@ export function ReaderView() {
         />
       )}
       <SelectionMenu enabled={panel === null && !closing} actions={selectionActions} />
-      {!closing && <TocSuggestionPrompt bookId={activeBook.book.id} onAnswered={reloadTools} />}
+      {!closing && !comic && (
+        <TocSuggestionPrompt bookId={activeBook.book.id} onAnswered={reloadTools} />
+      )}
       {noteDraft && (
         <BookmarkNoteDialog
           excerpt={noteDraft.excerpt}
@@ -1707,16 +1884,22 @@ export function ReaderView() {
       )}
       {cloudProgress && (
         <CloudProgressDialog
-          prompt={cloudProgress}
-          toc={tools.toc}
-          here={page?.locator ?? null}
+          prompt={comic ? { ...cloudProgress, excerpt: "" } : cloudProgress}
+          toc={comic ? comicSession.chapters : tools.toc}
+          here={comic ? comicSession.locator() : (page?.locator ?? null)}
           onAnswer={answerCloudProgress}
         />
       )}
       {cachingRange && activeBook.online && (
         <CacheRangeDialog
           book={activeBook}
-          current={state.contentWindow?.resourceIndex ?? undefined}
+          current={
+            comic
+              ? comicSession.place
+                ? coreIndex(comicSession.chapters, comicSession.place.chapter)
+                : undefined
+              : (state.contentWindow?.resourceIndex ?? undefined)
+          }
           onClose={() => setCachingRange(false)}
         />
       )}
@@ -1726,7 +1909,8 @@ export function ReaderView() {
           book={activeBook}
           prepare={async () => {
             // The switch maps the place saved now, not an older one.
-            await controller?.flush();
+            if (comic) await runtime.positions.flush();
+            else await controller?.flush();
           }}
           onChanged={(result) => {
             setChangingSource(false);
@@ -1735,7 +1919,9 @@ export function ReaderView() {
             runtime.positions.forget(bookId);
             reloadTools();
             const target = result.locator;
-            if (controller) run(() => (target ? controller.seek(target) : controller.open(bookId)));
+            if (comic) comicSession.reload(target);
+            else if (controller)
+              run(() => (target ? controller.seek(target) : controller.open(bookId)));
           }}
           onClose={() => setChangingSource(false)}
         />

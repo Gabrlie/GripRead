@@ -34,8 +34,6 @@ import { DiscoverView } from "./components/Discover/DiscoverView";
 import { SubscriptionView } from "./components/Subscription/SubscriptionView";
 import { SettingsView } from "./components/Settings/SettingsView";
 import { ReaderView } from "./components/Reader/ReaderView";
-import { ComicReader } from "./components/Comic/ComicReader";
-import { isComic } from "./application/comic";
 import { ImportModal } from "./components/Bookshelf/ImportModal";
 import { UpdatePrompt } from "./components/Updates/UpdatePrompt";
 import { DisclaimerPrompt } from "./components/Layout/Disclaimer";
@@ -352,11 +350,7 @@ function MainContent() {
       )}
       <div className={`flex-1 flex flex-col ${activeBook ? "" : "md:pl-64"} min-w-0`}>
         {activeBook ? (
-          isComic(activeBook) ? (
-            <ComicReader key={activeBook.book.id} />
-          ) : (
-            <ReaderView />
-          )
+          <ReaderView />
         ) : (
           <div key={activeTab} className="flex-1 flex flex-col min-w-0">
             {activeTab === "bookshelf" ? (

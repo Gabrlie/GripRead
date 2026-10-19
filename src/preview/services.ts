@@ -22,6 +22,13 @@ import type {
 import { DEFAULT_READING_STYLE } from "../types/generated";
 import { createMemorySourceService, PREVIEW_BOOKS, PREVIEW_SOURCES } from "./sources";
 import { PREVIEW_NETWORK } from "./network";
+import {
+  PREVIEW_COMIC_ID,
+  previewComicBook,
+  previewComicChapter,
+  previewComicPage,
+  previewComicToc,
+} from "./comic";
 import type { CloudBook, RemoteBackup, UpdateSettings, WebDavSettings } from "../types/generated";
 
 const BOOK_ID = "preview-book";
@@ -188,6 +195,7 @@ export function previewServices(): AppServices {
   let shelf: ShelfPreferences = { layout: "list", sort: "recent_read", groupId: "all" };
   let network = PREVIEW_NETWORK;
   let position: ReaderLocator | null = contextFor(ENTRIES[3].locator.offset);
+  let comicPosition: ReaderLocator | null = null;
   let settings: BookTocSettings = {
     ruleId: null,
     splitLongChapters: false,
@@ -279,7 +287,7 @@ export function previewServices(): AppServices {
       startImport: unsupported,
       getImportStatus: unsupported,
       cancelImport: async () => ({ requested: false }),
-      listBooks: async () => [book()],
+      listBooks: async () => [book(), { ...previewComicBook(), locator: comicPosition }],
       listRemovedBooks: async () => [],
       updateBook: unsupported,
       removeBook: unsupported,
@@ -342,8 +350,10 @@ export function previewServices(): AppServices {
       onTxtDecodeProgress: async () => () => undefined,
       listBookImages: async () => [],
       readBookImage: unsupported,
-      getComicChapter: unsupported,
-      readComicPage: unsupported,
+      getComicChapter: async (bookId, index) =>
+        bookId === PREVIEW_COMIC_ID ? previewComicChapter(index) : unsupported(),
+      readComicPage: async (bookId, chapter, page) =>
+        bookId === PREVIEW_COMIC_ID ? previewComicPage(chapter, page) : unsupported(),
       getBookInfo: async () => ({
         bookId: BOOK_ID,
         intro: "《云海问道》是一部关于少年求道、山河远行的长篇小说。",
@@ -363,15 +373,20 @@ export function previewServices(): AppServices {
       resolveLocator: async (_bookId, progress) =>
         contextFor(Math.round(Math.min(1, Math.max(0, progress)) * TEXT.length)),
       resolveOffset: async (request) => contextFor(Math.min(TEXT.length, request.offset)),
-      saveReaderLocator: async (locator) => (position = locator),
-      getSavedReaderLocator: async () => position,
-      listToc: async () => ({
-        entries: ENTRIES,
-        ruleId: settings.ruleId ?? "legado-1",
-        ruleName: RULES.find((rule) => rule.id === (settings.ruleId ?? "legado-1"))!.name,
-        settings,
-        fixed: false,
-      }),
+      saveReaderLocator: async (locator) =>
+        locator.bookId === PREVIEW_COMIC_ID ? (comicPosition = locator) : (position = locator),
+      getSavedReaderLocator: async (bookId) =>
+        bookId === PREVIEW_COMIC_ID ? comicPosition : position,
+      listToc: async (bookId) =>
+        bookId === PREVIEW_COMIC_ID
+          ? previewComicToc()
+          : {
+              entries: ENTRIES,
+              ruleId: settings.ruleId ?? "legado-1",
+              ruleName: RULES.find((rule) => rule.id === (settings.ruleId ?? "legado-1"))!.name,
+              settings,
+              fixed: false,
+            },
       tocSuggestion: async () => null,
       listTxtTocRules: async () => RULES,
       saveTxtTocRule: async (rule) => rule,

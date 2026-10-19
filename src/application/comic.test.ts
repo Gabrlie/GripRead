@@ -2,7 +2,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ComicChapter, ReaderLocator } from "../types/generated";
 import { tocEntry } from "../test/toc";
-import { ComicPages, chapterOf, comicChapters, coreIndex, isComic, pageOf } from "./comic";
+import {
+  ComicPages,
+  PAGE_DOWNLOADS,
+  PageCancelled,
+  chapterOf,
+  comicChapters,
+  coreIndex,
+  isComic,
+  pageOf,
+} from "./comic";
 
 const at = (resourceId: string, offset: number): ReaderLocator => ({
   bookId: "b",
@@ -53,5 +62,59 @@ describe("comic places", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(first);
     pages.dispose();
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(41);
+  });
+
+  it("downloads a few pages at a time, nearest the place read first", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    const started: string[] = [];
+    const finish: Array<() => void> = [];
+    const service = {
+      getComicChapter: vi.fn(),
+      readComicPage: vi.fn(
+        (_book: string, chapter: number, page: number) =>
+          new Promise<ArrayBuffer>((resolve) => {
+            started.push(`${chapter}:${page}`);
+            finish.push(() => resolve(new ArrayBuffer(1)));
+          }),
+      ),
+    };
+    const pages = new ComicPages(service, "b");
+    pages.focus(0, 5);
+    // Preloading asks for pages ahead before the page on screen asks.
+    const ahead = [6, 7, 8, 9, 10, 30].map((page) => pages.page(0, page).catch((e) => e));
+    const shown = pages.page(0, 5);
+    expect(started).toEqual(["0:6", "0:7", "0:8"]);
+    expect(started.length).toBe(PAGE_DOWNLOADS);
+    finish.shift()!();
+    await vi.waitFor(() => expect(started).toContain("0:5"));
+    expect(started[3]).toBe("0:5");
+    // Moving far away drops what waits there; what waits near goes on.
+    pages.focus(0, 40);
+    expect(await ahead[3]).toBeInstanceOf(PageCancelled);
+    expect(await ahead[4]).toBeInstanceOf(PageCancelled);
+    for (const done of finish.splice(0)) done();
+    await shown;
+    await vi.waitFor(() => expect(started).toContain("0:30"));
+    pages.dispose();
+  });
+
+  it("keeps the images on screen while releasing older ones", async () => {
+    let next = 0;
+    URL.createObjectURL = vi.fn(() => `blob:${(next += 1)}`);
+    URL.revokeObjectURL = vi.fn();
+    const service = {
+      getComicChapter: vi.fn(),
+      readComicPage: vi.fn(async () => new ArrayBuffer(1)),
+    };
+    const pages = new ComicPages(service, "b");
+    const shown = await pages.page(0, 0);
+    pages.hold(0, 0);
+    for (let page = 1; page <= 45; page += 1) await pages.page(0, page);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(shown);
+    pages.release(0, 0);
+    await pages.page(0, 46);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(shown);
+    pages.dispose();
   });
 });

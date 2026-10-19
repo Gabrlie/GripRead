@@ -22,7 +22,8 @@ export interface ZoomGestures {
 /**
  * Pinch and double-tap zoom with panning while zoomed, plus taps and
  * swipes, from pointer events. A single tap waits for a possible second
- * one, so it reaches `onTap` slightly late.
+ * one, so it reaches `onTap` slightly late. A cancelled pointer (the
+ * browser scrolling instead) is never a tap.
  */
 export function useZoom(gestures: ZoomGestures) {
   const [zoom, setZoom] = useState<Zoom>(NONE);
@@ -132,14 +133,27 @@ export function useZoom(gestures: ZoomGestures) {
     lastTap.current = { time: Date.now(), timer };
   };
 
+  // The browser took the touch over (a scroll began): it ends without a tap.
+  const onPointerCancel = (event: PointerEvent<HTMLElement>) => {
+    pointers.current.delete(event.pointerId);
+    if (pointers.current.size > 0) return;
+    pinch.current = null;
+    pan.current = null;
+    start.current = null;
+  };
+
+  /** Whether a finger (or button) is down. */
+  const pressed = useCallback(() => pointers.current.size > 0, []);
+
   return {
     zoom,
     reset,
+    pressed,
     handlers: {
       onPointerDown,
       onPointerMove,
       onPointerUp,
-      onPointerCancel: onPointerUp,
+      onPointerCancel,
     },
   };
 }

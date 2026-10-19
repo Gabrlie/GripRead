@@ -75,3 +75,18 @@ export const ALL_READER_TOOLS = Object.keys(READER_TOOLS) as ReaderTool[];
 
 /** Mirrors `MAX_BOTTOM_TOOLS` in models.rs. */
 export const MAX_BOTTOM_TOOLS = 7;
+
+/** The bottom bar tools a comic offers: no text tools. */
+const COMIC_TOOLS: ReadonlySet<ReaderTool> = new Set<ReaderTool>([
+  "contents",
+  "style",
+  "night",
+  "bookmark",
+  "more-settings",
+]);
+
+/** A comic's bottom bar: the chosen tools it offers, or contents, 界面, and night. */
+export function comicTools(tools: readonly ReaderTool[]): ReaderTool[] {
+  const kept = tools.filter((tool) => COMIC_TOOLS.has(tool));
+  return kept.length ? kept : ["contents", "style", "night"];
+}
