@@ -6,7 +6,7 @@ M0 remains in progress. The local TXT/library slice includes import recovery, en
 
 ## Active task
 
-[0.3.2](plans/2026-10-19-private-groups.md) is in progress on `dev`: private shelf groups. [0.3.1](plans/2026-10-18-comics.md) (comic reading) was released as `v0.3.1` on 2026-10-19.
+[0.3.2](plans/2026-10-19-private-groups.md) (private shelf groups) was released as `v0.3.2` on 2026-10-19. No round is open; the next one raises the version on `dev`.
 
 ## Blockers
 
@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-The next unfinished batch of [0.3.2](plans/2026-10-19-private-groups.md). RSS waits on a local branch; its version and schema (29) are set when it is merged.
+The next round the user assigns. RSS waits on a local branch; its version is set when it is merged, and its schema becomes 29.

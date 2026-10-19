@@ -1,6 +1,6 @@
 # 0.3.2: Private groups
 
-Status: in-progress
+Status: completed
 
 ## Outcome
 
