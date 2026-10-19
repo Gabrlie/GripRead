@@ -66,7 +66,11 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
     );
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg h-[70dvh] flex flex-col gap-2.5 p-4">
+      {/* The editor fills a fixed height; the list and import views are as
+          tall as their content, up to the same height. */}
+      <DialogContent
+        className={`bg-surface border border-surface-variant/40 rounded-2xl sm:max-w-lg flex flex-col gap-2.5 p-4 ${view.kind === "edit" ? "h-[70dvh]" : "max-h-[70dvh]"}`}
+      >
         <DialogHeader>
           <DialogTitle>
             {view.kind === "edit"
@@ -171,7 +175,7 @@ function RuleList({
   return (
     <>
       <div
-        className="max-h-[min(38dvh,20rem)] min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1"
         role="radiogroup"
         aria-label={t("tocRule.bookRule")}
       >
@@ -417,7 +421,7 @@ export function TocRuleImport({
 }) {
   const [json, setJson] = useState("");
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 min-h-0 overflow-y-auto overflow-x-hidden">
       {loader && (
         <RuleTextLoader
           service={loader}

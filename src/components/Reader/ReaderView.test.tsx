@@ -387,6 +387,37 @@ describe("reader directory and search operation ownership", () => {
     await waitFor(() => expect(navigation.closeReader).toHaveBeenCalledWith(true));
   });
 
+  it("keeps the contents under the pages and dialogs opened from them", async () => {
+    const app = runtime();
+    navigation.takeReaderPage.mockReturnValueOnce("contents");
+    await view(app);
+    expect(await screen.findByRole("dialog", { name: "目录" })).toBeTruthy();
+    const openFromMenu = async (name: string) => {
+      await userEvent.click(screen.getByRole("button", { name: "目录选项" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name }));
+    };
+    // The rule dialog sits on the contents, and closing it returns there.
+    await openFromMenu("目录规则");
+    const rules = await screen.findByRole("dialog", { name: "目录规则" });
+    // The rule list is as tall as its rules, not a fixed share of the screen.
+    expect(rules.className).toContain("max-h-[70dvh]");
+    expect(rules.className).not.toMatch(/(^|\s)h-\[70dvh\]/);
+    expect(screen.getByRole("dialog", { name: "目录", hidden: true })).toBeTruthy();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "目录规则" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "目录" })).toBeTruthy();
+    // So does 替换净化, by Escape or its own back button.
+    await openFromMenu("替换净化");
+    expect(await screen.findByRole("dialog", { name: "替换净化" })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "替换净化" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "目录" })).toBeTruthy();
+    expect(navigation.closeReader).not.toHaveBeenCalled();
+    // Leaving the contents then goes back to the detail page.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(navigation.closeReader).toHaveBeenCalledWith(true));
+  });
+
   it("stays in the reader after a place is chosen in contents the detail page opened", async () => {
     const app = runtime();
     vi.mocked(app.services.reader.listToc).mockResolvedValue(

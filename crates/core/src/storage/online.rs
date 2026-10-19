@@ -1113,27 +1113,31 @@ pub fn is_placeholder_title(title: &str) -> bool {
 
 /// `chapters`, with the titles known before kept where they now come
 /// without one: a source that names chapters only for a signed-in reader
-/// (the server has no sign-in) must not wipe the names out. The count
-/// says how many were kept.
+/// (the server has no sign-in) must not wipe the names out. An update time
+/// (`tag`) the update lacks is kept the same way. The count says how many
+/// titles were kept.
 fn keep_known_titles(
     known: &[OnlineChapter],
     chapters: &[OnlineChapter],
 ) -> (Vec<OnlineChapter>, usize) {
-    let titles: HashMap<&str, &str> = known
+    let known: HashMap<&str, &OnlineChapter> = known
         .iter()
-        .filter(|chapter| !is_placeholder_title(&chapter.title))
-        .map(|chapter| (chapter.url.as_str(), chapter.title.as_str()))
+        .map(|chapter| (chapter.url.as_str(), chapter))
         .collect();
     let mut kept = 0;
     let chapters = chapters
         .iter()
         .map(|chapter| {
             let mut chapter = chapter.clone();
-            if is_placeholder_title(&chapter.title) {
-                if let Some(title) = titles.get(chapter.url.as_str()) {
-                    chapter.title = (*title).to_string();
-                    kept += 1;
-                }
+            let Some(before) = known.get(chapter.url.as_str()) else {
+                return chapter;
+            };
+            if is_placeholder_title(&chapter.title) && !is_placeholder_title(&before.title) {
+                chapter.title = before.title.clone();
+                kept += 1;
+            }
+            if chapter.tag.trim().is_empty() {
+                chapter.tag = before.tag.clone();
             }
             chapter
         })
@@ -1655,6 +1659,22 @@ mod tests {
             }])
             .unwrap();
         assert_eq!(titles(&storage), ["第1章 惊蛰", "第2章 开门", "第3章 立春"]);
+        // An update time the source gave is kept when an update has none.
+        let mut timed = chapters(&["第1章 惊蛰", "第2章 开门", "第3章 立春"], "a");
+        timed[0].tag = "2026-10-01".into();
+        storage.replace_online_toc(&id, &book("a"), &timed).unwrap();
+        storage
+            .replace_online_toc(
+                &id,
+                &book("a"),
+                &chapters(&["#1", "第2章 开门", "第3章 立春"], "a"),
+            )
+            .unwrap();
+        let kept = storage.online_chapters(&id).unwrap();
+        assert_eq!(
+            (kept[0].title.as_str(), kept[0].tag.as_str()),
+            ("第1章 惊蛰", "2026-10-01")
+        );
         assert!(is_placeholder_title("#12") && is_placeholder_title(" "));
         assert!(
             !is_placeholder_title("#")

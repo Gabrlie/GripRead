@@ -298,7 +298,7 @@ export function ReaderView() {
     [cancelSearch, settingsStore],
   );
   const panels = useReaderPanel(onPanelClose);
-  const { panel, open: openPanelState, close: closePanel } = panels;
+  const { panel, open: openPanelState, close: closePanel, back: backPanel } = panels;
   panelRef.current = panel;
 
   const automaticTurn = useAutomaticTurn({
@@ -1156,7 +1156,8 @@ export function ReaderView() {
       if (event.key === "Escape" && !event.defaultPrevented && panel !== null) {
         event.preventDefault();
         event.stopPropagation();
-        closePanel();
+        // One layer at a time: a page pushed over the contents returns there.
+        backPanel();
         return;
       }
       if (
@@ -1187,7 +1188,7 @@ export function ReaderView() {
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [panel, closePanel, closing, close, turn, controls, autoPanel]);
+  }, [panel, backPanel, closing, close, turn, controls, autoPanel]);
 
   // Volume keys turn pages while a book is open (Legado 音量键翻页). With the
   // reading menu or a tool open, or while reading aloud, they change the
@@ -1577,7 +1578,7 @@ export function ReaderView() {
           onClose={closePanel}
         />
       )}
-      {panel === "contents" && (
+      {panels.isOpen("contents") && (
         <ContentsPage
           bookTitle={activeBook.book.title}
           toc={tools.toc}
@@ -1696,7 +1697,7 @@ export function ReaderView() {
           book={{ enabled: useReplaceRules, onToggle: toggleBookReplace }}
           onChanged={() => (replaceChanged.current = true)}
           onClose={() => {
-            closePanel();
+            panels.back();
             if (replaceChanged.current) {
               replaceChanged.current = false;
               applyTransformsRef.current();

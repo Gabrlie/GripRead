@@ -49,8 +49,10 @@ export const PANEL_TRIGGER_LABELS: Record<ReaderPanel, string> = {
 
 /**
  * One panel state for every reader tool. Nested panels push onto a back
- * stack; closing the last panel restores focus to the menu button that
- * opened it without delivering the dismissal to the page.
+ * stack and are shown over the panels under them (a dialog opened from the
+ * contents sits on the contents); closing the last panel restores focus to
+ * the menu button that opened it without delivering the dismissal to the
+ * page.
  */
 export function useReaderPanel(onClose?: (panel: ReaderPanel) => void) {
   const [stack, setStack] = useState<ReaderPanel[]>([]);
@@ -85,5 +87,7 @@ export function useReaderPanel(onClose?: (panel: ReaderPanel) => void) {
     setStack((current) => current.slice(0, -1));
   }, [close, onClose]);
   const current = useCallback(() => stackRef.current.at(-1) ?? null, []);
-  return { panel, open, push, close, back, current };
+  /** Whether `which` is open, on top or under a panel pushed over it. */
+  const isOpen = (which: ReaderPanel) => stack.includes(which);
+  return { panel, open, push, close, back, current, isOpen };
 }
