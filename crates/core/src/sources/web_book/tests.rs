@@ -321,6 +321,79 @@ fn scripted_object_lists_on_html_pages_read_like_legado() {
 }
 
 #[test]
+fn a_details_script_reusing_base_url_keeps_the_books_post_options() {
+    let base = test_server::start(|request: &Request| {
+        match (request.method.as_str(), request.path.as_str()) {
+            ("POST", "/detail") => {
+                let sent: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                Response::json(&format!(
+                    r#"{{"data":{{"id":{},"title":"海贼","chapters":[{{"name":"第1话","cid":11}}]}}}}"#,
+                    sent["comic_id"]
+                ))
+            }
+            ("GET", "/detail") => Response::json(r#"{"code":"bad_route","msg":"only POST"}"#),
+            _ => Response::not_found(),
+        }
+    });
+    let session = session(serde_json::json!({
+        "bookSourceUrl": base,
+        "bookSourceName": "漫画站",
+        "bookSourceType": 2,
+        "ruleBookInfo": {
+            "init": "<js>var d = JSON.parse(result).data; d.url = baseUrl; d</js>",
+            "name": "title",
+            "tocUrl": "url"
+        },
+        "ruleToc": {
+            "chapterList": "<js>var id = JSON.parse(result).data.id; \
+                JSON.parse(result).data.chapters.map(c => ({name: c.name, url: '/p/' + id + '/' + c.cid}))</js>",
+            "chapterName": "name",
+            "chapterUrl": "url"
+        }
+    }));
+    let address = format!(r#"{base}/detail,{{"method":"POST","body":{{"comic_id":7}}}}"#);
+    let book = book_ref(BookData {
+        book_url: address.clone(),
+        ..Default::default()
+    });
+    session.book_info(&book, false).unwrap();
+    assert_eq!(book.borrow().toc_url, address, "{:?}", session.logs());
+    let chapters = session.chapters(&book).unwrap();
+    assert_eq!(chapters[0].url, "/p/7/11", "{:?}", session.logs());
+}
+
+#[test]
+fn explore_scripts_see_the_source_address_and_fail_on_error_text() {
+    let base = test_server::start(|_: &Request| Response::not_found());
+    let session = session(serde_json::json!({
+        "bookSourceUrl": base,
+        "bookSourceName": "漫画站",
+        "exploreUrl": "<js>var kind = JSON.parse(java.ajax(baseUrl + '/kinds'))[0].items; \
+            JSON.stringify([{title: String(kind.length), url: '/rank'}])</js>"
+    }));
+    let kinds = session.explore_kinds().unwrap();
+    let title = &kinds[0].title;
+    // Rhino's JSON.parse throws on the failed request's text, and the
+    // message says what the text was rather than reading `.length`.
+    assert!(title.starts_with("ERROR:"), "{title}");
+    assert!(title.contains("JSON.parse"), "{title}");
+    assert!(!title.contains("length"), "{title}");
+    let session = session_of(
+        &base,
+        "<js>JSON.stringify([{title: baseUrl, url: '/rank'}])</js>",
+    );
+    assert_eq!(session.explore_kinds().unwrap()[0].title, base);
+}
+
+fn session_of(base: &str, explore_url: &str) -> SourceSession {
+    session(serde_json::json!({
+        "bookSourceUrl": base,
+        "bookSourceName": "漫画站",
+        "exploreUrl": explore_url
+    }))
+}
+
+#[test]
 fn missing_rules_and_unsupported_pages_report_their_kind() {
     let session = session(
         serde_json::json!({"bookSourceUrl": "https://example.invalid", "bookSourceName": "空"}),

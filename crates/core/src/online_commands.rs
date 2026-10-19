@@ -1407,6 +1407,16 @@ mod tests {
         assert_eq!(decoded, Some(vec![0xff, 0xd8, 1]));
     }
 
+    /// The last lines of a live source's log, after a failure.
+    fn print_last_logs(name: &str, logs: &[String]) {
+        for line in &logs[logs.len().saturating_sub(6)..] {
+            eprintln!(
+                "{name}:   日志 {}",
+                line.chars().take(300).collect::<String>()
+            );
+        }
+    }
+
     /// Explore → details → contents for sources named `GRIPREAD_SOURCE_NAME`,
     /// the way 发现 opens a book, printing each step's fields.
     #[test]
@@ -1454,6 +1464,7 @@ mod tests {
                         Ok(books) => books,
                         Err(error) => {
                             eprintln!("{name}: 发现失败 {}", error.message);
+                            print_last_logs(&name, &session.logs());
                             continue;
                         }
                     };
@@ -1516,7 +1527,10 @@ mod tests {
                                                 .collect::<String>())
                                         );
                                     }
-                                    Err(error) => eprintln!("{name}: 正文失败 {}", error.message),
+                                    Err(error) => {
+                                        eprintln!("{name}: 正文失败 {}", error.message);
+                                        print_last_logs(&name, &session.logs());
+                                    }
                                 }
                             }
                         }

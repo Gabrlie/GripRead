@@ -679,7 +679,10 @@ pub fn book_info(scope: &JsScope<'_>, book: &BookRef, can_rename: bool) -> Sourc
             let url =
                 AnalyzeUrl::new(&rule, scope, &book_url, None, None, &env.source.url(), None)?;
             let response = fetch(scope, &rule, &url)?;
-            rule.set_content(Val::Str(response.body.clone()), Some(&url.url));
+            // Legado's `baseUrl` here is the book's address with its options
+            // (a POST body, headers), so a script reusing it as the contents
+            // address requests it the same way.
+            rule.set_content(Val::Str(response.body.clone()), Some(&book_url));
             rule.set_redirect_url(&response.url);
             analyze_book_info(
                 scope,
@@ -1333,7 +1336,9 @@ pub fn explore_kinds(scope: &JsScope<'_>) -> SourceResult<Vec<ExploreKind>> {
                 } else {
                     &trimmed[4..trimmed.rfind('<').unwrap_or(trimmed.len()).max(4)]
                 };
+                // Legado's `BaseSource.evalJS` binds `baseUrl` to the source's address.
                 let rule = AnalyzeRule::new(env.clone());
+                rule.set_base_url(&env.source.url());
                 match rule.eval_js(scope, script, &Val::Null) {
                     Ok(value) => {
                         let text = value.to_text().trim().to_string();

@@ -57,7 +57,7 @@
   });
 
   // JSON.parse accepts values that are already parsed, and the lenient JSON
-  // GSON reads.
+  // GSON reads (single quotes, unquoted keys), but not bare text.
   var parseJson = JSON.parse;
   JSON.parse = function (text, reviver) {
     if (typeof text !== "string") {
@@ -69,7 +69,13 @@
     } catch (error) {
       var lenient = native.lenientJson(text);
       if (lenient === undefined) throw error;
-      return parseJson(lenient, reviver);
+      var value = parseJson(lenient, reviver);
+      // Bare text (an error page, a failed request's message) is no JSON
+      // in Rhino either; reading it as a string hides the failure.
+      // The text itself says what went wrong, so it is the message.
+      if (typeof value === "string" && !/^\s*["']/.test(text))
+        throw new SyntaxError("JSON.parse: " + text.trim().slice(0, 160));
+      return value;
     }
   };
 
