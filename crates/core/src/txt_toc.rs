@@ -109,42 +109,64 @@ fn regex_runtime_error(error: fancy_regex::Error) -> AppError {
 /// Legado `getTocRule`: the enabled rule with the most well-separated matches
 /// in the sample wins; ties go to the earlier rule. `None` means no rule
 /// matched at all and the book is split by size.
+///
+/// Unlike Legado, a rule loose enough to match prose (顶格标题 takes every
+/// short unindented line) only competes when no other rule finds at least
+/// [`STRICT_ENOUGH`] headings, so enabling one does not take over books a
+/// 第N章 rule reads correctly.
 pub fn choose_rule<'a>(text: &str, rules: &'a [RuleSpec]) -> Option<&'a RuleSpec> {
     let sample = format!("\n{}", &text[..floor_boundary(text, SAMPLE_BYTES)]);
-    let sample = sample.as_str();
-    let mut best: Option<&RuleSpec> = None;
-    let mut best_score = 1;
-    // Reverse order with `>=` makes the earliest of equally scored rules win.
-    for rule in rules.iter().rev() {
-        if rule.pattern.is_empty() {
-            continue;
-        }
-        let Ok(regex) = compile_rule(&rule.pattern) else {
-            continue;
-        };
-        let mut score = 0;
-        let mut last_end: Option<usize> = None;
-        // Character positions advance with the matches, keeping scoring linear.
-        let (mut cursor_byte, mut cursor_chars) = (0, 0);
-        let mut chars_at = |byte: usize| {
-            cursor_chars += sample[cursor_byte..byte].chars().count();
-            cursor_byte = byte;
-            cursor_chars
-        };
-        for found in regex.find_iter(sample) {
-            let Ok(found) = found else { break };
-            let start = chars_at(found.start());
-            if last_end.is_none_or(|end| start > end + SCORE_GAP_CHARS) {
-                score += 1;
-                last_end = Some(chars_at(found.end()));
+    let scored: Vec<(&RuleSpec, usize)> = rules
+        .iter()
+        .filter_map(|rule| Some((rule, score(&sample, rule)?)))
+        .collect();
+    let best = |strict_only: bool| {
+        let mut best: Option<(&RuleSpec, usize)> = None;
+        // Reverse order with `>=` makes the earliest of equally scored rules win.
+        for &(rule, score) in scored.iter().rev() {
+            if strict_only && is_loose_rule(&rule.id) {
+                continue;
+            }
+            if score >= best.map_or(1, |(_, best)| best) {
+                best = Some((rule, score));
             }
         }
-        if score >= best_score {
-            best_score = score;
-            best = Some(rule);
+        best
+    };
+    match best(true) {
+        Some((rule, score)) if score >= STRICT_ENOUGH => Some(rule),
+        _ => best(false).map(|(rule, _)| rule),
+    }
+}
+
+/// Headings a strict rule must find for loose rules to be left out.
+const STRICT_ENOUGH: usize = 3;
+
+/// A rule's matches in `sample` that start more than [`SCORE_GAP_CHARS`]
+/// after the previous counted one; `None` for an empty or invalid rule.
+fn score(sample: &str, rule: &RuleSpec) -> Option<usize> {
+    if rule.pattern.is_empty() {
+        return None;
+    }
+    let regex = compile_rule(&rule.pattern).ok()?;
+    let mut score = 0;
+    let mut last_end: Option<usize> = None;
+    // Character positions advance with the matches, keeping scoring linear.
+    let (mut cursor_byte, mut cursor_chars) = (0, 0);
+    let mut chars_at = |byte: usize| {
+        cursor_chars += sample[cursor_byte..byte].chars().count();
+        cursor_byte = byte;
+        cursor_chars
+    };
+    for found in regex.find_iter(sample) {
+        let Ok(found) = found else { break };
+        let start = chars_at(found.start());
+        if last_end.is_none_or(|end| start > end + SCORE_GAP_CHARS) {
+            score += 1;
+            last_end = Some(chars_at(found.end()));
         }
     }
-    best
+    Some(score)
 }
 
 /// Built-in rules loose enough to match ordinary prose (numbered lists,
@@ -880,6 +902,69 @@ mod tests {
         let rules = auto();
         let chosen = choose_rule(&text, &rules.rules).unwrap();
         assert_eq!(chosen.id, "legado-1");
+    }
+
+    /// Every built-in rule, enabled or not.
+    fn all_rules() -> Vec<RuleSpec> {
+        default_rules()
+            .into_iter()
+            .map(|rule| RuleSpec {
+                id: rule.id,
+                name: rule.name,
+                pattern: rule.pattern,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_enabled_loose_rule_does_not_take_over_numbered_chapters() {
+        // Unindented prose: 顶格标题 matches nearly every line.
+        let body = "山下有个小镇，镇口有棵老树\n天色渐晚，行人都回家去了\n轰！\n".repeat(60);
+        let text: String = (1..=8)
+            .map(|n| {
+                format!(
+                    "第{}章 启程{n}\n{body}",
+                    ["一", "二", "三", "四", "五", "六", "七", "八"][n - 1]
+                )
+            })
+            .collect();
+        let rules: Vec<RuleSpec> = auto()
+            .rules
+            .into_iter()
+            .chain(
+                all_rules()
+                    .into_iter()
+                    .filter(|rule| rule.id == "legado-18"),
+            )
+            .collect();
+        let chosen = choose_rule(&text, &rules).unwrap();
+        assert!(!is_loose_rule(&chosen.id), "{}", chosen.name);
+        let build = build_toc(&text, "b", "v", &TocBuildRule { rules, ..auto() }).unwrap();
+        assert_eq!(build.entries.len(), 8);
+        assert_eq!(build.entries[0].title, "第一章 启程1");
+    }
+
+    #[test]
+    fn common_headings_keep_a_strict_rule_with_every_rule_enabled() {
+        let prose = "　　少年站在山门之前，望着云海翻腾。\n这力道，绝不是常人能有的\n".repeat(40);
+        let formats: [fn(usize) -> String; 5] = [
+            |n| format!("第{n}章 风起"),
+            |n| format!("　　第{n}章　风起"),
+            |n| format!("Chapter {n} The Wind"),
+            |n| format!("【第{n}章】风起"),
+            |n| format!("第{n}节 风起"),
+        ];
+        let rules = all_rules();
+        for format in formats {
+            let text: String = (1..=6).map(|n| format!("{}\n{prose}", format(n))).collect();
+            let chosen = choose_rule(&text, &rules).unwrap();
+            assert!(
+                !is_loose_rule(&chosen.id),
+                "{} chose {}",
+                format(1),
+                chosen.name
+            );
+        }
     }
 
     #[test]
