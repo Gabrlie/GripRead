@@ -3,4 +3,8 @@
 /**
  * Refreshes the feeds named (every feed when empty).
  */
-export type RefreshFeedsRequest = { operationId: string, urls: Array<string>, };
+export type RefreshFeedsRequest = { operationId: string, urls: Array<string>, 
+/**
+ * Only the feeds whose refresh interval has passed.
+ */
+due: boolean, };

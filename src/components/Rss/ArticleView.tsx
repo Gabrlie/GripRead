@@ -42,10 +42,18 @@ export function ArticleView({
         if (!active) return;
         setArticle(loaded);
         setFull(Boolean(loaded.fullText));
-        if (!loaded.summary.read && state.settings?.markReadOnOpen !== false)
+        // 保持未读 keeps it unread until the reader marks it.
+        if (
+          !loaded.summary.read &&
+          !loaded.summary.keepUnread &&
+          state.settings?.markReadOnOpen !== false
+        )
           void store.setState([id], { read: true }).catch(() => undefined);
-        // 打开文章时读取全文: quietly, keeping the feed's text if it fails.
-        if (state.settings?.autoFullText && !loaded.fullText && loaded.summary.link) {
+        // 打开文章时读取全文 (the feed's own setting, else 订阅设置'): quietly,
+        // keeping the feed's text if it fails.
+        const feed = state.feeds.find((item) => item.url === loaded.summary.feedUrl);
+        const auto = feed?.options.fullText ?? state.settings?.autoFullText ?? false;
+        if (auto && !loaded.fullText && loaded.summary.link) {
           setFetching(true);
           void service
             .fetchFullText(id)

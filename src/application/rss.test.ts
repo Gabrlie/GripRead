@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { feedServiceMocks } from "../test/rss";
-import { ENTER_REFRESH_GAP_MS, FeedStore, feedGroups, refreshDue } from "./rss";
+import { ENTER_REFRESH_GAP_MS, FeedStore, feedGroups, refreshScheduled } from "./rss";
 
 describe("订阅 store", () => {
   it("groups feeds in order with unread totals, ungrouped last", async () => {
@@ -67,10 +67,21 @@ describe("订阅 store", () => {
     now += ENTER_REFRESH_GAP_MS;
     await store.enter();
     expect(service.refresh).toHaveBeenCalledTimes(2);
+    // The interval asks the core for the feeds due; off, a feed's own still counts.
     const settings = await service.getSettings();
-    expect(refreshDue(settings, now, now + 59 * 60_000)).toBe(false);
-    expect(refreshDue(settings, now, now + 60 * 60_000)).toBe(true);
-    expect(refreshDue({ ...settings, refreshMinutes: 0 }, 0, now)).toBe(false);
+    const feeds = store.getSnapshot().feeds;
+    expect(refreshScheduled(settings, feeds)).toBe(true);
+    expect(refreshScheduled({ ...settings, refreshMinutes: 0 }, feeds)).toBe(false);
+    const own = feeds.map((feed, index) =>
+      index ? feed : { ...feed, options: { ...feed.options, refreshMinutes: 30 } },
+    );
+    expect(refreshScheduled({ ...settings, refreshMinutes: 0 }, own)).toBe(true);
+    // Nothing due: no progress shown, and the last refresh stays.
+    const last = store.getSnapshot().lastRefresh;
+    now += 60_000;
+    await store.refresh([], true);
+    expect(service.refresh).toHaveBeenLastCalledWith(expect.any(String), [], true);
+    expect(store.getSnapshot()).toMatchObject({ refreshing: null, lastRefresh: last });
   });
 
   it("leaves entering alone when refreshing on entering is off", async () => {

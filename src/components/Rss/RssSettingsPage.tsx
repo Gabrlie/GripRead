@@ -1,94 +1,34 @@
-import { useFeeds, useSettings } from "../../application/runtime";
+import { useFeeds } from "../../application/runtime";
 import { useT } from "../../i18n";
 import type { RssSettings } from "../../types/generated";
 import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
-import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
-import { refreshIntervals } from "./format";
+import { Choice, IntervalChoice, Toggle } from "./controls";
 
 /** Days of articles kept, as the core accepts them. */
-const KEEP_DAYS = [30, 90, 180, 365];
+export const KEEP_DAYS = [30, 90, 180, 365];
+/** The newest articles kept per feed; 0 keeps them all. */
+export const KEEP_ARTICLES = [200, 500, 1000, 2000, 0];
 
-function Toggle({
-  label,
-  note,
-  checked,
-  onChange,
-}: {
-  label: string;
-  note?: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-      <span className="min-w-0">
-        {label}
-        {note && <span className="block text-[11px] text-secondary">{note}</span>}
-      </span>
-      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
-    </label>
-  );
+export function keepDayLabel(days: number, t: ReturnType<typeof useT>) {
+  return days === 365 ? t("rss.settings.year") : t("rss.settings.days", { count: days });
 }
 
-function Choice({
-  label,
-  note,
-  options,
-  value,
-  onPick,
-}: {
-  label: string;
-  note?: string;
-  options: [number, string][];
-  value: number;
-  onPick: (value: number) => void;
-}) {
-  return (
-    <div className="px-4 py-3 space-y-2">
-      <span className="block text-sm">
-        {label}
-        {note && <span className="block text-[11px] text-secondary">{note}</span>}
-      </span>
-      <div
-        role="radiogroup"
-        aria-label={label}
-        className="grid gap-1 bg-surface-container p-1 rounded-lg"
-        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
-      >
-        {options.map(([option, text]) => (
-          <button
-            key={option}
-            type="button"
-            role="radio"
-            aria-checked={value === option}
-            onClick={() => onPick(option)}
-            className={`h-7 rounded-md text-[11px] ${
-              value === option
-                ? "bg-surface text-primary font-semibold shadow-sm"
-                : "text-secondary"
-            }`}
-          >
-            {text}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+export function keepArticleLabel(count: number, t: ReturnType<typeof useT>) {
+  return count === 0 ? t("rss.settings.unlimited") : t("rss.settings.articles", { count });
 }
 
 /**
- * 订阅设置 (设置 › 订阅, or 订阅's menu): refreshing, reading articles, how
- * long articles are kept, and whether 订阅 shows in the tab bar. Kept on
- * this device.
+ * 订阅设置 (设置 › 订阅, or 订阅's menu): refreshing, reading articles, and
+ * how many articles are kept. Kept on this device; a feed's own settings
+ * (订阅详情) go before these.
  */
 export function RssSettingsPage({ onClose }: { onClose: () => void }) {
   const t = useT();
   const { state, store } = useFeeds();
-  const preferences = useSettings();
   const settings = state.settings;
   const save = (change: Partial<RssSettings>) =>
     settings &&
@@ -100,12 +40,11 @@ export function RssSettingsPage({ onClose }: { onClose: () => void }) {
       {settings ? (
         <>
           <PageSection title={t("rss.settings.refresh")}>
-            <Choice
+            <IntervalChoice
               label={t("rss.settings.interval")}
               note={t("rss.settings.interval.note")}
-              options={refreshIntervals([0, 30, 60, 180, 360])}
               value={settings.refreshMinutes}
-              onPick={(refreshMinutes) => save({ refreshMinutes })}
+              onPick={(refreshMinutes) => save({ refreshMinutes: refreshMinutes ?? 0 })}
             />
             <Toggle
               label={t("rss.settings.onEnter")}
@@ -119,6 +58,12 @@ export function RssSettingsPage({ onClose }: { onClose: () => void }) {
               label={t("rss.settings.markRead")}
               checked={settings.markReadOnOpen}
               onChange={(markReadOnOpen) => save({ markReadOnOpen })}
+            />
+            <Toggle
+              label={t("rss.settings.markReadOnScroll")}
+              note={t("rss.settings.markReadOnScroll.note")}
+              checked={settings.markReadOnScroll}
+              onChange={(markReadOnScroll) => save({ markReadOnScroll })}
             />
             <Toggle
               label={t("rss.settings.autoFull")}
@@ -158,12 +103,16 @@ export function RssSettingsPage({ onClose }: { onClose: () => void }) {
           </PageSection>
           <PageSection title={t("rss.settings.storage")}>
             <Choice
+              label={t("rss.settings.keepArticles")}
+              note={t("rss.settings.keepArticles.note")}
+              options={KEEP_ARTICLES.map((count) => [count, keepArticleLabel(count, t)])}
+              value={settings.keepArticles}
+              onPick={(keepArticles) => save({ keepArticles })}
+            />
+            <Choice
               label={t("rss.settings.keep")}
               note={t("rss.settings.keep.note")}
-              options={KEEP_DAYS.map((days) => [
-                days,
-                days === 365 ? t("rss.settings.year") : t("rss.settings.days", { count: days }),
-              ])}
+              options={KEEP_DAYS.map((days) => [days, keepDayLabel(days, t)])}
               value={settings.keepDays}
               onPick={(keepDays) => save({ keepDays })}
             />
@@ -173,16 +122,6 @@ export function RssSettingsPage({ onClose }: { onClose: () => void }) {
         <p role="status" className="px-1 text-sm text-secondary">
           {t("common.loading")}
         </p>
-      )}
-      {preferences.state.value && (
-        <PageSection>
-          <Toggle
-            label={t("appearance.showSubscription")}
-            note={t("rss.settings.tab.note")}
-            checked={preferences.state.value.showSubscription ?? true}
-            onChange={(showSubscription) => preferences.store.set({ showSubscription })}
-          />
-        </PageSection>
       )}
     </FullPage>
   );

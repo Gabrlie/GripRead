@@ -616,6 +616,47 @@ impl SyncClient {
         serde_json::from_str(&text).map(Some).map_err(network_error)
     }
 
+    /// 全文 of the page at `link`, read by the server; `None` when the
+    /// server is too old to.
+    pub fn rss_full_text(&self, link: &str) -> Result<Option<String>, AppError> {
+        let config = self.config();
+        if !config.connected() {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "notConnected",
+                "未连接服务器",
+            ));
+        }
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("{}/api/rss/fulltext", config.address))
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&protocol::RssFullTextRequest {
+                link: link.to_string(),
+            })?)
+            .map_err(network_error)?;
+        let mut response = agent(Duration::from_secs(60))
+            .run(request)
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .with_config()
+            .limit(16 * 1024 * 1024)
+            .read_to_string()
+            .map_err(network_error)?;
+        if unknown_route(status) || crate::online_reader::is_web_page(&text) {
+            return Ok(None);
+        }
+        if !(200..300).contains(&status) {
+            return Err(failure(status, &text));
+        }
+        serde_json::from_str::<protocol::RssFullTextReply>(&text)
+            .map(|reply| Some(reply.html))
+            .map_err(network_error)
+    }
+
     /// A feed's articles the server fetched since `since`; `None` when the
     /// server does not have the feed (or the route).
     pub fn rss_articles(

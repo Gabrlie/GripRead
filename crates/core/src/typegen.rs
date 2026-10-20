@@ -228,6 +228,12 @@ const IPC_TYPES: &[&str] = &[
     "FeedCandidate",
     "AddFeedRequest",
     "UpdateFeedRequest",
+    "FeedOptions",
+    "FeedGroup",
+    "SaveFeedGroupsRequest",
+    "RenameFeedGroupRequest",
+    "RemoveFeedGroupRequest",
+    "MarkReadRangeRequest",
     "FeedUrlsRequest",
     "RefreshFeedsRequest",
     "RssRefreshEvent",
@@ -486,6 +492,12 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<FeedCandidate>(&config)?;
     export_all::<AddFeedRequest>(&config)?;
     export_all::<UpdateFeedRequest>(&config)?;
+    export_all::<FeedOptions>(&config)?;
+    export_all::<FeedGroup>(&config)?;
+    export_all::<SaveFeedGroupsRequest>(&config)?;
+    export_all::<RenameFeedGroupRequest>(&config)?;
+    export_all::<RemoveFeedGroupRequest>(&config)?;
+    export_all::<MarkReadRangeRequest>(&config)?;
     export_all::<FeedUrlsRequest>(&config)?;
     export_all::<RefreshFeedsRequest>(&config)?;
     export_all::<RssRefreshEvent>(&config)?;

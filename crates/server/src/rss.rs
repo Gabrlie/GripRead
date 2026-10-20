@@ -1,9 +1,13 @@
-//! 订阅 on the server: feeds refreshed on a schedule (`jobs.json`'s
-//! `rssIntervalMinutes`) and on request, and their articles handed to
-//! connected devices, which then need not reach every feed themselves.
+//! 订阅 on the server: feeds refreshed on a schedule (each feed's own
+//! interval, or `jobs.json`'s `rssIntervalMinutes`) and on request, their
+//! articles handed to connected devices, which then need not reach every
+//! feed themselves, and 全文 read for devices that cannot reach a page.
 
 use super::*;
-use gripread_core::sync::{RssArticlesReply, RssFeedUpdate, RssRefreshReply, RssRefreshRequest};
+use gripread_core::sync::{
+    RssArticlesReply, RssFeedUpdate, RssFullTextReply, RssFullTextRequest, RssRefreshReply,
+    RssRefreshRequest,
+};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -12,6 +16,7 @@ pub fn routes() -> Router<Arc<Server>> {
     Router::new()
         .route("/api/rss/refresh", post(refresh))
         .route("/api/rss/articles", get(articles))
+        .route("/api/rss/fulltext", post(full_text))
 }
 
 fn now_ms() -> i64 {
@@ -21,19 +26,24 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// Refreshes the feeds named (all when empty) and reports each.
-pub(crate) async fn refresh_feeds(server: &Arc<Server>, urls: Vec<String>) -> RssRefreshReply {
+/// Refreshes the enabled feeds named (all when empty; with `due`, those
+/// whose interval has passed) and reports each.
+pub(crate) async fn refresh_feeds(
+    server: &Arc<Server>,
+    urls: Vec<String>,
+    due: bool,
+) -> RssRefreshReply {
     let storage = server.core.storage.clone();
+    let minutes = super::jobs::rss_interval(server);
     let reply = tokio::task::spawn_blocking(move || {
-        let urls = if urls.is_empty() {
-            storage
-                .lock()
-                .ok()
-                .and_then(|guard| guard.feed_urls().ok())
-                .unwrap_or_default()
-        } else {
-            urls
-        };
+        let urls = storage
+            .lock()
+            .ok()
+            .and_then(|guard| guard.refresh_targets(&urls, due, minutes).ok())
+            .unwrap_or_default();
+        if due && urls.is_empty() {
+            return None;
+        }
         let feeds = Mutex::new(Vec::new());
         gripread_core::rss::refresh_all(&storage, urls, &AtomicBool::new(false), &|url, result| {
             if let Ok(mut feeds) = feeds.lock() {
@@ -44,12 +54,16 @@ pub(crate) async fn refresh_feeds(server: &Arc<Server>, urls: Vec<String>) -> Rs
                 });
             }
         });
-        RssRefreshReply {
+        Some(RssRefreshReply {
             feeds: feeds.into_inner().unwrap_or_default(),
-        }
+        })
     })
     .await
     .unwrap_or_default();
+    // Nothing was due: no log line every minute.
+    let Some(reply) = reply else {
+        return RssRefreshReply::default();
+    };
     let added: u32 = reply.feeds.iter().map(|feed| feed.added).sum();
     let failed = reply
         .feeds
@@ -76,21 +90,13 @@ pub(crate) async fn refresh_feeds(server: &Arc<Server>, urls: Vec<String>) -> Rs
     reply
 }
 
-/// Refreshes every feed on the schedule set in `jobs.json`.
+/// Each minute, refreshes the feeds whose interval has passed: their own,
+/// or the one set in `jobs.json` (0 leaves only feeds with their own).
 pub fn schedule(server: Arc<Server>) {
     tokio::spawn(async move {
-        let mut last = None::<i64>;
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            let minutes = super::jobs::rss_interval(&server);
-            if minutes == 0 {
-                continue;
-            }
-            let due = last.is_none_or(|last| now_ms() - last >= i64::from(minutes) * 60_000);
-            if due {
-                last = Some(now_ms());
-                refresh_feeds(&server, Vec::new()).await;
-            }
+            refresh_feeds(&server, Vec::new(), true).await;
         }
     });
 }
@@ -104,7 +110,24 @@ async fn refresh(
         return unauthorized();
     }
     let urls = body.map(|Json(request)| request.urls).unwrap_or_default();
-    Json(refresh_feeds(&server, urls).await).into_response()
+    Json(refresh_feeds(&server, urls, false).await).into_response()
+}
+
+async fn full_text(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    Json(request): Json<RssFullTextRequest>,
+) -> Response {
+    if server.signed_in(&headers, None).is_none() {
+        return unauthorized();
+    }
+    match tokio::task::spawn_blocking(move || gripread_core::rss::public_page_text(&request.link))
+        .await
+    {
+        Ok(Ok(html)) => Json(RssFullTextReply { html }).into_response(),
+        Ok(Err(error)) => failure(StatusCode::BAD_GATEWAY, "io", &error.message),
+        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, "io", &error.to_string()),
+    }
 }
 
 async fn articles(

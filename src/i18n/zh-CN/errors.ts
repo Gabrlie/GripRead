@@ -100,4 +100,9 @@ export const errors = {
   "error.webPickFiles": "网页版请直接选择多个文件上传",
   "error.webUpdate": "网页版请更新服务器镜像",
   "error.webdavPaused": "已连接服务器，WebDAV 已暂停",
+  "error.rssPrivateAddress": "不能通过服务器读取本地或内网地址的原文：{error}",
+  "error.rssFeedUrlEmpty": "订阅地址不能为空",
+  "error.rssFeedExists": "已经订阅过这个地址",
+  "error.rssGroupNameEmpty": "分组名称不能为空",
+  "error.serverTooOldForFullText": "服务器版本较旧，不能代为读取全文",
 } as const;

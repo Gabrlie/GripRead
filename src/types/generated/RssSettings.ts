@@ -29,7 +29,15 @@ autoFullText: boolean,
  */
 listImages: boolean, 
 /**
- * Days of a feed's articles kept beyond its newest 500 (starred ones
- * always stay).
+ * Days of a feed's articles kept beyond its newest `keep_articles`
+ * (starred ones always stay).
  */
-keepDays: number, };
+keepDays: number, 
+/**
+ * The newest articles of a feed always kept.
+ */
+keepArticles: number, 
+/**
+ * An article scrolled up out of the list is marked read.
+ */
+markReadOnScroll: boolean, };

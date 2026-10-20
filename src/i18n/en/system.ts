@@ -100,5 +100,7 @@ export const system = {
   "data.part.assets": "Covers, fonts, and backgrounds",
   "data.part.backups": "Recovery points",
   "data.part.database": "Database",
+  "data.part.rss-articles": "Feed articles",
+  "data.part.rss-images": "Feed article images",
   "data.part.translations": "Translations",
 } satisfies Messages<typeof zh>;

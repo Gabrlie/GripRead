@@ -105,6 +105,7 @@ impl Storage {
                     requests.max(0) as u64,
                     true,
                 ),
+                part("rss-articles", "订阅文章", self.rss_article_bytes()?, true),
                 part("rss-images", "订阅文章图片", size(&["rss-images"]), true),
                 part("logs", "日志", size(&["logs"]), true),
                 part(
@@ -142,6 +143,9 @@ impl Storage {
                 }
             }
             self.conn.execute("DELETE FROM online_cover_cache", [])?;
+        }
+        if wants("rss-articles") {
+            self.clear_rss_articles()?;
         }
         if wants("rss-images") {
             match fs::remove_dir_all(self.rss_image_cache()) {

@@ -84,4 +84,5 @@ export const log = {
   "log.longTask": "The screen was busy for {ms} ms ({layer})",
   "log.readerError": '"{title}": {error}',
   "log.layoutTiming": "Laying out {chars} characters took {ms} ms, {pages} pages",
+  "log.rssFullTextViaServer": "This device could not read the page; the server reads it: {error}",
 } satisfies Messages<typeof zh>;

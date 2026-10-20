@@ -72,4 +72,5 @@ export const log = {
   "log.longTask": "界面卡顿 {ms} ms（{layer}）",
   "log.readerError": "《{title}》{error}",
   "log.layoutTiming": "排版 {chars} 字用了 {ms} ms，{pages} 页",
+  "log.rssFullTextViaServer": "本机读取原文失败，改由服务器读取：{error}",
 } as const;

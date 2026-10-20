@@ -3031,6 +3031,33 @@ pub struct Feed {
     pub last_error: Option<String>,
     pub unread: u32,
     pub total: u32,
+    /// A stopped feed is never refreshed; its articles stay.
+    pub enabled: bool,
+    pub options: FeedOptions,
+}
+
+/// A feed's own settings; each one left empty follows [`RssSettings`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FeedOptions {
+    /// Minutes between automatic refreshes.
+    pub refresh_minutes: Option<u32>,
+    /// The newest articles kept.
+    pub keep_articles: Option<u32>,
+    /// Days of articles kept beyond the newest.
+    pub keep_days: Option<u32>,
+    /// Opening an article fetches its 全文.
+    pub full_text: Option<bool>,
+    /// 全文 is always fetched by the server (while connected).
+    pub via_server: bool,
+}
+
+/// A group of feeds, in the order 订阅 lists them.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedGroup {
+    pub name: String,
+    pub sort: i64,
 }
 
 /// A feed found at an address (the address itself, or one a page links to).
@@ -3058,6 +3085,37 @@ pub struct UpdateFeedRequest {
     pub url: String,
     pub title: String,
     pub group: Option<String>,
+    /// A new address for the feed; it must be a feed.
+    #[serde(default)]
+    pub new_url: Option<String>,
+    /// Left out, these stay as they are.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub options: Option<FeedOptions>,
+}
+
+/// The groups in this order; groups not named keep their place after.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFeedGroupsRequest {
+    pub names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameFeedGroupRequest {
+    pub name: String,
+    pub new_name: String,
+}
+
+/// Removes a group: its feeds become ungrouped, or are unsubscribed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveFeedGroupRequest {
+    pub name: String,
+    #[serde(default)]
+    pub unsubscribe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -3073,6 +3131,9 @@ pub struct RefreshFeedsRequest {
     pub operation_id: String,
     #[serde(default)]
     pub urls: Vec<String>,
+    /// Only the feeds whose refresh interval has passed.
+    #[serde(default)]
+    pub due: bool,
 }
 
 /// `rss-refresh`: one feed refreshed, or the whole refresh done.
@@ -3139,6 +3200,8 @@ pub struct ArticleSummary {
     pub image: Option<String>,
     pub read: bool,
     pub starred: bool,
+    /// 保持未读: nothing marks it read but the reader's own mark.
+    pub keep_unread: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -3173,6 +3236,9 @@ pub struct ArticleStateRequest {
     pub read: Option<bool>,
     #[serde(default)]
     pub starred: Option<bool>,
+    /// 保持未读 (which also marks it unread); marking it read clears it.
+    #[serde(default)]
+    pub keep_unread: Option<bool>,
 }
 
 /// 全部标为已读 for one feed, one group, or (neither) everything.
@@ -3183,6 +3249,16 @@ pub struct MarkAllReadRequest {
     pub feed: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+}
+
+/// 以上/以下标为已读: the list's articles newer (above) or older (below)
+/// than `from`, and `from` itself. `query` is the list, without its cursor.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkReadRangeRequest {
+    pub query: ArticleQuery,
+    pub from: ArticleCursor,
+    pub newer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -3218,9 +3294,13 @@ pub struct RssSettings {
     pub auto_full_text: bool,
     /// Article lists show each article's first picture.
     pub list_images: bool,
-    /// Days of a feed's articles kept beyond its newest 500 (starred ones
-    /// always stay).
+    /// Days of a feed's articles kept beyond its newest `keep_articles`
+    /// (starred ones always stay).
     pub keep_days: u32,
+    /// The newest articles of a feed always kept.
+    pub keep_articles: u32,
+    /// An article scrolled up out of the list is marked read.
+    pub mark_read_on_scroll: bool,
 }
 
 impl Default for RssSettings {
@@ -3233,6 +3313,8 @@ impl Default for RssSettings {
             auto_full_text: false,
             list_images: true,
             keep_days: 90,
+            keep_articles: 500,
+            mark_read_on_scroll: false,
         }
     }
 }

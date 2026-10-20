@@ -26,6 +26,11 @@ import type {
   RssSettings,
   SaveRssSettingsRequest,
   UpdateFeedRequest,
+  FeedGroup,
+  SaveFeedGroupsRequest,
+  RenameFeedGroupRequest,
+  RemoveFeedGroupRequest,
+  MarkReadRangeRequest,
 } from "../types/generated";
 import type {
   BookImage,
@@ -968,15 +973,26 @@ export const tauriServices: AppServices = {
       invokeCommand<Feed>("add_feed", {
         request: { url, title, group } satisfies AddFeedRequest,
       }),
-    updateFeed: (url, title, group) =>
-      invokeCommand<void>("update_feed", {
-        request: { url, title, group } satisfies UpdateFeedRequest,
+    updateFeed: (request) =>
+      invokeCommand<Feed>("update_feed", { request: request satisfies UpdateFeedRequest }),
+    listGroups: () => invokeCommand<FeedGroup[]>("list_feed_groups"),
+    saveGroups: (names) =>
+      invokeCommand<void>("save_feed_groups", {
+        request: { names } satisfies SaveFeedGroupsRequest,
+      }),
+    renameGroup: (name, newName) =>
+      invokeCommand<void>("rename_feed_group", {
+        request: { name, newName } satisfies RenameFeedGroupRequest,
+      }),
+    removeGroup: (name, unsubscribe) =>
+      invokeCommand<void>("remove_feed_group", {
+        request: { name, unsubscribe } satisfies RemoveFeedGroupRequest,
       }),
     removeFeeds: (urls) =>
       invokeCommand<void>("remove_feeds", { request: { urls } satisfies FeedUrlsRequest }),
-    refresh: (operationId, urls) =>
+    refresh: (operationId, urls, due = false) =>
       invokeCommand<void>("refresh_feeds", {
-        request: { operationId, urls } satisfies RefreshFeedsRequest,
+        request: { operationId, urls, due } satisfies RefreshFeedsRequest,
       }),
     onRefresh: (listener) => listen<RssRefreshEvent>("rss-refresh", listener),
     listArticles: (query) =>
@@ -991,7 +1007,12 @@ export const tauriServices: AppServices = {
           ids,
           read: state.read ?? null,
           starred: state.starred ?? null,
+          keepUnread: state.keepUnread ?? null,
         } satisfies ArticleStateRequest,
+      }),
+    markReadRange: (query, from, newer) =>
+      invokeCommand<number>("mark_read_range", {
+        request: { query, from, newer } satisfies MarkReadRangeRequest,
       }),
     markAllRead: (scope) =>
       invokeCommand<number>("mark_all_read", {

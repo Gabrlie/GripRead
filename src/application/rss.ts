@@ -1,20 +1,23 @@
 import { t } from "../i18n";
-import type { FeedService } from "../services/contracts";
+import type { ArticleMarks, FeedService } from "../services/contracts";
 import type {
   ArticleCursor,
   ArticleFilter,
   ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedGroup,
   OpmlImportReport,
   RssSettings,
+  UpdateFeedRequest,
 } from "../types/generated";
 
 /** What the article list shows: everything, one group, or one feed. */
 export type FeedSelection =
   { kind: "all" } | { kind: "group"; group: string } | { kind: "feed"; url: string };
 
-export interface FeedGroup {
+/** A group of 订阅's list with its feeds. */
+export interface FeedSection {
   /** `null` for feeds without a group. */
   name: string | null;
   feeds: Feed[];
@@ -23,6 +26,8 @@ export interface FeedGroup {
 
 export interface FeedSnapshot {
   feeds: Feed[];
+  /** The groups in their order, empty ones included. */
+  groups: FeedGroup[];
   feedsLoaded: boolean;
   selection: FeedSelection;
   filter: ArticleFilter;
@@ -43,13 +48,16 @@ export interface FeedSnapshot {
 
 /** Entering 订阅 refreshes when the last refresh is older than this. */
 export const ENTER_REFRESH_GAP_MS = 10 * 60_000;
-/** How often the interval refresh checks whether it is due. */
+/** How often the interval refresh asks which feeds are due. */
 const SCHEDULE_TICK_MS = 60_000;
 const PAGE = 50;
 
-/** The groups in the order their first feed appears, ungrouped feeds last. */
-export function feedGroups(feeds: Feed[]): FeedGroup[] {
-  const groups: FeedGroup[] = [];
+/**
+ * The groups with feeds, in the order arranged (then the order their first
+ * feed appears), ungrouped feeds last.
+ */
+export function feedGroups(feeds: Feed[], order: FeedGroup[] = []): FeedSection[] {
+  const groups: FeedSection[] = [];
   const loose: Feed[] = [];
   for (const feed of feeds) {
     if (feed.group === null) {
@@ -64,6 +72,11 @@ export function feedGroups(feeds: Feed[]): FeedGroup[] {
     group.feeds.push(feed);
     group.unread += feed.unread;
   }
+  const place = (name: string | null) => {
+    const at = order.findIndex((group) => group.name === name);
+    return at < 0 ? order.length : at;
+  };
+  groups.sort((left, right) => place(left.name) - place(right.name));
   if (loose.length)
     groups.push({
       name: null,
@@ -79,10 +92,13 @@ export function selectionTitle(selection: FeedSelection, feeds: Feed[]): string 
   return feeds.find((feed) => feed.url === selection.url)?.title ?? t("nav.feeds");
 }
 
-/** Whether a refresh is due by the interval setting. */
-export function refreshDue(settings: RssSettings | null, lastRefresh: number, now: number) {
-  if (!settings || settings.refreshMinutes <= 0) return false;
-  return now - lastRefresh >= settings.refreshMinutes * 60_000;
+/** Whether any feed refreshes on an interval: the setting, or its own. */
+export function refreshScheduled(settings: RssSettings | null, feeds: Feed[]) {
+  if (!settings) return false;
+  return (
+    settings.refreshMinutes > 0 ||
+    feeds.some((feed) => feed.enabled && (feed.options.refreshMinutes ?? 0) > 0)
+  );
 }
 
 /**
@@ -94,6 +110,7 @@ export function refreshDue(settings: RssSettings | null, lastRefresh: number, no
 export class FeedStore {
   private snapshot: FeedSnapshot = {
     feeds: [],
+    groups: [],
     feedsLoaded: false,
     selection: { kind: "all" },
     filter: "all",
@@ -135,10 +152,12 @@ export class FeedStore {
       (settings) => !stopped && this.update({ settings }),
       () => undefined,
     );
+    // The core knows each feed's last fetch and interval; it refreshes
+    // only those due.
     const timer = setInterval(() => {
       const visible = typeof document === "undefined" || document.visibilityState === "visible";
-      if (visible && refreshDue(this.snapshot.settings, this.snapshot.lastRefresh, this.now()))
-        void this.refresh();
+      if (visible && refreshScheduled(this.snapshot.settings, this.snapshot.feeds))
+        void this.refresh([], true);
     }, SCHEDULE_TICK_MS);
     return () => {
       stopped = true;
@@ -164,14 +183,18 @@ export class FeedStore {
 
   loadFeeds = async () => {
     try {
-      const feeds = await this.service.listFeeds();
-      this.update({ feeds, feedsLoaded: true });
+      const [feeds, groups] = await Promise.all([
+        this.service.listFeeds(),
+        this.service.listGroups(),
+      ]);
+      this.update({ feeds, groups, feedsLoaded: true });
     } catch (error) {
       this.update({ feedsLoaded: true, error: String(error) });
     }
   };
 
-  private query(after: ArticleCursor | null): ArticleQuery {
+  /** The chosen list's query, from `after` on. */
+  query(after: ArticleCursor | null): ArticleQuery {
     const { selection, filter, search } = this.snapshot;
     return {
       feed: selection.kind === "feed" ? selection.url : null,
@@ -232,26 +255,37 @@ export class FeedStore {
     void this.loadArticles(true);
   };
 
-  /** Refreshes feeds (all when none are named); one refresh runs at a time. */
-  refresh = (urls: string[] = []): Promise<void> => {
+  /**
+   * Refreshes the enabled feeds (all when none are named; with `due`, those
+   * whose interval has passed, quietly until one is fetched); one refresh
+   * runs at a time.
+   */
+  refresh = (urls: string[] = [], due = false): Promise<void> => {
     if (this.refreshRun) return this.refreshRun;
     const operationId = `rss-${this.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let failed = 0;
-    this.update({ refreshing: { done: 0, total: urls.length || this.snapshot.feeds.length } });
+    let fetched = 0;
+    const enabled = this.snapshot.feeds.filter((feed) => feed.enabled).length;
+    if (!due) this.update({ refreshing: { done: 0, total: urls.length || enabled } });
     const run = (async () => {
       const stop = await this.service
         .onRefresh((event) => {
           if (event.operationId !== operationId || event.done) return;
+          fetched++;
           if (event.error) failed++;
           this.update({ refreshing: { done: event.refreshed, total: event.total } });
         })
         .catch(() => () => undefined);
       try {
-        await this.service.refresh(operationId, urls);
+        await this.service.refresh(operationId, urls, due);
       } catch (error) {
         this.update({ error: String(error) });
       } finally {
         stop();
+      }
+      if (due && !fetched) {
+        this.update({ refreshing: null });
+        return;
       }
       this.update({ refreshing: null, lastRefresh: this.now(), failed });
       await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
@@ -263,7 +297,8 @@ export class FeedStore {
   };
 
   /** Read and starred changes show at once; a failed save puts them back. */
-  setState = async (ids: string[], state: { read?: boolean; starred?: boolean }) => {
+  setState = async (ids: string[], marks: ArticleMarks) => {
+    const state: ArticleMarks = marks.keepUnread ? { ...marks, read: false } : marks;
     const before = this.snapshot.articles;
     const beforeFeeds = this.snapshot.feeds;
     const changed = new Set(ids);
@@ -279,6 +314,7 @@ export class FeedStore {
         ...article,
         read: state.read ?? article.read,
         starred: state.starred ?? article.starred,
+        keepUnread: state.keepUnread ?? (state.read ? false : article.keepUnread),
       };
     });
     this.update({
@@ -290,7 +326,7 @@ export class FeedStore {
       ),
     });
     try {
-      await this.service.setArticleState(ids, state);
+      await this.service.setArticleState(ids, marks);
     } catch (error) {
       this.update({ articles: before, feeds: beforeFeeds, error: String(error) });
       throw error;
@@ -308,15 +344,54 @@ export class FeedStore {
     return changed;
   };
 
+  /** 以上/以下标为已读 in the chosen list, from `article` on. */
+  markRange = async (article: ArticleSummary, newer: boolean) => {
+    const changed = await this.service.markReadRange(
+      { ...this.query(null), limit: null },
+      { publishedAt: article.publishedAt, id: article.id },
+      newer,
+    );
+    await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
+    return changed;
+  };
+
   addFeed = async (url: string, title: string | null, group: string | null) => {
     const feed = await this.service.addFeed(url, title, group);
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
     return feed;
   };
 
-  updateFeed = async (url: string, title: string, group: string | null) => {
-    await this.service.updateFeed(url, title, group);
+  /** Changes a feed; a list of its old address follows it to the new. */
+  updateFeed = async (request: UpdateFeedRequest) => {
+    const feed = await this.service.updateFeed(request);
+    const { selection } = this.snapshot;
+    if (selection.kind === "feed" && selection.url === request.url && feed.url !== request.url)
+      this.update({ selection: { kind: "feed", url: feed.url } });
+    await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
+    return feed;
+  };
+
+  saveGroups = async (names: string[]) => {
+    await this.service.saveGroups(names);
     await this.loadFeeds();
+  };
+
+  /** Renames a group; a list of it follows the new name. */
+  renameGroup = async (name: string, newName: string) => {
+    await this.service.renameGroup(name, newName);
+    const { selection } = this.snapshot;
+    if (selection.kind === "group" && selection.group === name)
+      this.update({ selection: { kind: "group", group: newName.trim() } });
+    await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
+  };
+
+  /** Removes a group (its feeds ungrouped or unsubscribed); its list goes to all. */
+  removeGroup = async (name: string, unsubscribe: boolean) => {
+    await this.service.removeGroup(name, unsubscribe);
+    const { selection } = this.snapshot;
+    if (selection.kind === "group" && selection.group === name)
+      this.update({ selection: { kind: "all" } });
+    await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };
 
   removeFeeds = async (urls: string[]) => {

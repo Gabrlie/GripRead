@@ -9,9 +9,10 @@ use crate::commands::{with_storage, AppState};
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AddFeedRequest, Article, ArticleIdRequest, ArticlePage, ArticleQuery, ArticleStateRequest,
-    DiscoverFeedRequest, Feed, FeedCandidate, FeedUrlsRequest, MarkAllReadRequest,
-    OpmlImportReport, OpmlImportRequest, OptionalPathRequest, RefreshFeedsRequest, RssImageRequest,
-    RssRefreshEvent, RssSettings, SaveRssSettingsRequest, UpdateFeedRequest,
+    DiscoverFeedRequest, Feed, FeedCandidate, FeedGroup, FeedUrlsRequest, MarkAllReadRequest,
+    MarkReadRangeRequest, OpmlImportReport, OpmlImportRequest, OptionalPathRequest,
+    RefreshFeedsRequest, RemoveFeedGroupRequest, RenameFeedGroupRequest, RssImageRequest,
+    RssRefreshEvent, RssSettings, SaveFeedGroupsRequest, SaveRssSettingsRequest, UpdateFeedRequest,
 };
 use crate::source_commands::SourceOperations;
 
@@ -56,12 +57,55 @@ pub async fn add_feed(state: &Arc<AppState>, request: AddFeedRequest) -> Result<
     .await
 }
 
+/// Changes a feed; a new address is read first, and must be a feed.
 pub async fn update_feed(
     state: &Arc<AppState>,
     request: UpdateFeedRequest,
+) -> Result<Feed, AppError> {
+    let mut request = request;
+    if let Some(new_url) = request.new_url.take().filter(|new_url| {
+        let new_url = new_url.trim();
+        !new_url.is_empty() && new_url != request.url
+    }) {
+        request.new_url = Some(blocking(move || crate::rss::check_feed(&new_url)).await?);
+    }
+    with_storage(state, move |storage| {
+        storage.update_feed(&request)?;
+        storage.feed(request.new_url.as_deref().unwrap_or(&request.url))
+    })
+    .await
+}
+
+pub async fn list_feed_groups(state: &Arc<AppState>) -> Result<Vec<FeedGroup>, AppError> {
+    with_storage(state, |storage| storage.feed_groups()).await
+}
+
+pub async fn save_feed_groups(
+    state: &Arc<AppState>,
+    request: SaveFeedGroupsRequest,
 ) -> Result<(), AppError> {
     with_storage(state, move |storage| {
-        storage.update_feed(&request.url, &request.title, request.group.as_deref())
+        storage.save_feed_groups(&request.names)
+    })
+    .await
+}
+
+pub async fn rename_feed_group(
+    state: &Arc<AppState>,
+    request: RenameFeedGroupRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.rename_feed_group(&request.name, &request.new_name)
+    })
+    .await
+}
+
+pub async fn remove_feed_group(
+    state: &Arc<AppState>,
+    request: RemoveFeedGroupRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.remove_feed_group(&request.name, request.unsubscribe)
     })
     .await
 }
@@ -78,11 +122,12 @@ pub async fn refresh_feeds(
     state: &Arc<AppState>,
     request: RefreshFeedsRequest,
 ) -> Result<(), AppError> {
-    let urls = if request.urls.is_empty() {
-        with_storage(state, |storage| storage.feed_urls()).await?
-    } else {
-        request.urls.clone()
-    };
+    let (urls, due) = (request.urls.clone(), request.due);
+    let urls = with_storage(state, move |storage| {
+        let minutes = storage.rss_settings().refresh_minutes;
+        storage.refresh_targets(&urls, due, minutes)
+    })
+    .await?;
     let root = state.data_root.clone();
     // A proxy turned off since the last check is noticed first.
     blocking(move || {
@@ -116,7 +161,11 @@ pub async fn refresh_feeds(
                 serde_json::to_value(event).unwrap_or_default(),
             );
         };
-        let here = if sync.connected() {
+        // Nothing due: the server is not asked, which would take an empty
+        // list as every feed.
+        let here = if urls.is_empty() {
+            urls
+        } else if sync.connected() {
             through_server(&storage, &sync, urls, &report)
         } else {
             urls
@@ -228,7 +277,23 @@ pub async fn fetch_full_text(
     request: ArticleIdRequest,
 ) -> Result<String, AppError> {
     let storage = state.storage.clone();
-    blocking(move || crate::rss::full_text(&storage, &request.id)).await
+    let sync = state.sync.clone();
+    let root = state.data_root.clone();
+    blocking(move || {
+        crate::network::refresh(&root);
+        let server = |link: &str| {
+            sync.rss_full_text(link)?.ok_or_else(|| {
+                AppError::keyed(
+                    ErrorCode::InvalidArgument,
+                    "serverTooOldForFullText",
+                    "服务器版本较旧，不能代为读取全文",
+                )
+            })
+        };
+        let server: Option<crate::rss::ServerPage<'_>> = sync.connected().then_some(&server);
+        crate::rss::full_text(&storage, &request.id, server)
+    })
+    .await
 }
 
 pub async fn set_article_state(
@@ -236,7 +301,12 @@ pub async fn set_article_state(
     request: ArticleStateRequest,
 ) -> Result<(), AppError> {
     with_storage(state, move |storage| {
-        storage.set_article_state(&request.ids, request.read, request.starred)
+        storage.set_article_state(
+            &request.ids,
+            request.read,
+            request.starred,
+            request.keep_unread,
+        )
     })
     .await
 }
@@ -247,6 +317,16 @@ pub async fn mark_all_read(
 ) -> Result<u32, AppError> {
     with_storage(state, move |storage| {
         storage.mark_all_read(request.feed.as_deref(), request.group.as_deref())
+    })
+    .await
+}
+
+pub async fn mark_read_range(
+    state: &Arc<AppState>,
+    request: MarkReadRangeRequest,
+) -> Result<u32, AppError> {
+    with_storage(state, move |storage| {
+        storage.mark_read_range(&request.query, &request.from, request.newer)
     })
     .await
 }

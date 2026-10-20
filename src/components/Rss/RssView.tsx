@@ -1,18 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { selectionTitle, type FeedSelection } from "../../application/rss";
 import { useFeeds } from "../../application/runtime";
-import { openExternal } from "../../services/external";
 import type { ArticleSummary } from "../../types/generated";
 import { describeError } from "../Cloud/format";
 import { Header } from "../Layout/Header";
 import { FullPage } from "../Layout/FullPage";
+import { usePageLayer } from "../Layout/use-page-layer";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
+import type { PressPoint } from "../ui/use-long-press";
 import { AddFeedDialog } from "./AddFeedDialog";
 import { ArticleList } from "./ArticleList";
+import { ArticleMenu } from "./ArticleMenu";
+import { FeedDetailPage } from "./FeedDetailPage";
 import { ArticleView } from "./ArticleView";
 import { FeedList } from "./FeedList";
 import { FeedManagePage } from "./FeedManagePage";
@@ -20,49 +23,39 @@ import { useWide } from "./use-wide";
 import { RssSettingsPage } from "./RssSettingsPage";
 import { useT } from "../../i18n";
 
-function ArticleMenu({ article, onClose }: { article: ArticleSummary; onClose: () => void }) {
+/**
+ * An article on a phone, over its list: a bar with back and the list's
+ * title, the article scrolling under it. Back (the button, Escape, or the
+ * system gesture) closes it like any page.
+ */
+function ArticlePage({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
   const t = useT();
-  const { store } = useFeeds();
-  const act = (work: () => Promise<unknown>) => {
-    onClose();
-    void work().catch((error: unknown) => toast({ text: describeError(error), error: true }));
-  };
-  const item =
-    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-surface-container";
+  const page = usePageLayer(onClose);
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-3 gap-1">
-        <DialogHeader className="px-2 pt-1">
-          <DialogTitle className="text-sm line-clamp-2">{article.title}</DialogTitle>
-        </DialogHeader>
-        <button
-          type="button"
-          className={item}
-          onClick={() => act(() => store.setState([article.id], { read: !article.read }))}
-        >
-          <Icon name={article.read ? "mark_unread" : "mark_read"} size={17} />
-          {article.read ? t("rss.markUnread") : t("rss.markRead")}
-        </button>
-        <button
-          type="button"
-          className={item}
-          onClick={() => act(() => store.setState([article.id], { starred: !article.starred }))}
-        >
-          <Icon name="star" size={17} />
-          {article.starred ? t("rss.unstar") : t("rss.star")}
-        </button>
-        {article.link && (
-          <button
-            type="button"
-            className={item}
-            onClick={() => act(() => openExternal(article.link!))}
-          >
-            <Icon name="open_in_new" size={17} />
-            {t("rss.openLink")}
-          </button>
-        )}
-      </DialogContent>
-    </Dialog>
+    <div
+      ref={page}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("rss.article")}
+      data-open=""
+      className="fixed inset-0 z-[45] bg-surface flex flex-col pt-safe"
+    >
+      <header className="shrink-0 h-12 flex items-center px-2 border-b border-surface-variant/30">
+        <Button size="icon" variant="ghost" aria-label={t("common.back")} onClick={onClose}>
+          <Icon name="arrow_back" size={20} />
+        </Button>
+        <span className="flex-1 min-w-0 truncate text-sm text-secondary">{title}</span>
+      </header>
+      <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
+    </div>
   );
 }
 
@@ -78,7 +71,8 @@ export function RssView() {
   // On a phone the article list is open; on a wide screen it always shows.
   const [listOpen, setListOpen] = useState(false);
   const [articleId, setArticleId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<ArticleSummary | null>(null);
+  const [menu, setMenu] = useState<{ article: ArticleSummary; point: PressPoint } | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
   const [setting, setSetting] = useState(false);
@@ -127,7 +121,7 @@ export function RssView() {
     <ArticleList
       activeId={articleId}
       onOpen={(article) => setArticleId(article.id)}
-      onMenu={setMenu}
+      onMenu={(article, point) => setMenu({ article, point })}
     />
   );
 
@@ -184,7 +178,13 @@ export function RssView() {
       {wide ? (
         <div className="flex-1 min-h-0 grid grid-cols-[15rem_22rem_1fr]">
           <aside className="overflow-y-auto border-r border-surface-variant/30 p-3">
-            <FeedList feeds={state.feeds} selection={state.selection} onSelect={select} />
+            <FeedList
+              feeds={state.feeds}
+              groups={state.groups}
+              selection={state.selection}
+              onSelect={select}
+              onDetail={setDetail}
+            />
           </aside>
           <section
             aria-label={title}
@@ -229,7 +229,13 @@ export function RssView() {
               </div>
             </div>
           ) : (
-            <FeedList feeds={state.feeds} selection={state.selection} onSelect={select} />
+            <FeedList
+              feeds={state.feeds}
+              groups={state.groups}
+              selection={state.selection}
+              onSelect={select}
+              onDetail={setDetail}
+            />
           )}
         </div>
       )}
@@ -238,30 +244,16 @@ export function RssView() {
           {list}
         </FullPage>
       )}
+      {/* A page layer of its own, so back closes the article before the list. */}
       {!wide && articleId && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("rss.article")}
-          className="fixed inset-0 z-[45] bg-surface flex flex-col pt-safe"
-        >
-          <header className="shrink-0 h-12 flex items-center px-2 border-b border-surface-variant/30">
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={t("common.back")}
-              onClick={() => setArticleId(null)}
-            >
-              <Icon name="arrow_back" size={20} />
-            </Button>
-            <span className="flex-1 min-w-0 truncate text-sm text-secondary">{title}</span>
-          </header>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <ArticleView id={articleId} onOpen={setArticleId} />
-          </div>
-        </div>
+        <ArticlePage title={title} onClose={() => setArticleId(null)}>
+          <ArticleView id={articleId} onOpen={setArticleId} />
+        </ArticlePage>
       )}
-      {menu && <ArticleMenu article={menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ArticleMenu article={menu.article} point={menu.point} onClose={() => setMenu(null)} />
+      )}
+      {detail && <FeedDetailPage url={detail} onClose={() => setDetail(null)} />}
       {adding && <AddFeedDialog onClose={() => setAdding(false)} />}
       {managing && <FeedManagePage onClose={() => setManaging(false)} />}
       {setting && <RssSettingsPage onClose={() => setSetting(false)} />}

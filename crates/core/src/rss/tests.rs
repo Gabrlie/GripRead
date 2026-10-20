@@ -128,7 +128,7 @@ fn refresh_keeps_state_and_old_articles_through_failures_and_304() {
     let newest = page.articles[0].id.clone();
     lock(&storage)
         .unwrap()
-        .set_article_state(std::slice::from_ref(&newest), Some(true), Some(true))
+        .set_article_state(std::slice::from_ref(&newest), Some(true), Some(true), None)
         .unwrap();
 
     assert_eq!(refresh_feed(&storage, &url).unwrap(), 0);
@@ -278,7 +278,7 @@ fn articles_page_filter_and_survive_as_kept() {
         .store_feed_fetch("https://a.example/feed", &fetched(500, old))
         .unwrap();
     guard
-        .set_article_state(&["0000".into()], None, Some(true))
+        .set_article_state(&["0000".into()], None, Some(true), None)
         .unwrap();
     // Twenty newer ones push out the twenty oldest, but not the starred one.
     assert_eq!(
@@ -346,7 +346,7 @@ fn articles_page_filter_and_survive_as_kept() {
     let kept = guard.list_articles(&starred).unwrap().articles;
     assert_eq!((kept.len(), kept[0].feed_title.as_str()), (1, "源"));
     guard
-        .set_article_state(&["0000".into()], None, Some(false))
+        .set_article_state(&["0000".into()], None, Some(false), None)
         .unwrap();
     assert!(guard.list_articles(&starred).unwrap().articles.is_empty());
 }
@@ -390,4 +390,224 @@ fn the_kept_days_setting_decides_how_far_back_articles_stay() {
         .unwrap();
     assert_eq!((saved.keep_days, saved.auto_full_text), (90, true));
     assert_eq!(guard.rss_settings(), saved);
+}
+
+#[test]
+fn articles_above_or_below_one_are_marked_read_but_those_kept_unread() {
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    guard
+        .add_feed("https://a.example/feed", "", None, None)
+        .unwrap();
+    guard
+        .store_feed_fetch("https://a.example/feed", &fetched(6, 1_000))
+        .unwrap();
+    // Newest first: 0005 … 0000. 0004 is kept unread.
+    guard
+        .set_article_state(&["0004".into()], None, None, Some(true))
+        .unwrap();
+    let query = ArticleQuery::default();
+    let from = |id: &str| crate::models::ArticleCursor {
+        published_at: 1_000 + id.parse::<i64>().unwrap() * 1000,
+        id: id.into(),
+    };
+    // 以上 from 0003: 0005 and 0003 (0004 is kept unread).
+    assert_eq!(
+        guard.mark_read_range(&query, &from("0003"), true).unwrap(),
+        2
+    );
+    // 以下 from 0001: 0001 and 0000.
+    assert_eq!(
+        guard.mark_read_range(&query, &from("0001"), false).unwrap(),
+        2
+    );
+    let unread: Vec<String> = guard
+        .list_articles(&ArticleQuery {
+            filter: ArticleFilter::Unread,
+            ..Default::default()
+        })
+        .unwrap()
+        .articles
+        .into_iter()
+        .map(|article| article.id)
+        .collect();
+    assert_eq!(unread, ["0004", "0002"]);
+    // 全部标为已读 leaves it too; the reader's own mark takes it off.
+    assert_eq!(guard.mark_all_read(None, None).unwrap(), 1);
+    assert!(guard.rss_article("0004").unwrap().summary.keep_unread);
+    guard
+        .set_article_state(&["0004".into()], Some(true), None, None)
+        .unwrap();
+    let article = guard.rss_article("0004").unwrap().summary;
+    assert!(article.read && !article.keep_unread);
+}
+
+#[test]
+fn feeds_refresh_on_their_own_interval_and_groups_keep_their_order() {
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    for (url, group) in [
+        ("https://a.example/feed", Some("甲")),
+        ("https://b.example/feed", Some("乙")),
+        ("https://c.example/feed", None),
+    ] {
+        guard.add_feed(url, "", group, None).unwrap();
+    }
+    // None fetched yet: all are due; with refreshing off, none is.
+    assert_eq!(guard.refresh_targets(&[], true, 60).unwrap().len(), 3);
+    assert!(guard.refresh_targets(&[], true, 0).unwrap().is_empty());
+    for url in guard.feed_urls().unwrap() {
+        guard.record_feed_unchanged(&url).unwrap();
+    }
+    assert!(guard.refresh_targets(&[], true, 60).unwrap().is_empty());
+    // A feed of its own five minutes is due when that has passed.
+    let feed = guard.feed("https://b.example/feed").unwrap();
+    guard
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: feed.url.clone(),
+            title: "乙".into(),
+            group: feed.group.clone(),
+            new_url: None,
+            enabled: None,
+            options: Some(crate::models::FeedOptions {
+                refresh_minutes: Some(1),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    // Below the shortest interval, it is raised to it.
+    assert_eq!(
+        guard.feed(&feed.url).unwrap().options.refresh_minutes,
+        Some(5)
+    );
+    guard
+        .conn_for_tests()
+        .execute(
+            "UPDATE rss_feeds SET last_fetch = last_fetch - 6 * 60000 WHERE url = ?1",
+            [&feed.url],
+        )
+        .unwrap();
+    assert_eq!(
+        guard.refresh_targets(&[], true, 60).unwrap(),
+        std::slice::from_ref(&feed.url)
+    );
+    // Manually refreshing all takes every enabled feed.
+    assert_eq!(guard.refresh_targets(&[], false, 0).unwrap().len(), 3);
+
+    // Groups: arranged, renamed into another, and removed.
+    guard
+        .save_feed_groups(&["乙".into(), "空".into(), "甲".into()])
+        .unwrap();
+    let names = |guard: &Storage| -> Vec<String> {
+        guard
+            .feed_groups()
+            .unwrap()
+            .into_iter()
+            .map(|group| group.name)
+            .collect()
+    };
+    assert_eq!(names(&guard), ["乙", "空", "甲"]);
+    guard.rename_feed_group("甲", "乙").unwrap();
+    assert_eq!(names(&guard), ["乙", "空"]);
+    assert_eq!(
+        guard
+            .feed("https://a.example/feed")
+            .unwrap()
+            .group
+            .as_deref(),
+        Some("乙")
+    );
+    guard.remove_feed_group("乙", false).unwrap();
+    assert_eq!(names(&guard), ["空"]);
+    assert_eq!(guard.list_feeds().unwrap().len(), 3);
+    assert!(guard
+        .list_feeds()
+        .unwrap()
+        .iter()
+        .all(|feed| feed.group.is_none()));
+    guard.save_feed_groups(&["丙".into()]).unwrap();
+    guard
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: "https://c.example/feed".into(),
+            title: "丙".into(),
+            group: Some("丙".into()),
+            new_url: None,
+            enabled: None,
+            options: None,
+        })
+        .unwrap();
+    guard.remove_feed_group("丙", true).unwrap();
+    assert_eq!(guard.list_feeds().unwrap().len(), 2);
+}
+
+#[test]
+fn a_page_the_device_cannot_reach_is_read_by_the_server() {
+    let base = start(|request: &Request| match request.path.as_str() {
+        "/feed" => Response::bytes(
+            "application/rss+xml",
+            r#"<rss version="2.0"><channel><title>甲</title>
+            <item><title>一</title><link>http://127.0.0.1:1/unreachable</link><guid>1</guid></item>
+            </channel></rss>"#
+                .as_bytes()
+                .to_vec(),
+        ),
+        _ => Response::not_found(),
+    });
+    let (_dir, storage) = library();
+    subscribe(&storage, &format!("{base}/feed"), None, None).unwrap();
+    let id = lock(&storage)
+        .unwrap()
+        .list_articles(&ArticleQuery::default())
+        .unwrap()
+        .articles[0]
+        .id
+        .clone();
+    let asked = AtomicU32::new(0);
+    let server = |link: &str| {
+        asked.fetch_add(1, Ordering::AcqRel);
+        assert!(link.ends_with("/unreachable"));
+        Ok("<p>服务器读到的正文</p>".to_string())
+    };
+    // Without a server the error stands; with one, the server reads it.
+    assert!(full_text(&storage, &id, None).is_err());
+    assert_eq!(
+        full_text(&storage, &id, Some(&server)).unwrap(),
+        "<p>服务器读到的正文</p>"
+    );
+    assert_eq!(asked.load(Ordering::Acquire), 1);
+    assert_eq!(
+        lock(&storage)
+            .unwrap()
+            .rss_article(&id)
+            .unwrap()
+            .full_text
+            .as_deref(),
+        Some("<p>服务器读到的正文</p>")
+    );
+}
+
+#[test]
+fn clearing_articles_keeps_unread_and_starred_and_does_not_bring_read_ones_back() {
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    let url = "https://a.example/feed";
+    guard.add_feed(url, "", None, None).unwrap();
+    guard.store_feed_fetch(url, &fetched(4, 1_000)).unwrap();
+    guard
+        .set_article_state(&["0000".into(), "0001".into()], Some(true), None, None)
+        .unwrap();
+    guard
+        .set_article_state(&["0001".into()], None, Some(true), None)
+        .unwrap();
+    guard.save_full_text("0002", "<p>全文</p>").unwrap();
+    let before = guard.rss_article_bytes().unwrap();
+    guard.clear_rss_articles().unwrap();
+    assert!(guard.rss_article_bytes().unwrap() < before);
+    assert!(guard.rss_article("0000").is_err());
+    assert!(guard.rss_article("0001").unwrap().summary.starred);
+    assert_eq!(guard.rss_article("0002").unwrap().full_text, None);
+    // The feed still carries the cleared article: it stays gone.
+    assert_eq!(guard.store_feed_fetch(url, &fetched(4, 1_000)).unwrap(), 0);
+    assert!(guard.rss_article("0000").is_err());
+    assert_eq!(guard.list_feeds().unwrap()[0].total, 3);
 }

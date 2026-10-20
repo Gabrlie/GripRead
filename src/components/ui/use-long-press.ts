@@ -1,10 +1,17 @@
 import { useRef, type MouseEvent, type PointerEvent } from "react";
 
+/** Where a long press happened, in viewport pixels (for a menu there). */
+export interface PressPoint {
+  x: number;
+  y: number;
+}
+
 /**
- * Long-press (or right-click) runs `onLongPress`, as Legado's long-press menus do;
- * the click that ends a long press does not also open the book.
+ * Long-press (or right-click) runs `onLongPress` with where it happened, as
+ * Legado's long-press menus do; the click that ends a long press does not
+ * also open the book.
  */
-export function useLongPress(onLongPress: () => void, onClick: () => void) {
+export function useLongPress(onLongPress: (point: PressPoint) => void, onClick: () => void) {
   const timer = useRef<number | null>(null);
   const fired = useRef(false);
   // A finger that moves (scrolling, swiping) is not pressing.
@@ -18,9 +25,10 @@ export function useLongPress(onLongPress: () => void, onClick: () => void) {
       fired.current = false;
       origin.current = { x: event.clientX, y: event.clientY };
       clear();
+      const point = { x: event.clientX, y: event.clientY };
       timer.current = window.setTimeout(() => {
         fired.current = true;
-        onLongPress();
+        onLongPress(point);
       }, 550);
     },
     onPointerMove: (event: PointerEvent) => {
@@ -33,7 +41,7 @@ export function useLongPress(onLongPress: () => void, onClick: () => void) {
     onContextMenu: (event: MouseEvent) => {
       event.preventDefault();
       clear();
-      if (!fired.current) onLongPress();
+      if (!fired.current) onLongPress({ x: event.clientX, y: event.clientY });
       fired.current = true;
     },
     onClick: () => {

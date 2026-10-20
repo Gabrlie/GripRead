@@ -102,4 +102,10 @@ export const errors = {
   "error.webPickFiles": "In the web version, choose several files to upload",
   "error.webUpdate": "Update the server image for the web version",
   "error.webdavPaused": "Connected to a server; WebDAV is paused",
+  "error.rssPrivateAddress":
+    "The server does not read pages at local or private addresses: {error}",
+  "error.rssFeedUrlEmpty": "Enter the feed's address",
+  "error.rssFeedExists": "Already subscribed to this address",
+  "error.rssGroupNameEmpty": "Enter a group name",
+  "error.serverTooOldForFullText": "The server is too old to read full text",
 } satisfies Messages<typeof zh>;

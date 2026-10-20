@@ -812,23 +812,40 @@ async fn a_connected_device_refreshes_its_feeds_through_the_server() {
     // A feed that grows by one article each time it is fetched.
     let fetched = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let count = fetched.clone();
-    let site = Router::new().route(
-        "/feed",
-        get(move || {
-            let round = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            let items: String = (1..=round)
-                .map(|n| format!("<item><title>第{n}篇</title><guid>p{n}</guid><link>https://a.example/{n}</link></item>"))
-                .collect();
-            async move {
-                (
-                    [(header::CONTENT_TYPE, "application/rss+xml")],
-                    format!("<rss version=\"2.0\"><channel><title>博客</title>{items}</channel></rss>"),
-                )
-            }
-        }),
-    );
+    let pages = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let page_hits = pages.clone();
     let site_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let feed = format!("http://{}/feed", site_listener.local_addr().unwrap());
+    let base = format!("http://{}", site_listener.local_addr().unwrap());
+    let feed = format!("{base}/feed");
+    let link = format!("{base}/page");
+    let site = Router::new()
+        .route(
+            "/feed",
+            get(move || {
+                let round = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                let items: String = (1..=round)
+                    .map(|n| format!("<item><title>第{n}篇</title><guid>p{n}</guid><link>{link}</link></item>"))
+                    .collect();
+                async move {
+                    (
+                        [(header::CONTENT_TYPE, "application/rss+xml")],
+                        format!("<rss version=\"2.0\"><channel><title>博客</title>{items}</channel></rss>"),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/page",
+            get(move || {
+                page_hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let text = "服务器读到的正文。".repeat(40);
+                async move {
+                    axum::response::Html(format!(
+                        "<html><body><nav>导航</nav><article><p>{text}</p><p>{text}</p></article></body></html>"
+                    ))
+                }
+            }),
+        );
     tokio::spawn(async move { axum::serve(site_listener, site).await.unwrap() });
 
     let folder = Folder::new();
@@ -867,13 +884,48 @@ async fn a_connected_device_refreshes_its_feeds_through_the_server() {
         gripread_core::models::RefreshFeedsRequest {
             operation_id: "rss-test".into(),
             urls: Vec::new(),
+            due: false,
         },
     )
     .await
     .unwrap();
-    let guard = phone.storage.lock().unwrap();
-    let feeds = guard.list_feeds().unwrap();
-    assert_eq!((feeds[0].title.as_str(), feeds[0].total), ("博客", 2));
-    assert!(guard.feed_server_cursor(&feed).unwrap() > 0);
+    let (id, feed_title) = {
+        let guard = phone.storage.lock().unwrap();
+        let feeds = guard.list_feeds().unwrap();
+        assert_eq!((feeds[0].title.as_str(), feeds[0].total), ("博客", 2));
+        assert!(guard.feed_server_cursor(&feed).unwrap() > 0);
+        let id = guard.list_articles(&Default::default()).unwrap().articles[0]
+            .id
+            .clone();
+        (id, feeds[0].title.clone())
+    };
     assert_eq!(fetched.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // A feed set to read 全文 through the server: the server reads the page.
+    {
+        let mut guard = phone.storage.lock().unwrap();
+        guard
+            .update_feed(&gripread_core::models::UpdateFeedRequest {
+                url: feed.clone(),
+                title: feed_title,
+                group: None,
+                new_url: None,
+                enabled: None,
+                options: Some(gripread_core::models::FeedOptions {
+                    via_server: true,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+    }
+    // The page is on this machine, which the server does not read for
+    // others (as with 通过服务器访问): the refusal comes back, unread.
+    let error = gripread_core::rss_commands::fetch_full_text(
+        &phone,
+        gripread_core::models::ArticleIdRequest { id },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.message.contains("内网"), "{}", error.message);
+    assert_eq!(pages.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

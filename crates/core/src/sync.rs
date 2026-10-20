@@ -91,6 +91,20 @@ pub struct RssRefreshReply {
     pub feeds: Vec<RssFeedUpdate>,
 }
 
+/// 全文 read by the server (`POST /api/rss/fulltext`): the main text of
+/// the page at `link`, as sanitized HTML.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RssFullTextRequest {
+    pub link: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RssFullTextReply {
+    pub html: String,
+}
+
 /// A feed's articles the server fetched since the device's cursor
 /// (`GET /api/rss/articles?feed=&since=`), and the cursor to send next.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

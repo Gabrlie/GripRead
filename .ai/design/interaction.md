@@ -47,7 +47,7 @@ Phone novels default to one page. Desktop defaults to a centered single page and
 
 A contents selection navigates to that chapter. Reader layout changes follow the [locator contract](../subsystems/reader.md). Loading and sync indicators remain outside the text; remote progress produces a user-selectable action instead of an automatic jump.
 
-RSS articles scroll continuously and show title, source, date, author, and content, with a bar for the previous and next article, 全文, read, star, and 原文. On a phone, subscriptions (全部文章, folding groups, unread counts), a list's articles (全部, 未读, 星标, search, a long press for read and star), and the article open one over another. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
+RSS articles scroll continuously and show title, source, date, author, and content, with a bar for the previous and next article, 全文, read, star, and 原文. On a phone, subscriptions (全部文章, folding groups in their arranged order, unread counts; a long press on a feed opens 订阅详情), a list's articles (全部, 未读, 星标, search; read articles dimmed; a long press opens a menu at the finger for read, star, 以上/以下标为已读, 保持未读, copying the link, and 原文), and the article open one over another, and back closes them in that order. 管理订阅 has 添加订阅 in its bar, 分组管理 (laid out as the shelf's), and each feed opening 订阅详情, a page of its name, group, address, 启用更新, interval, 全文, and retention, saved together. Preserve list position when returning from an article and retain selected columns on desktop. Content extraction and article-state behavior belong to [RSS](../subsystems/rss.md).
 
 ## States and accessibility
 

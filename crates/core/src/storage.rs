@@ -59,7 +59,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 29;
+const CURRENT_SCHEMA_VERSION: i64 = 30;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1246,6 +1246,16 @@ impl Storage {
             Self::create_rss_tables(&tx)?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (29, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 30 {
+            // 订阅: each feed's own settings, ordered groups, 保持未读.
+            let tx = self.conn.transaction()?;
+            Self::upgrade_rss_tables(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (30, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7405,7 +7415,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 29);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 30);
     }
 
     #[test]
@@ -10421,10 +10431,10 @@ mod tests {
             .store_feed_fetch(url, &rss_fetch(&["1", "2", "3"]))
             .unwrap();
         phone
-            .set_article_state(&[id("1")], Some(true), None)
+            .set_article_state(&[id("1")], Some(true), None, None)
             .unwrap();
         phone
-            .set_article_state(&[id("2")], None, Some(true))
+            .set_article_state(&[id("2")], None, Some(true), None)
             .unwrap();
         sync_round(&mut server, &mut phone, "phone", &mut phone_at);
         sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
@@ -10448,13 +10458,13 @@ mod tests {
 
         // Both change marks at once; neither loses the other's.
         phone
-            .set_article_state(&[id("3")], Some(true), None)
+            .set_article_state(&[id("3")], Some(true), None, None)
             .unwrap();
         desktop
-            .set_article_state(&[id("1")], Some(false), None)
+            .set_article_state(&[id("1")], Some(false), None, None)
             .unwrap();
         desktop
-            .set_article_state(&[id("4")], Some(true), None)
+            .set_article_state(&[id("4")], Some(true), None, None)
             .unwrap();
         sync_round(&mut server, &mut phone, "phone", &mut phone_at);
         sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
@@ -10473,7 +10483,7 @@ mod tests {
 
         // Unstarring and unsubscribing travel too; 同步排除 keeps them local.
         desktop
-            .set_article_state(&[id("2")], None, Some(false))
+            .set_article_state(&[id("2")], None, Some(false), None)
             .unwrap();
         desktop.remove_feeds(&[url.to_string()]).unwrap();
         sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
@@ -10492,6 +10502,77 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_moved_to_a_new_address_keeps_its_articles_on_every_device() {
+        let root = TestRoot::new();
+        let mut server = Storage::open(&root.0.join("server")).unwrap();
+        let mut phone = Storage::open(&root.0.join("phone")).unwrap();
+        let mut desktop = Storage::open(&root.0.join("desktop")).unwrap();
+        let (mut phone_at, mut desktop_at) = (0, 0);
+        let (old, new) = ("https://a.example/feed", "https://a.example/rss");
+        let id = |name: &str| crate::storage::article_id(old, name);
+        phone.add_feed(old, "", Some("技术"), None).unwrap();
+        phone
+            .store_feed_fetch(old, &rss_fetch(&["1", "2"]))
+            .unwrap();
+        phone
+            .set_article_state(&[id("1")], Some(true), Some(true), None)
+            .unwrap();
+        phone
+            .save_feed_groups(&["生活".into(), "技术".into()])
+            .unwrap();
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        desktop
+            .store_feed_fetch(old, &rss_fetch(&["1", "2"]))
+            .unwrap();
+
+        // The phone gives it a new address, stops it, and keeps 200 of it.
+        phone
+            .update_feed(&crate::models::UpdateFeedRequest {
+                url: old.into(),
+                title: "博客".into(),
+                group: Some("技术".into()),
+                new_url: Some(new.into()),
+                enabled: Some(false),
+                options: Some(crate::models::FeedOptions {
+                    keep_articles: Some(200),
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        let feed = phone.feed(new).unwrap();
+        assert_eq!((feed.total, feed.unread, feed.enabled), (2, 1, false));
+        assert_eq!(feed.options.keep_articles, Some(200));
+        // Fetched again at its new address, its articles are the same ones.
+        let state = phone.feed_fetch_state(new).unwrap().unwrap();
+        assert_eq!(state.id_base, old);
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+
+        let feeds = desktop.list_feeds().unwrap();
+        assert_eq!(feeds.len(), 1);
+        assert_eq!(
+            (feeds[0].url.as_str(), feeds[0].total, feeds[0].enabled),
+            (new, 2, false)
+        );
+        assert_eq!(feeds[0].options.keep_articles, Some(200));
+        let first = desktop.rss_article(&id("1")).unwrap().summary;
+        assert!(first.read && first.starred && first.feed_url == new);
+        let groups: Vec<String> = desktop
+            .feed_groups()
+            .unwrap()
+            .into_iter()
+            .map(|group| group.name)
+            .collect();
+        assert_eq!(groups, ["生活", "技术"]);
+        // A stopped feed is not refreshed, even asked by name.
+        assert!(desktop
+            .refresh_targets(&[new.to_string()], false, 60)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn backups_carry_subscriptions_and_starred_articles() {
         let root = TestRoot::new();
         let mut first = Storage::open(&root.0.join("first")).unwrap();
@@ -10502,7 +10583,7 @@ mod tests {
             .unwrap();
         let starred = crate::storage::article_id(url, "2");
         first
-            .set_article_state(std::slice::from_ref(&starred), None, Some(true))
+            .set_article_state(std::slice::from_ref(&starred), None, Some(true), None)
             .unwrap();
         let document =
             parse_backup(&serde_json::to_vec(&first.export_backup("Linux").unwrap()).unwrap())

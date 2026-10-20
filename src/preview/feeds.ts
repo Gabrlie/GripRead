@@ -1,8 +1,10 @@
 import type { FeedService } from "../services/contracts";
 import type {
   Article,
+  ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedGroup,
   RssRefreshEvent,
   RssSettings,
 } from "../types/generated";
@@ -38,6 +40,7 @@ function sampleArticles(feed: Feed, count: number, now: number): Stored[] {
         image: index % 3 === 0 ? `${feed.url}/picture/${index}.svg` : null,
         read: index > 2,
         starred: index === 1,
+        keepUnread: false,
       },
       content: `<p>${title}的正文。</p><p>第二段文字，带一个<a href="https://example.com">链接</a>。</p><blockquote>引用的一段话。</blockquote>`,
     };
@@ -52,6 +55,7 @@ export function memoryFeeds(seed = true): FeedService {
   const now = Date.now();
   let feeds: Feed[] = [];
   let articles: Stored[] = [];
+  let groups: FeedGroup[] = [];
   let settings: RssSettings = {
     refreshMinutes: 60,
     markReadOnOpen: true,
@@ -60,6 +64,8 @@ export function memoryFeeds(seed = true): FeedService {
     autoFullText: false,
     listImages: true,
     keepDays: 90,
+    keepArticles: 500,
+    markReadOnScroll: false,
   };
   const listeners = new Set<(event: RssRefreshEvent) => void>();
   const feed = (url: string, title: string, group: string | null, sort: number): Feed => ({
@@ -74,6 +80,14 @@ export function memoryFeeds(seed = true): FeedService {
     lastError: null,
     unread: 0,
     total: 0,
+    enabled: true,
+    options: {
+      refreshMinutes: null,
+      keepArticles: null,
+      keepDays: null,
+      fullText: null,
+      viaServer: false,
+    },
   });
   if (seed) {
     feeds = [
@@ -92,6 +106,55 @@ export function memoryFeeds(seed = true): FeedService {
         unread: own.filter((article) => !article.summary.read).length,
       };
     });
+  /** The groups in order: those arranged, then those only feeds name. */
+  const allGroups = (): FeedGroup[] => {
+    const list = [...groups];
+    for (const item of feeds)
+      if (item.group !== null && !list.some((group) => group.name === item.group))
+        list.push({ name: item.group, sort: list.length });
+    return list;
+  };
+  /** The list's articles, newest first, as the core filters them. */
+  const listed = (query: ArticleQuery) => {
+    const group = query.group ?? null;
+    const search = query.search?.trim().toLowerCase() ?? "";
+    const known = new Set(feeds.map((item) => item.url));
+    return articles
+      .map((article) => article.summary)
+      .filter((article) =>
+        query.feed
+          ? article.feedUrl === query.feed
+          : group !== null
+            ? feeds.find((item) => item.url === article.feedUrl)?.group === group
+            : query.filter === "starred" || known.has(article.feedUrl),
+      )
+      .filter((article) =>
+        query.filter === "unread"
+          ? !article.read
+          : query.filter === "starred"
+            ? article.starred
+            : true,
+      )
+      .filter(
+        (article) =>
+          !search ||
+          article.title.toLowerCase().includes(search) ||
+          article.excerpt.toLowerCase().includes(search),
+      )
+      .sort(
+        (left, right) => right.publishedAt - left.publishedAt || right.id.localeCompare(left.id),
+      );
+  };
+  const markRead = (ids: Set<string>) => {
+    let changed = 0;
+    articles = articles.map((article) => {
+      if (!ids.has(article.summary.id) || article.summary.read || article.summary.keepUnread)
+        return article;
+      changed++;
+      return { ...article, summary: { ...article.summary, read: true } };
+    });
+    return changed;
+  };
   const find = (id: string) => {
     const found = articles.find((article) => article.summary.id === id);
     if (!found) throw new Error("没有这篇文章");
@@ -107,8 +170,54 @@ export function memoryFeeds(seed = true): FeedService {
       articles = [...articles, ...sampleArticles(added, 3, Date.now())];
       return counted().find((item) => item.url === url)!;
     },
-    updateFeed: async (url, title, group) => {
-      feeds = feeds.map((item) => (item.url === url ? { ...item, title, group } : item));
+    updateFeed: async (request) => {
+      const url = request.newUrl?.trim() || request.url;
+      if (url !== request.url && feeds.some((item) => item.url === url))
+        throw new Error("已经订阅过这个地址");
+      feeds = feeds.map((item) =>
+        item.url === request.url
+          ? {
+              ...item,
+              url,
+              title: request.title,
+              group: request.group,
+              enabled: request.enabled ?? item.enabled,
+              options: request.options ?? item.options,
+            }
+          : item,
+      );
+      if (url !== request.url)
+        articles = articles.map((article) =>
+          article.summary.feedUrl === request.url
+            ? { ...article, summary: { ...article.summary, feedUrl: url } }
+            : article,
+        );
+      return counted().find((item) => item.url === url)!;
+    },
+    listGroups: async () => allGroups(),
+    saveGroups: async (names) => {
+      const rest = allGroups().filter((group) => !names.includes(group.name));
+      groups = [...names.map((name) => ({ name, sort: 0 })), ...rest].map((group, sort) => ({
+        name: group.name,
+        sort,
+      }));
+    },
+    renameGroup: async (name, newName) => {
+      const merging = allGroups().some((group) => group.name === newName);
+      groups = allGroups()
+        .filter((group) => !(merging && group.name === name))
+        .map((group) => (group.name === name ? { ...group, name: newName } : group));
+      feeds = feeds.map((item) => (item.group === name ? { ...item, group: newName } : item));
+    },
+    removeGroup: async (name, unsubscribe) => {
+      groups = allGroups().filter((group) => group.name !== name);
+      const urls = feeds.filter((item) => item.group === name).map((item) => item.url);
+      if (unsubscribe) {
+        feeds = feeds.filter((item) => !urls.includes(item.url));
+        articles = articles.filter(
+          (article) => !urls.includes(article.summary.feedUrl) || article.summary.starred,
+        );
+      } else feeds = feeds.map((item) => (item.group === name ? { ...item, group: null } : item));
     },
     removeFeeds: async (urls) => {
       feeds = feeds.filter((item) => !urls.includes(item.url));
@@ -116,8 +225,13 @@ export function memoryFeeds(seed = true): FeedService {
         (article) => !urls.includes(article.summary.feedUrl) || article.summary.starred,
       );
     },
-    refresh: async (operationId, urls) => {
-      const targets = urls.length ? urls : feeds.map((item) => item.url);
+    refresh: async (operationId, urls, due = false) => {
+      const enabled = feeds.filter((item) => item.enabled).map((item) => item.url);
+      const targets = due
+        ? []
+        : urls.length
+          ? urls.filter((url) => enabled.includes(url))
+          : enabled;
       targets.forEach((url, index) =>
         listeners.forEach((listener) =>
           listener({
@@ -148,34 +262,7 @@ export function memoryFeeds(seed = true): FeedService {
       return () => listeners.delete(listener);
     },
     listArticles: async (query) => {
-      const group = query.group ?? null;
-      const search = query.search?.trim().toLowerCase() ?? "";
-      const known = new Set(feeds.map((item) => item.url));
-      let list = articles
-        .map((article) => article.summary)
-        .filter((article) =>
-          query.feed
-            ? article.feedUrl === query.feed
-            : group !== null
-              ? feeds.find((item) => item.url === article.feedUrl)?.group === group
-              : query.filter === "starred" || known.has(article.feedUrl),
-        )
-        .filter((article) =>
-          query.filter === "unread"
-            ? !article.read
-            : query.filter === "starred"
-              ? article.starred
-              : true,
-        )
-        .filter(
-          (article) =>
-            !search ||
-            article.title.toLowerCase().includes(search) ||
-            article.excerpt.toLowerCase().includes(search),
-        )
-        .sort(
-          (left, right) => right.publishedAt - left.publishedAt || right.id.localeCompare(left.id),
-        );
+      let list = listed(query);
       const after = query.after;
       if (after)
         list = list.filter(
@@ -203,27 +290,35 @@ export function memoryFeeds(seed = true): FeedService {
               ...article,
               summary: {
                 ...article.summary,
-                read: state.read ?? article.summary.read,
+                read: state.keepUnread ? false : (state.read ?? article.summary.read),
                 starred: state.starred ?? article.summary.starred,
+                keepUnread: state.keepUnread ?? (state.read ? false : article.summary.keepUnread),
               },
             }
           : article,
       );
     },
-    markAllRead: async (scope) => {
-      let changed = 0;
-      articles = articles.map((article) => {
-        const owner = feeds.find((item) => item.url === article.summary.feedUrl);
-        const inScope = scope.feed
-          ? article.summary.feedUrl === scope.feed
-          : scope.group
-            ? owner?.group === scope.group
-            : true;
-        if (!inScope || article.summary.read) return article;
-        changed++;
-        return { ...article, summary: { ...article.summary, read: true } };
-      });
-      return changed;
+    markAllRead: async (scope) =>
+      markRead(
+        new Set(
+          articles
+            .filter((article) => {
+              const owner = feeds.find((item) => item.url === article.summary.feedUrl);
+              return scope.feed
+                ? article.summary.feedUrl === scope.feed
+                : scope.group
+                  ? owner?.group === scope.group
+                  : true;
+            })
+            .map((article) => article.summary.id),
+        ),
+      ),
+    markReadRange: async (query, from, newer) => {
+      const list = listed({ ...query, after: null });
+      const at = list.findIndex((article) => article.id === from.id);
+      if (at < 0) return 0;
+      const range = newer ? list.slice(0, at + 1) : list.slice(at);
+      return markRead(new Set(range.map((article) => article.id)));
     },
     image: async (url) => (url.endsWith(".svg") ? samplePicture(url) : new ArrayBuffer(0)),
     importOpml: async () => ({ added: 0, existing: 0 }),

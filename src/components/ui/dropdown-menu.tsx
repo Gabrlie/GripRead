@@ -6,13 +6,14 @@ export const DropdownMenuTrigger = Menu.Trigger;
 export function DropdownMenuContent({
   align = "end",
   sideOffset = 6,
+  anchor,
   className,
   children,
   ...props
-}: Menu.Popup.Props & Pick<Menu.Positioner.Props, "align" | "sideOffset">) {
+}: Menu.Popup.Props & Pick<Menu.Positioner.Props, "align" | "sideOffset" | "anchor">) {
   return (
     <Menu.Portal>
-      <Menu.Positioner align={align} sideOffset={sideOffset} className="z-[60]">
+      <Menu.Positioner align={align} sideOffset={sideOffset} anchor={anchor} className="z-[60]">
         <Menu.Popup
           className={cn(
             "glass-dropdown min-w-48 rounded-2xl p-1.5 text-on-surface outline-none animate-in fade-in-0 zoom-in-95",

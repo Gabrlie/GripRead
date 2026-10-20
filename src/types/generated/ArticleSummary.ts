@@ -8,4 +8,8 @@ excerpt: string,
 /**
  * The first picture, for a thumbnail.
  */
-image: string | null, read: boolean, starred: boolean, };
+image: string | null, read: boolean, starred: boolean, 
+/**
+ * 保持未读: nothing marks it read but the reader's own mark.
+ */
+keepUnread: boolean, };

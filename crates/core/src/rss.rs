@@ -19,7 +19,11 @@ use crate::error::{AppError, ErrorCode};
 use crate::models::{FeedCandidate, OpmlImportReport};
 use crate::storage::{article_id, FetchedArticle, FetchedFeed, Storage};
 
-const USER_AGENT: &str = "Mozilla/5.0 (compatible; GripRead; +https://github.com/Gabrlie/GripRead)";
+/// A browser's: some sites refuse or reset other clients.
+const USER_AGENT: &str = crate::sources::http::DEFAULT_USER_AGENT;
+const FEED_ACCEPT: &str = "application/rss+xml, application/atom+xml, application/feed+json, application/xml;q=0.9, text/xml;q=0.9, text/html;q=0.8, */*;q=0.5";
+const PAGE_ACCEPT: &str =
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
 const TIMEOUT: Duration = Duration::from_secs(30);
 const FEED_LIMIT: u64 = 16 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 20 * 1024 * 1024;
@@ -53,22 +57,72 @@ pub struct Fetched {
     pub body: Vec<u8>,
 }
 
-/// GET through the app's client, following redirects.
+/// Checks an address before it is fetched (a message when refused).
+pub type AddressCheck<'a> = &'a dyn Fn(&str) -> Result<(), String>;
+/// Reads a page's 全文 through the server.
+pub type ServerPage<'a> = &'a dyn Fn(&str) -> Result<String, AppError>;
+
+/// A connection the other end dropped, which a second try often gets past.
+fn dropped_connection(error: &ureq::Error) -> bool {
+    matches!(error, ureq::Error::Io(error) if matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::UnexpectedEof
+    ))
+}
+
+/// GET through the app's client, following redirects. `headers` may
+/// replace the feed `Accept` header.
 pub fn fetch(url: &str, headers: &[(&str, String)], limit: u64) -> Result<Fetched, AppError> {
+    fetch_checked(url, headers, limit, None)
+}
+
+/// [`fetch`], each address (redirects too) first passing `check`.
+fn fetch_checked(
+    url: &str,
+    headers: &[(&str, String)],
+    limit: u64,
+    check: Option<AddressCheck<'_>>,
+) -> Result<Fetched, AppError> {
     let agent = crate::sources::network::agent();
     let mut address = url.to_string();
+    let accept = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("accept"))
+        .map_or(FEED_ACCEPT, |(_, value)| value.as_str());
     for _ in 0..=REDIRECTS {
-        let mut request = agent
-            .get(&address)
-            .config()
-            .timeout_global(Some(TIMEOUT))
-            .build()
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/rss+xml, application/atom+xml, application/feed+json, application/xml;q=0.9, text/xml;q=0.9, text/html;q=0.8, */*;q=0.5");
-        for (name, value) in headers {
-            request = request.header(*name, value.as_str());
+        if let Some(check) = check {
+            check(&address).map_err(|message| {
+                AppError::keyed(
+                    ErrorCode::InvalidArgument,
+                    "rssPrivateAddress",
+                    message.clone(),
+                )
+                .with("error", message)
+            })?;
         }
-        let mut response = request.call().map_err(network)?;
+        let call = || {
+            let mut request = agent
+                .get(&address)
+                .config()
+                .timeout_global(Some(TIMEOUT))
+                .build()
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", accept)
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+            for (name, value) in headers {
+                if !name.eq_ignore_ascii_case("accept") {
+                    request = request.header(*name, value.as_str());
+                }
+            }
+            request.call()
+        };
+        let mut response = match call() {
+            Err(error) if dropped_connection(&error) => call(),
+            result => result,
+        }
+        .map_err(network)?;
         let status = response.status().as_u16();
         let header = |name: &str| {
             response
@@ -115,6 +169,12 @@ pub fn fetch(url: &str, headers: &[(&str, String)], limit: u64) -> Result<Fetche
 
 /// Parses a feed document at `url`.
 pub fn parse_feed(url: &str, body: &[u8]) -> Result<FetchedFeed, AppError> {
+    parse_feed_as(url, url, body)
+}
+
+/// Parses a feed document at `url`, its article ids made from `id_base`
+/// (the feed's first address).
+pub fn parse_feed_as(url: &str, id_base: &str, body: &[u8]) -> Result<FetchedFeed, AppError> {
     let parser = feed_rs::parser::Builder::new()
         .base_uri(Some(url))
         // Entries without an id are known by their link or title, so a
@@ -185,7 +245,7 @@ pub fn parse_feed(url: &str, body: &[u8]) -> Result<FetchedFeed, AppError> {
         let Some(identity) = identity else {
             continue;
         };
-        let id = article_id(url, identity);
+        let id = article_id(id_base, identity);
         if !seen.insert(id.clone()) {
             continue;
         }
@@ -278,7 +338,7 @@ pub fn refresh_feed(storage: &Mutex<Storage>, url: &str) -> Result<u32, AppError
                 format!("HTTP {}", response.status),
             ));
         }
-        let mut feed = parse_feed(url, &response.body)?;
+        let mut feed = parse_feed_as(url, &state.id_base, &response.body)?;
         feed.etag = response.etag;
         feed.last_modified = response.last_modified;
         lock(storage)?.store_feed_fetch(url, &feed)
@@ -320,6 +380,21 @@ pub fn refresh_all(
             });
         }
     });
+}
+
+/// The address of the feed at `address` (after redirects are followed),
+/// or why it is not one.
+pub fn check_feed(address: &str) -> Result<String, AppError> {
+    let address = normalize_url(address)?;
+    let response = fetch(&address, &[], FEED_LIMIT)?;
+    if !(200..300).contains(&response.status) {
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!("HTTP {}", response.status),
+        ));
+    }
+    parse_feed(&response.url, &response.body)?;
+    Ok(address)
 }
 
 /// The feeds at an address: the address itself when it is a feed, the
@@ -666,8 +741,14 @@ pub fn image(
 
 // ---------------------------------------------------------------- Full text
 
-/// Reads the article's page and keeps its main text (全文).
-pub fn full_text(storage: &Mutex<Storage>, id: &str) -> Result<String, AppError> {
+/// Reads the article's page and keeps its main text (全文). `server`
+/// reads a page through the server: always for a feed set to, and when
+/// this device cannot reach the page itself.
+pub fn full_text(
+    storage: &Mutex<Storage>,
+    id: &str,
+    server: Option<ServerPage<'_>>,
+) -> Result<String, AppError> {
     let article = lock(storage)?.rss_article(id)?;
     let link = article.summary.link.clone().ok_or_else(|| {
         AppError::keyed(
@@ -676,7 +757,49 @@ pub fn full_text(storage: &Mutex<Storage>, id: &str) -> Result<String, AppError>
             "这篇文章没有原文链接",
         )
     })?;
-    let response = fetch(&link, &[], FEED_LIMIT)?;
+    let via_server = lock(storage)?
+        .feed_fetch_state(&article.summary.feed_url)?
+        .is_some_and(|feed| feed.via_server);
+    let text = match server {
+        Some(server) if via_server => server(&link)?,
+        Some(server) => match page_text(&link) {
+            // A page that answered but has no article is not retried.
+            Err(error) if error.key.as_deref() == Some("rssNetwork") => {
+                crate::log_keyed!(
+                    Info,
+                    "rss",
+                    "rssFullTextViaServer",
+                    format!("本机读取原文失败，改由服务器读取：{}", error.message),
+                    @error error,
+                );
+                server(&link)?
+            }
+            result => result?,
+        },
+        None => page_text(&link)?,
+    };
+    lock(storage)?.save_full_text(id, &text)?;
+    Ok(text)
+}
+
+/// The main text of the page at `link`, as sanitized HTML.
+pub fn page_text(link: &str) -> Result<String, AppError> {
+    read_page(link, None)
+}
+
+/// [`page_text`] for another device (the server's 全文): never of a local
+/// or private address, as with 通过服务器访问.
+pub fn public_page_text(link: &str) -> Result<String, AppError> {
+    read_page(link, Some(&crate::sources::http::public_address))
+}
+
+fn read_page(link: &str, check: Option<AddressCheck<'_>>) -> Result<String, AppError> {
+    let response = fetch_checked(
+        link,
+        &[("Accept", PAGE_ACCEPT.to_string())],
+        FEED_LIMIT,
+        check,
+    )?;
     if !(200..300).contains(&response.status) {
         return Err(AppError::keyed(
             ErrorCode::Io,
@@ -686,15 +809,13 @@ pub fn full_text(storage: &Mutex<Storage>, id: &str) -> Result<String, AppError>
         .with("status", response.status));
     }
     let html = decode_html(&response.body, &response.content_type);
-    let text = extract_main(&html, &response.url).ok_or_else(|| {
+    extract_main(&html, &response.url).ok_or_else(|| {
         AppError::keyed(
             ErrorCode::InvalidArgument,
             "rssNoMainText",
             "没能从原文页面中找到正文",
         )
-    })?;
-    lock(storage)?.save_full_text(id, &text)?;
-    Ok(text)
+    })
 }
 
 /// Decodes a page by its declared charset (header, then `<meta>`), UTF-8

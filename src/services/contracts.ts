@@ -5,6 +5,9 @@ import type {
   ArticleQuery,
   Feed,
   FeedCandidate,
+  FeedGroup,
+  ArticleCursor,
+  UpdateFeedRequest,
   OpmlImportReport,
   RssRefreshEvent,
   RssSettings,
@@ -424,23 +427,43 @@ export interface TranslationService {
   onChapterProgress(listener: (event: ChapterTranslationEvent) => void): Promise<() => void>;
 }
 
+/** An article's marks; absent ones stay. 保持未读 also marks it unread. */
+export interface ArticleMarks {
+  read?: boolean;
+  starred?: boolean;
+  keepUnread?: boolean;
+}
+
 /** 订阅: RSS/Atom subscriptions, their articles, and article state. */
 export interface FeedService {
   listFeeds(): Promise<Feed[]>;
   /** The feeds at an address: itself, or the ones a page names. */
   discover(url: string): Promise<FeedCandidate[]>;
   addFeed(url: string, title: string | null, group: string | null): Promise<Feed>;
-  updateFeed(url: string, title: string, group: string | null): Promise<void>;
+  /** Changes a feed (a new address must be a feed); answers it as it now is. */
+  updateFeed(request: UpdateFeedRequest): Promise<Feed>;
   removeFeeds(urls: string[]): Promise<void>;
-  /** Refreshes the feeds (all when empty); progress comes through `onRefresh`. */
-  refresh(operationId: string, urls: string[]): Promise<void>;
+  /** The groups in order, those only feeds name included. */
+  listGroups(): Promise<FeedGroup[]>;
+  /** Puts the groups in this order, creating the new ones. */
+  saveGroups(names: string[]): Promise<void>;
+  renameGroup(name: string, newName: string): Promise<void>;
+  /** Its feeds become ungrouped, or are unsubscribed. */
+  removeGroup(name: string, unsubscribe: boolean): Promise<void>;
+  /**
+   * Refreshes the enabled feeds (all when empty; with `due`, those whose
+   * interval has passed); progress comes through `onRefresh`.
+   */
+  refresh(operationId: string, urls: string[], due?: boolean): Promise<void>;
   onRefresh(listener: (event: RssRefreshEvent) => void): Promise<Unsubscribe>;
   listArticles(query: ArticleQuery): Promise<ArticlePage>;
   getArticle(id: string): Promise<Article>;
   /** 全文: the page's main text, kept with the article. */
   fetchFullText(id: string): Promise<string>;
-  setArticleState(ids: string[], state: { read?: boolean; starred?: boolean }): Promise<void>;
+  setArticleState(ids: string[], state: ArticleMarks): Promise<void>;
   markAllRead(scope: { feed?: string | null; group?: string | null }): Promise<number>;
+  /** 以上/以下标为已读: the list's articles newer or older than `from`, and it. */
+  markReadRange(query: ArticleQuery, from: ArticleCursor, newer: boolean): Promise<number>;
   image(url: string, referer: string | null): Promise<ArrayBuffer>;
   /** Picks an OPML file and subscribes to its feeds; `null` when cancelled. */
   importOpml(): Promise<OpmlImportReport | null>;

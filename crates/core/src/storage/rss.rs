@@ -1,22 +1,29 @@
 //! 订阅: RSS/Atom feeds and their articles. Articles are keyed by a hash of
-//! the feed and the entry's identity, so a refresh updates what it already
-//! has and keeps its read and starred state. Each feed keeps its newest
-//! [`KEEP_ARTICLES`] articles, or those of the last `keep_days` days (in
-//! [`RssSettings`], [`KEEP_DAYS`] by default) if that is more; starred
-//! articles stay until unstarred.
+//! the feed's first address (its `id_base`, which a new address keeps) and
+//! the entry's identity, so a refresh updates what it already has and keeps
+//! its read and starred state. Each feed keeps its newest `keep_articles`
+//! articles, or those of the last `keep_days` days if that is more (its own
+//! settings, or [`RssSettings`]'); starred articles stay until unstarred.
 
 use super::*;
 use crate::models::{
     Article, ArticleCursor, ArticleFilter, ArticlePage, ArticleQuery, ArticleSummary, Feed,
-    RssSettings,
+    FeedGroup, FeedOptions, RssSettings, UpdateFeedRequest,
 };
 use serde_json::Value;
 use std::collections::HashSet;
 
-pub const KEEP_ARTICLES: i64 = 500;
+pub const KEEP_ARTICLES: u32 = 500;
 pub const KEEP_DAYS: u32 = 90;
 /// The choices for how many days of articles are kept.
 pub const KEEP_DAY_CHOICES: [u32; 4] = [30, 90, 180, 365];
+/// The newest articles kept: at least this many, at most [`MAX_KEEP`];
+/// 0 keeps every article.
+pub const MIN_KEEP: u32 = 50;
+pub const MAX_KEEP: u32 = 100_000;
+/// Refresh intervals: off (0), or between these minutes.
+pub const MIN_REFRESH: u32 = 5;
+pub const MAX_REFRESH: u32 = 24 * 60;
 const PAGE: u32 = 50;
 const SETTINGS_FILE: &str = "rss.json";
 
@@ -26,6 +33,10 @@ pub struct FeedFetchState {
     pub title: String,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// What its article ids are made from: its first address.
+    pub id_base: String,
+    pub enabled: bool,
+    pub via_server: bool,
 }
 
 /// What one fetch of a feed found.
@@ -71,11 +82,85 @@ fn summary_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleSummary> {
         image: row.get(8)?,
         read: row.get(9)?,
         starred: row.get(10)?,
+        keep_unread: row.get(11)?,
     })
 }
 
 const SUMMARY_COLUMNS: &str = "a.id, a.feed_url, COALESCE(f.title, a.feed_title), a.title, a.link,
-    a.author, a.published_at, a.excerpt, a.image, a.read, a.starred";
+    a.author, a.published_at, a.excerpt, a.image, a.read, a.starred, a.keep_unread";
+
+const FEED_COLUMNS: &str = "f.url, f.title, f.site_url, f.icon_url, f.group_name, f.sort,
+    f.added_at, f.last_fetch, f.last_error, COALESCE(c.unread, 0), COALESCE(c.total, 0),
+    f.enabled, f.refresh_minutes, f.keep_articles, f.keep_days, f.full_text, f.via_server";
+
+fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
+    Ok(Feed {
+        url: row.get(0)?,
+        title: row.get(1)?,
+        site_url: row.get(2)?,
+        icon_url: row.get(3)?,
+        group: row.get(4)?,
+        sort: row.get(5)?,
+        added_at: row.get(6)?,
+        last_fetch: row.get(7)?,
+        last_error: row.get(8)?,
+        unread: row.get(9)?,
+        total: row.get(10)?,
+        enabled: row.get(11)?,
+        options: FeedOptions {
+            refresh_minutes: row.get(12)?,
+            keep_articles: row.get(13)?,
+            keep_days: row.get(14)?,
+            full_text: row.get(15)?,
+            via_server: row.get(16)?,
+        },
+    })
+}
+
+fn invalid(key: &'static str, message: &str) -> AppError {
+    AppError::keyed(ErrorCode::InvalidArgument, key, message.to_string())
+}
+
+/// A refresh interval as kept: off, or within its bounds.
+fn refresh_minutes(minutes: u32) -> u32 {
+    if minutes == 0 {
+        0
+    } else {
+        minutes.clamp(MIN_REFRESH, MAX_REFRESH)
+    }
+}
+
+/// How many of the newest articles are kept: all (0), or within bounds.
+fn keep_articles(count: u32) -> u32 {
+    if count == 0 {
+        0
+    } else {
+        count.clamp(MIN_KEEP, MAX_KEEP)
+    }
+}
+
+fn keep_days(days: u32) -> u32 {
+    if KEEP_DAY_CHOICES.contains(&days) {
+        days
+    } else {
+        KEEP_DAYS
+    }
+}
+
+/// A feed's own settings as kept.
+fn checked_options(options: &FeedOptions) -> FeedOptions {
+    FeedOptions {
+        refresh_minutes: options.refresh_minutes.map(refresh_minutes),
+        keep_articles: options.keep_articles.map(keep_articles),
+        keep_days: options.keep_days.map(keep_days),
+        full_text: options.full_text,
+        via_server: options.via_server,
+    }
+}
+
+fn group_name(group: Option<&str>) -> Option<&str> {
+    group.map(str::trim).filter(|group| !group.is_empty())
+}
 
 impl Storage {
     pub(super) fn create_rss_tables(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
@@ -119,6 +204,46 @@ impl Storage {
         Ok(())
     }
 
+    /// Schema 30: each feed's own settings, ordered groups, and 保持未读.
+    /// Columns already there (a database rolled back to an older schema
+    /// keeps its tables) are left as they are.
+    pub(super) fn upgrade_rss_tables(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
+        let columns = [
+            ("rss_feeds", "enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("rss_feeds", "refresh_minutes", "INTEGER"),
+            ("rss_feeds", "keep_articles", "INTEGER"),
+            ("rss_feeds", "keep_days", "INTEGER"),
+            ("rss_feeds", "full_text", "INTEGER"),
+            ("rss_feeds", "via_server", "INTEGER NOT NULL DEFAULT 0"),
+            ("rss_feeds", "id_base", "TEXT"),
+            ("rss_articles", "keep_unread", "INTEGER NOT NULL DEFAULT 0"),
+        ];
+        for (table, column, kind) in columns {
+            let present: bool = tx.query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"
+                ),
+                params![column],
+                |row| row.get(0),
+            )?;
+            if !present {
+                tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
+            }
+        }
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS rss_groups (
+                name TEXT PRIMARY KEY NOT NULL,
+                sort INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS rss_cleared (
+                id TEXT PRIMARY KEY NOT NULL,
+                cleared_at INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS rss_articles_unread ON rss_articles(feed_url, read);",
+        )?;
+        Ok(())
+    }
+
     pub fn rss_settings(&self) -> RssSettings {
         fs::read_to_string(self.root.join(SETTINGS_FILE))
             .ok()
@@ -128,14 +253,10 @@ impl Storage {
 
     pub fn save_rss_settings(&self, settings: &RssSettings) -> Result<RssSettings, AppError> {
         let settings = RssSettings {
-            refresh_minutes: settings.refresh_minutes.min(24 * 60),
-            mark_read_on_open: settings.mark_read_on_open,
+            refresh_minutes: refresh_minutes(settings.refresh_minutes),
             font_size: settings.font_size.clamp(12, 32),
-            keep_days: if KEEP_DAY_CHOICES.contains(&settings.keep_days) {
-                settings.keep_days
-            } else {
-                KEEP_DAYS
-            },
+            keep_days: keep_days(settings.keep_days),
+            keep_articles: keep_articles(settings.keep_articles),
             ..settings.clone()
         };
         fs::write(
@@ -146,29 +267,14 @@ impl Storage {
     }
 
     pub fn list_feeds(&self) -> Result<Vec<Feed>, AppError> {
-        let mut statement = self.conn.prepare(
-            "SELECT f.url, f.title, f.site_url, f.icon_url, f.group_name, f.sort, f.added_at,
-                    f.last_fetch, f.last_error,
-                    (SELECT COUNT(*) FROM rss_articles a WHERE a.feed_url = f.url AND a.read = 0),
-                    (SELECT COUNT(*) FROM rss_articles a WHERE a.feed_url = f.url)
-             FROM rss_feeds f ORDER BY f.sort, f.added_at, f.url",
-        )?;
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {FEED_COLUMNS} FROM rss_feeds f
+             LEFT JOIN (SELECT feed_url, SUM(read = 0) AS unread, COUNT(*) AS total
+                        FROM rss_articles GROUP BY feed_url) c ON c.feed_url = f.url
+             ORDER BY f.sort, f.added_at, f.url"
+        ))?;
         let feeds = statement
-            .query_map([], |row| {
-                Ok(Feed {
-                    url: row.get(0)?,
-                    title: row.get(1)?,
-                    site_url: row.get(2)?,
-                    icon_url: row.get(3)?,
-                    group: row.get(4)?,
-                    sort: row.get(5)?,
-                    added_at: row.get(6)?,
-                    last_fetch: row.get(7)?,
-                    last_error: row.get(8)?,
-                    unread: row.get(9)?,
-                    total: row.get(10)?,
-                })
-            })?
+            .query_map([], feed_of)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(feeds)
     }
@@ -183,17 +289,56 @@ impl Storage {
         Ok(urls)
     }
 
+    /// The feeds a refresh fetches: of `urls` (every feed when empty), the
+    /// enabled ones; with `due`, only those whose interval (their own, or
+    /// `default_minutes`) has passed since they were last fetched.
+    pub fn refresh_targets(
+        &self,
+        urls: &[String],
+        due: bool,
+        default_minutes: u32,
+    ) -> Result<Vec<String>, AppError> {
+        let now = now_millis();
+        let mut statement = self.conn.prepare(
+            "SELECT url, last_fetch, refresh_minutes FROM rss_feeds WHERE enabled = 1
+             ORDER BY sort, added_at, url",
+        )?;
+        let feeds = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<u32>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(feeds
+            .into_iter()
+            .filter(|(url, _, _)| urls.is_empty() || urls.contains(url))
+            .filter(|(_, last, minutes)| {
+                let minutes = minutes.unwrap_or(default_minutes);
+                !due || (minutes > 0
+                    && last.is_none_or(|last| now - last >= i64::from(minutes) * 60_000))
+            })
+            .map(|(url, _, _)| url)
+            .collect())
+    }
+
     pub fn feed_fetch_state(&self, url: &str) -> Result<Option<FeedFetchState>, AppError> {
         Ok(self
             .conn
             .query_row(
-                "SELECT title, etag, last_modified FROM rss_feeds WHERE url = ?1",
+                "SELECT title, etag, last_modified, COALESCE(id_base, url), enabled, via_server
+                 FROM rss_feeds WHERE url = ?1",
                 params![url],
                 |row| {
                     Ok(FeedFetchState {
                         title: row.get(0)?,
                         etag: row.get(1)?,
                         last_modified: row.get(2)?,
+                        id_base: row.get(3)?,
+                        enabled: row.get(4)?,
+                        via_server: row.get(5)?,
                     })
                 },
             )
@@ -222,7 +367,7 @@ impl Storage {
                 url,
                 title.trim(),
                 site_url,
-                group.map(str::trim).filter(|group| !group.is_empty()),
+                group_name(group),
                 next_sort,
                 now
             ],
@@ -230,21 +375,38 @@ impl Storage {
         Ok(added > 0)
     }
 
-    pub fn update_feed(&self, url: &str, title: &str, group: Option<&str>) -> Result<(), AppError> {
-        let title = title.trim();
+    pub fn feed(&self, url: &str) -> Result<Feed, AppError> {
+        self.list_feeds()?
+            .into_iter()
+            .find(|feed| feed.url == url)
+            .ok_or_else(|| AppError::keyed(ErrorCode::NotFound, "rssNoFeed", "没有这个订阅"))
+    }
+
+    /// Changes a feed: its title and group, and what the request carries
+    /// of its address, whether it is refreshed, and its own settings. A new
+    /// address (checked to be a feed by the caller) keeps its articles.
+    pub fn update_feed(&mut self, request: &UpdateFeedRequest) -> Result<(), AppError> {
+        let title = request.title.trim();
         if title.is_empty() {
-            return Err(AppError::keyed(
-                ErrorCode::InvalidArgument,
-                "rssFeedTitleEmpty",
-                "订阅名称不能为空",
-            ));
+            return Err(invalid("rssFeedTitleEmpty", "订阅名称不能为空"));
         }
-        let changed = self.conn.execute(
+        let mut url = request.url.clone();
+        let tx = self.conn.transaction()?;
+        if let Some(new_url) = request
+            .new_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|new_url| *new_url != url)
+        {
+            move_feed(&tx, &url, new_url)?;
+            url = new_url.to_string();
+        }
+        let changed = tx.execute(
             "UPDATE rss_feeds SET title = ?2, group_name = ?3, updated_at = ?4 WHERE url = ?1",
             params![
                 url,
                 title,
-                group.map(str::trim).filter(|group| !group.is_empty()),
+                group_name(request.group.as_deref()),
                 now_millis()
             ],
         )?;
@@ -255,6 +417,16 @@ impl Storage {
                 "没有这个订阅",
             ));
         }
+        if let Some(enabled) = request.enabled {
+            tx.execute(
+                "UPDATE rss_feeds SET enabled = ?2 WHERE url = ?1",
+                params![url, enabled],
+            )?;
+        }
+        if let Some(options) = &request.options {
+            set_options(&tx, &url, &checked_options(options))?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -299,16 +471,16 @@ impl Storage {
     /// Known articles take the feed's newer text and keep their state.
     pub fn store_feed_fetch(&mut self, url: &str, fetched: &FetchedFeed) -> Result<u32, AppError> {
         let now = now_millis();
-        let keep_days = self.rss_settings().keep_days;
+        let settings = self.rss_settings();
         let tx = self.conn.transaction()?;
-        let feed_title: Option<String> = tx
+        let feed: Option<(String, Option<u32>, Option<u32>)> = tx
             .query_row(
-                "SELECT title FROM rss_feeds WHERE url = ?1",
+                "SELECT title, keep_articles, keep_days FROM rss_feeds WHERE url = ?1",
                 params![url],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        let Some(feed_title) = feed_title else {
+        let Some((feed_title, keep_count, days)) = feed else {
             return Err(AppError::keyed(
                 ErrorCode::NotFound,
                 "rssNoFeed",
@@ -337,11 +509,15 @@ impl Storage {
         )?;
         let mut inserted = Vec::new();
         for article in &fetched.articles {
-            let known: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM rss_articles WHERE id = ?1)",
+            let (known, cleared): (bool, bool) = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM rss_articles WHERE id = ?1),
+                        EXISTS(SELECT 1 FROM rss_cleared WHERE id = ?1)",
                 params![article.id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            if cleared {
+                continue;
+            }
             if known {
                 tx.execute(
                     "UPDATE rss_articles SET title = ?2, link = ?3, author = ?4, excerpt = ?5,
@@ -382,7 +558,13 @@ impl Storage {
             )?;
             inserted.push(article.id.as_str());
         }
-        prune_feed(&tx, url, now, keep_days)?;
+        prune_feed(
+            &tx,
+            url,
+            now,
+            keep_count.unwrap_or(settings.keep_articles),
+            days.unwrap_or(settings.keep_days),
+        )?;
         // Entries too old to keep come and go at once; they are not new.
         let mut added = 0;
         let mut kept_ids = Vec::new();
@@ -404,60 +586,21 @@ impl Storage {
 
     pub fn list_articles(&self, query: &ArticleQuery) -> Result<ArticlePage, AppError> {
         let limit = query.limit.unwrap_or(PAGE).clamp(1, 200);
-        let mut conditions = Vec::new();
-        let mut values: Vec<rusqlite::types::Value> = Vec::new();
-        let mut bind = |value: rusqlite::types::Value| {
-            values.push(value);
-            format!("?{}", values.len())
-        };
-        if let Some(feed) = &query.feed {
-            conditions.push(format!("a.feed_url = {}", bind(feed.clone().into())));
-        } else if let Some(group) = &query.group {
-            conditions.push(format!("f.group_name = {}", bind(group.clone().into())));
-        }
-        match query.filter {
-            ArticleFilter::All => {}
-            ArticleFilter::Unread => conditions.push("a.read = 0".into()),
-            ArticleFilter::Starred => conditions.push("a.starred = 1".into()),
-        }
-        // Articles of removed feeds show only among the starred.
-        if query.filter != ArticleFilter::Starred && query.feed.is_none() {
-            conditions.push("f.url IS NOT NULL".into());
-        }
-        if let Some(search) = query
-            .search
-            .as_deref()
-            .map(str::trim)
-            .filter(|search| !search.is_empty())
-        {
-            let pattern = format!(
-                "%{}%",
-                search
-                    .replace('\\', "\\\\")
-                    .replace('%', "\\%")
-                    .replace('_', "\\_")
-            );
-            let at = bind(pattern.into());
-            conditions.push(format!(
-                "(a.title LIKE {at} ESCAPE '\\' OR a.excerpt LIKE {at} ESCAPE '\\')"
-            ));
-        }
+        let (mut conditions, mut values) = list_conditions(query);
         if let Some(after) = &query.after {
-            let time = bind(after.published_at.into());
-            let id = bind(after.id.clone().into());
+            values.push(after.published_at.into());
+            let time = values.len();
+            values.push(after.id.clone().into());
+            let id = values.len();
             conditions.push(format!(
-                "(a.published_at < {time} OR (a.published_at = {time} AND a.id < {id}))"
+                "(a.published_at < ?{time} OR (a.published_at = ?{time} AND a.id < ?{id}))"
             ));
         }
-        let filter = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
         let sql = format!(
             "SELECT {SUMMARY_COLUMNS} FROM rss_articles a
              LEFT JOIN rss_feeds f ON f.url = a.feed_url
-             {filter} ORDER BY a.published_at DESC, a.id DESC LIMIT {}",
+             {} ORDER BY a.published_at DESC, a.id DESC LIMIT {}",
+            where_clause(&conditions),
             limit + 1
         );
         let mut statement = self.conn.prepare(&sql)?;
@@ -475,6 +618,39 @@ impl Storage {
         Ok(ArticlePage { articles, next })
     }
 
+    /// 以上/以下标为已读: marks the list's unread articles from `from` up
+    /// (newer) or down (older), `from` included, except those kept unread;
+    /// returns how many changed.
+    pub fn mark_read_range(
+        &self,
+        query: &ArticleQuery,
+        from: &ArticleCursor,
+        newer: bool,
+    ) -> Result<u32, AppError> {
+        let (mut conditions, mut values) = list_conditions(query);
+        values.push(from.published_at.into());
+        let time = values.len();
+        values.push(from.id.clone().into());
+        let id = values.len();
+        let (side, edge) = if newer { (">", ">=") } else { ("<", "<=") };
+        conditions.push(format!(
+            "(a.published_at {side} ?{time} OR (a.published_at = ?{time} AND a.id {edge} ?{id}))"
+        ));
+        conditions.push("a.read = 0 AND a.keep_unread = 0".into());
+        values.push(now_millis().into());
+        let now = values.len();
+        let changed = self.conn.execute(
+            &format!(
+                "UPDATE rss_articles SET read = 1, read_at = ?{now} WHERE id IN
+                    (SELECT a.id FROM rss_articles a LEFT JOIN rss_feeds f ON f.url = a.feed_url
+                     {})",
+                where_clause(&conditions)
+            ),
+            rusqlite::params_from_iter(values),
+        )?;
+        Ok(changed as u32)
+    }
+
     pub fn rss_article(&self, id: &str) -> Result<Article, AppError> {
         self.conn
             .query_row(
@@ -486,8 +662,8 @@ impl Storage {
                 |row| {
                     Ok(Article {
                         summary: summary_of(row)?,
-                        content: row.get(11)?,
-                        full_text: row.get(12)?,
+                        content: row.get(12)?,
+                        full_text: row.get(13)?,
                     })
                 },
             )
@@ -503,13 +679,20 @@ impl Storage {
         Ok(())
     }
 
+    /// Marks articles. 保持未读 also marks them unread; marking them read
+    /// takes it off.
     pub fn set_article_state(
         &mut self,
         ids: &[String],
         read: Option<bool>,
         starred: Option<bool>,
+        keep_unread: Option<bool>,
     ) -> Result<(), AppError> {
         let now = now_millis();
+        let read = match keep_unread {
+            Some(true) => Some(false),
+            _ => read,
+        };
         let tx = self.conn.transaction()?;
         for id in ids {
             if let Some(read) = read {
@@ -517,6 +700,13 @@ impl Storage {
                     "UPDATE rss_articles SET read = ?2, read_at = CASE WHEN ?2 THEN ?3 ELSE NULL END
                      WHERE id = ?1 AND read != ?2",
                     params![id, read, now],
+                )?;
+            }
+            let keep = keep_unread.or(read.filter(|read| *read).map(|_| false));
+            if let Some(keep) = keep {
+                tx.execute(
+                    "UPDATE rss_articles SET keep_unread = ?2 WHERE id = ?1",
+                    params![id, keep],
                 )?;
             }
             if let Some(starred) = starred {
@@ -538,21 +728,23 @@ impl Storage {
         Ok(())
     }
 
-    /// 全部标为已读; returns how many changed.
+    /// 全部标为已读 (but those kept unread); returns how many changed.
     pub fn mark_all_read(&self, feed: Option<&str>, group: Option<&str>) -> Result<u32, AppError> {
         let now = now_millis();
         let changed = match (feed, group) {
             (Some(feed), _) => self.conn.execute(
-                "UPDATE rss_articles SET read = 1, read_at = ?2 WHERE read = 0 AND feed_url = ?1",
+                "UPDATE rss_articles SET read = 1, read_at = ?2
+                 WHERE read = 0 AND keep_unread = 0 AND feed_url = ?1",
                 params![feed, now],
             )?,
             (None, Some(group)) => self.conn.execute(
-                "UPDATE rss_articles SET read = 1, read_at = ?2 WHERE read = 0 AND feed_url IN
+                "UPDATE rss_articles SET read = 1, read_at = ?2
+                 WHERE read = 0 AND keep_unread = 0 AND feed_url IN
                     (SELECT url FROM rss_feeds WHERE group_name = ?1)",
                 params![group, now],
             )?,
             (None, None) => self.conn.execute(
-                "UPDATE rss_articles SET read = 1, read_at = ?1 WHERE read = 0",
+                "UPDATE rss_articles SET read = 1, read_at = ?1 WHERE read = 0 AND keep_unread = 0",
                 params![now],
             )?,
         };
@@ -629,26 +821,184 @@ impl Storage {
         Ok(added)
     }
 
+    /// What the articles' text takes (an estimate inside the database).
+    pub fn rss_article_bytes(&self) -> Result<u64, AppError> {
+        let bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(COALESCE(full_text, ''))
+                + LENGTH(excerpt) + LENGTH(title)), 0) FROM rss_articles",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(bytes.max(0) as u64)
+    }
+
+    /// 清理订阅文章: drops read articles that are not starred, and the
+    /// 全文 kept of the rest; feeds and unread articles stay. A dropped
+    /// article is remembered, so a refresh does not bring it back unread.
+    pub fn clear_rss_articles(&mut self) -> Result<(), AppError> {
+        let now = now_millis();
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO rss_cleared(id, cleared_at)
+             SELECT id, ?1 FROM rss_articles WHERE read = 1 AND starred = 0",
+            params![now],
+        )?;
+        tx.execute_batch(
+            "DELETE FROM rss_articles WHERE read = 1 AND starred = 0;
+             UPDATE rss_articles SET full_text = NULL WHERE full_text IS NOT NULL;",
+        )?;
+        // A year on, a feed no longer carries them.
+        tx.execute(
+            "DELETE FROM rss_cleared WHERE cleared_at < ?1",
+            params![now - 365 * 86_400_000],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn conn_for_tests(&self) -> &rusqlite::Connection {
+        &self.conn
+    }
+
     /// Where article images are kept.
     pub fn rss_image_cache(&self) -> PathBuf {
         self.root.join("rss-images")
     }
 }
 
-/// Drops a feed's oldest unstarred articles beyond what is kept.
+/// Drops a feed's oldest unstarred articles beyond what is kept: those
+/// older than `keep_days` and not among the newest `keep_count` (0 keeps
+/// them all).
 fn prune_feed(
     tx: &rusqlite::Transaction<'_>,
     url: &str,
     now: i64,
+    keep_count: u32,
     keep_days: u32,
 ) -> Result<(), AppError> {
+    if keep_count == 0 {
+        return Ok(());
+    }
     let since = now - i64::from(keep_days) * 86_400_000;
     tx.execute(
         "DELETE FROM rss_articles WHERE feed_url = ?1 AND starred = 0 AND published_at < ?2
            AND id NOT IN (SELECT id FROM rss_articles WHERE feed_url = ?1
                           ORDER BY published_at DESC, id DESC LIMIT ?3)",
-        params![url, since, KEEP_ARTICLES],
+        params![url, since, keep_count],
     )?;
+    Ok(())
+}
+
+/// The filters of an article list (its feed or group, filter, and search),
+/// with their values bound in order.
+fn list_conditions(query: &ArticleQuery) -> (Vec<String>, Vec<rusqlite::types::Value>) {
+    let mut conditions = Vec::new();
+    let mut values: Vec<rusqlite::types::Value> = Vec::new();
+    let mut bind = |value: rusqlite::types::Value| {
+        values.push(value);
+        format!("?{}", values.len())
+    };
+    if let Some(feed) = &query.feed {
+        conditions.push(format!("a.feed_url = {}", bind(feed.clone().into())));
+    } else if let Some(group) = &query.group {
+        conditions.push(format!("f.group_name = {}", bind(group.clone().into())));
+    }
+    match query.filter {
+        ArticleFilter::All => {}
+        ArticleFilter::Unread => conditions.push("a.read = 0".into()),
+        ArticleFilter::Starred => conditions.push("a.starred = 1".into()),
+    }
+    // Articles of removed feeds show only among the starred.
+    if query.filter != ArticleFilter::Starred && query.feed.is_none() {
+        conditions.push("f.url IS NOT NULL".into());
+    }
+    if let Some(search) = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|search| !search.is_empty())
+    {
+        let pattern = format!(
+            "%{}%",
+            search
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let at = bind(pattern.into());
+        conditions.push(format!(
+            "(a.title LIKE {at} ESCAPE '\\' OR a.excerpt LIKE {at} ESCAPE '\\')"
+        ));
+    }
+    (conditions, values)
+}
+
+fn where_clause(conditions: &[String]) -> String {
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+fn set_options(
+    tx: &rusqlite::Transaction<'_>,
+    url: &str,
+    options: &FeedOptions,
+) -> Result<(), AppError> {
+    tx.execute(
+        "UPDATE rss_feeds SET refresh_minutes = ?2, keep_articles = ?3, keep_days = ?4,
+            full_text = ?5, via_server = ?6 WHERE url = ?1",
+        params![
+            url,
+            options.refresh_minutes,
+            options.keep_articles,
+            options.keep_days,
+            options.full_text,
+            options.via_server
+        ],
+    )?;
+    Ok(())
+}
+
+/// Gives a feed a new address. Its articles go with it and keep their ids
+/// (it keeps its first address as `id_base`); the old address's fetch
+/// state is dropped.
+fn move_feed(tx: &rusqlite::Transaction<'_>, from: &str, to: &str) -> Result<(), AppError> {
+    if to.is_empty() {
+        return Err(invalid("rssFeedUrlEmpty", "订阅地址不能为空"));
+    }
+    let taken: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rss_feeds WHERE url = ?1)",
+        params![to],
+        |row| row.get(0),
+    )?;
+    if taken {
+        return Err(invalid("rssFeedExists", "已经订阅过这个地址"));
+    }
+    let moved = tx.execute(
+        "INSERT INTO rss_feeds(url, title, site_url, icon_url, group_name, sort, added_at,
+            updated_at, last_fetch, last_error, enabled, refresh_minutes, keep_articles,
+            keep_days, full_text, via_server, id_base)
+         SELECT ?2, title, site_url, icon_url, group_name, sort, added_at, ?3, NULL, NULL,
+            enabled, refresh_minutes, keep_articles, keep_days, full_text, via_server,
+            COALESCE(id_base, url)
+         FROM rss_feeds WHERE url = ?1",
+        params![from, to, now_millis()],
+    )?;
+    if moved == 0 {
+        return Err(AppError::keyed(
+            ErrorCode::NotFound,
+            "rssNoFeed",
+            "没有这个订阅",
+        ));
+    }
+    tx.execute(
+        "UPDATE rss_articles SET feed_url = ?2 WHERE feed_url = ?1",
+        params![from, to],
+    )?;
+    tx.execute("DELETE FROM rss_feeds WHERE url = ?1", params![from])?;
     Ok(())
 }
 
@@ -672,6 +1022,17 @@ pub struct PortableFeed {
     pub site_url: Option<String>,
     #[serde(default)]
     pub sort: i64,
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub options: FeedOptions,
+    /// The first address, when it has a new one: its articles' ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_base: Option<String>,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 /// A starred article with its text, so it shows where it was never fetched.
@@ -697,17 +1058,138 @@ pub struct PortableStar {
 
 impl Storage {
     pub fn portable_feeds(&self) -> Result<Vec<PortableFeed>, AppError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT url, id_base FROM rss_feeds WHERE id_base IS NOT NULL")?;
+        let bases: std::collections::HashMap<String, String> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
         Ok(self
             .list_feeds()?
             .into_iter()
             .map(|feed| PortableFeed {
+                id_base: bases.get(&feed.url).cloned(),
                 url: feed.url,
                 title: feed.title,
                 group: feed.group,
                 site_url: feed.site_url,
                 sort: feed.sort,
+                enabled: feed.enabled,
+                options: feed.options,
             })
             .collect())
+    }
+
+    /// The groups in order: those arranged in 分组管理, then any other a
+    /// feed is filed under, in the order of their first feed.
+    pub fn feed_groups(&self) -> Result<Vec<FeedGroup>, AppError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT name, sort FROM rss_groups ORDER BY sort, name")?;
+        let mut groups = statement
+            .query_map([], |row| {
+                Ok(FeedGroup {
+                    name: row.get(0)?,
+                    sort: row.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut next = groups.last().map_or(0, |group| group.sort + 1);
+        for feed in self.list_feeds()? {
+            if let Some(name) = feed.group {
+                if !groups.iter().any(|group| group.name == name) {
+                    groups.push(FeedGroup { name, sort: next });
+                    next += 1;
+                }
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Puts the groups in this order, creating any not there yet; the
+    /// others follow.
+    pub fn save_feed_groups(&mut self, names: &[String]) -> Result<(), AppError> {
+        let mut order: Vec<String> = Vec::new();
+        for name in names.iter().map(|name| name.trim()) {
+            if name.is_empty() {
+                return Err(invalid("rssGroupNameEmpty", "分组名称不能为空"));
+            }
+            if !order.iter().any(|known| known == name) {
+                order.push(name.to_string());
+            }
+        }
+        for group in self.feed_groups()? {
+            if !order.contains(&group.name) {
+                order.push(group.name);
+            }
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM rss_groups", [])?;
+        for (sort, name) in order.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO rss_groups(name, sort) VALUES (?1, ?2)",
+                params![name, sort as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Renames a group; into one that exists, the two become one.
+    pub fn rename_feed_group(&mut self, name: &str, new_name: &str) -> Result<(), AppError> {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(invalid("rssGroupNameEmpty", "分组名称不能为空"));
+        }
+        if new_name == name {
+            return Ok(());
+        }
+        let groups: Vec<String> = self
+            .feed_groups()?
+            .into_iter()
+            .map(|group| group.name)
+            .collect();
+        // Into another group, it takes that one's place; else it keeps its own.
+        let merging = groups.iter().any(|group| group == new_name);
+        let order: Vec<String> = groups
+            .into_iter()
+            .filter(|group| !(merging && group == name))
+            .map(|group| {
+                if group == name {
+                    new_name.to_string()
+                } else {
+                    group
+                }
+            })
+            .collect();
+        self.conn.execute(
+            "UPDATE rss_feeds SET group_name = ?2, updated_at = ?3 WHERE group_name = ?1",
+            params![name, new_name, now_millis()],
+        )?;
+        self.conn
+            .execute("DELETE FROM rss_groups WHERE name = ?1", params![name])?;
+        self.save_feed_groups(&order)
+    }
+
+    /// Removes a group: its feeds become ungrouped, or are unsubscribed.
+    pub fn remove_feed_group(&mut self, name: &str, unsubscribe: bool) -> Result<(), AppError> {
+        if unsubscribe {
+            let urls: Vec<String> = self
+                .list_feeds()?
+                .into_iter()
+                .filter(|feed| feed.group.as_deref() == Some(name))
+                .map(|feed| feed.url)
+                .collect();
+            self.remove_feeds(&urls)?;
+        } else {
+            self.conn.execute(
+                "UPDATE rss_feeds SET group_name = NULL, updated_at = ?2 WHERE group_name = ?1",
+                params![name, now_millis()],
+            )?;
+        }
+        self.conn
+            .execute("DELETE FROM rss_groups WHERE name = ?1", params![name])?;
+        Ok(())
     }
 
     pub fn portable_stars(&self) -> Result<Vec<PortableStar>, AppError> {
@@ -769,9 +1251,22 @@ impl Storage {
         Ok(ids.into_iter().collect())
     }
 
-    /// `feed:<url>`, `rss-read:<url>`, and `rss-star:<id>` records.
+    /// `feed:<url>`, `rss-read:<url>`, `rss-star:<id>`, and
+    /// `rss-group:<name>` records.
     pub(super) fn rss_records(&self) -> Result<Vec<(String, Value)>, AppError> {
         let mut records = Vec::new();
+        let mut statement = self.conn.prepare("SELECT name, sort FROM rss_groups")?;
+        let groups = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (name, sort) in groups {
+            records.push((
+                format!("rss-group:{name}"),
+                serde_json::json!({ "sort": sort }),
+            ));
+        }
         for feed in self.portable_feeds()? {
             records.push((
                 format!("rss-read:{}", feed.url),
@@ -801,23 +1296,69 @@ impl Storage {
         self.restore_feed(&feed)
     }
 
-    pub(super) fn restore_feed(&self, feed: &PortableFeed) -> Result<(), AppError> {
+    /// A group arranged elsewhere, or removed there (its feeds' own records
+    /// say where they went).
+    pub(super) fn apply_feed_group_record(
+        &mut self,
+        name: &str,
+        value: Option<&Value>,
+    ) -> Result<(), AppError> {
+        match value {
+            Some(value) => {
+                let sort = value.get("sort").and_then(Value::as_i64).unwrap_or(0);
+                self.conn.execute(
+                    "INSERT INTO rss_groups(name, sort) VALUES (?1, ?2)
+                     ON CONFLICT(name) DO UPDATE SET sort = excluded.sort",
+                    params![name, sort],
+                )?;
+            }
+            None => {
+                self.conn
+                    .execute("DELETE FROM rss_groups WHERE name = ?1", params![name])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds or updates a feed from a sync or backup record. A feed given a
+    /// new address elsewhere is moved here too, with its articles.
+    pub(super) fn restore_feed(&mut self, feed: &PortableFeed) -> Result<(), AppError> {
         let now = now_millis();
-        self.conn.execute(
-            "INSERT INTO rss_feeds(url, title, site_url, group_name, sort, added_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        let tx = self.conn.transaction()?;
+        if let Some(base) = &feed.id_base {
+            let moved: Option<String> = tx
+                .query_row(
+                    "SELECT url FROM rss_feeds WHERE url != ?1 AND COALESCE(id_base, url) = ?2
+                       AND NOT EXISTS(SELECT 1 FROM rss_feeds WHERE url = ?1)",
+                    params![feed.url, base],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(from) = moved {
+                move_feed(&tx, &from, &feed.url)?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO rss_feeds(url, title, site_url, group_name, sort, added_at, updated_at,
+                enabled, id_base)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)
              ON CONFLICT(url) DO UPDATE SET title = excluded.title,
                 group_name = excluded.group_name, sort = excluded.sort,
-                site_url = COALESCE(excluded.site_url, site_url), updated_at = excluded.updated_at",
+                site_url = COALESCE(excluded.site_url, site_url), updated_at = excluded.updated_at,
+                enabled = excluded.enabled, id_base = COALESCE(excluded.id_base, id_base)",
             params![
                 feed.url,
                 feed.title,
                 feed.site_url,
                 feed.group,
                 feed.sort,
-                now
+                now,
+                feed.enabled,
+                feed.id_base
             ],
         )?;
+        set_options(&tx, &feed.url, &checked_options(&feed.options))?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -882,7 +1423,7 @@ impl Storage {
         value: Option<&Value>,
     ) -> Result<(), AppError> {
         let Some(value) = value else {
-            return self.set_article_state(&[id.to_string()], None, Some(false));
+            return self.set_article_state(&[id.to_string()], None, Some(false), None);
         };
         let star: PortableStar = serde_json::from_value(value.clone())?;
         self.restore_star(&star)

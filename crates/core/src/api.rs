@@ -131,6 +131,11 @@ pub const COMMANDS: &[&str] = &[
     "discover_feed",
     "add_feed",
     "update_feed",
+    "list_feed_groups",
+    "save_feed_groups",
+    "rename_feed_group",
+    "remove_feed_group",
+    "mark_read_range",
     "remove_feeds",
     "refresh_feeds",
     "list_articles",
@@ -744,6 +749,19 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         "discover_feed" => reply(crate::rss_commands::discover_feed(state, request(args)?).await),
         "add_feed" => reply(crate::rss_commands::add_feed(state, request(args)?).await),
         "update_feed" => reply(crate::rss_commands::update_feed(state, request(args)?).await),
+        "list_feed_groups" => reply(crate::rss_commands::list_feed_groups(state).await),
+        "save_feed_groups" => {
+            reply(crate::rss_commands::save_feed_groups(state, request(args)?).await)
+        }
+        "rename_feed_group" => {
+            reply(crate::rss_commands::rename_feed_group(state, request(args)?).await)
+        }
+        "remove_feed_group" => {
+            reply(crate::rss_commands::remove_feed_group(state, request(args)?).await)
+        }
+        "mark_read_range" => {
+            reply(crate::rss_commands::mark_read_range(state, request(args)?).await)
+        }
         "remove_feeds" => reply(crate::rss_commands::remove_feeds(state, request(args)?).await),
         "refresh_feeds" => reply(crate::rss_commands::refresh_feeds(state, request(args)?).await),
         "list_articles" => reply(crate::rss_commands::list_articles(state, request(args)?).await),

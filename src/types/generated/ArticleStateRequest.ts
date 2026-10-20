@@ -3,4 +3,8 @@
 /**
  * Marks articles read or unread, starred or not; absent leaves it.
  */
-export type ArticleStateRequest = { ids: Array<string>, read: boolean | null, starred: boolean | null, };
+export type ArticleStateRequest = { ids: Array<string>, read: boolean | null, starred: boolean | null, 
+/**
+ * 保持未读 (which also marks it unread); marking it read clears it.
+ */
+keepUnread: boolean | null, };

@@ -60,7 +60,7 @@ pub fn record_categories(key: &str) -> Vec<RestoreCategory> {
         "replace" => vec![RestoreCategory::ReplaceRules],
         "toc" => vec![RestoreCategory::TocRules],
         "source" => vec![RestoreCategory::Sources],
-        "feed" | "rss-read" | "rss-star" => vec![RestoreCategory::Rss],
+        "feed" | "rss-read" | "rss-star" | "rss-group" => vec![RestoreCategory::Rss],
         "prefs" => match key {
             "prefs:theme" => vec![RestoreCategory::Theme],
             "prefs:shelf" => vec![RestoreCategory::ShelfLayout],
@@ -158,7 +158,7 @@ fn owning_book(key: &str) -> Option<&str> {
 fn apply_order(key: &str) -> u8 {
     match key.split(':').next().unwrap_or_default() {
         "group" => 0,
-        "toc" | "replace" | "source" | "prefs" | "feed" => 1,
+        "toc" | "replace" | "source" | "prefs" | "feed" | "rss-group" => 1,
         "book" | "online" => 2,
         _ => 3,
     }
@@ -556,7 +556,14 @@ impl Storage {
     /// records are skipped; returns how many were applied.
     pub fn sync_apply(&mut self, changes: &[SyncChange]) -> Result<u32, AppError> {
         let mut ordered: Vec<&SyncChange> = changes.iter().collect();
-        ordered.sort_by_key(|change| apply_order(&change.key));
+        // A feed given a new address arrives as the new one and the old
+        // one's removal: the move comes first, so its articles go with it.
+        ordered.sort_by_key(|change| {
+            (
+                apply_order(&change.key),
+                change.key.starts_with("feed:") && change.value.is_none(),
+            )
+        });
         let synced = self.synced_records()?;
         let local = if ordered.iter().any(|change| merged_by_field(&change.key)) {
             self.sync_snapshot()?
@@ -678,6 +685,7 @@ impl Storage {
             ("feed", value) => self.apply_feed_record(rest, value)?,
             ("rss-read", value) => self.apply_read_record(rest, value, base)?,
             ("rss-star", value) => self.apply_star_record(rest, value)?,
+            ("rss-group", value) => self.apply_feed_group_record(rest, value)?,
             ("book", value) => self.apply_book_record(rest, value)?,
             ("online", value) => self.apply_online_record(rest, value)?,
             ("chapters", Some(value)) => {
