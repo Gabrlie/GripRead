@@ -92,7 +92,7 @@ const SUMMARY_COLUMNS: &str = "a.id, a.feed_url, COALESCE(f.title, a.feed_title)
 const FEED_COLUMNS: &str = "f.url, f.title, f.site_url, f.icon_url, f.group_name, f.sort,
     f.added_at, f.last_fetch, f.last_error, COALESCE(c.unread, 0), COALESCE(c.total, 0),
     f.enabled, f.refresh_minutes, f.keep_articles, f.keep_days, f.full_text, f.via_server,
-    f.keep_unread";
+    f.keep_unread, f.account_id, f.address";
 
 fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
     Ok(Feed {
@@ -116,6 +116,8 @@ fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
             via_server: row.get(16)?,
             keep_unread: row.get(17)?,
         },
+        account: row.get(18)?,
+        address: row.get(19)?,
     })
 }
 
@@ -181,7 +183,7 @@ fn search_body(content: &str, full_text: Option<&str>, excerpt: &str) -> String 
 }
 
 /// Puts an article (again) into the search index.
-fn index_article(conn: &rusqlite::Connection, id: &str) -> Result<(), AppError> {
+pub(super) fn index_article(conn: &rusqlite::Connection, id: &str) -> Result<(), AppError> {
     type Indexed = (i64, String, Option<String>, String, Option<String>, String);
     let row: Option<Indexed> = conn
         .query_row(
@@ -214,6 +216,24 @@ fn index_article(conn: &rusqlite::Connection, id: &str) -> Result<(), AppError> 
         ],
     )?;
     Ok(())
+}
+
+/// Whether 过滤规则 let an article in.
+pub(super) fn admitted(filters: &crate::rss::filter::FilterSet, article: &FetchedArticle) -> bool {
+    let body = if filters.reads_body() {
+        crate::rss::plain_text(if article.content.is_empty() {
+            &article.excerpt
+        } else {
+            &article.content
+        })
+    } else {
+        String::new()
+    };
+    filters.admits(&crate::rss::filter::ArticleText {
+        title: &article.title,
+        author: article.author.as_deref().unwrap_or_default(),
+        body: &body,
+    })
 }
 
 /// An RSSHub instance's address, without a trailing slash; the public one
@@ -423,8 +443,8 @@ impl Storage {
     ) -> Result<Vec<String>, AppError> {
         let now = now_millis();
         let mut statement = self.conn.prepare(
-            "SELECT url, last_fetch, refresh_minutes FROM rss_feeds WHERE enabled = 1
-             ORDER BY sort, added_at, url",
+            "SELECT url, last_fetch, refresh_minutes FROM rss_feeds
+             WHERE enabled = 1 AND account_id IS NULL ORDER BY sort, added_at, url",
         )?;
         let feeds = statement
             .query_map([], |row| {
@@ -515,11 +535,16 @@ impl Storage {
         }
         let mut url = request.url.clone();
         let tx = self.conn.transaction()?;
+        let on_account: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rss_feeds WHERE url = ?1 AND account_id IS NOT NULL)",
+            params![url],
+            |row| row.get(0),
+        )?;
         if let Some(new_url) = request
             .new_url
             .as_deref()
             .map(str::trim)
-            .filter(|new_url| *new_url != url)
+            .filter(|new_url| *new_url != url && !on_account)
         {
             move_feed(&tx, &url, new_url)?;
             url = new_url.to_string();
@@ -647,24 +672,8 @@ impl Storage {
             if cleared {
                 continue;
             }
-            if !known && !filters.is_empty() {
-                let body = if filters.reads_body() {
-                    crate::rss::plain_text(if article.content.is_empty() {
-                        &article.excerpt
-                    } else {
-                        &article.content
-                    })
-                } else {
-                    String::new()
-                };
-                let text = crate::rss::filter::ArticleText {
-                    title: &article.title,
-                    author: article.author.as_deref().unwrap_or_default(),
-                    body: &body,
-                };
-                if !filters.admits(&text) {
-                    continue;
-                }
+            if !known && !filters.is_empty() && !admitted(&filters, article) {
+                continue;
             }
             if known {
                 tx.execute(
@@ -880,21 +889,32 @@ impl Storage {
     }
 
     /// 全部标为已读 (but those kept unread); returns how many changed.
-    pub fn mark_all_read(&self, feed: Option<&str>, group: Option<&str>) -> Result<u32, AppError> {
+    pub fn mark_all_read(
+        &self,
+        feed: Option<&str>,
+        group: Option<&str>,
+        account: Option<&str>,
+    ) -> Result<u32, AppError> {
         let now = now_millis();
-        let changed = match (feed, group) {
-            (Some(feed), _) => self.conn.execute(
+        let changed = match (feed, group, account) {
+            (Some(feed), _, _) => self.conn.execute(
                 "UPDATE rss_articles SET read = 1, read_at = ?2
                  WHERE read = 0 AND keep_unread = 0 AND feed_url = ?1",
                 params![feed, now],
             )?,
-            (None, Some(group)) => self.conn.execute(
+            (None, Some(group), account) => self.conn.execute(
                 "UPDATE rss_articles SET read = 1, read_at = ?2
                  WHERE read = 0 AND keep_unread = 0 AND feed_url IN
-                    (SELECT url FROM rss_feeds WHERE group_name = ?1)",
-                params![group, now],
+                    (SELECT url FROM rss_feeds WHERE group_name = ?1 AND account_id IS ?3)",
+                params![group, now, account],
             )?,
-            (None, None) => self.conn.execute(
+            (None, None, Some(account)) => self.conn.execute(
+                "UPDATE rss_articles SET read = 1, read_at = ?2
+                 WHERE read = 0 AND keep_unread = 0 AND feed_url IN
+                    (SELECT url FROM rss_feeds WHERE account_id = ?1)",
+                params![account, now],
+            )?,
+            (None, None, None) => self.conn.execute(
                 "UPDATE rss_articles SET read = 1, read_at = ?1 WHERE read = 0 AND keep_unread = 0",
                 params![now],
             )?,
@@ -1032,7 +1052,7 @@ impl Storage {
 /// Drops a feed's oldest unstarred articles beyond what is kept: those
 /// older than `keep_days` and not among the newest `keep_count` (0 keeps
 /// them all).
-fn prune_feed(
+pub(super) fn prune_feed(
     tx: &rusqlite::Transaction<'_>,
     url: &str,
     now: i64,
@@ -1063,10 +1083,17 @@ fn list_conditions(query: &ArticleQuery) -> (Vec<String>, Vec<rusqlite::types::V
         values.push(value);
         format!("?{}", values.len())
     };
+    let account: rusqlite::types::Value = query.account.clone().into();
     if let Some(feed) = &query.feed {
         conditions.push(format!("a.feed_url = {}", bind(feed.clone().into())));
     } else if let Some(group) = &query.group {
-        conditions.push(format!("f.group_name = {}", bind(group.clone().into())));
+        let group = bind(group.clone().into());
+        conditions.push(format!(
+            "f.group_name = {group} AND f.account_id IS {}",
+            bind(account)
+        ));
+    } else if query.account.is_some() {
+        conditions.push(format!("f.account_id = {}", bind(account)));
     }
     match query.filter {
         ArticleFilter::All => {}
@@ -1241,6 +1268,7 @@ impl Storage {
         Ok(self
             .list_feeds()?
             .into_iter()
+            .filter(|feed| feed.account.is_none())
             .map(|feed| PortableFeed {
                 id_base: bases.get(&feed.url).cloned(),
                 url: feed.url,
@@ -1270,6 +1298,9 @@ impl Storage {
             .collect::<Result<Vec<_>, _>>()?;
         let mut next = groups.last().map_or(0, |group| group.sort + 1);
         for feed in self.list_feeds()? {
+            if feed.account.is_some() {
+                continue;
+            }
             if let Some(name) = feed.group {
                 if !groups.iter().any(|group| group.name == name) {
                     groups.push(FeedGroup { name, sort: next });
@@ -1337,7 +1368,8 @@ impl Storage {
             })
             .collect();
         self.conn.execute(
-            "UPDATE rss_feeds SET group_name = ?2, updated_at = ?3 WHERE group_name = ?1",
+            "UPDATE rss_feeds SET group_name = ?2, updated_at = ?3
+             WHERE group_name = ?1 AND account_id IS NULL",
             params![name, new_name, now_millis()],
         )?;
         self.conn.execute(
@@ -1356,13 +1388,14 @@ impl Storage {
             let urls: Vec<String> = self
                 .list_feeds()?
                 .into_iter()
-                .filter(|feed| feed.group.as_deref() == Some(name))
+                .filter(|feed| feed.account.is_none() && feed.group.as_deref() == Some(name))
                 .map(|feed| feed.url)
                 .collect();
             self.remove_feeds(&urls)?;
         } else {
             self.conn.execute(
-                "UPDATE rss_feeds SET group_name = NULL, updated_at = ?2 WHERE group_name = ?1",
+                "UPDATE rss_feeds SET group_name = NULL, updated_at = ?2
+                 WHERE group_name = ?1 AND account_id IS NULL",
                 params![name, now_millis()],
             )?;
         }
@@ -1380,7 +1413,7 @@ impl Storage {
             "SELECT a.id, a.feed_url, COALESCE(f.title, a.feed_title), a.title, a.link, a.author,
                     a.published_at, a.excerpt, a.image, a.content
              FROM rss_articles a LEFT JOIN rss_feeds f ON f.url = a.feed_url
-             WHERE a.starred = 1 ORDER BY a.id",
+             WHERE a.starred = 1 AND a.remote_id IS NULL ORDER BY a.id",
         )?;
         let stars = statement
             .query_map([], |row| {
@@ -1507,6 +1540,10 @@ impl Storage {
     /// Adds or updates a feed from a sync or backup record. A feed given a
     /// new address elsewhere is moved here too, with its articles.
     pub(super) fn restore_feed(&mut self, feed: &PortableFeed) -> Result<(), AppError> {
+        // An account's feeds come from the account.
+        if super::rss_accounts::feed_account(&feed.url).is_some() {
+            return Ok(());
+        }
         let now = now_millis();
         let tx = self.conn.transaction()?;
         if let Some(base) = &feed.id_base {

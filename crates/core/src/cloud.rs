@@ -1020,9 +1020,10 @@ mod tests {
         let (manual, _) = backup_now(&first, "Linux").unwrap();
         assert!(manual.name.starts_with("manual-") && manual.name.ends_with("-书房平板.json"));
         let (dav, folders) = connect(&first).unwrap();
+        // Nine days of automatic backups, the last one today.
         for day in 0..9 {
             let mut document = lock(&first).unwrap().export_backup("Linux").unwrap();
-            document.created_at = 1_791_705_600_000 + day * DAY_MILLIS;
+            document.created_at = now_millis() - (8 - day) * DAY_MILLIS;
             upload_backup(&first, &dav, &folders, &document, true).unwrap();
         }
         let backups = list_backups(&first).unwrap();

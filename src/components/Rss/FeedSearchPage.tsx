@@ -10,7 +10,8 @@ import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
 import { ArticleContent } from "./ArticleContent";
-import { GroupField } from "./controls";
+import { feedGroupNames } from "../../application/rss";
+import { Choice, GroupField } from "./controls";
 import { articleTime, hostOf } from "./format";
 
 const SOURCES: Record<FeedSearchSource, MessageKey> = {
@@ -20,7 +21,10 @@ const SOURCES: Record<FeedSearchSource, MessageKey> = {
   feedly: "rss.find.source.feedly",
 };
 
-/** Subscribing to a feed found: its name (the feed's own when empty) and group. */
+/**
+ * Subscribing to a feed found: its name (the feed's own when empty), its
+ * group, and, with 订阅账号, where: on this device or on an account.
+ */
 function SubscribeDialog({
   url,
   title: found,
@@ -36,11 +40,12 @@ function SubscribeDialog({
   const { state, store } = useFeeds();
   const [title, setTitle] = useState(found);
   const [group, setGroup] = useState("");
+  const [account, setAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const subscribe = () => {
     setBusy(true);
     void store
-      .addFeed(url, title.trim() || null, group.trim() || null)
+      .addFeed(url, title.trim() || null, group.trim() || null, account)
       .then(
         (feed) => {
           toast(t("rss.subscribed", { title: feed.title }));
@@ -70,12 +75,28 @@ function SubscribeDialog({
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
+          {state.accounts.length > 0 && (
+            <div className="-mx-4 -my-3">
+              <Choice<string | null>
+                label={t("rss.account.target")}
+                options={[
+                  [null, t("rss.account.local")],
+                  ...state.accounts.map((item): [string, string] => [item.id, item.name]),
+                ]}
+                value={account}
+                onPick={(picked) => {
+                  setAccount(picked);
+                  setGroup("");
+                }}
+              />
+            </div>
+          )}
           <div className="space-y-1">
             <GroupField
               id="rss-subscribe-groups"
               value={group}
               onChange={setGroup}
-              groups={state.groups.map((item) => item.name)}
+              groups={feedGroupNames(state, account)}
             />
           </div>
           <div className="flex justify-end gap-2">
@@ -112,7 +133,9 @@ export function FeedPreviewPage({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [subscribing, setSubscribing] = useState(false);
-  const subscribed = state.feeds.some((feed) => feed.url === result.url);
+  const subscribed = state.feeds.some(
+    (feed) => feed.url === result.url || feed.address === result.url,
+  );
   useEffect(() => {
     let active = true;
     void service.preview(result.url).then(
@@ -234,7 +257,7 @@ export function FeedSearchPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<FeedSearchResult | null>(null);
-  const subscribed = new Set(state.feeds.map((feed) => feed.url));
+  const subscribed = new Set(state.feeds.map((feed) => feed.address ?? feed.url));
   const search = () => {
     const text = query.trim();
     if (!text) return;

@@ -109,4 +109,13 @@ export const errors = {
   "error.rssFilterEmpty": "过滤规则不能为空",
   "error.rssFilterTarget": "请选择规则适用的分组或订阅",
   "error.rssSearchFailed": "搜索失败：HTTP {status}",
+  "error.rssNoAccount": "没有这个订阅账号",
+  "error.rssAccountServerEmpty": "请填写服务器地址",
+  "error.rssAccountServerInvalid": "服务器地址无效",
+  "error.rssAccountUserEmpty": "请填写用户名",
+  "error.rssAccountPasswordEmpty": "请填写密码",
+  "error.rssAccountLogin": "用户名或密码不对（FreshRSS 和 Miniflux 用的是 API 密码）",
+  "error.rssAccountNotReader": "这个地址不是 Google Reader API 服务",
+  "error.rssAccountHttp": "订阅账号返回 HTTP {status}",
+  "error.rssAccountSubscribeFailed": "订阅账号没能订阅：{error}",
 } as const;

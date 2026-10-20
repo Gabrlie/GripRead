@@ -137,7 +137,7 @@ impl Storage {
             "SELECT {FILTER_COLUMNS} FROM rss_filters WHERE enabled = 1 AND (scope = 'all'
                OR (scope = 'feed' AND target = ?1)
                OR (scope = 'group' AND target =
-                    (SELECT group_name FROM rss_feeds WHERE url = ?1)))"
+                    (SELECT group_name FROM rss_feeds WHERE url = ?1 AND account_id IS NULL)))"
         ))?;
         let filters = statement
             .query_map(params![url], filter_of)?
@@ -211,7 +211,7 @@ impl Storage {
     ) -> Result<Vec<StoredText>, AppError> {
         let scope = match filter.scope {
             FeedFilterScope::All => "f.url IS NOT NULL AND ?1 IS NULL",
-            FeedFilterScope::Group => "f.group_name = ?1",
+            FeedFilterScope::Group => "f.group_name = ?1 AND f.account_id IS NULL",
             FeedFilterScope::Feed => "a.feed_url = ?1",
         };
         let body = if matches!(

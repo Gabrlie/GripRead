@@ -10,11 +10,14 @@ import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
 import { FILTER_FIELDS, FilterDialog, newFilter } from "./FilterDialog";
 
-/** Whether a rule applies to the feed: all feeds, its group, or itself. */
+/**
+ * Whether a rule applies to the feed: all feeds, its group (one of the
+ * device's own), or itself.
+ */
 export function appliesTo(filter: FeedFilter, feed: Feed) {
   return (
     filter.scope === "all" ||
-    (filter.scope === "group" && filter.target === feed.group) ||
+    (filter.scope === "group" && feed.account === null && filter.target === feed.group) ||
     (filter.scope === "feed" && filter.target === feed.url)
   );
 }

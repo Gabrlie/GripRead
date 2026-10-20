@@ -94,7 +94,7 @@ export function RssView() {
       (count) => toast(count ? t("rss.markedRead", { count }) : t("rss.noUnread")),
       (error: unknown) => toast({ text: describeError(error), error: true }),
     );
-  const title = selectionTitle(state.selection, state.feeds);
+  const title = selectionTitle(state.selection, state.feeds, state.accounts);
   const refreshing = state.refreshing ? t("rss.refreshing", state.refreshing) : null;
   const listActions = (
     <>
@@ -181,6 +181,7 @@ export function RssView() {
             <FeedList
               feeds={state.feeds}
               groups={state.groups}
+              accounts={state.accounts}
               selection={state.selection}
               onSelect={select}
               onDetail={setDetail}
@@ -215,7 +216,7 @@ export function RssView() {
             transition: pull.dragging ? "none" : "transform 300ms ease-out",
           }}
         >
-          {state.feedsLoaded && state.feeds.length === 0 ? (
+          {state.feedsLoaded && state.feeds.length === 0 && state.accounts.length === 0 ? (
             <div className="rounded-2xl bg-surface-container-low p-8 text-center space-y-3 mt-4">
               <Icon name="rss_feed" size={28} className="mx-auto text-secondary" />
               <p className="text-sm">{t("rss.empty")}</p>
@@ -232,6 +233,7 @@ export function RssView() {
             <FeedList
               feeds={state.feeds}
               groups={state.groups}
+              accounts={state.accounts}
               selection={state.selection}
               onSelect={select}
               onDetail={setDetail}

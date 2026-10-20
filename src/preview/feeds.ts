@@ -4,6 +4,7 @@ import type {
   ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedAccount,
   FeedFilter,
   FeedGroup,
   FeedSearchResult,
@@ -74,6 +75,7 @@ export function memoryFeeds(seed = true): FeedService {
     rsshubKey: "",
   };
   let filters: FeedFilter[] = [];
+  let accounts: FeedAccount[] = [];
   const listeners = new Set<(event: RssRefreshEvent) => void>();
   const feed = (url: string, title: string, group: string | null, sort: number): Feed => ({
     url,
@@ -96,6 +98,20 @@ export function memoryFeeds(seed = true): FeedService {
       viaServer: false,
       keepUnread: null,
     },
+    account: null,
+    address: null,
+  });
+  /** A feed of an account, as its service names it. */
+  const accountFeed = (
+    account: string,
+    stream: number,
+    title: string,
+    group: string | null,
+  ): Feed => ({
+    ...feed(`account:${account}:feed/${stream}`, title, group, stream),
+    siteUrl: `https://remote${stream}.example.org`,
+    account,
+    address: `https://remote${stream}.example.org/feed`,
   });
   if (seed) {
     feeds = [
@@ -118,7 +134,11 @@ export function memoryFeeds(seed = true): FeedService {
   const allGroups = (): FeedGroup[] => {
     const list = [...groups];
     for (const item of feeds)
-      if (item.group !== null && !list.some((group) => group.name === item.group))
+      if (
+        item.account === null &&
+        item.group !== null &&
+        !list.some((group) => group.name === item.group)
+      )
         list.push({ name: item.group, sort: list.length });
     return list;
   };
@@ -129,13 +149,14 @@ export function memoryFeeds(seed = true): FeedService {
     const known = new Set(feeds.map((item) => item.url));
     return articles
       .map((article) => article.summary)
-      .filter((article) =>
-        query.feed
-          ? article.feedUrl === query.feed
-          : group !== null
-            ? feeds.find((item) => item.url === article.feedUrl)?.group === group
-            : query.filter === "starred" || known.has(article.feedUrl),
-      )
+      .filter((article) => {
+        const owner = feeds.find((item) => item.url === article.feedUrl);
+        if (query.feed) return article.feedUrl === query.feed;
+        if (group !== null)
+          return owner?.group === group && owner.account === (query.account ?? null);
+        if (query.account) return owner?.account === query.account;
+        return query.filter === "starred" || known.has(article.feedUrl);
+      })
       .filter((article) =>
         query.filter === "unread"
           ? !article.read
@@ -175,7 +196,10 @@ export function memoryFeeds(seed = true): FeedService {
       rule.scope === "all" ||
       (rule.scope === "feed"
         ? article.feedUrl === rule.target
-        : feeds.find((item) => item.url === article.feedUrl)?.group === rule.target);
+        : feeds.some(
+            (item) =>
+              item.url === article.feedUrl && item.account === null && item.group === rule.target,
+          ));
     const text = (article: Stored) => {
       const { title, author } = article.summary;
       const body = article.content.replace(/<[^>]*>/g, " ");
@@ -265,12 +289,16 @@ export function memoryFeeds(seed = true): FeedService {
         })),
       };
     },
-    addFeed: async (url, title, group) => {
-      if (feeds.some((item) => item.url === url)) throw new Error("已经订阅过这个地址");
-      const added = feed(url, title || new URL(url).hostname, group, feeds.length);
+    addFeed: async (url, title, group, account = null) => {
+      if (feeds.some((item) => item.url === url || item.address === url))
+        throw new Error("已经订阅过这个地址");
+      const name = title || new URL(url).hostname;
+      const added = account
+        ? { ...accountFeed(account, feeds.length + 10, name, group), address: url }
+        : feed(url, name, group, feeds.length);
       feeds = [...feeds, added];
       articles = [...articles, ...sampleArticles(added, 3, Date.now())];
-      return counted().find((item) => item.url === url)!;
+      return counted().find((item) => item.url === added.url)!;
     },
     updateFeed: async (request) => {
       const url = request.newUrl?.trim() || request.url;
@@ -309,17 +337,24 @@ export function memoryFeeds(seed = true): FeedService {
       groups = allGroups()
         .filter((group) => !(merging && group.name === name))
         .map((group) => (group.name === name ? { ...group, name: newName } : group));
-      feeds = feeds.map((item) => (item.group === name ? { ...item, group: newName } : item));
+      feeds = feeds.map((item) =>
+        item.account === null && item.group === name ? { ...item, group: newName } : item,
+      );
     },
     removeGroup: async (name, unsubscribe) => {
       groups = allGroups().filter((group) => group.name !== name);
-      const urls = feeds.filter((item) => item.group === name).map((item) => item.url);
+      const urls = feeds
+        .filter((item) => item.account === null && item.group === name)
+        .map((item) => item.url);
       if (unsubscribe) {
         feeds = feeds.filter((item) => !urls.includes(item.url));
         articles = articles.filter(
           (article) => !urls.includes(article.summary.feedUrl) || article.summary.starred,
         );
-      } else feeds = feeds.map((item) => (item.group === name ? { ...item, group: null } : item));
+      } else
+        feeds = feeds.map((item) =>
+          item.account === null && item.group === name ? { ...item, group: null } : item,
+        );
     },
     removeFeeds: async (urls) => {
       feeds = feeds.filter((item) => !urls.includes(item.url));
@@ -327,13 +362,26 @@ export function memoryFeeds(seed = true): FeedService {
         (article) => !urls.includes(article.summary.feedUrl) || article.summary.starred,
       );
     },
-    refresh: async (operationId, urls, due = false) => {
-      const enabled = feeds.filter((item) => item.enabled).map((item) => item.url);
+    refresh: async (operationId, urls, due = false, named = []) => {
+      const enabled = feeds
+        .filter((item) => item.enabled && item.account === null)
+        .map((item) => item.url);
+      const everything = !urls.length && !named.length;
+      const synced = accounts
+        .map((account) => account.id)
+        .filter(
+          (id) =>
+            everything ||
+            named.includes(id) ||
+            urls.some((url) => url.startsWith(`account:${id}:`)),
+        )
+        .map((id) => `account:${id}`);
       const targets = due
         ? []
-        : urls.length
-          ? urls.filter((url) => enabled.includes(url))
-          : enabled;
+        : [...synced, ...(everything ? enabled : urls.filter((url) => enabled.includes(url)))];
+      accounts = accounts.map((account) =>
+        synced.includes(`account:${account.id}`) ? { ...account, lastSync: Date.now() } : account,
+      );
       targets.forEach((url, index) =>
         listeners.forEach((listener) =>
           listener({
@@ -406,11 +454,10 @@ export function memoryFeeds(seed = true): FeedService {
           articles
             .filter((article) => {
               const owner = feeds.find((item) => item.url === article.summary.feedUrl);
-              return scope.feed
-                ? article.summary.feedUrl === scope.feed
-                : scope.group
-                  ? owner?.group === scope.group
-                  : true;
+              if (scope.feed) return article.summary.feedUrl === scope.feed;
+              if (scope.group)
+                return owner?.group === scope.group && owner.account === (scope.account ?? null);
+              return scope.account ? owner?.account === scope.account : true;
             })
             .map((article) => article.summary.id),
         ),
@@ -446,6 +493,43 @@ export function memoryFeeds(seed = true): FeedService {
     },
     removeFilter: async (id) => {
       filters = filters.filter((item) => item.id !== id);
+    },
+    listAccounts: async () => accounts,
+    saveAccount: async (request) => {
+      if (request.password === "wrong")
+        throw new Error("用户名或密码不对（FreshRSS 和 Miniflux 用的是 API 密码）");
+      const id = request.id ?? `${request.username}-${accounts.length + 1}`;
+      const saved: FeedAccount = {
+        id,
+        kind: request.kind,
+        name: request.name.trim() || request.username,
+        server: request.server,
+        username: request.username,
+        filterRead: request.filterRead,
+        sort: accounts.length,
+        lastSync: request.id ? (accounts.find((item) => item.id === id)?.lastSync ?? null) : null,
+        lastError: null,
+        pending: 0,
+      };
+      if (request.id) {
+        accounts = accounts.map((item) => (item.id === id ? saved : item));
+        return saved;
+      }
+      accounts = [...accounts, saved];
+      const remote = [
+        accountFeed(id, 1, "远方新闻", "资讯"),
+        accountFeed(id, 2, "远方杂志", "资讯"),
+        accountFeed(id, 3, "远方博客", null),
+      ];
+      feeds = [...feeds, ...remote];
+      articles = [...articles, ...remote.flatMap((item) => sampleArticles(item, 5, Date.now()))];
+      return saved;
+    },
+    removeAccount: async (id) => {
+      accounts = accounts.filter((item) => item.id !== id);
+      const urls = new Set(feeds.filter((item) => item.account === id).map((item) => item.url));
+      feeds = feeds.filter((item) => !urls.has(item.url));
+      articles = articles.filter((article) => !urls.has(article.summary.feedUrl));
     },
     testFilter: async (rule) => {
       const { checked, out } = filtered(rule);

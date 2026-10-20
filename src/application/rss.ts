@@ -6,16 +6,24 @@ import type {
   ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedAccount,
   FeedFilter,
   FeedGroup,
   OpmlImportReport,
   RssSettings,
+  SaveFeedAccountRequest,
   UpdateFeedRequest,
 } from "../types/generated";
 
-/** What the article list shows: everything, one group, or one feed. */
+/**
+ * What the article list shows: everything, one group (of the device's own
+ * feeds, or of an account's), one feed, or all of an account's feeds.
+ */
 export type FeedSelection =
-  { kind: "all" } | { kind: "group"; group: string } | { kind: "feed"; url: string };
+  | { kind: "all" }
+  | { kind: "group"; group: string; account?: string | null }
+  | { kind: "feed"; url: string }
+  | { kind: "account"; account: string };
 
 /** A group of 订阅's list with its feeds. */
 export interface FeedSection {
@@ -47,6 +55,8 @@ export interface FeedSnapshot {
   settings: RssSettings | null;
   /** 过滤规则, once loaded. */
   filters: FeedFilter[];
+  /** 订阅账号, in order. */
+  accounts: FeedAccount[];
 }
 
 /** Entering 订阅 refreshes when the last refresh is older than this. */
@@ -89,10 +99,39 @@ export function feedGroups(feeds: Feed[], order: FeedGroup[] = []): FeedSection[
   return groups;
 }
 
-export function selectionTitle(selection: FeedSelection, feeds: Feed[]): string {
+export function selectionTitle(
+  selection: FeedSelection,
+  feeds: Feed[],
+  accounts: FeedAccount[] = [],
+): string {
   if (selection.kind === "all") return t("rss.allArticles");
   if (selection.kind === "group") return selection.group;
+  if (selection.kind === "account")
+    return accounts.find((account) => account.id === selection.account)?.name ?? t("nav.feeds");
   return feeds.find((feed) => feed.url === selection.url)?.title ?? t("nav.feeds");
+}
+
+/**
+ * The groups feeds can be filed under: the device's own (in their order,
+ * empty ones too), or those of an account's feeds.
+ */
+export function feedGroupNames(
+  state: { feeds: Feed[]; groups: FeedGroup[] },
+  account: string | null,
+): string[] {
+  if (account === null) return state.groups.map((group) => group.name);
+  const names: string[] = [];
+  for (const feed of state.feeds)
+    if (feed.account === account && feed.group !== null && !names.includes(feed.group))
+      names.push(feed.group);
+  return names;
+}
+
+/** The account a list belongs to: an account's own, or one of its groups. */
+export function selectionAccount(selection: FeedSelection): string | null {
+  if (selection.kind === "account") return selection.account;
+  if (selection.kind === "group") return selection.account ?? null;
+  return null;
 }
 
 /** Whether any feed refreshes on an interval: the setting, or its own. */
@@ -128,6 +167,7 @@ export class FeedStore {
     error: null,
     settings: null,
     filters: [],
+    accounts: [],
   };
   private listeners = new Set<() => void>();
   private listVersion = 0;
@@ -187,11 +227,12 @@ export class FeedStore {
 
   loadFeeds = async () => {
     try {
-      const [feeds, groups] = await Promise.all([
+      const [feeds, groups, accounts] = await Promise.all([
         this.service.listFeeds(),
         this.service.listGroups(),
+        this.service.listAccounts(),
       ]);
-      this.update({ feeds, groups, feedsLoaded: true });
+      this.update({ feeds, groups, accounts, feedsLoaded: true });
     } catch (error) {
       this.update({ feedsLoaded: true, error: String(error) });
     }
@@ -203,6 +244,7 @@ export class FeedStore {
     return {
       feed: selection.kind === "feed" ? selection.url : null,
       group: selection.kind === "group" ? selection.group : null,
+      account: selectionAccount(selection),
       filter,
       search: search.trim() || null,
       after,
@@ -260,17 +302,22 @@ export class FeedStore {
   };
 
   /**
-   * Refreshes the enabled feeds (all when none are named; with `due`, those
-   * whose interval has passed, quietly until one is fetched); one refresh
-   * runs at a time.
+   * Refreshes the enabled feeds and syncs the 订阅账号 (all when none are
+   * named; with `due`, those whose interval has passed, quietly until one
+   * is fetched); one refresh runs at a time.
    */
-  refresh = (urls: string[] = [], due = false): Promise<void> => {
+  refresh = (urls: string[] = [], due = false, accounts: string[] = []): Promise<void> => {
     if (this.refreshRun) return this.refreshRun;
     const operationId = `rss-${this.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let failed = 0;
     let fetched = 0;
-    const enabled = this.snapshot.feeds.filter((feed) => feed.enabled).length;
-    if (!due) this.update({ refreshing: { done: 0, total: urls.length || enabled } });
+    const enabled =
+      this.snapshot.feeds.filter((feed) => feed.enabled && feed.account === null).length +
+      this.snapshot.accounts.length;
+    if (!due)
+      this.update({
+        refreshing: { done: 0, total: urls.length + accounts.length || enabled },
+      });
     const run = (async () => {
       const stop = await this.service
         .onRefresh((event) => {
@@ -281,7 +328,7 @@ export class FeedStore {
         })
         .catch(() => () => undefined);
       try {
-        await this.service.refresh(operationId, urls, due);
+        await this.service.refresh(operationId, urls, due, accounts);
       } catch (error) {
         this.update({ error: String(error) });
       } finally {
@@ -343,6 +390,7 @@ export class FeedStore {
     const changed = await this.service.markAllRead({
       feed: selection.kind === "feed" ? selection.url : null,
       group: selection.kind === "group" ? selection.group : null,
+      account: selectionAccount(selection),
     });
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
     return changed;
@@ -359,8 +407,14 @@ export class FeedStore {
     return changed;
   };
 
-  addFeed = async (url: string, title: string | null, group: string | null) => {
-    const feed = await this.service.addFeed(url, title, group);
+  /** Subscribes here, or on a 订阅账号. */
+  addFeed = async (
+    url: string,
+    title: string | null,
+    group: string | null,
+    account: string | null = null,
+  ) => {
+    const feed = await this.service.addFeed(url, title, group, account);
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
     return feed;
   };
@@ -384,7 +438,7 @@ export class FeedStore {
   renameGroup = async (name: string, newName: string) => {
     await this.service.renameGroup(name, newName);
     const { selection } = this.snapshot;
-    if (selection.kind === "group" && selection.group === name)
+    if (selection.kind === "group" && !selection.account && selection.group === name)
       this.update({ selection: { kind: "group", group: newName.trim() } });
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };
@@ -393,7 +447,7 @@ export class FeedStore {
   removeGroup = async (name: string, unsubscribe: boolean) => {
     await this.service.removeGroup(name, unsubscribe);
     const { selection } = this.snapshot;
-    if (selection.kind === "group" && selection.group === name)
+    if (selection.kind === "group" && !selection.account && selection.group === name)
       this.update({ selection: { kind: "all" } });
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };
@@ -432,6 +486,26 @@ export class FeedStore {
   removeFilter = async (id: string) => {
     await this.service.removeFilter(id);
     await this.loadFilters();
+  };
+
+  /** Signs in and saves an account; a new one syncs at once. */
+  saveAccount = async (request: SaveFeedAccountRequest) => {
+    const account = await this.service.saveAccount(request);
+    await this.loadFeeds();
+    if (!request.id) await this.refresh([], false, [account.id]);
+    return account;
+  };
+
+  /** Removes an account and its feeds from this device; its lists go to all. */
+  removeAccount = async (id: string) => {
+    await this.service.removeAccount(id);
+    const { selection, feeds } = this.snapshot;
+    const owner =
+      selection.kind === "feed"
+        ? feeds.find((feed) => feed.url === selection.url)?.account
+        : selectionAccount(selection);
+    if (owner === id) this.update({ selection: { kind: "all" } });
+    await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };
 
   /** Shows the change at once; a failed save puts the last settings back. */

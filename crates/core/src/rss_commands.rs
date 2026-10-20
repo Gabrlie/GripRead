@@ -9,12 +9,13 @@ use crate::commands::{with_storage, AppState};
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AddFeedRequest, Article, ArticleIdRequest, ArticlePage, ArticleQuery, ArticleStateRequest,
-    Feed, FeedFilter, FeedFilterIdRequest, FeedFilterTest, FeedGroup, FeedPreview,
-    FeedSearchResult, FeedUrlsRequest, MarkAllReadRequest, MarkReadRangeRequest, OpmlImportReport,
-    OpmlImportRequest, OptionalPathRequest, PreviewFeedRequest, RefreshFeedsRequest,
-    RemoveFeedGroupRequest, RenameFeedGroupRequest, RssImageRequest, RssRefreshEvent, RssSettings,
-    SaveFeedFilterRequest, SaveFeedGroupsRequest, SaveRssSettingsRequest, SearchFeedsRequest,
-    TestFeedFilterRequest, UpdateFeedRequest,
+    Feed, FeedAccount, FeedAccountIdRequest, FeedFilter, FeedFilterIdRequest, FeedFilterTest,
+    FeedGroup, FeedPreview, FeedSearchResult, FeedUrlsRequest, MarkAllReadRequest,
+    MarkReadRangeRequest, OpmlImportReport, OpmlImportRequest, OptionalPathRequest,
+    PreviewFeedRequest, RefreshFeedsRequest, RemoveFeedGroupRequest, RenameFeedGroupRequest,
+    RssImageRequest, RssRefreshEvent, RssSettings, SaveFeedAccountRequest, SaveFeedFilterRequest,
+    SaveFeedGroupsRequest, SaveRssSettingsRequest, SearchFeedsRequest, TestFeedFilterRequest,
+    UpdateFeedRequest,
 };
 use crate::source_commands::SourceOperations;
 
@@ -33,7 +34,19 @@ pub async fn list_feeds(state: &Arc<AppState>) -> Result<Vec<Feed>, AppError> {
 pub async fn add_feed(state: &Arc<AppState>, request: AddFeedRequest) -> Result<Feed, AppError> {
     let storage = state.storage.clone();
     let url = request.url.trim().to_string();
+    let root = state.data_root.clone();
     blocking(move || {
+        if let Some(account) = &request.account {
+            crate::network::refresh(&root);
+            let url = crate::rss::account::subscribe(
+                &storage,
+                account,
+                &url,
+                request.title.as_deref(),
+                request.group.as_deref(),
+            )?;
+            return lock(&storage)?.feed(&url);
+        }
         crate::rss::subscribe(
             &storage,
             &url,
@@ -52,12 +65,28 @@ pub async fn add_feed(state: &Arc<AppState>, request: AddFeedRequest) -> Result<
     .await
 }
 
-/// Changes a feed; a new address is read first, and must be a feed.
+/// Changes a feed; a new address is read first, and must be a feed. An
+/// account's feed is renamed or moved on the account first.
 pub async fn update_feed(
     state: &Arc<AppState>,
     request: UpdateFeedRequest,
 ) -> Result<Feed, AppError> {
     let mut request = request;
+    if crate::storage::feed_account(&request.url).is_some() {
+        let storage = state.storage.clone();
+        let root = state.data_root.clone();
+        let (url, title, group) = (
+            request.url.clone(),
+            request.title.clone(),
+            request.group.clone(),
+        );
+        blocking(move || {
+            crate::network::refresh(&root);
+            crate::rss::account::edit_feed(&storage, &url, &title, group.as_deref())
+        })
+        .await?;
+        request.new_url = None;
+    }
     if let Some(new_url) = request.new_url.take().filter(|new_url| {
         let new_url = new_url.trim();
         !new_url.is_empty() && new_url != request.url
@@ -105,8 +134,70 @@ pub async fn remove_feed_group(
     .await
 }
 
+/// Unsubscribes; an account's feeds are unsubscribed on the account first.
 pub async fn remove_feeds(state: &Arc<AppState>, request: FeedUrlsRequest) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    let root = state.data_root.clone();
+    let urls = request.urls.clone();
+    if urls
+        .iter()
+        .any(|url| crate::storage::feed_account(url).is_some())
+    {
+        blocking(move || {
+            crate::network::refresh(&root);
+            for url in &urls {
+                crate::rss::account::unsubscribe(&storage, url)?;
+            }
+            Ok(())
+        })
+        .await?;
+    }
     with_storage(state, move |storage| storage.remove_feeds(&request.urls)).await
+}
+
+pub async fn list_feed_accounts(state: &Arc<AppState>) -> Result<Vec<FeedAccount>, AppError> {
+    with_storage(state, |storage| storage.feed_accounts()).await
+}
+
+/// Adds or changes an account after signing in to it; a changed account
+/// keeps its service and user name.
+pub async fn save_feed_account(
+    state: &Arc<AppState>,
+    request: SaveFeedAccountRequest,
+) -> Result<FeedAccount, AppError> {
+    let storage = state.storage.clone();
+    let root = state.data_root.clone();
+    blocking(move || {
+        let existing = match &request.id {
+            Some(id) => Some(lock(&storage)?.account_login(id)?),
+            None => None,
+        };
+        let request = match &existing {
+            Some(existing) => SaveFeedAccountRequest {
+                server: existing.server.clone(),
+                username: existing.username.clone(),
+                ..request
+            },
+            None => request,
+        };
+        crate::network::refresh(&root);
+        let login = crate::rss::account::verify(&request, existing)?;
+        let guard = lock(&storage)?;
+        let id = guard.save_feed_account(&request, &login)?;
+        guard.feed_account(&id)
+    })
+    .await
+}
+
+/// Removes an account from this device; the service keeps everything.
+pub async fn remove_feed_account(
+    state: &Arc<AppState>,
+    request: FeedAccountIdRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.remove_feed_account(&request.id)
+    })
+    .await
 }
 
 /// Refreshes feeds a few at a time, sending `rss-refresh` for each and
@@ -117,10 +208,27 @@ pub async fn refresh_feeds(
     state: &Arc<AppState>,
     request: RefreshFeedsRequest,
 ) -> Result<(), AppError> {
-    let (urls, due) = (request.urls.clone(), request.due);
-    let urls = with_storage(state, move |storage| {
+    let (urls, due, named) = (request.urls.clone(), request.due, request.accounts.clone());
+    let (urls, accounts) = with_storage(state, move |storage| {
         let minutes = storage.rss_settings().refresh_minutes;
-        storage.refresh_targets(&urls, due, minutes)
+        let everything = urls.is_empty() && named.is_empty();
+        // An account feed named syncs its account.
+        let mut named = named;
+        let mut local = Vec::new();
+        for url in urls {
+            match crate::storage::feed_account(&url) {
+                Some((account, _)) => named.push(account.to_string()),
+                None => local.push(url),
+            }
+        }
+        let urls = if everything || !local.is_empty() {
+            storage.refresh_targets(&local, due, minutes)?
+        } else {
+            Vec::new()
+        };
+        let accounts =
+            storage.accounts_to_sync((!everything).then_some(&named[..]), due, minutes)?;
+        Ok((urls, accounts))
     })
     .await?;
     let root = state.data_root.clone();
@@ -132,7 +240,7 @@ pub async fn refresh_feeds(
     .await?;
     let cancel = state.operations.register(&request.operation_id);
     let cancels = state.operations.cancels();
-    let total = urls.len() as u32;
+    let total = (urls.len() + accounts.len()) as u32;
     let refreshed = Arc::new(AtomicU32::new(0));
     let storage = state.storage.clone();
     let events = state.events.clone();
@@ -156,6 +264,16 @@ pub async fn refresh_feeds(
                 serde_json::to_value(event).unwrap_or_default(),
             );
         };
+        // Accounts sync here: their passwords stay on this device.
+        for account in &accounts {
+            if cancel.load(Ordering::Acquire) {
+                break;
+            }
+            report(
+                &format!("account:{account}"),
+                crate::rss::account::sync(&storage, account),
+            );
+        }
         // Nothing due: the server is not asked, which would take an empty
         // list as every feed.
         let here = if urls.is_empty() {
@@ -311,7 +429,11 @@ pub async fn mark_all_read(
     request: MarkAllReadRequest,
 ) -> Result<u32, AppError> {
     with_storage(state, move |storage| {
-        storage.mark_all_read(request.feed.as_deref(), request.group.as_deref())
+        storage.mark_all_read(
+            request.feed.as_deref(),
+            request.group.as_deref(),
+            request.account.as_deref(),
+        )
     })
     .await
 }

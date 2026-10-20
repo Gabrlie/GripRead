@@ -7,4 +7,9 @@ export type RefreshFeedsRequest = { operationId: string, urls: Array<string>,
 /**
  * Only the feeds whose refresh interval has passed.
  */
-due: boolean, };
+due: boolean, 
+/**
+ * 订阅账号 to sync; with `urls`, only those named are refreshed, and
+ * with neither, everything.
+ */
+accounts: Array<string>, };

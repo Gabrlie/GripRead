@@ -26,8 +26,9 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// Refreshes the enabled feeds named (all when empty; with `due`, those
-/// whose interval has passed) and reports each.
+/// Refreshes the enabled feeds named (all when empty, with the server's
+/// own 订阅账号; with `due`, those whose interval has passed) and reports
+/// each.
 pub(crate) async fn refresh_feeds(
     server: &Arc<Server>,
     urls: Vec<String>,
@@ -36,15 +37,35 @@ pub(crate) async fn refresh_feeds(
     let storage = server.core.storage.clone();
     let minutes = super::jobs::rss_interval(server);
     let reply = tokio::task::spawn_blocking(move || {
+        // 订阅账号 added on the web version sync with every refresh of all.
+        let accounts = if urls.is_empty() {
+            storage
+                .lock()
+                .ok()
+                .and_then(|guard| guard.accounts_to_sync(None, due, minutes).ok())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let urls = storage
             .lock()
             .ok()
             .and_then(|guard| guard.refresh_targets(&urls, due, minutes).ok())
             .unwrap_or_default();
-        if due && urls.is_empty() {
+        if due && urls.is_empty() && accounts.is_empty() {
             return None;
         }
         let feeds = Mutex::new(Vec::new());
+        for account in accounts {
+            let result = gripread_core::rss::account::sync(&storage, &account);
+            if let Ok(mut feeds) = feeds.lock() {
+                feeds.push(RssFeedUpdate {
+                    url: format!("account:{account}"),
+                    added: *result.as_ref().unwrap_or(&0),
+                    error: result.err().map(|error| error.message),
+                });
+            }
+        }
         gripread_core::rss::refresh_all(&storage, urls, &AtomicBool::new(false), &|url, result| {
             if let Ok(mut feeds) = feeds.lock() {
                 feeds.push(RssFeedUpdate {

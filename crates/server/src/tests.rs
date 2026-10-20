@@ -885,6 +885,7 @@ async fn a_connected_device_refreshes_its_feeds_through_the_server() {
             operation_id: "rss-test".into(),
             urls: Vec::new(),
             due: false,
+            accounts: Vec::new(),
         },
     )
     .await

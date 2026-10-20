@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { feedGroups, type FeedSelection } from "../../application/rss";
-import type { Feed, FeedGroup } from "../../types/generated";
+import type { Feed, FeedAccount, FeedGroup } from "../../types/generated";
 import { Icon } from "../ui/Icon";
 import { useLongPress } from "../ui/use-long-press";
 import { useT } from "../../i18n";
@@ -59,24 +59,29 @@ function FeedRow({
 
 function same(left: FeedSelection, right: FeedSelection): boolean {
   if (left.kind !== right.kind) return false;
-  if (left.kind === "group" && right.kind === "group") return left.group === right.group;
+  if (left.kind === "group" && right.kind === "group")
+    return left.group === right.group && (left.account ?? null) === (right.account ?? null);
   if (left.kind === "feed" && right.kind === "feed") return left.url === right.url;
+  if (left.kind === "account" && right.kind === "account") return left.account === right.account;
   return true;
 }
 
 /**
- * 全部文章, then the groups in their order (folding) with their feeds,
- * unread counts beside. A long press on a feed opens its 订阅详情.
+ * 全部文章, then the device's own groups in their order (folding) with
+ * their feeds, then each 订阅账号 with its groups and feeds; unread counts
+ * beside. A long press on a feed opens its 订阅详情.
  */
 export function FeedList({
   feeds,
   groups = [],
+  accounts = [],
   selection,
   onSelect,
   onDetail,
 }: {
   feeds: Feed[];
   groups?: FeedGroup[];
+  accounts?: FeedAccount[];
   selection: FeedSelection;
   onSelect: (selection: FeedSelection) => void;
   onDetail?: (url: string) => void;
@@ -88,6 +93,13 @@ export function FeedList({
     `flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm ${
       active ? "bg-surface-container text-primary font-medium" : "text-on-surface"
     }`;
+  const fold = (key: string) =>
+    setFolded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const feedRow = (feed: Feed, nested: boolean) => {
     const target: FeedSelection = { kind: "feed", url: feed.url };
     return (
@@ -101,6 +113,41 @@ export function FeedList({
       />
     );
   };
+  /** Groups (folding) and the feeds outside them. */
+  const sections = (own: Feed[], order: FeedGroup[], account: string | null) =>
+    feedGroups(own, order).map((group) => {
+      if (group.name === null) return group.feeds.map((feed) => feedRow(feed, false));
+      const name = group.name;
+      const key = `${account ?? ""}/${name}`;
+      const target: FeedSelection = { kind: "group", group: name, account };
+      return (
+        <li key={`group:${key}`}>
+          <div className="flex items-center">
+            <button
+              type="button"
+              aria-label={t(folded.has(key) ? "rss.expand" : "rss.collapse", { group: name })}
+              className="h-8 w-7 flex items-center justify-center text-secondary"
+              onClick={() => fold(key)}
+            >
+              <Icon name="expand_more" size={16} className={folded.has(key) ? "-rotate-90" : ""} />
+            </button>
+            <button
+              type="button"
+              aria-current={same(selection, target) || undefined}
+              className={`${row(same(selection, target))} pl-1`}
+              onClick={() => onSelect(target)}
+            >
+              <Icon name="folder" size={15} className="text-secondary shrink-0" />
+              <span className="flex-1 min-w-0 truncate">{name}</span>
+              <Count value={group.unread} />
+            </button>
+          </div>
+          {!folded.has(key) && (
+            <ul className="space-y-0.5">{group.feeds.map((feed) => feedRow(feed, true))}</ul>
+          )}
+        </li>
+      );
+    });
   return (
     <nav aria-label={t("rss.feedList")} className="space-y-1">
       <button
@@ -114,51 +161,58 @@ export function FeedList({
         <Count value={total} />
       </button>
       <ul className="space-y-0.5">
-        {feedGroups(feeds, groups).map((group) =>
-          group.name === null ? (
-            group.feeds.map((feed) => feedRow(feed, false))
-          ) : (
-            <li key={`group:${group.name}`}>
-              <div className="flex items-center">
-                <button
-                  type="button"
-                  aria-label={t(folded.has(group.name) ? "rss.expand" : "rss.collapse", {
-                    group: group.name,
-                  })}
-                  className="h-8 w-7 flex items-center justify-center text-secondary"
-                  onClick={() =>
-                    setFolded((current) => {
-                      const next = new Set(current);
-                      if (next.has(group.name!)) next.delete(group.name!);
-                      else next.add(group.name!);
-                      return next;
-                    })
-                  }
-                >
-                  <Icon
-                    name="expand_more"
-                    size={16}
-                    className={folded.has(group.name) ? "-rotate-90" : ""}
-                  />
-                </button>
-                <button
-                  type="button"
-                  aria-current={same(selection, { kind: "group", group: group.name }) || undefined}
-                  className={`${row(same(selection, { kind: "group", group: group.name }))} pl-1`}
-                  onClick={() => onSelect({ kind: "group", group: group.name! })}
-                >
-                  <Icon name="folder" size={15} className="text-secondary shrink-0" />
-                  <span className="flex-1 min-w-0 truncate">{group.name}</span>
-                  <Count value={group.unread} />
-                </button>
-              </div>
-              {!folded.has(group.name) && (
-                <ul className="space-y-0.5">{group.feeds.map((feed) => feedRow(feed, true))}</ul>
-              )}
-            </li>
-          ),
+        {sections(
+          feeds.filter((feed) => feed.account === null),
+          groups,
+          null,
         )}
       </ul>
+      {accounts.map((account) => {
+        const own = feeds.filter((feed) => feed.account === account.id);
+        const target: FeedSelection = { kind: "account", account: account.id };
+        const key = `account:${account.id}`;
+        return (
+          <section key={account.id} aria-label={account.name} className="pt-2 space-y-0.5">
+            <div className="flex items-center">
+              <button
+                type="button"
+                aria-label={t(folded.has(key) ? "rss.expand" : "rss.collapse", {
+                  group: account.name,
+                })}
+                className="h-8 w-7 flex items-center justify-center text-secondary"
+                onClick={() => fold(key)}
+              >
+                <Icon
+                  name="expand_more"
+                  size={16}
+                  className={folded.has(key) ? "-rotate-90" : ""}
+                />
+              </button>
+              <button
+                type="button"
+                aria-current={same(selection, target) || undefined}
+                className={`${row(same(selection, target))} pl-1`}
+                onClick={() => onSelect(target)}
+              >
+                <Icon name="cloud" size={15} className="text-secondary shrink-0" />
+                <span className="flex-1 min-w-0 truncate">{account.name}</span>
+                {account.lastError && (
+                  <Icon
+                    name="error"
+                    size={14}
+                    className="text-error shrink-0"
+                    aria-label={t("rss.account.failed")}
+                  />
+                )}
+                <Count value={own.reduce((sum, feed) => sum + feed.unread, 0)} />
+              </button>
+            </div>
+            {!folded.has(key) && (
+              <ul className="space-y-0.5 pl-3">{sections(own, [], account.id)}</ul>
+            )}
+          </section>
+        );
+      })}
     </nav>
   );
 }

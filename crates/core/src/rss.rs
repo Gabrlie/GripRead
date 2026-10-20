@@ -675,7 +675,12 @@ pub fn import_opml(storage: &Mutex<Storage>, text: &str) -> Result<OpmlImportRep
 
 /// The subscriptions as an OPML 2.0 file, grouped as they are here.
 pub fn export_opml(storage: &Storage) -> Result<String, AppError> {
-    let feeds = storage.list_feeds()?;
+    // An account's feeds are the account's to export.
+    let feeds: Vec<_> = storage
+        .list_feeds()?
+        .into_iter()
+        .filter(|feed| feed.account.is_none())
+        .collect();
     let outline = |feed: &crate::models::Feed, indent: &str| {
         format!(
             "{indent}<outline type=\"rss\" text=\"{0}\" title=\"{0}\" xmlUrl=\"{1}\"{2}/>\n",
@@ -1211,8 +1216,11 @@ fn first_image(html: &str) -> Option<String> {
     Some(rest[src..src + end].replace("&amp;", "&"))
 }
 
+pub mod account;
 pub mod filter;
 pub mod search;
 
+#[cfg(test)]
+mod account_tests;
 #[cfg(test)]
 mod tests;

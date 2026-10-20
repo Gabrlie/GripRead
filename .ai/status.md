@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Batch 3 of the [second round](plans/2026-10-19-rss-round2.md) (Google Reader API accounts), after the user's device test of the batch 2 beta.
+Batch 4 of the [second round](plans/2026-10-19-rss-round2.md) (AI 模型 and 语音 in 设置), after the user's device test of the batch 3 beta.

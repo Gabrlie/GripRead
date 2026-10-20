@@ -42,6 +42,7 @@ mod portable;
 mod privacy;
 pub use privacy::PRIVATE_TITLE;
 mod rss;
+mod rss_accounts;
 mod rss_filters;
 mod sources;
 mod sync;
@@ -56,11 +57,15 @@ pub use portable::{
     ProgressState, StoredWebDav,
 };
 pub use rss::{article_id, FeedFetchState, FetchedArticle, FetchedFeed};
+pub use rss_accounts::{
+    account_article_id, account_feed_url, account_id, feed_account, AccountFeed, AccountItem,
+    AccountLogin, PendingMark, StoredItems,
+};
 pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 31;
+const CURRENT_SCHEMA_VERSION: i64 = 32;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1267,6 +1272,16 @@ impl Storage {
             Self::upgrade_rss_search(&tx)?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (31, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 32 {
+            // 订阅账号: Google Reader API accounts and their feeds.
+            let tx = self.conn.transaction()?;
+            Self::create_rss_accounts(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (32, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7426,7 +7441,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 31);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 32);
     }
 
     #[test]
@@ -10655,13 +10670,13 @@ mod tests {
                     .conn
                     .execute_batch(
                         "DROP TRIGGER rss_articles_unindex; DROP TABLE rss_search;
-                         DELETE FROM schema_migrations WHERE version = 31;",
+                         DELETE FROM schema_migrations WHERE version >= 31;",
                     )
                     .unwrap();
             } else {
                 storage
                     .conn
-                    .execute("DELETE FROM schema_migrations WHERE version = 31", [])
+                    .execute("DELETE FROM schema_migrations WHERE version >= 31", [])
                     .unwrap();
             }
             drop(storage);

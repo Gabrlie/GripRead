@@ -112,4 +112,14 @@ export const errors = {
   "error.rssFilterEmpty": "The filter cannot be empty",
   "error.rssFilterTarget": "Choose the group or feed the filter applies to",
   "error.rssSearchFailed": "Search failed: HTTP {status}",
+  "error.rssNoAccount": "There is no such feed account",
+  "error.rssAccountServerEmpty": "Enter the server address",
+  "error.rssAccountServerInvalid": "The server address is not valid",
+  "error.rssAccountUserEmpty": "Enter the user name",
+  "error.rssAccountPasswordEmpty": "Enter the password",
+  "error.rssAccountLogin":
+    "The user name or password is wrong (FreshRSS and Miniflux take the API password)",
+  "error.rssAccountNotReader": "This address is not a Google Reader API service",
+  "error.rssAccountHttp": "The feed account answered HTTP {status}",
+  "error.rssAccountSubscribeFailed": "The feed account could not subscribe: {error}",
 } satisfies Messages<typeof zh>;

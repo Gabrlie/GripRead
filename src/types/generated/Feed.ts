@@ -12,4 +12,12 @@ group: string | null, sort: number, addedAt: number, lastFetch: number | null, l
 /**
  * A stopped feed is never refreshed; its articles stay.
  */
-enabled: boolean, options: FeedOptions, };
+enabled: boolean, options: FeedOptions, 
+/**
+ * The 订阅账号 it belongs to; none for a feed of this device's own.
+ */
+account: string | null, 
+/**
+ * An account feed's own address (its `url` names it in the account).
+ */
+address: string | null, };

@@ -238,6 +238,10 @@ const IPC_TYPES: &[&str] = &[
     "FeedFilterIdRequest",
     "TestFeedFilterRequest",
     "FeedFilterTest",
+    "FeedAccountKind",
+    "FeedAccount",
+    "SaveFeedAccountRequest",
+    "FeedAccountIdRequest",
     "FeedSearchSource",
     "FeedSearchResult",
     "SearchFeedsRequest",
@@ -515,6 +519,10 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<FeedFilterIdRequest>(&config)?;
     export_all::<TestFeedFilterRequest>(&config)?;
     export_all::<FeedFilterTest>(&config)?;
+    export_all::<FeedAccountKind>(&config)?;
+    export_all::<FeedAccount>(&config)?;
+    export_all::<SaveFeedAccountRequest>(&config)?;
+    export_all::<FeedAccountIdRequest>(&config)?;
     export_all::<FeedSearchSource>(&config)?;
     export_all::<FeedSearchResult>(&config)?;
     export_all::<SearchFeedsRequest>(&config)?;

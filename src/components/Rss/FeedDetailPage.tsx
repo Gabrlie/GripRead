@@ -8,6 +8,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
+import { feedGroupNames } from "../../application/rss";
 import { Choice, GroupField, IntervalChoice, Toggle } from "./controls";
 import { appliesTo, FilterList } from "./FeedFiltersPage";
 import { articleTime } from "./format";
@@ -35,7 +36,9 @@ function Field({
  * 订阅详情: a feed's name, group, and address; whether and how often it is
  * refreshed; reading its articles; how many are kept; the 过滤规则 that
  * apply to it; and unsubscribing.
- * Changes are saved together; each setting may follow 订阅设置.
+ * Changes are saved together; each setting may follow 订阅设置. A feed of a
+ * 订阅账号 is renamed, moved, and unsubscribed on the account, which also
+ * keeps its address and refreshes it.
  */
 function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void; layer: string }) {
   const t = useT();
@@ -48,7 +51,10 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
-  const groups = state.groups.map((item) => item.name);
+  const groups = feedGroupNames(state, feed.account);
+  const account = feed.account
+    ? state.accounts.find((item) => item.id === feed.account)
+    : undefined;
   useEffect(() => {
     void store.loadFilters().catch(() => undefined);
   }, [store]);
@@ -62,8 +68,8 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
         url: feed.url,
         title: title.trim(),
         group: group.trim() || null,
-        newUrl: url.trim() === feed.url ? null : url.trim(),
-        enabled,
+        newUrl: account || url.trim() === feed.url ? null : url.trim(),
+        enabled: account ? null : enabled,
         options,
       })
       .then(
@@ -99,31 +105,43 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
         <Field label={t("rss.group")}>
           <GroupField id="rss-feed-groups" value={group} onChange={setGroup} groups={groups} />
         </Field>
-        <Field label={t("rss.address")} note={t("rss.feed.url.note")}>
-          <Input
-            inputMode="url"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            className="break-all"
-          />
-        </Field>
-      </PageSection>
-      <PageSection title={t("rss.feed.update")}>
-        <Toggle
-          label={t("rss.feed.enabled")}
-          note={t("rss.feed.enabled.note")}
-          checked={enabled}
-          onChange={setEnabled}
-        />
-        {enabled && (
-          <IntervalChoice
-            follow
-            label={t("rss.feed.interval")}
-            value={options.refreshMinutes}
-            onPick={(refreshMinutes) => change({ refreshMinutes })}
-          />
+        {account ? (
+          <div className="px-4 py-3 space-y-1">
+            <span className="block text-sm">{t("rss.address")}</span>
+            <span className="block text-xs text-secondary break-all">{feed.address}</span>
+            <span className="block text-[11px] text-secondary">
+              {t("rss.feed.onAccount", { name: account.name })}
+            </span>
+          </div>
+        ) : (
+          <Field label={t("rss.address")} note={t("rss.feed.url.note")}>
+            <Input
+              inputMode="url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              className="break-all"
+            />
+          </Field>
         )}
       </PageSection>
+      {!account && (
+        <PageSection title={t("rss.feed.update")}>
+          <Toggle
+            label={t("rss.feed.enabled")}
+            note={t("rss.feed.enabled.note")}
+            checked={enabled}
+            onChange={setEnabled}
+          />
+          {enabled && (
+            <IntervalChoice
+              follow
+              label={t("rss.feed.interval")}
+              value={options.refreshMinutes}
+              onPick={(refreshMinutes) => change({ refreshMinutes })}
+            />
+          )}
+        </PageSection>
+      )}
       <PageSection title={t("rss.settings.reading")}>
         <Choice<boolean | null>
           label={t("rss.feed.fullText")}
@@ -209,7 +227,9 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
                 {t("rss.unsubscribe")}
               </DialogTitle>
               <DialogDescription>
-                {t("rss.unsubscribe.confirm", { title: feed.title })}
+                {account
+                  ? t("rss.unsubscribe.confirmAccount", { title: feed.title, name: account.name })
+                  : t("rss.unsubscribe.confirm", { title: feed.title })}
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-end gap-2">

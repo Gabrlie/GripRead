@@ -13,6 +13,7 @@ export const log = {
   "log.serverTooOldToRefreshFeeds": "服务器版本较旧，不能代为刷新订阅，在本机刷新",
   "log.serverFeedRefreshFailed": "服务器刷新订阅失败，改为本机刷新：{error}",
   "log.rssFeedFailed": "{title} 刷新失败：{error}",
+  "log.rssAccountFailed": "订阅账号 {name} 同步失败：{error}",
   "log.rssNewFeedUnreadable": "新订阅暂时无法读取：{error}",
   "log.feedsRefreshed": "订阅刷新：{feeds} 个订阅，新文章 {articles} 篇",
   "log.feedsRefreshedFailed": "订阅刷新：{feeds} 个订阅，新文章 {articles} 篇，{failed} 个失败",

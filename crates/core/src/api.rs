@@ -120,6 +120,9 @@ pub fn mutates(name: &str) -> bool {
         // Opening a private group changes nothing.
         "unlock_group",
         "rss_image",
+        // 订阅账号 stay on the device.
+        "save_feed_account",
+        "remove_feed_account",
     ];
     !READS.iter().any(|read| name.starts_with(read))
 }
@@ -137,6 +140,9 @@ pub const COMMANDS: &[&str] = &[
     "save_feed_filter",
     "remove_feed_filter",
     "test_feed_filter",
+    "list_feed_accounts",
+    "save_feed_account",
+    "remove_feed_account",
     "search_feeds",
     "preview_feed",
     "mark_read_range",
@@ -774,6 +780,13 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "test_feed_filter" => {
             reply(crate::rss_commands::test_feed_filter(state, request(args)?).await)
+        }
+        "list_feed_accounts" => reply(crate::rss_commands::list_feed_accounts(state).await),
+        "save_feed_account" => {
+            reply(crate::rss_commands::save_feed_account(state, request(args)?).await)
+        }
+        "remove_feed_account" => {
+            reply(crate::rss_commands::remove_feed_account(state, request(args)?).await)
         }
         "search_feeds" => reply(crate::rss_commands::search_feeds(state, request(args)?).await),
         "preview_feed" => reply(crate::rss_commands::preview_feed(state, request(args)?).await),

@@ -14,12 +14,15 @@ import type {
   ArticleQuery,
   ArticleStateRequest,
   Feed,
+  FeedAccount,
+  FeedAccountIdRequest,
   FeedFilter,
   FeedFilterIdRequest,
   FeedFilterTest,
   FeedPreview,
   FeedSearchResult,
   PreviewFeedRequest,
+  SaveFeedAccountRequest,
   SaveFeedFilterRequest,
   SearchFeedsRequest,
   TestFeedFilterRequest,
@@ -980,9 +983,9 @@ export const tauriServices: AppServices = {
       invokeCommand<FeedPreview>("preview_feed", {
         request: { url } satisfies PreviewFeedRequest,
       }),
-    addFeed: (url, title, group) =>
+    addFeed: (url, title, group, account = null) =>
       invokeCommand<Feed>("add_feed", {
-        request: { url, title, group } satisfies AddFeedRequest,
+        request: { url, title, group, account } satisfies AddFeedRequest,
       }),
     updateFeed: (request) =>
       invokeCommand<Feed>("update_feed", { request: request satisfies UpdateFeedRequest }),
@@ -1001,9 +1004,9 @@ export const tauriServices: AppServices = {
       }),
     removeFeeds: (urls) =>
       invokeCommand<void>("remove_feeds", { request: { urls } satisfies FeedUrlsRequest }),
-    refresh: (operationId, urls, due = false) =>
+    refresh: (operationId, urls, due = false, accounts = []) =>
       invokeCommand<void>("refresh_feeds", {
-        request: { operationId, urls, due } satisfies RefreshFeedsRequest,
+        request: { operationId, urls, due, accounts } satisfies RefreshFeedsRequest,
       }),
     onRefresh: (listener) => listen<RssRefreshEvent>("rss-refresh", listener),
     listArticles: (query) =>
@@ -1030,6 +1033,7 @@ export const tauriServices: AppServices = {
         request: {
           feed: scope.feed ?? null,
           group: scope.group ?? null,
+          account: scope.account ?? null,
         } satisfies MarkAllReadRequest,
       }),
     image: (url, referer) =>
@@ -1080,6 +1084,15 @@ export const tauriServices: AppServices = {
     testFilter: (filter) =>
       invokeCommand<FeedFilterTest>("test_feed_filter", {
         request: { filter } satisfies TestFeedFilterRequest,
+      }),
+    listAccounts: () => invokeCommand<FeedAccount[]>("list_feed_accounts"),
+    saveAccount: (request) =>
+      invokeCommand<FeedAccount>("save_feed_account", {
+        request: request satisfies SaveFeedAccountRequest,
+      }),
+    removeAccount: (id) =>
+      invokeCommand<void>("remove_feed_account", {
+        request: { id } satisfies FeedAccountIdRequest,
       }),
   },
 };

@@ -103,6 +103,7 @@ describe("订阅", () => {
         "https://new.example/user/7/feed",
         "new.example",
         "新分组",
+        null,
       ),
     );
     // Back on the results, it shows as subscribed.
@@ -314,6 +315,115 @@ describe("订阅", () => {
     await userEvent.click(within(groups).getByRole("radio", { name: "订阅移到未分组" }));
     await userEvent.click(within(groups).getByRole("button", { name: "删除分组「新闻」？" }));
     await waitFor(() => expect(feeds.removeGroup).toHaveBeenCalledWith("新闻", false));
+    stop();
+  });
+
+  it("adds a feed account and changes its feeds on the account", async () => {
+    const { feeds, runtime } = page(true, "manage");
+    const stop = runtime.feeds.start();
+    const manage = await screen.findByRole("dialog", { name: "管理订阅" });
+    await userEvent.click(within(manage).getByRole("button", { name: /订阅账号/ }));
+    const accounts = await screen.findByRole("dialog", { name: "订阅账号" });
+    expect(within(accounts).getByText("还没有订阅账号")).toBeTruthy();
+    await userEvent.click(within(accounts).getByRole("button", { name: "添加账号" }));
+    const adding = await screen.findByRole("dialog", { name: "添加账号" });
+    const save = within(adding).getByRole("button", { name: "保存" });
+    expect(save).toHaveProperty("disabled", true);
+    await userEvent.type(within(adding).getByLabelText("服务器地址"), "https://rss.example");
+    await userEvent.type(within(adding).getByLabelText("用户名"), "me");
+    await userEvent.type(within(adding).getByLabelText(/^密码/), "wrong");
+    await userEvent.click(save);
+    expect((await within(adding).findByRole("alert")).textContent).toContain("API 密码");
+    await userEvent.clear(within(adding).getByLabelText(/^密码/));
+    await userEvent.type(within(adding).getByLabelText(/^密码/), "secret");
+    await userEvent.click(
+      within(within(adding).getByRole("radiogroup", { name: /过滤规则命中后/ })).getByRole(
+        "radio",
+        { name: "标为已读" },
+      ),
+    );
+    await userEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "添加账号" })).toBeNull());
+    expect(feeds.saveAccount).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "freshRss", username: "me", filterRead: true }),
+    );
+    expect(feeds.refresh).toHaveBeenLastCalledWith(expect.any(String), [], false, ["me-1"]);
+    expect(await within(accounts).findByText(/FreshRSS · me/)).toBeTruthy();
+    await userEvent.click(within(accounts).getByRole("button", { name: "返回" }));
+
+    // Its feeds are listed with the account, and changed there.
+    await userEvent.click(
+      await within(manage).findByRole("button", { name: "打开 远方新闻 的详情" }),
+    );
+    const detail = await screen.findByRole("dialog", { name: "订阅详情" });
+    expect(within(detail).getByText("https://remote1.example.org/feed")).toBeTruthy();
+    expect(within(detail).queryByRole("switch", { name: /启用更新/ })).toBeNull();
+    // Its groups are the account's.
+    expect(within(detail).queryByRole("button", { name: "新闻" })).toBeNull();
+    await userEvent.click(within(detail).getByRole("button", { name: "无分组" }));
+    await userEvent.click(within(detail).getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(feeds.updateFeed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "account:me-1:feed/1",
+          group: null,
+          newUrl: null,
+          enabled: null,
+        }),
+      ),
+    );
+    stop();
+  });
+
+  it("lists each account's feeds in a section of its own", async () => {
+    const { feeds, runtime } = page();
+    await feeds.saveAccount({
+      id: null,
+      kind: "miniflux",
+      name: "远方",
+      server: "https://flux.example",
+      username: "me",
+      password: "secret",
+      filterRead: false,
+    });
+    const stop = runtime.feeds.start();
+    const list = await screen.findByRole("navigation", { name: "订阅列表" });
+    const account = await within(list).findByRole("region", { name: "远方" });
+    expect(within(account).getByRole("button", { name: /^资讯/ })).toBeTruthy();
+    expect(within(account).getByRole("button", { name: /远方博客/ })).toBeTruthy();
+    // The device's own group of the same name is not the account's.
+    expect(within(account).queryByRole("button", { name: /每日新闻/ })).toBeNull();
+    await userEvent.click(within(account).getByRole("button", { name: /^远方\s*\d+$/ }));
+    const articles = await screen.findByRole("dialog", { name: "远方" });
+    expect(await within(articles).findByText("远方新闻 · 第 1 篇")).toBeTruthy();
+    expect(within(articles).queryByText(/每日新闻/)).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "远方" })).toBeNull());
+
+    // A feed found can be subscribed on the account, under its groups.
+    await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
+    const search = await screen.findByRole("dialog", { name: "添加订阅" });
+    await userEvent.type(within(search).getByLabelText("关键字或网址"), "other.example/rss{Enter}");
+    await userEvent.click(
+      await within(search).findByRole("button", { name: /预览 other.example/ }),
+    );
+    const preview = await screen.findByRole("dialog", { name: "other.example" });
+    await userEvent.click(within(preview).getByRole("button", { name: "订阅" }));
+    const subscribe = await screen.findByRole("dialog", { name: "订阅" });
+    const target = within(subscribe).getByRole("radiogroup", { name: "订阅到" });
+    expect(within(subscribe).getByRole("button", { name: "新闻" })).toBeTruthy();
+    await userEvent.click(within(target).getByRole("radio", { name: "远方" }));
+    expect(within(subscribe).queryByRole("button", { name: "新闻" })).toBeNull();
+    await userEvent.click(within(subscribe).getByRole("button", { name: "资讯" }));
+    await userEvent.click(within(subscribe).getByRole("button", { name: "订阅" }));
+    await waitFor(() =>
+      expect(feeds.addFeed).toHaveBeenCalledWith(
+        "https://other.example/rss",
+        "other.example",
+        "资讯",
+        "me-1",
+      ),
+    );
     stop();
   });
 

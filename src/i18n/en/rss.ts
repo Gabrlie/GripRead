@@ -226,4 +226,52 @@ export const rss = {
   "rss.settings.rsshub.note":
     "Feed search turns pages into feeds on this instance; a key is written into the addresses it makes",
   "rss.feed.keepUnread": "Keep unread articles",
+  "rss.accounts": "Feed accounts",
+  "rss.accounts.short": "FreshRSS, Miniflux, and others",
+  "rss.accounts.empty": "No feed accounts yet",
+  "rss.accounts.note":
+    "Services with the Google Reader API, such as FreshRSS and Miniflux. An account's feeds are listed on their own in Feeds; read and starred marks are written back to the account, kept while offline and written once connected. The password stays on this device and is neither synced nor backed up.",
+  "rss.account.add": "Add account",
+  "rss.account.added": "Added “{name}”, syncing",
+  "rss.account.service": "Service",
+  "rss.account.kind": "Type",
+  "rss.account.kind.freshRss": "FreshRSS",
+  "rss.account.kind.miniflux": "Miniflux",
+  "rss.account.kind.googleReader": "Other",
+  "rss.account.kind.freshRss.note":
+    "Enter FreshRSS's address. The password is the API password, set under Settings › Account › API management, with API access allowed under Settings › Authentication",
+  "rss.account.kind.miniflux.note":
+    "Enter Miniflux's address. The user name and password are those set under Settings › Integrations › Google Reader",
+  "rss.account.kind.googleReader.note":
+    "Enter the service's Google Reader API address (where /accounts/ClientLogin is)",
+  "rss.account.server": "Server address",
+  "rss.account.fixed":
+    "It cannot change once added; to use another address or user name, remove the account and add it again",
+  "rss.account.username": "User name",
+  "rss.account.password": "Password",
+  "rss.account.password.note": "Kept only on this device",
+  "rss.account.password.keep": "Leave empty to keep it",
+  "rss.account.name.placeholder": "The user name by default",
+  "rss.account.signingIn": "Signing in…",
+  "rss.account.filterRead": "Articles filters keep out",
+  "rss.account.filterRead.note":
+    "They never show here; marked read, they are marked read on the account too",
+  "rss.account.filterRead.leave": "Leave them",
+  "rss.account.filterRead.read": "Mark read",
+  "rss.account.feeds": "{count} feeds",
+  "rss.account.syncedAt": "Synced {time}",
+  "rss.account.neverSynced": "Not synced yet",
+  "rss.account.pending": "{count} changes to write back",
+  "rss.account.syncNow": "Sync now",
+  "rss.account.syncing": "Syncing…",
+  "rss.account.failed": "Sync failed",
+  "rss.account.remove": "Remove account",
+  "rss.account.remove.confirm":
+    "Remove “{name}” with its feeds and articles from this device? The account keeps everything; changes not written back yet are lost.",
+  "rss.account.removed": "Account removed",
+  "rss.account.target": "Subscribe on",
+  "rss.account.local": "This device",
+  "rss.feed.onAccount":
+    "This feed is on the account “{name}”, which refreshes it; a new name or group is written to the account",
+  "rss.unsubscribe.confirmAccount": "Unsubscribe from “{title}” on the account “{name}”?",
 } satisfies Messages<typeof zh>;

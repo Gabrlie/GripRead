@@ -6,4 +6,9 @@ export type ArticleQuery = {
 /**
  * One feed, or every feed of a group, or (neither) all feeds.
  */
-feed: string | null, group: string | null, filter: ArticleFilter, search: string | null, after: ArticleCursor | null, limit: number | null, };
+feed: string | null, group: string | null, 
+/**
+ * A 订阅账号: its group, or (without one) all its feeds; a group
+ * without an account is one of the device's own.
+ */
+account: string | null, filter: ArticleFilter, search: string | null, after: ArticleCursor | null, limit: number | null, };

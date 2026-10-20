@@ -324,7 +324,7 @@ fn articles_page_filter_and_survive_as_kept() {
         guard.list_articles(&search("100%")).unwrap().articles.len(),
         0
     );
-    assert_eq!(guard.mark_all_read(None, Some("组")).unwrap(), 501);
+    assert_eq!(guard.mark_all_read(None, Some("组"), None).unwrap(), 501);
     let unread = ArticleQuery {
         filter: ArticleFilter::Unread,
         ..Default::default()
@@ -433,7 +433,7 @@ fn articles_above_or_below_one_are_marked_read_but_those_kept_unread() {
         .collect();
     assert_eq!(unread, ["0004", "0002"]);
     // 全部标为已读 leaves it too; the reader's own mark takes it off.
-    assert_eq!(guard.mark_all_read(None, None).unwrap(), 1);
+    assert_eq!(guard.mark_all_read(None, None, None).unwrap(), 1);
     assert!(guard.rss_article("0004").unwrap().summary.keep_unread);
     guard
         .set_article_state(&["0004".into()], Some(true), None, None)
@@ -1176,6 +1176,9 @@ fn many_articles_stay_quick() {
         assert_eq!(feeds.iter().map(|feed| feed.unread).sum::<u32>(), 50_000);
     });
     timed("mark all read", &mut || {
-        assert_eq!(guard.mark_all_read(None, Some("组 1")).unwrap(), 10_000);
+        assert_eq!(
+            guard.mark_all_read(None, Some("组 1"), None).unwrap(),
+            10_000
+        );
     });
 }

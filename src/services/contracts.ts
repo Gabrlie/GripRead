@@ -4,6 +4,7 @@ import type {
   ArticlePage,
   ArticleQuery,
   Feed,
+  FeedAccount,
   FeedFilter,
   FeedFilterTest,
   FeedPreview,
@@ -14,6 +15,7 @@ import type {
   OpmlImportReport,
   RssRefreshEvent,
   RssSettings,
+  SaveFeedAccountRequest,
 } from "../types/generated";
 import type {
   BookImage,
@@ -447,7 +449,13 @@ export interface FeedService {
   search(query: string): Promise<FeedSearchResult[]>;
   /** A feed's newest articles, without subscribing. */
   preview(url: string): Promise<FeedPreview>;
-  addFeed(url: string, title: string | null, group: string | null): Promise<Feed>;
+  /** Subscribes here, or on a 订阅账号 (`account`). */
+  addFeed(
+    url: string,
+    title: string | null,
+    group: string | null,
+    account?: string | null,
+  ): Promise<Feed>;
   /** Changes a feed (a new address must be a feed); answers it as it now is. */
   updateFeed(request: UpdateFeedRequest): Promise<Feed>;
   removeFeeds(urls: string[]): Promise<void>;
@@ -459,17 +467,22 @@ export interface FeedService {
   /** Its feeds become ungrouped, or are unsubscribed. */
   removeGroup(name: string, unsubscribe: boolean): Promise<void>;
   /**
-   * Refreshes the enabled feeds (all when empty; with `due`, those whose
-   * interval has passed); progress comes through `onRefresh`.
+   * Refreshes the enabled feeds and syncs the 订阅账号 (all when neither is
+   * named; with `due`, those whose interval has passed); progress comes
+   * through `onRefresh`.
    */
-  refresh(operationId: string, urls: string[], due?: boolean): Promise<void>;
+  refresh(operationId: string, urls: string[], due?: boolean, accounts?: string[]): Promise<void>;
   onRefresh(listener: (event: RssRefreshEvent) => void): Promise<Unsubscribe>;
   listArticles(query: ArticleQuery): Promise<ArticlePage>;
   getArticle(id: string): Promise<Article>;
   /** 全文: the page's main text, kept with the article. */
   fetchFullText(id: string): Promise<string>;
   setArticleState(ids: string[], state: ArticleMarks): Promise<void>;
-  markAllRead(scope: { feed?: string | null; group?: string | null }): Promise<number>;
+  markAllRead(scope: {
+    feed?: string | null;
+    group?: string | null;
+    account?: string | null;
+  }): Promise<number>;
   /** 以上/以下标为已读: the list's articles newer or older than `from`, and it. */
   markReadRange(query: ArticleQuery, from: ArticleCursor, newer: boolean): Promise<number>;
   image(url: string, referer: string | null): Promise<ArrayBuffer>;
@@ -489,6 +502,12 @@ export interface FeedService {
   removeFilter(id: string): Promise<void>;
   /** What a rule would keep out of the newest stored articles. */
   testFilter(filter: FeedFilter): Promise<FeedFilterTest>;
+  /** 订阅账号, in order. */
+  listAccounts(): Promise<FeedAccount[]>;
+  /** Signs in, then adds or changes the account. */
+  saveAccount(request: SaveFeedAccountRequest): Promise<FeedAccount>;
+  /** Removes an account and what it brought from this device. */
+  removeAccount(id: string): Promise<void>;
 }
 export interface AppServices {
   library: LibraryService;

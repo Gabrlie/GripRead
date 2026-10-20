@@ -22,6 +22,7 @@ export const log = {
   "log.serverFeedRefreshFailed":
     "The server could not refresh feeds; refreshing on this device: {error}",
   "log.rssFeedFailed": "Refreshing {title} failed: {error}",
+  "log.rssAccountFailed": "Syncing the feed account {name} failed: {error}",
   "log.rssNewFeedUnreadable": "The new feed cannot be read yet: {error}",
   "log.feedsRefreshed": "Feeds refreshed: {feeds} feeds, {articles} new articles",
   "log.feedsRefreshedFailed":

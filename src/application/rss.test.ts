@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { feedServiceMocks } from "../test/rss";
-import { ENTER_REFRESH_GAP_MS, FeedStore, feedGroups, refreshScheduled } from "./rss";
+import {
+  ENTER_REFRESH_GAP_MS,
+  FeedStore,
+  feedGroupNames,
+  feedGroups,
+  refreshScheduled,
+  selectionTitle,
+} from "./rss";
 
 describe("订阅 store", () => {
   it("groups feeds in order with unread totals, ungrouped last", async () => {
@@ -80,7 +87,7 @@ describe("订阅 store", () => {
     const last = store.getSnapshot().lastRefresh;
     now += 60_000;
     await store.refresh([], true);
-    expect(service.refresh).toHaveBeenLastCalledWith(expect.any(String), [], true);
+    expect(service.refresh).toHaveBeenLastCalledWith(expect.any(String), [], true, []);
     expect(store.getSnapshot()).toMatchObject({ refreshing: null, lastRefresh: last });
   });
 
@@ -116,9 +123,54 @@ describe("订阅 store", () => {
     const feed = store.getSnapshot().feeds[0];
     store.select({ kind: "feed", url: feed.url });
     await store.markAllRead();
-    expect(service.markAllRead).toHaveBeenCalledWith({ feed: feed.url, group: null });
+    expect(service.markAllRead).toHaveBeenCalledWith({
+      feed: feed.url,
+      group: null,
+      account: null,
+    });
     expect(store.getSnapshot().feeds[0].unread).toBe(0);
     await store.removeFeeds([feed.url]);
     expect(store.getSnapshot().selection).toEqual({ kind: "all" });
+  });
+
+  it("keeps an account's feeds and groups to the account, and syncs it when added", async () => {
+    const service = feedServiceMocks();
+    const store = new FeedStore(service);
+    await store.loadFeeds();
+    const account = await store.saveAccount({
+      id: null,
+      kind: "freshRss",
+      name: "",
+      server: "https://rss.example",
+      username: "me",
+      password: "secret",
+      filterRead: false,
+    });
+    expect(service.refresh).toHaveBeenLastCalledWith(expect.any(String), [], false, [account.id]);
+    const state = store.getSnapshot();
+    expect(state.accounts.map((item) => item.name)).toEqual(["me"]);
+    // The device's groups stay its own; the account's come from its feeds.
+    expect(feedGroupNames(state, null)).toEqual(["新闻", "技术"]);
+    expect(feedGroupNames(state, account.id)).toEqual(["资讯"]);
+    store.select({ kind: "group", group: "资讯", account: account.id });
+    await vi.waitFor(() => expect(store.getSnapshot().loading).toBe(false));
+    const listed = store.getSnapshot().articles;
+    expect(listed.length).toBe(10);
+    expect(listed.every((article) => article.feedUrl.startsWith(`account:${account.id}:`))).toBe(
+      true,
+    );
+    expect(
+      selectionTitle({ kind: "account", account: account.id }, state.feeds, state.accounts),
+    ).toBe("me");
+    store.select({ kind: "account", account: account.id });
+    await store.markAllRead();
+    expect(service.markAllRead).toHaveBeenLastCalledWith({
+      feed: null,
+      group: null,
+      account: account.id,
+    });
+    await store.removeAccount(account.id);
+    expect(store.getSnapshot()).toMatchObject({ selection: { kind: "all" }, accounts: [] });
+    expect(store.getSnapshot().feeds.every((feed) => feed.account === null)).toBe(true);
   });
 });

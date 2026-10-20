@@ -3,4 +3,8 @@
 /**
  * 全部标为已读 for one feed, one group, or (neither) everything.
  */
-export type MarkAllReadRequest = { feed: string | null, group: string | null, };
+export type MarkAllReadRequest = { feed: string | null, group: string | null, 
+/**
+ * As in [`ArticleQuery`].
+ */
+account: string | null, };

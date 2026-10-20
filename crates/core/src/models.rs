@@ -3034,6 +3034,67 @@ pub struct Feed {
     /// A stopped feed is never refreshed; its articles stay.
     pub enabled: bool,
     pub options: FeedOptions,
+    /// The 订阅账号 it belongs to; none for a feed of this device's own.
+    pub account: Option<String>,
+    /// An account feed's own address (its `url` names it in the account).
+    pub address: Option<String>,
+}
+
+/// The Google Reader API service an account is on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedAccountKind {
+    #[default]
+    FreshRss,
+    Miniflux,
+    /// Any other service with the Google Reader API.
+    GoogleReader,
+}
+
+/// 订阅账号: feeds kept on a Google Reader API service, read here. Its
+/// password stays on this device.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedAccount {
+    /// Made from the service's address and the user name, so every device
+    /// names the account, its feeds, and its articles alike.
+    pub id: String,
+    pub kind: FeedAccountKind,
+    pub name: String,
+    /// The service's API address.
+    pub server: String,
+    pub username: String,
+    /// Articles a 过滤规则 keeps out are marked read on the account too.
+    pub filter_read: bool,
+    pub sort: i64,
+    pub last_sync: Option<i64>,
+    pub last_error: Option<String>,
+    /// Read and starred marks not yet written to the account.
+    pub pending: u32,
+}
+
+/// Adds an account (no `id`) or changes one; the service is signed in to
+/// first. A changed account keeps its address and user name.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFeedAccountRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub kind: FeedAccountKind,
+    pub name: String,
+    pub server: String,
+    pub username: String,
+    /// Left out, an account keeps the one it has.
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub filter_read: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedAccountIdRequest {
+    pub id: String,
 }
 
 /// A feed's own settings; each one left empty follows [`RssSettings`].
@@ -3225,6 +3286,9 @@ pub struct AddFeedRequest {
     pub title: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    /// Subscribes on this 订阅账号 instead of on the device.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -3282,6 +3346,10 @@ pub struct RefreshFeedsRequest {
     /// Only the feeds whose refresh interval has passed.
     #[serde(default)]
     pub due: bool,
+    /// 订阅账号 to sync; with `urls`, only those named are refreshed, and
+    /// with neither, everything.
+    #[serde(default)]
+    pub accounts: Vec<String>,
 }
 
 /// `rss-refresh`: one feed refreshed, or the whole refresh done.
@@ -3322,6 +3390,10 @@ pub struct ArticleQuery {
     pub feed: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    /// A 订阅账号: its group, or (without one) all its feeds; a group
+    /// without an account is one of the device's own.
+    #[serde(default)]
+    pub account: Option<String>,
     #[serde(default)]
     pub filter: ArticleFilter,
     #[serde(default)]
@@ -3397,6 +3469,9 @@ pub struct MarkAllReadRequest {
     pub feed: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    /// As in [`ArticleQuery`].
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 /// 以上/以下标为已读: the list's articles newer (above) or older (below)

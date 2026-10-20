@@ -6,14 +6,16 @@ import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { FeedSearchPage } from "./FeedSearchPage";
+import { FeedAccountsPage } from "./FeedAccountsPage";
 import { FeedDetailPage } from "./FeedDetailPage";
 import { FeedGroupsDialog } from "./FeedGroupsDialog";
 import { articleTime } from "./format";
 import { useT } from "../../i18n";
 
 /**
- * 管理订阅: adding feeds, 分组管理, each feed with its last refresh or error
- * (refresh one, or open its 订阅详情), and OPML import and export.
+ * 管理订阅: adding feeds, 分组管理, 订阅账号, each feed with its last
+ * refresh or error (refresh one, or open its 订阅详情), and OPML import and
+ * export.
  */
 export function FeedManagePage({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -21,6 +23,9 @@ export function FeedManagePage({ onClose }: { onClose: () => void }) {
   const [detail, setDetail] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [grouping, setGrouping] = useState(false);
+  const [accounts, setAccounts] = useState(false);
+  const accountName = (id: string | null) =>
+    state.accounts.find((account) => account.id === id)?.name;
   return (
     <FullPage
       label={t("rss.manage")}
@@ -44,6 +49,16 @@ export function FeedManagePage({ onClose }: { onClose: () => void }) {
           detail={t("rss.groups.note")}
           onClick={() => setGrouping(true)}
         />
+        <PageLink
+          icon="cloud"
+          label={t("rss.accounts")}
+          detail={
+            state.accounts.length
+              ? state.accounts.map((account) => account.name).join("、")
+              : t("rss.accounts.short")
+          }
+          onClick={() => setAccounts(true)}
+        />
       </PageSection>
       <PageSection title={t("rss.feeds", { count: state.feeds.length })}>
         {state.feeds.length === 0 && (
@@ -63,6 +78,7 @@ export function FeedManagePage({ onClose }: { onClose: () => void }) {
               <span
                 className={`block text-[11px] truncate ${feed.lastError ? "text-error" : "text-secondary"}`}
               >
+                {feed.account ? `${accountName(feed.account) ?? ""} · ` : ""}
                 {feed.group ? `${feed.group} · ` : ""}
                 {!feed.enabled
                   ? t("rss.feed.stopped")
@@ -129,6 +145,7 @@ export function FeedManagePage({ onClose }: { onClose: () => void }) {
       {detail && <FeedDetailPage url={detail} onClose={() => setDetail(null)} />}
       {adding && <FeedSearchPage onClose={() => setAdding(false)} />}
       {grouping && <FeedGroupsDialog onClose={() => setGrouping(false)} />}
+      {accounts && <FeedAccountsPage onClose={() => setAccounts(false)} />}
     </FullPage>
   );
 }

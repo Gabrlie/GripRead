@@ -4,4 +4,8 @@ export type AddFeedRequest = { url: string,
 /**
  * The reader's own title; the feed's when empty.
  */
-title: string | null, group: string | null, };
+title: string | null, group: string | null, 
+/**
+ * Subscribes on this 订阅账号 instead of on the device.
+ */
+account: string | null, };
