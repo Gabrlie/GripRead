@@ -105,4 +105,8 @@ export const errors = {
   "error.rssFeedExists": "已经订阅过这个地址",
   "error.rssGroupNameEmpty": "分组名称不能为空",
   "error.serverTooOldForFullText": "服务器版本较旧，不能代为读取全文",
+  "error.rssFilterInvalid": "正则表达式有误：{error}",
+  "error.rssFilterEmpty": "过滤规则不能为空",
+  "error.rssFilterTarget": "请选择规则适用的分组或订阅",
+  "error.rssSearchFailed": "搜索失败：HTTP {status}",
 } as const;

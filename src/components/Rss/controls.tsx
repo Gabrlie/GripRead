@@ -93,6 +93,61 @@ export function Choice<T extends string | number | boolean | null>({
   );
 }
 
+/**
+ * A feed's group: typed (with the known ones offered), or picked from the
+ * groups as chips; "" is no group.
+ */
+export function GroupField({
+  value,
+  onChange,
+  groups,
+  id,
+}: {
+  value: string;
+  onChange: (group: string) => void;
+  groups: string[];
+  /** Ties the input to its list of known groups. */
+  id: string;
+}) {
+  const t = useT();
+  const chosen = value.trim() || null;
+  return (
+    <>
+      <Input
+        aria-label={t("rss.group")}
+        placeholder={t("rss.feed.noGroup")}
+        list={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <datalist id={id}>
+        {groups.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+      {groups.length > 0 && (
+        <span className="flex flex-wrap gap-1.5 pt-1">
+          {[null, ...groups].map((name) => (
+            <button
+              key={name ?? ""}
+              type="button"
+              aria-pressed={chosen === name}
+              onClick={() => onChange(name ?? "")}
+              className={`h-7 px-2.5 rounded-full text-[11px] ${
+                chosen === name
+                  ? "bg-primary text-on-primary"
+                  : "bg-surface-container text-secondary"
+              }`}
+            >
+              {name ?? t("rss.feed.noGroup")}
+            </button>
+          ))}
+        </span>
+      )}
+    </>
+  );
+}
+
 /** Asks for a refresh interval in minutes. */
 function MinutesDialog({
   value,

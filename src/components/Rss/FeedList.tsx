@@ -5,9 +5,14 @@ import { Icon } from "../ui/Icon";
 import { useLongPress } from "../ui/use-long-press";
 import { useT } from "../../i18n";
 
-function Count({ value }: { value: number }) {
+/** Unread counts above this show as "999+". */
+const MAX_COUNT = 999;
+
+export function Count({ value }: { value: number }) {
   return value > 0 ? (
-    <span className="text-[11px] tabular-nums text-secondary shrink-0">{value}</span>
+    <span className="text-[11px] tabular-nums text-secondary shrink-0">
+      {value > MAX_COUNT ? `${MAX_COUNT}+` : value}
+    </span>
   ) : null;
 }
 

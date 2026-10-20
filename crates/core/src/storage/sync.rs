@@ -60,7 +60,9 @@ pub fn record_categories(key: &str) -> Vec<RestoreCategory> {
         "replace" => vec![RestoreCategory::ReplaceRules],
         "toc" => vec![RestoreCategory::TocRules],
         "source" => vec![RestoreCategory::Sources],
-        "feed" | "rss-read" | "rss-star" | "rss-group" => vec![RestoreCategory::Rss],
+        "feed" | "rss-read" | "rss-star" | "rss-group" | "rss-filter" => {
+            vec![RestoreCategory::Rss]
+        }
         "prefs" => match key {
             "prefs:theme" => vec![RestoreCategory::Theme],
             "prefs:shelf" => vec![RestoreCategory::ShelfLayout],
@@ -158,7 +160,7 @@ fn owning_book(key: &str) -> Option<&str> {
 fn apply_order(key: &str) -> u8 {
     match key.split(':').next().unwrap_or_default() {
         "group" => 0,
-        "toc" | "replace" | "source" | "prefs" | "feed" | "rss-group" => 1,
+        "toc" | "replace" | "source" | "prefs" | "feed" | "rss-group" | "rss-filter" => 1,
         "book" | "online" => 2,
         _ => 3,
     }
@@ -686,6 +688,7 @@ impl Storage {
             ("rss-read", value) => self.apply_read_record(rest, value, base)?,
             ("rss-star", value) => self.apply_star_record(rest, value)?,
             ("rss-group", value) => self.apply_feed_group_record(rest, value)?,
+            ("rss-filter", value) => self.apply_filter_record(rest, value)?,
             ("book", value) => self.apply_book_record(rest, value)?,
             ("online", value) => self.apply_online_record(rest, value)?,
             ("chapters", Some(value)) => {

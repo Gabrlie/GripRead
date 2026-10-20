@@ -13,9 +13,16 @@ import type {
   ArticlePage,
   ArticleQuery,
   ArticleStateRequest,
-  DiscoverFeedRequest,
   Feed,
-  FeedCandidate,
+  FeedFilter,
+  FeedFilterIdRequest,
+  FeedFilterTest,
+  FeedPreview,
+  FeedSearchResult,
+  PreviewFeedRequest,
+  SaveFeedFilterRequest,
+  SearchFeedsRequest,
+  TestFeedFilterRequest,
   FeedUrlsRequest,
   MarkAllReadRequest,
   OpmlImportReport,
@@ -965,9 +972,13 @@ export const tauriServices: AppServices = {
   },
   feeds: {
     listFeeds: () => invokeCommand<Feed[]>("list_feeds"),
-    discover: (url) =>
-      invokeCommand<FeedCandidate[]>("discover_feed", {
-        request: { url } satisfies DiscoverFeedRequest,
+    search: (query) =>
+      invokeCommand<FeedSearchResult[]>("search_feeds", {
+        request: { query } satisfies SearchFeedsRequest,
+      }),
+    preview: (url) =>
+      invokeCommand<FeedPreview>("preview_feed", {
+        request: { url } satisfies PreviewFeedRequest,
       }),
     addFeed: (url, title, group) =>
       invokeCommand<Feed>("add_feed", {
@@ -1056,6 +1067,19 @@ export const tauriServices: AppServices = {
     saveSettings: (settings) =>
       invokeCommand<RssSettings>("save_rss_settings", {
         request: { settings } satisfies SaveRssSettingsRequest,
+      }),
+    listFilters: () => invokeCommand<FeedFilter[]>("list_feed_filters"),
+    saveFilter: (filter, purge) =>
+      invokeCommand<FeedFilter>("save_feed_filter", {
+        request: { filter, purge } satisfies SaveFeedFilterRequest,
+      }),
+    removeFilter: (id) =>
+      invokeCommand<void>("remove_feed_filter", {
+        request: { id } satisfies FeedFilterIdRequest,
+      }),
+    testFilter: (filter) =>
+      invokeCommand<FeedFilterTest>("test_feed_filter", {
+        request: { filter } satisfies TestFeedFilterRequest,
       }),
   },
 };

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFeeds } from "../../application/runtime";
 import { useT } from "../../i18n";
 import type { Feed, FeedOptions } from "../../types/generated";
@@ -8,7 +8,8 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
-import { Choice, IntervalChoice, Toggle } from "./controls";
+import { Choice, GroupField, IntervalChoice, Toggle } from "./controls";
+import { appliesTo, FilterList } from "./FeedFiltersPage";
 import { articleTime } from "./format";
 import { KEEP_ARTICLES, KEEP_DAYS, keepArticleLabel, keepDayLabel } from "./RssSettingsPage";
 
@@ -32,7 +33,8 @@ function Field({
 
 /**
  * 订阅详情: a feed's name, group, and address; whether and how often it is
- * refreshed; reading its articles; how many are kept; and unsubscribing.
+ * refreshed; reading its articles; how many are kept; the 过滤规则 that
+ * apply to it; and unsubscribing.
  * Changes are saved together; each setting may follow 订阅设置.
  */
 function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void; layer: string }) {
@@ -47,6 +49,9 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const groups = state.groups.map((item) => item.name);
+  useEffect(() => {
+    void store.loadFilters().catch(() => undefined);
+  }, [store]);
   const change = (patch: Partial<FeedOptions>) =>
     setOptions((current) => ({ ...current, ...patch }));
   const save = () => {
@@ -92,36 +97,7 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
           <Input value={title} onChange={(event) => setTitle(event.target.value)} />
         </Field>
         <Field label={t("rss.group")}>
-          <Input
-            placeholder={t("rss.feed.noGroup")}
-            list="rss-feed-groups"
-            value={group}
-            onChange={(event) => setGroup(event.target.value)}
-          />
-          <datalist id="rss-feed-groups">
-            {groups.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-          {groups.length > 0 && (
-            <span className="flex flex-wrap gap-1.5 pt-1">
-              {[null, ...groups].map((name) => (
-                <button
-                  key={name ?? ""}
-                  type="button"
-                  aria-pressed={(group.trim() || null) === name}
-                  onClick={() => setGroup(name ?? "")}
-                  className={`h-7 px-2.5 rounded-full text-[11px] ${
-                    (group.trim() || null) === name
-                      ? "bg-primary text-on-primary"
-                      : "bg-surface-container text-secondary"
-                  }`}
-                >
-                  {name ?? t("rss.feed.noGroup")}
-                </button>
-              ))}
-            </span>
-          )}
+          <GroupField id="rss-feed-groups" value={group} onChange={setGroup} groups={groups} />
         </Field>
         <Field label={t("rss.address")} note={t("rss.feed.url.note")}>
           <Input
@@ -184,6 +160,22 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
           ]}
           value={options.keepDays}
           onPick={(keepDays) => change({ keepDays })}
+        />
+        <Choice<boolean | null>
+          label={t("rss.feed.keepUnread")}
+          options={[
+            [null, follow],
+            [true, t("rss.settings.on")],
+            [false, t("rss.settings.off")],
+          ]}
+          value={options.keepUnread}
+          onPick={(keepUnread) => change({ keepUnread })}
+        />
+      </PageSection>
+      <PageSection title={t("rss.filters.forFeed")}>
+        <FilterList
+          filters={state.filters.filter((filter) => appliesTo(filter, feed))}
+          preset={{ scope: "feed", target: feed.url }}
         />
       </PageSection>
       <PageSection title={t("rss.feed.status")}>

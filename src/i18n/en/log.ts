@@ -85,4 +85,5 @@ export const log = {
   "log.readerError": '"{title}": {error}',
   "log.layoutTiming": "Laying out {chars} characters took {ms} ms, {pages} pages",
   "log.rssFullTextViaServer": "This device could not read the page; the server reads it: {error}",
+  "log.rssRadarUnavailable": "Could not read the RSSHub rules: {error}",
 } satisfies Messages<typeof zh>;

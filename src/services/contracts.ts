@@ -4,7 +4,10 @@ import type {
   ArticlePage,
   ArticleQuery,
   Feed,
-  FeedCandidate,
+  FeedFilter,
+  FeedFilterTest,
+  FeedPreview,
+  FeedSearchResult,
   FeedGroup,
   ArticleCursor,
   UpdateFeedRequest,
@@ -437,8 +440,13 @@ export interface ArticleMarks {
 /** 订阅: RSS/Atom subscriptions, their articles, and article state. */
 export interface FeedService {
   listFeeds(): Promise<Feed[]>;
-  /** The feeds at an address: itself, or the ones a page names. */
-  discover(url: string): Promise<FeedCandidate[]>;
+  /**
+   * 搜索订阅: words in Feedly's directory; an address as a feed, the feeds
+   * its page names, or RSSHub routes for it.
+   */
+  search(query: string): Promise<FeedSearchResult[]>;
+  /** A feed's newest articles, without subscribing. */
+  preview(url: string): Promise<FeedPreview>;
   addFeed(url: string, title: string | null, group: string | null): Promise<Feed>;
   /** Changes a feed (a new address must be a feed); answers it as it now is. */
   updateFeed(request: UpdateFeedRequest): Promise<Feed>;
@@ -471,6 +479,16 @@ export interface FeedService {
   exportOpml(): Promise<boolean>;
   getSettings(): Promise<RssSettings>;
   saveSettings(settings: RssSettings): Promise<RssSettings>;
+  /** 过滤规则, in order. */
+  listFilters(): Promise<FeedFilter[]>;
+  /**
+   * Saves a rule (a new one when its id is empty); with `purge`, stored
+   * articles it would have kept out go too (starred ones stay).
+   */
+  saveFilter(filter: FeedFilter, purge: boolean): Promise<FeedFilter>;
+  removeFilter(id: string): Promise<void>;
+  /** What a rule would keep out of the newest stored articles. */
+  testFilter(filter: FeedFilter): Promise<FeedFilterTest>;
 }
 export interface AppServices {
   library: LibraryService;

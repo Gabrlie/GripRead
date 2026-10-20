@@ -12,7 +12,7 @@ import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 import type { PressPoint } from "../ui/use-long-press";
-import { AddFeedDialog } from "./AddFeedDialog";
+import { FeedSearchPage } from "./FeedSearchPage";
 import { ArticleList } from "./ArticleList";
 import { ArticleMenu } from "./ArticleMenu";
 import { FeedDetailPage } from "./FeedDetailPage";
@@ -254,7 +254,7 @@ export function RssView() {
         <ArticleMenu article={menu.article} point={menu.point} onClose={() => setMenu(null)} />
       )}
       {detail && <FeedDetailPage url={detail} onClose={() => setDetail(null)} />}
-      {adding && <AddFeedDialog onClose={() => setAdding(false)} />}
+      {adding && <FeedSearchPage onClose={() => setAdding(false)} />}
       {managing && <FeedManagePage onClose={() => setManaging(false)} />}
       {setting && <RssSettingsPage onClose={() => setSetting(false)} />}
       {confirmRead && (

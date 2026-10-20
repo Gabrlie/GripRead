@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useFeeds, useRuntime } from "../../application/runtime";
 import { useT, type MessageKey } from "../../i18n";
 import type { ArticleFilter, ArticleSummary } from "../../types/generated";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
+import { useWindowedList } from "../ui/use-windowed-list";
 import { useLongPress, type PressPoint } from "../ui/use-long-press";
 import { articleTime, imageBlob } from "./format";
 
@@ -15,6 +16,8 @@ const FILTERS: [ArticleFilter, MessageKey][] = [
 
 /** How long scrolled-past articles gather before they are marked read. */
 const SCROLL_MARK_MS = 1000;
+/** A row's height before it is measured (with the gap below it). */
+export const ROW_ESTIMATE = 104;
 
 /** The element that scrolls `element`, for watching rows leave its top. */
 function scrollerOf(element: HTMLElement | null): HTMLElement | null {
@@ -26,50 +29,49 @@ function scrollerOf(element: HTMLElement | null): HTMLElement | null {
 }
 
 /**
- * 划出屏幕时标为已读: unread rows (not kept unread) that scroll up out of
- * the list are marked read a moment later, together. They stay where they
- * are, also under 未读, until the list next loads.
+ * 划出屏幕时标为已读: unread rows (not kept unread) that scroll up past the
+ * top of the list (`first` is the first row in view) are marked read a
+ * moment later, together. They stay where they are, also under 未读, until
+ * the list next loads.
  */
-function useMarkOnScroll(list: RefObject<HTMLElement | null>, articles: ArticleSummary[]) {
+function useMarkOnScroll(first: number, articles: ArticleSummary[]) {
   const { state, store } = useFeeds();
   const on = state.settings?.markReadOnScroll === true;
   const pending = useRef(new Set<string>());
   const timer = useRef<number | null>(null);
-  const known = useRef(articles);
-  known.current = articles;
+  const passed = useRef(0);
+  const list = useRef(articles);
+  // A new list starts from its top.
+  if (list.current !== articles && articles[0]?.id !== list.current[0]?.id) passed.current = 0;
+  list.current = articles;
+  const flush = useRef(() => undefined as void);
+  flush.current = () => {
+    timer.current = null;
+    const ids = [...pending.current];
+    pending.current.clear();
+    if (ids.length) void store.setState(ids, { read: true }).catch(() => undefined);
+  };
   useEffect(() => {
-    const element = list.current;
-    if (!on || !element || typeof IntersectionObserver === "undefined") return;
-    const flush = () => {
-      timer.current = null;
-      const ids = [...pending.current];
-      pending.current.clear();
-      if (ids.length) void store.setState(ids, { read: true }).catch(() => undefined);
-    };
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const top = entry.rootBounds?.top ?? 0;
-          if (entry.isIntersecting || entry.boundingClientRect.bottom > top + 1) continue;
-          const id = (entry.target as HTMLElement).dataset.article;
-          const article = known.current.find((item) => item.id === id);
-          if (!article || article.read || article.keepUnread) continue;
-          pending.current.add(article.id);
-        }
-        if (pending.current.size && timer.current === null)
-          timer.current = window.setTimeout(flush, SCROLL_MARK_MS);
-      },
-      { root: scrollerOf(element) },
-    );
-    element.querySelectorAll("[data-article]").forEach((row) => observer.observe(row));
-    return () => {
-      observer.disconnect();
+    if (!on) {
+      passed.current = first;
+      return;
+    }
+    if (first <= passed.current) return;
+    for (const article of articles.slice(passed.current, first))
+      if (!article.read && !article.keepUnread) pending.current.add(article.id);
+    passed.current = first;
+    if (pending.current.size && timer.current === null)
+      timer.current = window.setTimeout(() => flush.current(), SCROLL_MARK_MS);
+  }, [on, first, articles]);
+  useEffect(
+    () => () => {
       if (timer.current !== null) {
         window.clearTimeout(timer.current);
-        flush();
+        flush.current();
       }
-    };
-  }, [on, articles, store, list]);
+    },
+    [],
+  );
 }
 
 /** An article's first picture, fetched through the app's cache once in view. */
@@ -135,17 +137,33 @@ function ArticleRow({
   active,
   onOpen,
   onMenu,
+  onMeasure,
 }: {
   article: ArticleSummary;
   active: boolean;
   onOpen: () => void;
   onMenu: (point: PressPoint) => void;
+  /** The row's height as laid out, gap included. */
+  onMeasure: (height: number) => void;
 }) {
   const t = useT();
   const { state } = useFeeds();
   const press = useLongPress(onMenu, onOpen);
+  const measure = useRef(onMeasure);
+  measure.current = onMeasure;
+  const row = useRef<HTMLLIElement>(null);
+  useLayoutEffect(() => {
+    const element = row.current;
+    if (!element) return;
+    const report = () => element.offsetHeight > 0 && measure.current(element.offsetHeight);
+    report();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <li data-article={article.id}>
+    <li ref={row} data-article={article.id} className="pb-2">
       <button
         type="button"
         aria-current={active || undefined}
@@ -203,7 +221,8 @@ function ArticleRow({
 
 /**
  * The chosen list's articles, newest first, with 全部 / 未读 / 星标, search,
- * and more as the end comes into view. A long press or right-click opens
+ * and more as the end comes into view; only the rows near the view are
+ * made, so long lists stay quick. A long press or right-click opens
  * an article's menu there. Read articles are dimmed.
  */
 export function ArticleList({
@@ -220,7 +239,28 @@ export function ArticleList({
   const [search, setSearch] = useState(state.search);
   const end = useRef<HTMLDivElement>(null);
   const rows = useRef<HTMLUListElement>(null);
-  useMarkOnScroll(rows, state.articles);
+  const scroller = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    scroller.current = scrollerOf(rows.current);
+  }, []);
+  // Heights of rows laid out so far; the others are estimated.
+  const [heights, setHeights] = useState(() => new Map<string, number>());
+  const measured = useRef(new Map<string, number>());
+  const frame = useRef(0);
+  const articles = state.articles;
+  const heightOf = useCallback(
+    (index: number) => heights.get(articles[index]?.id) ?? ROW_ESTIMATE,
+    [heights, articles],
+  );
+  const measure = useCallback((id: string, height: number) => {
+    if (Math.abs((measured.current.get(id) ?? 0) - height) < 1) return;
+    measured.current.set(id, height);
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => setHeights(new Map(measured.current)));
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  const windowed = useWindowedList(scroller, articles.length, heightOf, rows);
+  useMarkOnScroll(windowed.first, articles);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (search !== state.search) store.setSearch(search);
@@ -288,19 +328,24 @@ export function ArticleList({
                 ? t("rss.notFound")
                 : t("rss.noArticles")}
         </p>
-      ) : (
-        <ul ref={rows} className="space-y-2">
-          {state.articles.map((article) => (
-            <ArticleRow
-              key={article.id}
-              article={article}
-              active={article.id === activeId}
-              onOpen={() => onOpen(article)}
-              onMenu={(point) => onMenu(article, point)}
-            />
-          ))}
-        </ul>
-      )}
+      ) : null}
+      {/* Only the rows near the view are made; spacers stand for the rest. */}
+      <ul
+        ref={rows}
+        style={{ paddingTop: windowed.before, paddingBottom: windowed.after }}
+        hidden={state.articles.length === 0}
+      >
+        {articles.slice(windowed.start, windowed.end).map((article) => (
+          <ArticleRow
+            key={article.id}
+            article={article}
+            active={article.id === activeId}
+            onOpen={() => onOpen(article)}
+            onMenu={(point) => onMenu(article, point)}
+            onMeasure={(height) => measure(article.id, height)}
+          />
+        ))}
+      </ul>
       <div ref={end} aria-hidden="true" className="h-4" />
       {state.loadingMore && (
         <p role="status" className="text-center text-xs text-secondary">

@@ -611,3 +611,571 @@ fn clearing_articles_keeps_unread_and_starred_and_does_not_bring_read_ones_back(
     assert!(guard.rss_article("0000").is_err());
     assert_eq!(guard.list_feeds().unwrap()[0].total, 3);
 }
+
+fn article(id: &str, title: &str, author: Option<&str>, content: &str, at: i64) -> FetchedArticle {
+    FetchedArticle {
+        id: id.into(),
+        title: title.into(),
+        author: author.map(str::to_string),
+        content: content.into(),
+        published_at: at,
+        ..FetchedArticle::default()
+    }
+}
+
+fn rule(
+    scope: crate::models::FeedFilterScope,
+    target: Option<&str>,
+    field: crate::models::FeedFilterField,
+    mode: crate::models::FeedFilterMode,
+    pattern: &str,
+) -> crate::models::FeedFilter {
+    crate::models::FeedFilter {
+        scope,
+        target: target.map(str::to_string),
+        field,
+        mode,
+        pattern: pattern.into(),
+        ignore_case: true,
+        enabled: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn filter_rules_keep_new_articles_out_and_follow_their_feed_and_group() {
+    use crate::models::{
+        FeedFilterField as Field, FeedFilterMode as Mode, FeedFilterScope as Scope,
+    };
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    let (a, b) = ("https://a.example/feed", "https://b.example/feed");
+    guard.add_feed(a, "甲", Some("组"), None).unwrap();
+    guard.add_feed(b, "乙", None, None).unwrap();
+    let ad = guard
+        .save_feed_filter(
+            &rule(Scope::All, None, Field::Title, Mode::Drop, "广告|推广"),
+            false,
+        )
+        .unwrap();
+    assert!(!ad.id.is_empty());
+    let only_rust = guard
+        .save_feed_filter(
+            &rule(Scope::Group, Some("组"), Field::Any, Mode::Keep, "rust"),
+            false,
+        )
+        .unwrap();
+    // An author rule for one feed.
+    guard
+        .save_feed_filter(
+            &rule(Scope::Feed, Some(b), Field::Author, Mode::Drop, "^机器人$"),
+            false,
+        )
+        .unwrap();
+
+    let added = guard
+        .store_feed_fetch(
+            a,
+            &FetchedFeed {
+                title: "甲".into(),
+                articles: vec![
+                    article("a1", "广告：Rust 课程", None, "", 1_000),
+                    article("a2", "新闻", None, "<p>关于 RUST 的消息</p>", 2_000),
+                    article("a3", "Go 新闻", None, "<p>别的</p>", 3_000),
+                ],
+                ..FetchedFeed::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(added, 1);
+    assert!(guard.rss_article("a2").is_ok());
+    let added = guard
+        .store_feed_fetch(
+            b,
+            &FetchedFeed {
+                title: "乙".into(),
+                articles: vec![
+                    article("b1", "推广", None, "", 1_000),
+                    article("b2", "日报", Some("机器人"), "", 2_000),
+                    article("b3", "随笔", Some("人"), "", 3_000),
+                ],
+                ..FetchedFeed::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(added, 1);
+    assert!(guard.rss_article("b3").is_ok());
+
+    // Bad expressions are refused when saved.
+    let error = guard
+        .save_feed_filter(
+            &rule(Scope::All, None, Field::Title, Mode::Drop, "(未闭合"),
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(error.key.as_deref(), Some("rssFilterInvalid"));
+    let error = guard
+        .save_feed_filter(
+            &rule(
+                Scope::All,
+                None,
+                Field::Title,
+                Mode::Drop,
+                r"\w{1000}{1000}",
+            ),
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(error.key.as_deref(), Some("rssFilterInvalid"));
+    let error = guard
+        .save_feed_filter(
+            &rule(Scope::Feed, None, Field::Title, Mode::Drop, "x"),
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(error.key.as_deref(), Some("rssFilterTarget"));
+
+    // A rule is tried on what is stored, then saved with the stored
+    // matches removed (but starred ones).
+    guard
+        .store_feed_fetch(
+            b,
+            &FetchedFeed {
+                title: "乙".into(),
+                articles: vec![
+                    article("b4", "周报 第一期", None, "", 4_000),
+                    article("b5", "周报 第二期", None, "", 5_000),
+                ],
+                ..FetchedFeed::default()
+            },
+        )
+        .unwrap();
+    guard
+        .set_article_state(&["b5".into()], None, Some(true), None)
+        .unwrap();
+    let weekly = rule(Scope::Feed, Some(b), Field::Title, Mode::Drop, "周报");
+    let test = guard.test_feed_filter(&weekly).unwrap();
+    assert_eq!((test.checked, test.dropped), (3, 2));
+    assert_eq!(test.samples, ["周报 第二期", "周报 第一期"]);
+    guard.save_feed_filter(&weekly, true).unwrap();
+    assert!(guard.rss_article("b4").is_err());
+    assert!(guard.rss_article("b5").is_ok());
+
+    // Rules follow a new address and a group's new name.
+    assert_eq!(guard.feed_filters().unwrap().len(), 4);
+    guard
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: b.into(),
+            title: "乙".into(),
+            group: None,
+            new_url: Some("https://b.example/atom".into()),
+            enabled: None,
+            options: None,
+        })
+        .unwrap();
+    guard.rename_feed_group("组", "技术").unwrap();
+    let filters = guard.feed_filters().unwrap();
+    assert!(filters
+        .iter()
+        .filter(|filter| filter.scope == Scope::Feed)
+        .all(|filter| filter.target.as_deref() == Some("https://b.example/atom")));
+    let kept = filters
+        .iter()
+        .find(|filter| filter.id == only_rust.id)
+        .unwrap();
+    assert_eq!(kept.target.as_deref(), Some("技术"));
+    // A disabled rule lets articles in again.
+    guard
+        .save_feed_filter(
+            &crate::models::FeedFilter {
+                enabled: false,
+                ..kept.clone()
+            },
+            false,
+        )
+        .unwrap();
+    guard
+        .store_feed_fetch(
+            a,
+            &FetchedFeed {
+                title: "甲".into(),
+                articles: vec![article("a4", "Go 周刊", None, "", 9_000)],
+                ..FetchedFeed::default()
+            },
+        )
+        .unwrap();
+    assert!(guard.rss_article("a4").is_ok());
+    guard.remove_feed_group("技术", false).unwrap();
+    guard
+        .remove_feeds(&["https://b.example/atom".into()])
+        .unwrap();
+    let left: Vec<String> = guard
+        .feed_filters()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(left, [ad.id]);
+}
+
+#[test]
+fn search_finds_words_inside_the_text_in_any_language() {
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    let url = "https://a.example/feed";
+    guard.add_feed(url, "甲", None, None).unwrap();
+    guard
+        .store_feed_fetch(
+            url,
+            &FetchedFeed {
+                title: "甲".into(),
+                articles: vec![
+                    article(
+                        "s1",
+                        "早报",
+                        Some("编辑部"),
+                        "<p>今天的天气很好，适合出门</p>",
+                        1_000,
+                    ),
+                    article(
+                        "s2",
+                        "Weekly notes",
+                        None,
+                        "<p>Compilers and the borrow checker</p>",
+                        2_000,
+                    ),
+                    article("s3", "天气预报", None, "", 3_000),
+                ],
+                ..FetchedFeed::default()
+            },
+        )
+        .unwrap();
+    let search = |guard: &Storage, text: &str| -> Vec<String> {
+        guard
+            .list_articles(&ArticleQuery {
+                search: Some(text.into()),
+                ..Default::default()
+            })
+            .unwrap()
+            .articles
+            .into_iter()
+            .map(|article| article.id)
+            .collect()
+    };
+    assert_eq!(search(&guard, "天气很好"), ["s1"]);
+    assert_eq!(search(&guard, "BORROW"), ["s2"]);
+    assert_eq!(search(&guard, "编辑部"), ["s1"]);
+    // Two characters are too short for the index: titles and excerpts.
+    assert_eq!(search(&guard, "天气"), ["s3"]);
+    // Quotes in a search are text.
+    assert!(search(&guard, "\"天气").is_empty());
+    // 全文 is found too, and removed articles are not.
+    guard.save_full_text("s3", "<p>明天有大风降温</p>").unwrap();
+    assert_eq!(search(&guard, "大风降温"), ["s3"]);
+    guard.remove_feeds(&[url.into()]).unwrap();
+    assert!(search(&guard, "天气很好").is_empty());
+    let indexed: i64 = guard
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM rss_search", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(indexed, 0);
+}
+
+#[test]
+fn unread_articles_can_be_kept_from_pruning() {
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    let url = "https://a.example/feed";
+    guard.add_feed(url, "甲", None, None).unwrap();
+    guard
+        .save_rss_settings(&RssSettings {
+            keep_articles: 50,
+            keep_days: 30,
+            ..RssSettings::default()
+        })
+        .unwrap();
+    guard.store_feed_fetch(url, &fetched(60, 1_000)).unwrap();
+    assert_eq!(guard.list_feeds().unwrap()[0].total, 50);
+    // 保持未读 stays whatever the setting.
+    guard
+        .set_article_state(&["0010".into()], None, None, Some(true))
+        .unwrap();
+    guard
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: url.into(),
+            title: "甲".into(),
+            group: None,
+            new_url: None,
+            enabled: None,
+            options: Some(crate::models::FeedOptions {
+                keep_unread: Some(true),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    guard.store_feed_fetch(url, &fetched(70, 1_000)).unwrap();
+    // Every unread article stays, those pruned before back with them.
+    assert_eq!(guard.list_feeds().unwrap()[0].total, 70);
+    let ids: Vec<String> = (10..30).map(|index| format!("{index:04}")).collect();
+    guard
+        .set_article_state(&ids, Some(true), None, None)
+        .unwrap();
+    guard
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: url.into(),
+            title: "甲".into(),
+            group: None,
+            new_url: None,
+            enabled: None,
+            options: Some(crate::models::FeedOptions::default()),
+        })
+        .unwrap();
+    guard.store_feed_fetch(url, &fetched(70, 1_000)).unwrap();
+    assert_eq!(guard.list_feeds().unwrap()[0].total, 50);
+    assert!(guard.rss_article("0009").is_err());
+}
+
+#[test]
+fn the_picture_cache_drops_the_least_recently_seen_beyond_its_limit() {
+    let dir = Dir(std::env::temp_dir().join(format!("gripread-images-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir_all(dir.0.join("ab")).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for index in 0..10 {
+        let path = dir.0.join("ab").join(format!("{index}"));
+        std::fs::write(&path, vec![0u8; 100 * 1024]).unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(old + std::time::Duration::from_secs(index))
+            .unwrap();
+    }
+    // 1 MB of pictures in a 0.5 MB cache: down to 90% of it, oldest first.
+    trim_image_cache(&dir.0, 512 * 1024);
+    let left: Vec<String> = {
+        let mut left: Vec<String> = std::fs::read_dir(dir.0.join("ab"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        left
+    };
+    assert_eq!(left, ["6", "7", "8", "9"]);
+    trim_image_cache(&dir.0, 0);
+    assert_eq!(std::fs::read_dir(dir.0.join("ab")).unwrap().count(), 4);
+}
+
+#[test]
+fn radar_rules_turn_pages_into_rsshub_routes() {
+    use crate::models::FeedSearchSource;
+    let rules = serde_json::json!({
+        "example.com": {
+            "_name": "示例站",
+            "www": [
+                {"title": "用户动态", "source": ["/user/:id", "/u/:id"], "target": "/example/user/:id"},
+                {"title": "分类", "source": "/list/:category/:sort?", "target": "/example/list/:category/:sort?"},
+                {"title": "无目标", "source": ["/user/:id"]}
+            ],
+            "space": [
+                {"title": "空间", "source": ["/*"], "target": "/example/space/:uid"}
+            ]
+        },
+        "example.com.cn": {
+            ".": [{"title": "首页", "source": ["/"], "target": "/cn/home"}]
+        }
+    });
+    let routes = |address: &str| -> Vec<String> {
+        search::radar_routes(&rules, address, "https://hub.example", "")
+            .into_iter()
+            .map(|result| {
+                assert_eq!(result.source, FeedSearchSource::Rsshub);
+                result.url
+            })
+            .collect()
+    };
+    assert_eq!(
+        routes("https://www.example.com/user/42/"),
+        ["https://hub.example/example/user/42"]
+    );
+    // Without "www", the www rules apply too.
+    assert_eq!(
+        routes("https://example.com/u/%E4%B8%AD"),
+        ["https://hub.example/example/user/%E4%B8%AD"]
+    );
+    assert_eq!(
+        routes("https://www.example.com/list/news"),
+        ["https://hub.example/example/list/news"]
+    );
+    assert_eq!(
+        routes("https://www.example.com/list/news/hot"),
+        ["https://hub.example/example/list/news/hot"]
+    );
+    // A route needing a value the page does not give is skipped.
+    assert!(routes("https://space.example.com/7").is_empty());
+    assert!(routes("https://www.example.com/other").is_empty());
+    assert_eq!(
+        routes("https://example.com.cn/"),
+        ["https://hub.example/cn/home"]
+    );
+    let keyed = search::radar_routes(
+        &rules,
+        "https://www.example.com/user/1",
+        "https://hub.example",
+        "k&1",
+    );
+    assert_eq!(keyed[0].url, "https://hub.example/example/user/1?key=k%261");
+    assert_eq!(keyed[0].title, "示例站 · 用户动态");
+    assert!(search::is_address("www.example.com/user/1"));
+    assert!(!search::is_address("rust 新闻"));
+    assert!(!search::is_address("rust"));
+}
+
+#[test]
+fn searches_ask_feedly_for_words_and_rsshub_for_pages() {
+    let rules_asked = Arc::new(AtomicU32::new(0));
+    let asked = rules_asked.clone();
+    let base = start(move |request: &Request| match request.path.as_str() {
+        "/feedly" => {
+            assert!(request
+                .query
+                .contains("query=%E5%A4%A9%E6%B0%94+%E9%A2%84%E6%8A%A5"));
+            Response::json(
+                r#"{"results":[
+                    {"feedId":"feed/https://a.example/feed","title":"甲","website":"https://a.example/",
+                     "description":"简介","subscribers":120,"iconUrl":"https://a.example/i.png"},
+                    {"feedId":"user/1/category/x","title":"不是订阅"}
+                ]}"#,
+            )
+        }
+        "/api/radar/rules" => {
+            asked.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(request.param("key").as_deref(), Some("k"));
+            Response::json(
+                r#"{"127.0.0.1":{"_name":"本地","." :[{"title":"用户","source":["/user/:id"],"target":"/local/user/:id"}]}}"#,
+            )
+        }
+        "/posts.xml" => Response::bytes("application/rss+xml", RSS.as_bytes().to_vec()),
+        "/user/42" => Response::html("<html>no links</html>"),
+        _ => Response::not_found(),
+    });
+    let dir = Dir(std::env::temp_dir().join(format!("gripread-radar-{}", uuid::Uuid::new_v4())));
+    let rules_file = dir.0.join("rules.json");
+    let feedly = format!("{base}/feedly");
+    let sites = search::SearchSites {
+        feedly: &feedly,
+        instance: &base,
+        key: "k",
+        rules_file: &rules_file,
+    };
+    let words = search::search("天气 预报", &sites).unwrap();
+    assert_eq!(words.len(), 1);
+    assert_eq!(words[0].url, "https://a.example/feed");
+    assert_eq!(words[0].subscribers, Some(120));
+    // A feed's own address needs nothing more.
+    let direct = search::search(&format!("{base}/posts.xml"), &sites).unwrap();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].source, crate::models::FeedSearchSource::Feed);
+    assert_eq!(rules_asked.load(Ordering::SeqCst), 0);
+    let page = search::search(&format!("{base}/user/42"), &sites).unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].url, format!("{base}/local/user/42?key=k"));
+    // The rules are kept for a day.
+    search::search(&format!("{base}/user/7"), &sites).unwrap();
+    assert_eq!(rules_asked.load(Ordering::SeqCst), 1);
+    let error = search::search(&format!("{base}/nothing"), &sites).unwrap_err();
+    assert_eq!(error.key.as_deref(), Some("rssNoFeedFound"));
+
+    // A preview reads the feed and keeps nothing.
+    let preview = search::preview_at(&format!("{base}/posts.xml")).unwrap();
+    assert_eq!(preview.title, "甲博客");
+    assert_eq!(preview.articles.len(), 3);
+    assert!(preview.articles[0].published_at >= preview.articles[1].published_at);
+}
+
+/// Fifty thousand articles in fifty feeds: lists, searches, and counts
+/// stay quick (generous bounds, for debug builds and busy machines).
+#[test]
+fn many_articles_stay_quick() {
+    use std::time::{Duration, Instant};
+    let (_dir, storage) = library();
+    let mut guard = lock(&storage).unwrap();
+    guard
+        .save_rss_settings(&RssSettings {
+            keep_articles: 0,
+            ..RssSettings::default()
+        })
+        .unwrap();
+    let now = 1_800_000_000_000;
+    for feed in 0..50 {
+        let url = format!("https://f{feed}.example/feed");
+        guard
+            .add_feed(
+                &url,
+                &format!("订阅 {feed}"),
+                Some(&format!("组 {}", feed % 5)),
+                None,
+            )
+            .unwrap();
+        let articles = (0..1000)
+            .map(|index| {
+                article(
+                    &format!("{feed:02}-{index:04}"),
+                    &format!("第 {index} 篇文章 来自订阅 {feed}"),
+                    None,
+                    &format!("<p>正文 {index} 关键词{} 其他内容</p>", index % 97),
+                    now - (index * 50 + feed) as i64 * 60_000,
+                )
+            })
+            .collect();
+        guard
+            .store_feed_fetch(
+                &url,
+                &FetchedFeed {
+                    title: format!("订阅 {feed}"),
+                    articles,
+                    ..FetchedFeed::default()
+                },
+            )
+            .unwrap();
+    }
+    let limit = Duration::from_millis(300);
+    let timed = |name: &str, work: &mut dyn FnMut()| {
+        let start = Instant::now();
+        work();
+        let took = start.elapsed();
+        assert!(took < limit, "{name} took {took:?}");
+    };
+    let mut query = ArticleQuery::default();
+    timed("first page", &mut || {
+        assert_eq!(guard.list_articles(&query).unwrap().articles.len(), 50);
+    });
+    timed("ten pages", &mut || {
+        for _ in 0..10 {
+            query.after = guard.list_articles(&query).unwrap().next;
+        }
+        assert!(query.after.is_some());
+    });
+    timed("unread page", &mut || {
+        let page = guard
+            .list_articles(&ArticleQuery {
+                filter: ArticleFilter::Unread,
+                group: Some("组 3".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.articles.len(), 50);
+    });
+    timed("search", &mut || {
+        let page = guard
+            .list_articles(&ArticleQuery {
+                search: Some("关键词42 ".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.articles.len(), 50);
+    });
+    timed("counts", &mut || {
+        let feeds = guard.list_feeds().unwrap();
+        assert_eq!(feeds.iter().map(|feed| feed.unread).sum::<u32>(), 50_000);
+    });
+    timed("mark all read", &mut || {
+        assert_eq!(guard.mark_all_read(None, Some("组 1")).unwrap(), 10_000);
+    });
+}

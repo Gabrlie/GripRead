@@ -5,7 +5,7 @@ import { FullPage, PageLink, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/toast";
-import { AddFeedDialog } from "./AddFeedDialog";
+import { FeedSearchPage } from "./FeedSearchPage";
 import { FeedDetailPage } from "./FeedDetailPage";
 import { FeedGroupsDialog } from "./FeedGroupsDialog";
 import { articleTime } from "./format";
@@ -127,7 +127,7 @@ export function FeedManagePage({ onClose }: { onClose: () => void }) {
         </div>
       </PageSection>
       {detail && <FeedDetailPage url={detail} onClose={() => setDetail(null)} />}
-      {adding && <AddFeedDialog onClose={() => setAdding(false)} />}
+      {adding && <FeedSearchPage onClose={() => setAdding(false)} />}
       {grouping && <FeedGroupsDialog onClose={() => setGrouping(false)} />}
     </FullPage>
   );

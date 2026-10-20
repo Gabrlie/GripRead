@@ -5,12 +5,14 @@ const OVERSCAN = 12;
 /**
  * Renders only the rows of a long list near the viewport. Rows have known
  * heights (`heightOf`), so the hook can place any row without measuring and
- * scroll straight to one; the rest of the list is two spacers.
+ * scroll straight to one; the rest of the list is two spacers. A list that
+ * does not start at the top of its scroller names its element (`list`).
  */
 export function useWindowedList(
   scroller: RefObject<HTMLElement | null>,
   count: number,
   heightOf: (index: number) => number,
+  list?: RefObject<HTMLElement | null>,
 ) {
   const offsets = useMemo(() => {
     const list = new Array<number>(count + 1);
@@ -26,9 +28,14 @@ export function useWindowedList(
     let frame = 0;
     const update = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() =>
-        setView({ top: box.scrollTop, height: box.clientHeight || 800 }),
-      );
+      frame = requestAnimationFrame(() => {
+        const start = list?.current
+          ? list.current.getBoundingClientRect().top -
+            box.getBoundingClientRect().top +
+            box.scrollTop
+          : 0;
+        setView({ top: box.scrollTop - start, height: box.clientHeight || 800 });
+      });
     };
     update();
     box.addEventListener("scroll", update, { passive: true });
@@ -39,7 +46,7 @@ export function useWindowedList(
       box.removeEventListener("scroll", update);
       observer?.disconnect();
     };
-  }, [scroller]);
+  }, [scroller, list]);
 
   const find = (offset: number) => {
     let low = 0;
@@ -71,6 +78,8 @@ export function useWindowedList(
   return {
     start,
     end,
+    /** The first row in view: those before it have scrolled past. */
+    first: view.top > 0 ? find(view.top) : 0,
     before: offsets[start] ?? 0,
     after: (offsets[count] ?? 0) - (offsets[end] ?? 0),
     scrollToIndex,

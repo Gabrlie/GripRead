@@ -6,6 +6,7 @@ import type {
   ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedFilter,
   FeedGroup,
   OpmlImportReport,
   RssSettings,
@@ -44,6 +45,8 @@ export interface FeedSnapshot {
   failed: number;
   error: string | null;
   settings: RssSettings | null;
+  /** 过滤规则, once loaded. */
+  filters: FeedFilter[];
 }
 
 /** Entering 订阅 refreshes when the last refresh is older than this. */
@@ -124,6 +127,7 @@ export class FeedStore {
     failed: 0,
     error: null,
     settings: null,
+    filters: [],
   };
   private listeners = new Set<() => void>();
   private listVersion = 0;
@@ -412,6 +416,23 @@ export class FeedStore {
   };
 
   exportOpml = () => this.service.exportOpml();
+
+  loadFilters = async () => {
+    this.update({ filters: await this.service.listFilters() });
+  };
+
+  /** Saves a rule; with `purge`, the articles it keeps out go from the lists. */
+  saveFilter = async (filter: FeedFilter, purge: boolean) => {
+    const saved = await this.service.saveFilter(filter, purge);
+    await this.loadFilters();
+    if (purge) await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
+    return saved;
+  };
+
+  removeFilter = async (id: string) => {
+    await this.service.removeFilter(id);
+    await this.loadFilters();
+  };
 
   /** Shows the change at once; a failed save puts the last settings back. */
   saveSettings = async (settings: RssSettings) => {

@@ -63,6 +63,8 @@ pub struct BackupDocument {
     pub feeds: Vec<super::rss::PortableFeed>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub starred_articles: Vec<super::rss::PortableStar>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feed_filters: Vec<crate::models::FeedFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -838,6 +840,7 @@ impl Storage {
             webdav: None,
             feeds: self.portable_feeds()?,
             starred_articles: self.portable_stars()?,
+            feed_filters: self.feed_filters()?,
         })
     }
 
@@ -1267,6 +1270,9 @@ impl Storage {
             }
             for star in &document.starred_articles {
                 self.restore_star(star)?;
+            }
+            for filter in &document.feed_filters {
+                self.restore_feed_filter(filter)?;
             }
             report.feeds_restored = document.feeds.len() as u32;
         }

@@ -42,6 +42,7 @@ mod portable;
 mod privacy;
 pub use privacy::PRIVATE_TITLE;
 mod rss;
+mod rss_filters;
 mod sources;
 mod sync;
 mod translation;
@@ -59,7 +60,7 @@ pub use sources::{split_groups, SqliteSourceStore, CHECK_GROUPS};
 pub use sync::{record_categories, record_hash, LoggedChange, SyncChange};
 pub use translation::{CachedLine, TranslationSource};
 
-const CURRENT_SCHEMA_VERSION: i64 = 30;
+const CURRENT_SCHEMA_VERSION: i64 = 31;
 const MAX_WINDOW_UNITS: u64 = 1_000_000;
 const INDEX_SCHEMA_VERSION: u8 = 1;
 const INDEX_STRIDE_UNITS: u64 = 4096;
@@ -1256,6 +1257,16 @@ impl Storage {
             Self::upgrade_rss_tables(&tx)?;
             tx.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (30, ?1)",
+                params![now_millis()],
+            )?;
+            tx.commit()?;
+        }
+        if current < 31 {
+            // 订阅: 过滤规则, 未读不清理, and the search index.
+            let tx = self.conn.transaction()?;
+            Self::upgrade_rss_search(&tx)?;
+            tx.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (31, ?1)",
                 params![now_millis()],
             )?;
             tx.commit()?;
@@ -7415,7 +7426,7 @@ mod tests {
         drop(storage);
         let reopened = Storage::open(&data).unwrap();
         assert_eq!(reopened.get_settings().unwrap(), preferences);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 30);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 31);
     }
 
     #[test]
@@ -10436,8 +10447,24 @@ mod tests {
         phone
             .set_article_state(&[id("2")], None, Some(true), None)
             .unwrap();
+        let filter = phone
+            .save_feed_filter(
+                &crate::models::FeedFilter {
+                    pattern: "^广告".into(),
+                    ignore_case: true,
+                    enabled: true,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
         sync_round(&mut server, &mut phone, "phone", &mut phone_at);
         sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        // 过滤规则 travel with the feeds.
+        assert_eq!(
+            desktop.feed_filters().unwrap(),
+            std::slice::from_ref(&filter)
+        );
 
         // The desktop has the subscription, and the starred article with its
         // text before it fetches the feed.
@@ -10480,6 +10507,11 @@ mod tests {
                 [false, true, true]
             );
         }
+
+        desktop.remove_feed_filter(&filter.id).unwrap();
+        sync_round(&mut server, &mut desktop, "desktop", &mut desktop_at);
+        sync_round(&mut server, &mut phone, "phone", &mut phone_at);
+        assert!(phone.feed_filters().unwrap().is_empty());
 
         // Unstarring and unsubscribing travel too; 同步排除 keeps them local.
         desktop
@@ -10585,6 +10617,16 @@ mod tests {
         first
             .set_article_state(std::slice::from_ref(&starred), None, Some(true), None)
             .unwrap();
+        let filter = first
+            .save_feed_filter(
+                &crate::models::FeedFilter {
+                    pattern: "广告".into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
         let document =
             parse_backup(&serde_json::to_vec(&first.export_backup("Linux").unwrap()).unwrap())
                 .unwrap();
@@ -10592,6 +10634,51 @@ mod tests {
         assert_eq!(second.restore_backup(&document).unwrap().feeds_restored, 1);
         assert_eq!(second.list_feeds().unwrap()[0].group.as_deref(), Some("组"));
         assert!(second.rss_article(&starred).unwrap().summary.starred);
+        assert_eq!(second.feed_filters().unwrap(), [filter]);
+    }
+
+    #[test]
+    fn articles_stored_before_the_search_index_are_indexed_on_upgrade() {
+        let root = TestRoot::new();
+        let path = root.0.join("data");
+        let mut storage = Storage::open(&path).unwrap();
+        let url = "https://a.example/feed";
+        storage.add_feed(url, "博客", None, None).unwrap();
+        storage
+            .store_feed_fetch(url, &rss_fetch(&["一二三四", "五六七八"]))
+            .unwrap();
+        // As schema 30 left it (and once more, as a rolled-back database
+        // that still has the index would).
+        for remove_index in [true, false] {
+            if remove_index {
+                storage
+                    .conn
+                    .execute_batch(
+                        "DROP TRIGGER rss_articles_unindex; DROP TABLE rss_search;
+                         DELETE FROM schema_migrations WHERE version = 31;",
+                    )
+                    .unwrap();
+            } else {
+                storage
+                    .conn
+                    .execute("DELETE FROM schema_migrations WHERE version = 31", [])
+                    .unwrap();
+            }
+            drop(storage);
+            storage = Storage::open(&path).unwrap();
+            let found = storage
+                .list_articles(&crate::models::ArticleQuery {
+                    search: Some("六七八".into()),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(found.articles.len(), 1);
+            let indexed: i64 = storage
+                .conn
+                .query_row("SELECT COUNT(*) FROM rss_search", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(indexed, 2);
+        }
     }
 
     #[test]

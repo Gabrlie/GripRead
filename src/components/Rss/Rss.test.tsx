@@ -7,6 +7,7 @@ import type { AppServices } from "../../services/contracts";
 import { feedServiceMocks } from "../../test/rss";
 import { FeedManagePage } from "./FeedManagePage";
 import { RssSettingsPage } from "./RssSettingsPage";
+import { ROW_ESTIMATE } from "./ArticleList";
 import { RssView } from "./RssView";
 
 afterEach(cleanup);
@@ -68,23 +69,99 @@ describe("订阅", () => {
     expect(await within(article).findByText("（全文）")).toBeTruthy();
   });
 
-  it("finds a feed at an address and subscribes to it", async () => {
+  it("finds feeds by words or an address, previews one, and subscribes", async () => {
     const { feeds } = page(false);
     await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
-    const dialog = await screen.findByRole("dialog", { name: "添加订阅" });
-    await userEvent.type(within(dialog).getByLabelText("订阅地址"), "https://new.example/feed");
-    await userEvent.click(within(dialog).getByRole("button", { name: "查找" }));
-    await userEvent.type(await within(dialog).findByLabelText("分组"), "新分组");
-    await userEvent.click(within(dialog).getByRole("button", { name: "订阅" }));
+    const search = await screen.findByRole("dialog", { name: "添加订阅" });
+    const box = within(search).getByLabelText("关键字或网址");
+    // Words look in the directory.
+    await userEvent.type(box, "天气{Enter}");
+    expect(await within(search).findByText("天气 日报")).toBeTruthy();
+    expect(within(search).getAllByText("Feedly")).toHaveLength(3);
+    expect(feeds.search).toHaveBeenLastCalledWith("天气");
+    // An address finds its page's feed and an RSSHub route for it.
+    await userEvent.clear(box);
+    await userEvent.type(box, "new.example/user/7{Enter}");
+    expect(await within(search).findByText("RSSHub")).toBeTruthy();
+    await userEvent.click(within(search).getByRole("button", { name: "预览 new.example 的订阅" }));
+    const preview = await screen.findByRole("dialog", { name: "new.example" });
+    // Its articles open in place, and nothing is kept.
+    await userEvent.click(await within(preview).findByText("new.example · 第 1 篇"));
+    const reading = await screen.findByRole("dialog", { name: "new.example · 第 1 篇" });
+    expect(within(reading).getByText(/的正文/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "new.example · 第 1 篇" })).toBeNull(),
+    );
+    expect(await feeds.listFeeds()).toHaveLength(0);
+    await userEvent.click(within(preview).getByRole("button", { name: "订阅" }));
+    const subscribe = await screen.findByRole("dialog", { name: "订阅" });
+    await userEvent.type(within(subscribe).getByLabelText("分组"), "新分组");
+    await userEvent.click(within(subscribe).getByRole("button", { name: "订阅" }));
     await waitFor(() =>
       expect(feeds.addFeed).toHaveBeenCalledWith(
-        "https://new.example/feed",
+        "https://new.example/user/7/feed",
         "new.example",
         "新分组",
       ),
     );
+    // Back on the results, it shows as subscribed.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "new.example" })).toBeNull());
+    expect(await within(search).findByText(/已订阅/)).toBeTruthy();
+  });
+
+  it("makes, tests, and switches off filters", async () => {
+    const { feeds, runtime } = page(true, "settings");
+    const stop = runtime.feeds.start();
+    await userEvent.click(await screen.findByRole("button", { name: /过滤规则/ }));
+    const filters = await screen.findByRole("dialog", { name: "过滤规则" });
+    expect(within(filters).getByText("还没有过滤规则")).toBeTruthy();
+    await userEvent.click(within(filters).getAllByRole("button", { name: "添加规则" })[0]);
+    const editor = await screen.findByRole("dialog", { name: "新建规则" });
+    await userEvent.type(within(editor).getByLabelText("正则表达式"), "第 (1|2) 篇");
+    await userEvent.click(within(editor).getByRole("radio", { name: "分组" }));
+    await userEvent.selectOptions(within(editor).getByLabelText("选择分组"), "技术");
+    await userEvent.click(within(editor).getByRole("button", { name: "测试" }));
+    expect(await within(editor).findByText("最近 8 篇里有 2 篇会被过滤")).toBeTruthy();
+    expect(within(editor).getByText("技术周刊 · 第 1 篇")).toBeTruthy();
+    await userEvent.click(within(editor).getByRole("switch", { name: /同时删除已有的命中文章/ }));
+    await userEvent.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(feeds.saveFilter).toHaveBeenCalledWith(
+        expect.objectContaining({ pattern: "第 (1|2) 篇", scope: "group", target: "技术" }),
+        true,
+      ),
+    );
+    expect(await within(filters).findByText("第 (1|2) 篇")).toBeTruthy();
+    expect(within(filters).getByText(/分组：技术/)).toBeTruthy();
+    const total = (await feeds.listFeeds()).find((feed) => feed.group === "技术")!.total;
+    // The starred one of the two stays.
+    expect(total).toBe(7);
+    await userEvent.click(within(filters).getByRole("switch", { name: "启用规则 第 (1|2) 篇" }));
+    await waitFor(() =>
+      expect(feeds.saveFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: false }),
+        false,
+      ),
+    );
+    // A bad expression says why.
+    await userEvent.click(within(filters).getAllByRole("button", { name: "添加规则" })[0]);
+    const bad = await screen.findByRole("dialog", { name: "新建规则" });
+    await userEvent.type(within(bad).getByLabelText("正则表达式"), "(");
+    await userEvent.click(within(bad).getByRole("button", { name: "测试" }));
+    expect(await within(bad).findByRole("alert")).toBeTruthy();
+    stop();
+  });
+
+  it("shows unread counts over 999 as 999+", async () => {
+    const { feeds, runtime } = page();
     const list = await screen.findByRole("navigation", { name: "订阅列表" });
-    expect(await within(list).findByRole("button", { name: "收起 新分组" })).toBeTruthy();
+    const listed = await feeds.listFeeds();
+    vi.mocked(feeds.listFeeds).mockResolvedValue(
+      listed.map((feed, index) => (index === 0 ? { ...feed, unread: 12_345 } : feed)),
+    );
+    void runtime.feeds.loadFeeds();
+    expect(await within(list).findAllByText("999+")).not.toHaveLength(0);
   });
 
   it("filters to starred articles", async () => {
@@ -262,48 +339,46 @@ describe("订阅", () => {
 
   it("marks articles read as they scroll up out of the list", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const watched: { callback: IntersectionObserverCallback; rows: Element[] }[] = [];
-    window.IntersectionObserver = class {
-      rows: Element[] = [];
-      constructor(callback: IntersectionObserverCallback) {
-        watched.push({ callback, rows: this.rows });
-      }
-      observe(row: Element) {
-        this.rows.push(row);
-      }
-      disconnect() {}
-      unobserve() {}
-    } as never;
+    // The scroll containers scroll here as they do in the app.
+    const style = document.createElement("style");
+    style.textContent = ".overflow-y-auto { overflow-y: auto; }";
+    document.head.append(style);
     const { feeds, runtime } = page();
     await feeds.saveSettings({ ...(await feeds.getSettings()), markReadOnScroll: true });
     const stop = runtime.feeds.start();
     const list = await screen.findByRole("navigation", { name: "订阅列表" });
     await userEvent.click(within(list).getByRole("button", { name: /每日新闻/ }));
-    await screen.findByText("每日新闻 · 第 1 篇");
-    const scrolled = await vi.waitFor(() => {
-      const found = [...watched]
-        .reverse()
-        .find((item) => item.rows.some((row) => row.matches("[data-article]")));
-      if (!found) throw new Error("rows not watched yet");
-      return found;
-    });
-    const [first, second] = scrolled.rows;
-    const entry = (target: Element, bottom: number) =>
-      ({
-        target,
-        isIntersecting: false,
-        boundingClientRect: { bottom },
-        rootBounds: { top: 100 },
-      }) as unknown as IntersectionObserverEntry;
-    // The first left the top; the second is below the bottom, not passed.
-    scrolled.callback([entry(first, 90), entry(second, 900)], {} as IntersectionObserver);
+    const row = await screen.findByText("每日新闻 · 第 1 篇");
+    const scroller = row.closest(".overflow-y-auto") as HTMLElement;
+    // jsdom does not lay out or scroll: the position, and where the list
+    // then sits, are set by hand.
+    let top = 0;
+    Object.defineProperty(scroller, "scrollTop", { get: () => top, set: (value) => (top = value) });
+    row.closest("ul")!.getBoundingClientRect = () => DOMRect.fromRect({ y: -top });
+    // Three rows (estimated heights) and a little of the fourth are past.
+    scroller.scrollTop = ROW_ESTIMATE * 3 + 10;
+    fireEvent.scroll(scroller);
+    await vi.waitFor(() =>
+      expect(feeds.setArticleState).toHaveBeenCalledWith(
+        [
+          "https://news.example.com/feed#0",
+          "https://news.example.com/feed#1",
+          "https://news.example.com/feed#2",
+        ],
+        { read: true },
+      ),
+    );
+    expect(feeds.setArticleState).toHaveBeenCalledTimes(1);
+    // Scrolling back and down again marks nothing more.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    await vi.advanceTimersByTimeAsync(100);
+    scroller.scrollTop = ROW_ESTIMATE * 3 + 10;
+    fireEvent.scroll(scroller);
     await vi.advanceTimersByTimeAsync(1100);
-    expect(feeds.setArticleState).toHaveBeenCalledWith(["https://news.example.com/feed#0"], {
-      read: true,
-    });
     expect(feeds.setArticleState).toHaveBeenCalledTimes(1);
     stop();
     vi.useRealTimers();
-    delete (window as { IntersectionObserver?: unknown }).IntersectionObserver;
+    style.remove();
   });
 });

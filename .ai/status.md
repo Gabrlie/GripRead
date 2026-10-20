@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Batch 2 of the [second round](plans/2026-10-19-rss-round2.md) (filters, large lists, feed search), after the user's device test of the batch 1 beta.
+Batch 3 of the [second round](plans/2026-10-19-rss-round2.md) (Google Reader API accounts), after the user's device test of the batch 2 beta.

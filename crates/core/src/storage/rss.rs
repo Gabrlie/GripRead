@@ -91,7 +91,8 @@ const SUMMARY_COLUMNS: &str = "a.id, a.feed_url, COALESCE(f.title, a.feed_title)
 
 const FEED_COLUMNS: &str = "f.url, f.title, f.site_url, f.icon_url, f.group_name, f.sort,
     f.added_at, f.last_fetch, f.last_error, COALESCE(c.unread, 0), COALESCE(c.total, 0),
-    f.enabled, f.refresh_minutes, f.keep_articles, f.keep_days, f.full_text, f.via_server";
+    f.enabled, f.refresh_minutes, f.keep_articles, f.keep_days, f.full_text, f.via_server,
+    f.keep_unread";
 
 fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
     Ok(Feed {
@@ -113,6 +114,7 @@ fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
             keep_days: row.get(14)?,
             full_text: row.get(15)?,
             via_server: row.get(16)?,
+            keep_unread: row.get(17)?,
         },
     })
 }
@@ -155,6 +157,75 @@ fn checked_options(options: &FeedOptions) -> FeedOptions {
         keep_days: options.keep_days.map(keep_days),
         full_text: options.full_text,
         via_server: options.via_server,
+        keep_unread: options.keep_unread,
+    }
+}
+
+/// Image cache limits offered, in megabytes; 0 keeps every picture.
+pub const IMAGE_CACHE_CHOICES: [u32; 4] = [100, 500, 1000, 0];
+/// Article text indexed for search, in characters.
+const SEARCH_BODY_CHARS: usize = 20_000;
+/// Searches shorter than this (in characters) cannot use the index.
+const SEARCH_MIN_CHARS: usize = 3;
+
+/// What search finds an article by: its text without markup, cut short.
+fn search_body(content: &str, full_text: Option<&str>, excerpt: &str) -> String {
+    let html = full_text
+        .filter(|text| !text.is_empty())
+        .unwrap_or(if content.is_empty() { excerpt } else { content });
+    let text = crate::rss::plain_text(html);
+    match text.char_indices().nth(SEARCH_BODY_CHARS) {
+        Some((end, _)) => text[..end].to_string(),
+        None => text,
+    }
+}
+
+/// Puts an article (again) into the search index.
+fn index_article(conn: &rusqlite::Connection, id: &str) -> Result<(), AppError> {
+    type Indexed = (i64, String, Option<String>, String, Option<String>, String);
+    let row: Option<Indexed> = conn
+        .query_row(
+            "SELECT rowid, title, author, content, full_text, excerpt FROM rss_articles
+             WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((rowid, title, author, content, full_text, excerpt)) = row else {
+        return Ok(());
+    };
+    conn.execute("DELETE FROM rss_search WHERE rowid = ?1", params![rowid])?;
+    conn.execute(
+        "INSERT INTO rss_search(rowid, title, author, body) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            rowid,
+            title,
+            author.unwrap_or_default(),
+            search_body(&content, full_text.as_deref(), &excerpt)
+        ],
+    )?;
+    Ok(())
+}
+
+/// An RSSHub instance's address, without a trailing slash; the public one
+/// when empty.
+fn rsshub_instance(address: &str) -> String {
+    let address = address.trim().trim_end_matches('/');
+    if address.is_empty() {
+        RssSettings::default().rsshub_instance
+    } else if address.contains("://") {
+        address.to_string()
+    } else {
+        format!("https://{address}")
     }
 }
 
@@ -244,6 +315,51 @@ impl Storage {
         Ok(())
     }
 
+    /// Schema 31: 过滤规则, 未读不清理 for each feed, and the search index
+    /// (a trigram index, so text in any language is found inside words; it
+    /// keeps the articles' rowids, which nothing renumbers). Articles
+    /// already there are indexed now.
+    pub(super) fn upgrade_rss_search(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('rss_feeds') WHERE name = 'keep_unread')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch("ALTER TABLE rss_feeds ADD COLUMN keep_unread INTEGER")?;
+        }
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS rss_filters (
+                id TEXT PRIMARY KEY NOT NULL,
+                scope TEXT NOT NULL,
+                target TEXT,
+                field TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                ignore_case INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS rss_search USING fts5(
+                title, author, body, content='', contentless_delete=1, tokenize='trigram'
+             );
+             CREATE TRIGGER IF NOT EXISTS rss_articles_unindex AFTER DELETE ON rss_articles
+             BEGIN
+                DELETE FROM rss_search WHERE rowid = old.rowid;
+             END;
+             INSERT INTO rss_search(rss_search) VALUES ('delete-all');",
+        )?;
+        let ids: Vec<String> = tx
+            .prepare("SELECT id FROM rss_articles")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for id in ids {
+            index_article(tx, &id)?;
+        }
+        Ok(())
+    }
+
     pub fn rss_settings(&self) -> RssSettings {
         fs::read_to_string(self.root.join(SETTINGS_FILE))
             .ok()
@@ -257,6 +373,13 @@ impl Storage {
             font_size: settings.font_size.clamp(12, 32),
             keep_days: keep_days(settings.keep_days),
             keep_articles: keep_articles(settings.keep_articles),
+            image_cache_mb: if IMAGE_CACHE_CHOICES.contains(&settings.image_cache_mb) {
+                settings.image_cache_mb
+            } else {
+                RssSettings::default().image_cache_mb
+            },
+            rsshub_instance: rsshub_instance(&settings.rsshub_instance),
+            rsshub_key: settings.rsshub_key.trim().to_string(),
             ..settings.clone()
         };
         fs::write(
@@ -445,6 +568,10 @@ impl Storage {
                 params![url],
             )?;
             tx.execute("DELETE FROM rss_feeds WHERE url = ?1", params![url])?;
+            tx.execute(
+                "DELETE FROM rss_filters WHERE scope = 'feed' AND target = ?1",
+                params![url],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -473,14 +600,15 @@ impl Storage {
         let now = now_millis();
         let settings = self.rss_settings();
         let tx = self.conn.transaction()?;
-        let feed: Option<(String, Option<u32>, Option<u32>)> = tx
+        type Kept = (String, Option<u32>, Option<u32>, Option<bool>);
+        let feed: Option<Kept> = tx
             .query_row(
-                "SELECT title, keep_articles, keep_days FROM rss_feeds WHERE url = ?1",
+                "SELECT title, keep_articles, keep_days, keep_unread FROM rss_feeds WHERE url = ?1",
                 params![url],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((feed_title, keep_count, days)) = feed else {
+        let Some((feed_title, keep_count, days, keep_unread)) = feed else {
             return Err(AppError::keyed(
                 ErrorCode::NotFound,
                 "rssNoFeed",
@@ -507,6 +635,7 @@ impl Storage {
                 now
             ],
         )?;
+        let filters = Self::feed_filter_set(&tx, url)?;
         let mut inserted = Vec::new();
         for article in &fetched.articles {
             let (known, cleared): (bool, bool) = tx.query_row(
@@ -517,6 +646,25 @@ impl Storage {
             )?;
             if cleared {
                 continue;
+            }
+            if !known && !filters.is_empty() {
+                let body = if filters.reads_body() {
+                    crate::rss::plain_text(if article.content.is_empty() {
+                        &article.excerpt
+                    } else {
+                        &article.content
+                    })
+                } else {
+                    String::new()
+                };
+                let text = crate::rss::filter::ArticleText {
+                    title: &article.title,
+                    author: article.author.as_deref().unwrap_or_default(),
+                    body: &body,
+                };
+                if !filters.admits(&text) {
+                    continue;
+                }
             }
             if known {
                 tx.execute(
@@ -532,6 +680,7 @@ impl Storage {
                         article.content
                     ],
                 )?;
+                index_article(&tx, &article.id)?;
                 continue;
             }
             tx.execute(
@@ -556,6 +705,7 @@ impl Storage {
                     article.content
                 ],
             )?;
+            index_article(&tx, &article.id)?;
             inserted.push(article.id.as_str());
         }
         prune_feed(
@@ -564,6 +714,7 @@ impl Storage {
             now,
             keep_count.unwrap_or(settings.keep_articles),
             days.unwrap_or(settings.keep_days),
+            keep_unread.unwrap_or(settings.keep_unread_articles),
         )?;
         // Entries too old to keep come and go at once; they are not new.
         let mut added = 0;
@@ -676,7 +827,7 @@ impl Storage {
             "UPDATE rss_articles SET full_text = ?2 WHERE id = ?1",
             params![id, html],
         )?;
-        Ok(())
+        index_article(&self.conn, id)
     }
 
     /// Marks articles. 保持未读 also marks them unread; marking them read
@@ -843,10 +994,21 @@ impl Storage {
              SELECT id, ?1 FROM rss_articles WHERE read = 1 AND starred = 0",
             params![now],
         )?;
-        tx.execute_batch(
-            "DELETE FROM rss_articles WHERE read = 1 AND starred = 0;
-             UPDATE rss_articles SET full_text = NULL WHERE full_text IS NOT NULL;",
+        tx.execute(
+            "DELETE FROM rss_articles WHERE read = 1 AND starred = 0",
+            [],
         )?;
+        let fetched: Vec<String> = tx
+            .prepare("SELECT id FROM rss_articles WHERE full_text IS NOT NULL")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        tx.execute(
+            "UPDATE rss_articles SET full_text = NULL WHERE full_text IS NOT NULL",
+            [],
+        )?;
+        for id in fetched {
+            index_article(&tx, &id)?;
+        }
         // A year on, a feed no longer carries them.
         tx.execute(
             "DELETE FROM rss_cleared WHERE cleared_at < ?1",
@@ -876,16 +1038,18 @@ fn prune_feed(
     now: i64,
     keep_count: u32,
     keep_days: u32,
+    keep_unread: bool,
 ) -> Result<(), AppError> {
     if keep_count == 0 {
         return Ok(());
     }
     let since = now - i64::from(keep_days) * 86_400_000;
     tx.execute(
-        "DELETE FROM rss_articles WHERE feed_url = ?1 AND starred = 0 AND published_at < ?2
+        "DELETE FROM rss_articles WHERE feed_url = ?1 AND starred = 0 AND keep_unread = 0
+           AND (?4 = 0 OR read = 1) AND published_at < ?2
            AND id NOT IN (SELECT id FROM rss_articles WHERE feed_url = ?1
                           ORDER BY published_at DESC, id DESC LIMIT ?3)",
-        params![url, since, keep_count],
+        params![url, since, keep_count, keep_unread],
     )?;
     Ok(())
 }
@@ -919,6 +1083,15 @@ fn list_conditions(query: &ArticleQuery) -> (Vec<String>, Vec<rusqlite::types::V
         .map(str::trim)
         .filter(|search| !search.is_empty())
     {
+        if search.chars().count() >= SEARCH_MIN_CHARS {
+            // One phrase, matched anywhere in the title, author, or text.
+            let phrase = format!("\"{}\"", search.replace('"', "\"\""));
+            let at = bind(phrase.into());
+            conditions.push(format!(
+                "a.rowid IN (SELECT rowid FROM rss_search WHERE rss_search MATCH {at})"
+            ));
+            return (conditions, values);
+        }
         let pattern = format!(
             "%{}%",
             search
@@ -949,14 +1122,15 @@ fn set_options(
 ) -> Result<(), AppError> {
     tx.execute(
         "UPDATE rss_feeds SET refresh_minutes = ?2, keep_articles = ?3, keep_days = ?4,
-            full_text = ?5, via_server = ?6 WHERE url = ?1",
+            full_text = ?5, via_server = ?6, keep_unread = ?7 WHERE url = ?1",
         params![
             url,
             options.refresh_minutes,
             options.keep_articles,
             options.keep_days,
             options.full_text,
-            options.via_server
+            options.via_server,
+            options.keep_unread
         ],
     )?;
     Ok(())
@@ -980,10 +1154,10 @@ fn move_feed(tx: &rusqlite::Transaction<'_>, from: &str, to: &str) -> Result<(),
     let moved = tx.execute(
         "INSERT INTO rss_feeds(url, title, site_url, icon_url, group_name, sort, added_at,
             updated_at, last_fetch, last_error, enabled, refresh_minutes, keep_articles,
-            keep_days, full_text, via_server, id_base)
+            keep_days, full_text, via_server, keep_unread, id_base)
          SELECT ?2, title, site_url, icon_url, group_name, sort, added_at, ?3, NULL, NULL,
             enabled, refresh_minutes, keep_articles, keep_days, full_text, via_server,
-            COALESCE(id_base, url)
+            keep_unread, COALESCE(id_base, url)
          FROM rss_feeds WHERE url = ?1",
         params![from, to, now_millis()],
     )?;
@@ -999,7 +1173,7 @@ fn move_feed(tx: &rusqlite::Transaction<'_>, from: &str, to: &str) -> Result<(),
         params![from, to],
     )?;
     tx.execute("DELETE FROM rss_feeds WHERE url = ?1", params![from])?;
-    Ok(())
+    super::rss_filters::move_feed_filters(tx, from, to)
 }
 
 /// Read articles go into sync records by the start of their id, which is
@@ -1166,6 +1340,11 @@ impl Storage {
             "UPDATE rss_feeds SET group_name = ?2, updated_at = ?3 WHERE group_name = ?1",
             params![name, new_name, now_millis()],
         )?;
+        self.conn.execute(
+            "UPDATE rss_filters SET target = ?2, updated_at = ?3
+             WHERE scope = 'group' AND target = ?1",
+            params![name, new_name, now_millis()],
+        )?;
         self.conn
             .execute("DELETE FROM rss_groups WHERE name = ?1", params![name])?;
         self.save_feed_groups(&order)
@@ -1189,6 +1368,10 @@ impl Storage {
         }
         self.conn
             .execute("DELETE FROM rss_groups WHERE name = ?1", params![name])?;
+        self.conn.execute(
+            "DELETE FROM rss_filters WHERE scope = 'group' AND target = ?1",
+            params![name],
+        )?;
         Ok(())
     }
 
@@ -1280,6 +1463,7 @@ impl Storage {
                 serde_json::to_value(&star)?,
             ));
         }
+        records.extend(self.filter_records()?);
         Ok(records)
     }
 
@@ -1451,6 +1635,6 @@ impl Storage {
                 star.content
             ],
         )?;
-        Ok(())
+        index_article(&self.conn, &star.id)
     }
 }

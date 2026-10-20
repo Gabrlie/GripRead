@@ -8,8 +8,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ego_tree::NodeRef;
 use scraper::{ElementRef, Html, Node, Selector};
@@ -400,6 +401,14 @@ pub fn check_feed(address: &str) -> Result<String, AppError> {
 /// The feeds at an address: the address itself when it is a feed, the
 /// feeds a page links to, or the usual feed paths of its site.
 pub fn discover(address: &str) -> Result<Vec<FeedCandidate>, AppError> {
+    Ok(discover_all(address)?
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect())
+}
+
+/// [`discover`], each feed marked when it is the address itself.
+fn discover_all(address: &str) -> Result<Vec<(FeedCandidate, bool)>, AppError> {
     let address = normalize_url(address)?;
     let response = fetch(&address, &[], FEED_LIMIT)?;
     if !(200..300).contains(&response.status) {
@@ -409,14 +418,17 @@ pub fn discover(address: &str) -> Result<Vec<FeedCandidate>, AppError> {
         ));
     }
     if let Ok(feed) = parse_feed(&response.url, &response.body) {
-        return Ok(vec![FeedCandidate {
-            title: if feed.title.is_empty() {
-                response.url.clone()
-            } else {
-                feed.title
+        return Ok(vec![(
+            FeedCandidate {
+                title: if feed.title.is_empty() {
+                    response.url.clone()
+                } else {
+                    feed.title
+                },
+                url: response.url,
             },
-            url: response.url,
-        }]);
+            true,
+        )]);
     }
     let html = decode_html(&response.body, &response.content_type);
     let mut found = linked_feeds(&html, &response.url);
@@ -460,7 +472,10 @@ pub fn discover(address: &str) -> Result<Vec<FeedCandidate>, AppError> {
             "这个地址没有找到 RSS 或 Atom 订阅",
         ));
     }
-    Ok(found)
+    Ok(found
+        .into_iter()
+        .map(|candidate| (candidate, false))
+        .collect())
 }
 
 /// `<link rel="alternate">` feeds of a page.
@@ -715,6 +730,7 @@ pub fn image(
         .rss_image_cache()
         .join(crate::storage::cover_key("rss", &url));
     if let Ok(bytes) = fs::read(&path) {
+        touch(&path);
         return Ok(bytes);
     }
     let mut headers = Vec::new();
@@ -736,7 +752,77 @@ pub fn image(
     let partial = path.with_extension("part");
     fs::write(&partial, &response.body)?;
     fs::rename(&partial, &path)?;
+    let written = WRITTEN.fetch_add(response.body.len() as u64, Ordering::AcqRel)
+        + response.body.len() as u64;
+    if written >= TRIM_EVERY {
+        WRITTEN.store(0, Ordering::Release);
+        let limit = u64::from(lock(storage)?.rss_settings().image_cache_mb) * 1024 * 1024;
+        if let Some(folder) = path.parent() {
+            trim_image_cache(folder, limit);
+        }
+    }
     Ok(response.body)
+}
+
+/// Pictures written since the cache was last measured.
+static WRITTEN: AtomicU64 = AtomicU64::new(0);
+/// The cache is measured after this much is written.
+const TRIM_EVERY: u64 = 10 * 1024 * 1024;
+/// A picture looked at is marked so at most this often.
+const TOUCH_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Marks a picture as looked at now, so it is among the last to go.
+fn touch(path: &std::path::Path) {
+    let stale = fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age > TOUCH_AFTER);
+    if stale {
+        if let Ok(file) = fs::File::options().write(true).open(path) {
+            let _ = file.set_modified(SystemTime::now());
+        }
+    }
+}
+
+/// Keeps the picture cache within `limit` bytes (0: no limit): over it,
+/// the pictures looked at longest ago go until it is at 90%.
+pub fn trim_image_cache(folder: &std::path::Path, limit: u64) {
+    if limit == 0 {
+        return;
+    }
+    let mut files: Vec<(SystemTime, u64, std::path::PathBuf)> = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                folders.push(entry.path());
+            } else {
+                let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                files.push((modified, meta.len(), entry.path()));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|(_, size, _)| size).sum();
+    if total <= limit {
+        return;
+    }
+    files.sort_by_key(|(modified, _, _)| *modified);
+    let goal = limit / 10 * 9;
+    for (_, size, path) in files {
+        if total <= goal {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Full text
@@ -1124,6 +1210,9 @@ fn first_image(html: &str) -> Option<String> {
     let end = rest[src..].find('"')?;
     Some(rest[src..src + end].replace("&amp;", "&"))
 }
+
+pub mod filter;
+pub mod search;
 
 #[cfg(test)]
 mod tests;

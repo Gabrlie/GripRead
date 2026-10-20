@@ -23,4 +23,8 @@ fullText: boolean | null,
 /**
  * 全文 is always fetched by the server (while connected).
  */
-viaServer: boolean, };
+viaServer: boolean, 
+/**
+ * Unread articles are never pruned.
+ */
+keepUnread: boolean | null, };

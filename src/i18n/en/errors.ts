@@ -108,4 +108,8 @@ export const errors = {
   "error.rssFeedExists": "Already subscribed to this address",
   "error.rssGroupNameEmpty": "Enter a group name",
   "error.serverTooOldForFullText": "The server is too old to read full text",
+  "error.rssFilterInvalid": "The regular expression is not valid: {error}",
+  "error.rssFilterEmpty": "The filter cannot be empty",
+  "error.rssFilterTarget": "Choose the group or feed the filter applies to",
+  "error.rssSearchFailed": "Search failed: HTTP {status}",
 } satisfies Messages<typeof zh>;

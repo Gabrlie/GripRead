@@ -40,4 +40,20 @@ keepArticles: number,
 /**
  * An article scrolled up out of the list is marked read.
  */
-markReadOnScroll: boolean, };
+markReadOnScroll: boolean, 
+/**
+ * Unread articles are never pruned.
+ */
+keepUnreadArticles: boolean, 
+/**
+ * Megabytes of article pictures kept; 0 keeps them all.
+ */
+imageCacheMb: number, 
+/**
+ * The RSSHub instance feed search turns pages into feeds with.
+ */
+rsshubInstance: string, 
+/**
+ * The instance's access key, put into the feed addresses it makes.
+ */
+rsshubKey: string, };

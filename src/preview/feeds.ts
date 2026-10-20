@@ -4,7 +4,9 @@ import type {
   ArticleQuery,
   ArticleSummary,
   Feed,
+  FeedFilter,
   FeedGroup,
+  FeedSearchResult,
   RssRefreshEvent,
   RssSettings,
 } from "../types/generated";
@@ -66,7 +68,12 @@ export function memoryFeeds(seed = true): FeedService {
     keepDays: 90,
     keepArticles: 500,
     markReadOnScroll: false,
+    keepUnreadArticles: false,
+    imageCacheMb: 500,
+    rsshubInstance: "https://rsshub.app",
+    rsshubKey: "",
   };
+  let filters: FeedFilter[] = [];
   const listeners = new Set<(event: RssRefreshEvent) => void>();
   const feed = (url: string, title: string, group: string | null, sort: number): Feed => ({
     url,
@@ -87,6 +94,7 @@ export function memoryFeeds(seed = true): FeedService {
       keepDays: null,
       fullText: null,
       viaServer: false,
+      keepUnread: null,
     },
   });
   if (seed) {
@@ -155,6 +163,33 @@ export function memoryFeeds(seed = true): FeedService {
     });
     return changed;
   };
+  /** The stored articles a rule applies to, newest first, and those it keeps out. */
+  const filtered = (rule: FeedFilter) => {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(rule.pattern, rule.ignoreCase ? "i" : "");
+    } catch {
+      throw new Error("正则表达式有误");
+    }
+    const applies = (article: ArticleSummary) =>
+      rule.scope === "all" ||
+      (rule.scope === "feed"
+        ? article.feedUrl === rule.target
+        : feeds.find((item) => item.url === article.feedUrl)?.group === rule.target);
+    const text = (article: Stored) => {
+      const { title, author } = article.summary;
+      const body = article.content.replace(/<[^>]*>/g, " ");
+      if (rule.field === "title") return title;
+      if (rule.field === "author") return author ?? "";
+      if (rule.field === "content") return body;
+      return `${title}\n${author ?? ""}\n${body}`;
+    };
+    const checked = articles
+      .filter((article) => applies(article.summary))
+      .sort((left, right) => right.summary.publishedAt - left.summary.publishedAt);
+    const out = checked.filter((article) => pattern.test(text(article)) === (rule.mode === "drop"));
+    return { checked, out };
+  };
   const find = (id: string) => {
     const found = articles.find((article) => article.summary.id === id);
     if (!found) throw new Error("没有这篇文章");
@@ -162,7 +197,74 @@ export function memoryFeeds(seed = true): FeedService {
   };
   return {
     listFeeds: async () => counted(),
-    discover: async (url) => [{ url, title: new URL(url).hostname }],
+    search: async (query): Promise<FeedSearchResult[]> => {
+      const text = query.trim();
+      if (!text) return [];
+      if (!/^\S+\.\S+$/.test(text) && !text.includes("://"))
+        return ["日报", "周刊", "博客"].map((kind, index) => ({
+          url: `https://${index + 1}.example.org/feed`,
+          title: `${text} ${kind}`,
+          site: `https://${index + 1}.example.org`,
+          description: `关于「${text}」的${kind}，每天更新。`,
+          subscribers: 1200 >> index,
+          icon: null,
+          source: "feedly",
+        }));
+      const url = text.includes("://") ? text : `https://${text}`;
+      const { hostname, pathname } = new URL(url);
+      const results: FeedSearchResult[] = [];
+      if (/feed|rss|atom|\.xml/.test(pathname))
+        results.push({
+          url,
+          title: hostname,
+          site: null,
+          description: null,
+          subscribers: null,
+          icon: null,
+          source: "feed",
+        });
+      else
+        results.push(
+          {
+            url: `${url.replace(/\/$/, "")}/feed`,
+            title: `${hostname} 的订阅`,
+            site: url,
+            description: null,
+            subscribers: null,
+            icon: null,
+            source: "page",
+          },
+          {
+            url: `${settings.rsshubInstance}/example${pathname}`,
+            title: `${hostname} · 动态`,
+            site: url,
+            description: `/example${pathname}`,
+            subscribers: null,
+            icon: null,
+            source: "rsshub",
+          },
+        );
+      return results;
+    },
+    preview: async (url) => {
+      const title = new URL(url).hostname;
+      const sample = feed(url, title, null, 0);
+      return {
+        url,
+        title,
+        siteUrl: sample.siteUrl,
+        articles: sampleArticles(sample, 8, Date.now()).map(({ summary, content }) => ({
+          id: summary.id,
+          title: summary.title,
+          link: summary.link,
+          author: summary.author,
+          publishedAt: summary.publishedAt,
+          excerpt: summary.excerpt,
+          image: summary.image,
+          content,
+        })),
+      };
+    },
     addFeed: async (url, title, group) => {
       if (feeds.some((item) => item.url === url)) throw new Error("已经订阅过这个地址");
       const added = feed(url, title || new URL(url).hostname, group, feeds.length);
@@ -325,5 +427,33 @@ export function memoryFeeds(seed = true): FeedService {
     exportOpml: async () => false,
     getSettings: async () => settings,
     saveSettings: async (next) => (settings = next),
+    listFilters: async () => filters,
+    saveFilter: async (rule, purge) => {
+      const { out } = filtered(rule);
+      const saved = rule.id
+        ? rule
+        : { ...rule, id: `filter-${Date.now()}-${filters.length}`, sort: filters.length };
+      filters = filters.some((item) => item.id === saved.id)
+        ? filters.map((item) => (item.id === saved.id ? saved : item))
+        : [...filters, saved];
+      if (purge) {
+        const gone = new Set(
+          out.filter((article) => !article.summary.starred).map((article) => article.summary.id),
+        );
+        articles = articles.filter((article) => !gone.has(article.summary.id));
+      }
+      return saved;
+    },
+    removeFilter: async (id) => {
+      filters = filters.filter((item) => item.id !== id);
+    },
+    testFilter: async (rule) => {
+      const { checked, out } = filtered(rule);
+      return {
+        checked: Math.min(checked.length, 2000),
+        dropped: out.length,
+        samples: out.slice(0, 5).map((article) => article.summary.title),
+      };
+    },
   };
 }

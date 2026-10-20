@@ -9,10 +9,12 @@ use crate::commands::{with_storage, AppState};
 use crate::error::{AppError, ErrorCode};
 use crate::models::{
     AddFeedRequest, Article, ArticleIdRequest, ArticlePage, ArticleQuery, ArticleStateRequest,
-    DiscoverFeedRequest, Feed, FeedCandidate, FeedGroup, FeedUrlsRequest, MarkAllReadRequest,
-    MarkReadRangeRequest, OpmlImportReport, OpmlImportRequest, OptionalPathRequest,
-    RefreshFeedsRequest, RemoveFeedGroupRequest, RenameFeedGroupRequest, RssImageRequest,
-    RssRefreshEvent, RssSettings, SaveFeedGroupsRequest, SaveRssSettingsRequest, UpdateFeedRequest,
+    Feed, FeedFilter, FeedFilterIdRequest, FeedFilterTest, FeedGroup, FeedPreview,
+    FeedSearchResult, FeedUrlsRequest, MarkAllReadRequest, MarkReadRangeRequest, OpmlImportReport,
+    OpmlImportRequest, OptionalPathRequest, PreviewFeedRequest, RefreshFeedsRequest,
+    RemoveFeedGroupRequest, RenameFeedGroupRequest, RssImageRequest, RssRefreshEvent, RssSettings,
+    SaveFeedFilterRequest, SaveFeedGroupsRequest, SaveRssSettingsRequest, SearchFeedsRequest,
+    TestFeedFilterRequest, UpdateFeedRequest,
 };
 use crate::source_commands::SourceOperations;
 
@@ -26,13 +28,6 @@ async fn blocking<T: Send + 'static>(
 
 pub async fn list_feeds(state: &Arc<AppState>) -> Result<Vec<Feed>, AppError> {
     with_storage(state, |storage| storage.list_feeds()).await
-}
-
-pub async fn discover_feed(
-    _state: &Arc<AppState>,
-    request: DiscoverFeedRequest,
-) -> Result<Vec<FeedCandidate>, AppError> {
-    blocking(move || crate::rss::discover(&request.url)).await
 }
 
 pub async fn add_feed(state: &Arc<AppState>, request: AddFeedRequest) -> Result<Feed, AppError> {
@@ -378,4 +373,54 @@ pub async fn save_rss_settings(
         storage.save_rss_settings(&request.settings)
     })
     .await
+}
+
+pub async fn list_feed_filters(state: &Arc<AppState>) -> Result<Vec<FeedFilter>, AppError> {
+    with_storage(state, |storage| storage.feed_filters()).await
+}
+
+pub async fn save_feed_filter(
+    state: &Arc<AppState>,
+    request: SaveFeedFilterRequest,
+) -> Result<FeedFilter, AppError> {
+    with_storage(state, move |storage| {
+        storage.save_feed_filter(&request.filter, request.purge)
+    })
+    .await
+}
+
+pub async fn remove_feed_filter(
+    state: &Arc<AppState>,
+    request: FeedFilterIdRequest,
+) -> Result<(), AppError> {
+    with_storage(state, move |storage| {
+        storage.remove_feed_filter(&request.id)
+    })
+    .await
+}
+
+pub async fn test_feed_filter(
+    state: &Arc<AppState>,
+    request: TestFeedFilterRequest,
+) -> Result<FeedFilterTest, AppError> {
+    with_storage(state, move |storage| {
+        storage.test_feed_filter(&request.filter)
+    })
+    .await
+}
+
+pub async fn search_feeds(
+    state: &Arc<AppState>,
+    request: SearchFeedsRequest,
+) -> Result<Vec<FeedSearchResult>, AppError> {
+    let storage = state.storage.clone();
+    blocking(move || crate::rss::search::search_feeds(&storage, &request.query)).await
+}
+
+pub async fn preview_feed(
+    state: &Arc<AppState>,
+    request: PreviewFeedRequest,
+) -> Result<FeedPreview, AppError> {
+    let storage = state.storage.clone();
+    blocking(move || crate::rss::search::preview(&storage, &request.url)).await
 }

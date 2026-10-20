@@ -3050,6 +3050,8 @@ pub struct FeedOptions {
     pub full_text: Option<bool>,
     /// 全文 is always fetched by the server (while connected).
     pub via_server: bool,
+    /// Unread articles are never pruned.
+    pub keep_unread: Option<bool>,
 }
 
 /// A group of feeds, in the order 订阅 lists them.
@@ -3058,6 +3060,152 @@ pub struct FeedOptions {
 pub struct FeedGroup {
     pub name: String,
     pub sort: i64,
+}
+
+/// Which articles a filter rule looks at.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedFilterScope {
+    #[default]
+    All,
+    Group,
+    Feed,
+}
+
+/// What of an article a filter rule matches.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedFilterField {
+    #[default]
+    Title,
+    Author,
+    Content,
+    /// The title, author, and text together.
+    Any,
+}
+
+/// Whether matching articles are dropped, or are the only ones kept.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedFilterMode {
+    #[default]
+    Drop,
+    Keep,
+}
+
+/// A 过滤规则: a regular expression new articles are checked against
+/// before they are stored.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FeedFilter {
+    /// Empty for a new rule.
+    pub id: String,
+    pub scope: FeedFilterScope,
+    /// The group's name or the feed's address.
+    pub target: Option<String>,
+    pub field: FeedFilterField,
+    pub mode: FeedFilterMode,
+    pub pattern: String,
+    pub ignore_case: bool,
+    pub enabled: bool,
+    pub sort: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFeedFilterRequest {
+    pub filter: FeedFilter,
+    /// Stored articles the rule would not have let in are removed too
+    /// (starred ones stay).
+    #[serde(default)]
+    pub purge: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedFilterIdRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TestFeedFilterRequest {
+    pub filter: FeedFilter,
+}
+
+/// What a rule would do to the newest stored articles it applies to.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedFilterTest {
+    pub checked: u32,
+    /// Articles the rule would drop.
+    pub dropped: u32,
+    /// Titles of a few of them.
+    pub samples: Vec<String>,
+}
+
+/// Where a feed search result came from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedSearchSource {
+    /// The address is itself a feed.
+    Feed,
+    /// The page links to it.
+    Page,
+    /// An RSSHub route for the page.
+    Rsshub,
+    /// Feedly's directory.
+    Feedly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedSearchResult {
+    pub url: String,
+    pub title: String,
+    pub site: Option<String>,
+    pub description: Option<String>,
+    pub subscribers: Option<u64>,
+    pub icon: Option<String>,
+    pub source: FeedSearchSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchFeedsRequest {
+    /// Words, or an address.
+    pub query: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFeedRequest {
+    pub url: String,
+}
+
+/// An article of a feed looked at before subscribing.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewArticle {
+    pub id: String,
+    pub title: String,
+    pub link: Option<String>,
+    pub author: Option<String>,
+    pub published_at: i64,
+    pub excerpt: String,
+    pub image: Option<String>,
+    /// Sanitized HTML.
+    pub content: String,
+}
+
+/// A feed's newest articles, fetched without subscribing.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedPreview {
+    pub url: String,
+    pub title: String,
+    pub site_url: Option<String>,
+    pub articles: Vec<PreviewArticle>,
 }
 
 /// A feed found at an address (the address itself, or one a page links to).
@@ -3301,6 +3449,14 @@ pub struct RssSettings {
     pub keep_articles: u32,
     /// An article scrolled up out of the list is marked read.
     pub mark_read_on_scroll: bool,
+    /// Unread articles are never pruned.
+    pub keep_unread_articles: bool,
+    /// Megabytes of article pictures kept; 0 keeps them all.
+    pub image_cache_mb: u32,
+    /// The RSSHub instance feed search turns pages into feeds with.
+    pub rsshub_instance: String,
+    /// The instance's access key, put into the feed addresses it makes.
+    pub rsshub_key: String,
 }
 
 impl Default for RssSettings {
@@ -3315,6 +3471,10 @@ impl Default for RssSettings {
             keep_days: 90,
             keep_articles: 500,
             mark_read_on_scroll: false,
+            keep_unread_articles: false,
+            image_cache_mb: 500,
+            rsshub_instance: "https://rsshub.app".into(),
+            rsshub_key: String::new(),
         }
     }
 }
@@ -3324,12 +3484,6 @@ impl Default for RssSettings {
 pub struct OpmlImportRequest {
     /// The OPML file's text (read with `read_source_file`).
     pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscoverFeedRequest {
-    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

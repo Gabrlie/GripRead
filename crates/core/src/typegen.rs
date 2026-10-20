@@ -230,6 +230,20 @@ const IPC_TYPES: &[&str] = &[
     "UpdateFeedRequest",
     "FeedOptions",
     "FeedGroup",
+    "FeedFilterScope",
+    "FeedFilterField",
+    "FeedFilterMode",
+    "FeedFilter",
+    "SaveFeedFilterRequest",
+    "FeedFilterIdRequest",
+    "TestFeedFilterRequest",
+    "FeedFilterTest",
+    "FeedSearchSource",
+    "FeedSearchResult",
+    "SearchFeedsRequest",
+    "PreviewFeedRequest",
+    "PreviewArticle",
+    "FeedPreview",
     "SaveFeedGroupsRequest",
     "RenameFeedGroupRequest",
     "RemoveFeedGroupRequest",
@@ -250,7 +264,6 @@ const IPC_TYPES: &[&str] = &[
     "OpmlImportReport",
     "RssSettings",
     "OpmlImportRequest",
-    "DiscoverFeedRequest",
     "SaveRssSettingsRequest",
     "SwitchRequest",
     "NetworkSettings",
@@ -494,6 +507,20 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<UpdateFeedRequest>(&config)?;
     export_all::<FeedOptions>(&config)?;
     export_all::<FeedGroup>(&config)?;
+    export_all::<FeedFilterScope>(&config)?;
+    export_all::<FeedFilterField>(&config)?;
+    export_all::<FeedFilterMode>(&config)?;
+    export_all::<FeedFilter>(&config)?;
+    export_all::<SaveFeedFilterRequest>(&config)?;
+    export_all::<FeedFilterIdRequest>(&config)?;
+    export_all::<TestFeedFilterRequest>(&config)?;
+    export_all::<FeedFilterTest>(&config)?;
+    export_all::<FeedSearchSource>(&config)?;
+    export_all::<FeedSearchResult>(&config)?;
+    export_all::<SearchFeedsRequest>(&config)?;
+    export_all::<PreviewFeedRequest>(&config)?;
+    export_all::<PreviewArticle>(&config)?;
+    export_all::<FeedPreview>(&config)?;
     export_all::<SaveFeedGroupsRequest>(&config)?;
     export_all::<RenameFeedGroupRequest>(&config)?;
     export_all::<RemoveFeedGroupRequest>(&config)?;
@@ -514,7 +541,6 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<OpmlImportReport>(&config)?;
     export_all::<RssSettings>(&config)?;
     export_all::<OpmlImportRequest>(&config)?;
-    export_all::<DiscoverFeedRequest>(&config)?;
     export_all::<SaveRssSettingsRequest>(&config)?;
     export_all::<SwitchRequest>(&config)?;
     export_all::<NetworkSettings>(&config)?;

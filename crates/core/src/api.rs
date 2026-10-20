@@ -119,7 +119,6 @@ pub fn mutates(name: &str) -> bool {
         "server_api",
         // Opening a private group changes nothing.
         "unlock_group",
-        "discover_",
         "rss_image",
     ];
     !READS.iter().any(|read| name.starts_with(read))
@@ -128,13 +127,18 @@ pub fn mutates(name: &str) -> bool {
 /// The command names [`dispatch`] answers.
 pub const COMMANDS: &[&str] = &[
     "list_feeds",
-    "discover_feed",
     "add_feed",
     "update_feed",
     "list_feed_groups",
     "save_feed_groups",
     "rename_feed_group",
     "remove_feed_group",
+    "list_feed_filters",
+    "save_feed_filter",
+    "remove_feed_filter",
+    "test_feed_filter",
+    "search_feeds",
+    "preview_feed",
     "mark_read_range",
     "remove_feeds",
     "refresh_feeds",
@@ -746,7 +750,6 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         }
         "disconnect_sync_server" => reply(crate::commands::disconnect_sync_server(state).await),
         "list_feeds" => reply(crate::rss_commands::list_feeds(state).await),
-        "discover_feed" => reply(crate::rss_commands::discover_feed(state, request(args)?).await),
         "add_feed" => reply(crate::rss_commands::add_feed(state, request(args)?).await),
         "update_feed" => reply(crate::rss_commands::update_feed(state, request(args)?).await),
         "list_feed_groups" => reply(crate::rss_commands::list_feed_groups(state).await),
@@ -762,6 +765,18 @@ async fn run(state: &Arc<AppState>, name: &str, args: Value) -> Result<Reply, Ap
         "mark_read_range" => {
             reply(crate::rss_commands::mark_read_range(state, request(args)?).await)
         }
+        "list_feed_filters" => reply(crate::rss_commands::list_feed_filters(state).await),
+        "save_feed_filter" => {
+            reply(crate::rss_commands::save_feed_filter(state, request(args)?).await)
+        }
+        "remove_feed_filter" => {
+            reply(crate::rss_commands::remove_feed_filter(state, request(args)?).await)
+        }
+        "test_feed_filter" => {
+            reply(crate::rss_commands::test_feed_filter(state, request(args)?).await)
+        }
+        "search_feeds" => reply(crate::rss_commands::search_feeds(state, request(args)?).await),
+        "preview_feed" => reply(crate::rss_commands::preview_feed(state, request(args)?).await),
         "remove_feeds" => reply(crate::rss_commands::remove_feeds(state, request(args)?).await),
         "refresh_feeds" => reply(crate::rss_commands::refresh_feeds(state, request(args)?).await),
         "list_articles" => reply(crate::rss_commands::list_articles(state, request(args)?).await),

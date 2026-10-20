@@ -73,4 +73,5 @@ export const log = {
   "log.readerError": "《{title}》{error}",
   "log.layoutTiming": "排版 {chars} 字用了 {ms} ms，{pages} 页",
   "log.rssFullTextViaServer": "本机读取原文失败，改由服务器读取：{error}",
+  "log.rssRadarUnavailable": "RSSHub 规则读取失败：{error}",
 } as const;
