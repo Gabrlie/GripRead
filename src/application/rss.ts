@@ -46,7 +46,15 @@ export interface FeedSnapshot {
   /** The first page is loading (later loads keep the list). */
   loading: boolean;
   loadingMore: boolean;
-  refreshing: { done: number; total: number } | null;
+  /**
+   * The refresh under way: feeds and accounts done of all, and how far the
+   * account syncing now has fetched its articles.
+   */
+  refreshing: {
+    done: number;
+    total: number;
+    step?: { account: string; done: number; total: number };
+  } | null;
   /** When the last refresh finished. */
   lastRefresh: number;
   /** Feeds that failed in the last refresh. */
@@ -63,6 +71,8 @@ export interface FeedSnapshot {
 export const ENTER_REFRESH_GAP_MS = 10 * 60_000;
 /** How often the interval refresh asks which feeds are due. */
 const SCHEDULE_TICK_MS = 60_000;
+/** A refresh heard nothing of this long is let go, so another can start. */
+export const REFRESH_SILENCE_MS = 3 * 60_000;
 const PAGE = 50;
 
 /**
@@ -319,19 +329,45 @@ export class FeedStore {
         refreshing: { done: 0, total: urls.length + accounts.length || enabled },
       });
     const run = (async () => {
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      let silent!: () => void;
+      const stalled = new Promise<"stalled">((resolve) => {
+        silent = () => {
+          clearTimeout(quiet);
+          quiet = setTimeout(() => resolve("stalled"), REFRESH_SILENCE_MS);
+        };
+      });
+      silent();
       const stop = await this.service
         .onRefresh((event) => {
           if (event.operationId !== operationId || event.done) return;
+          silent();
+          if (event.step) {
+            const account = event.url.replace(/^account:/, "");
+            this.update({
+              refreshing: {
+                done: event.refreshed,
+                total: event.total,
+                step: { account, ...event.step },
+              },
+            });
+            return;
+          }
           fetched++;
           if (event.error) failed++;
           this.update({ refreshing: { done: event.refreshed, total: event.total } });
         })
         .catch(() => () => undefined);
       try {
-        await this.service.refresh(operationId, urls, due, accounts);
+        const finished = await Promise.race([
+          this.service.refresh(operationId, urls, due, accounts),
+          stalled,
+        ]);
+        if (finished === "stalled") this.update({ error: t("rss.refreshStalled") });
       } catch (error) {
         this.update({ error: String(error) });
       } finally {
+        clearTimeout(quiet);
         stop();
       }
       if (due && !fetched) {
@@ -434,20 +470,28 @@ export class FeedStore {
     await this.loadFeeds();
   };
 
-  /** Renames a group; a list of it follows the new name. */
-  renameGroup = async (name: string, newName: string) => {
-    await this.service.renameGroup(name, newName);
+  /** Renames a group (of `account`, on it); a list of it follows the new name. */
+  renameGroup = async (name: string, newName: string, account: string | null = null) => {
+    await this.service.renameGroup(name, newName, account);
     const { selection } = this.snapshot;
-    if (selection.kind === "group" && !selection.account && selection.group === name)
-      this.update({ selection: { kind: "group", group: newName.trim() } });
+    if (
+      selection.kind === "group" &&
+      (selection.account ?? null) === account &&
+      selection.group === name
+    )
+      this.update({ selection: { kind: "group", group: newName.trim(), account } });
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };
 
   /** Removes a group (its feeds ungrouped or unsubscribed); its list goes to all. */
-  removeGroup = async (name: string, unsubscribe: boolean) => {
-    await this.service.removeGroup(name, unsubscribe);
+  removeGroup = async (name: string, unsubscribe: boolean, account: string | null = null) => {
+    await this.service.removeGroup(name, unsubscribe, account);
     const { selection } = this.snapshot;
-    if (selection.kind === "group" && !selection.account && selection.group === name)
+    if (
+      selection.kind === "group" &&
+      (selection.account ?? null) === account &&
+      selection.group === name
+    )
       this.update({ selection: { kind: "all" } });
     await Promise.all([this.loadFeeds(), this.loadArticles(true)]);
   };

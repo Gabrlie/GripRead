@@ -3038,6 +3038,8 @@ pub struct Feed {
     pub account: Option<String>,
     /// An account feed's own address (its `url` names it in the account).
     pub address: Option<String>,
+    /// When its newest article kept here was published.
+    pub newest: Option<i64>,
 }
 
 /// The Google Reader API service an account is on.
@@ -3319,6 +3321,9 @@ pub struct SaveFeedGroupsRequest {
 pub struct RenameFeedGroupRequest {
     pub name: String,
     pub new_name: String,
+    /// A group of this 订阅账号, renamed on the account.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 /// Removes a group: its feeds become ungrouped, or are unsubscribed.
@@ -3328,6 +3333,9 @@ pub struct RemoveFeedGroupRequest {
     pub name: String,
     #[serde(default)]
     pub unsubscribe: bool,
+    /// A group of this 订阅账号, removed on the account.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -3352,7 +3360,16 @@ pub struct RefreshFeedsRequest {
     pub accounts: Vec<String>,
 }
 
-/// `rss-refresh`: one feed refreshed, or the whole refresh done.
+/// How far a 订阅账号's sync has fetched its articles: `done` of `total`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RssRefreshStep {
+    pub done: u32,
+    pub total: u32,
+}
+
+/// `rss-refresh`: one feed refreshed, an account's sync along the way
+/// (`step`, the feed not yet counted), or the whole refresh done.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RssRefreshEvent {
@@ -3362,6 +3379,9 @@ pub struct RssRefreshEvent {
     pub total: u32,
     pub new_articles: u32,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub step: Option<RssRefreshStep>,
     pub done: bool,
 }
 

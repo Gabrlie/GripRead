@@ -38,7 +38,7 @@ import { useReadingTime } from "./use-reading-time";
 import { SelectionMenu, type SelectionActions } from "./SelectionMenu";
 import { EMPTY_REPLACE_RULE, ReplaceRuleEditor, ReplaceRulesPage } from "../Rules/ReplaceRulesPage";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast, useErrorToast } from "../ui/toast";
 import { ReadAloudDialog } from "./dialogs/ReadAloudDialog";
 import {
   ReadAloud,
@@ -739,21 +739,18 @@ export function ReaderView() {
     if (!activeBook) return;
     if (activeBook.online) {
       toast(t("shelf.updating"));
-      void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(
-        ([outcome]) => {
-          if (outcome?.error)
-            toast({
-              text: t("detail.updateFailed", { error: outcome.error }),
-              error: true,
-            });
-          else {
-            refreshingDirectory.current = true;
-            reloadTools();
-            if (comic) comicSession.reload(comicSession.locator());
-          }
-        },
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      );
+      void updateOnlineToc(runtime.services.sources, [activeBook.book.id]).then(([outcome]) => {
+        if (outcome?.error)
+          toast({
+            text: t("detail.updateFailed", { error: outcome.error }),
+            error: true,
+          });
+        else {
+          refreshingDirectory.current = true;
+          reloadTools();
+          if (comic) comicSession.reload(comicSession.locator());
+        }
+      }, reportError);
       return;
     }
     refreshingDirectory.current = true;
@@ -1361,6 +1358,25 @@ export function ReaderView() {
     },
   };
 
+  // Failures show over the page while they hold (not over an open panel).
+  const failure =
+    panel === null ? state.error || state.saveError || actionError || settings.error : null;
+  useErrorToast(failure, state.saveError ? "reader-save-error" : "reader-error", () =>
+    settings.error
+      ? preferences
+        ? settingsStore.retry()
+        : void settingsStore.load()
+      : actionError && failedAction.current
+        ? run(failedAction.current)
+        : controller &&
+          activeBook &&
+          run(() => (state.error ? controller.open(activeBook.book.id) : controller.flush())),
+  );
+  useErrorToast(fontError && !state.error && panel === null ? fontError : null, "reader-font");
+  useEffect(() => {
+    if (state.positionWarning && !state.error) toast(state.positionWarning);
+  }, [state.positionWarning, state.error]);
+
   if (!activeBook) return null;
   const page = state.page;
   const progress =
@@ -1565,49 +1581,6 @@ export function ReaderView() {
         aria-hidden="true"
         style={typeStyle}
       />
-      {fontError && !state.error && panel === null && (
-        <div
-          role="status"
-          className="fixed bottom-40 left-4 right-4 z-30 rounded-xl px-4 py-2 bg-error-container text-error text-xs break-words"
-        >
-          {fontError}
-        </div>
-      )}
-      {(state.error || state.saveError || actionError || settings.error) && panel === null && (
-        <div
-          role="alert"
-          data-testid={state.saveError ? "reader-save-error" : "reader-error"}
-          className="fixed bottom-32 left-4 right-4 z-30 rounded-xl px-4 py-2 bg-error-container text-error text-xs break-words"
-        >
-          {state.error || state.saveError || actionError || settings.error}
-          <Button
-            variant="outline"
-            className="ml-2"
-            onClick={() =>
-              settings.error
-                ? preferences
-                  ? settingsStore.retry()
-                  : void settingsStore.load()
-                : actionError && failedAction.current
-                  ? run(failedAction.current)
-                  : controller &&
-                    run(() =>
-                      state.error ? controller.open(activeBook.book.id) : controller.flush(),
-                    )
-            }
-          >
-            {t("common.retry")}
-          </Button>
-        </div>
-      )}
-      {state.positionWarning && !state.error && (
-        <div
-          role="status"
-          className="fixed bottom-32 left-4 right-4 z-30 rounded-xl px-4 py-2 bg-secondary-container text-on-secondary-container text-xs"
-        >
-          {state.positionWarning}
-        </div>
-      )}
       <div className="contents" style={appearance.menu}>
         {system.available() && (
           <ReaderBrightnessBar
@@ -1952,15 +1925,12 @@ export function ReaderView() {
                 size="sm"
                 onClick={() => {
                   const { toDetail } = askShelf;
-                  void runtime.services.sources.setOnShelf(activeBook.book.id, true).then(
-                    () => {
-                      void keepOnlineCover(runtime.services.sources, activeBook);
-                      shelfChoice.current = "add";
-                      setAskShelf(null);
-                      close(toDetail);
-                    },
-                    (failure: unknown) => toast({ text: describeError(failure), error: true }),
-                  );
+                  void runtime.services.sources.setOnShelf(activeBook.book.id, true).then(() => {
+                    void keepOnlineCover(runtime.services.sources, activeBook);
+                    shelfChoice.current = "add";
+                    setAskShelf(null);
+                    close(toDetail);
+                  }, reportError);
                 }}
               >
                 {t("reader.addToShelf")}

@@ -430,11 +430,9 @@ impl Storage {
         filter_read: bool,
     ) -> Result<StoredItems, AppError> {
         let now = now_millis();
-        let settings = self.rss_settings();
         let tx = self.conn.transaction()?;
         let mut stored = StoredItems::default();
         let mut filters = std::collections::HashMap::new();
-        let mut touched = std::collections::BTreeSet::new();
         for item in items {
             let url = account_feed_url(account, &item.stream);
             let id = account_article_id(account, &item.remote_id);
@@ -522,30 +520,98 @@ impl Storage {
             )?;
             super::rss::index_article(&tx, &id)?;
             stored.added += 1;
-            touched.insert(url);
         }
-        // Unread articles are the account's to keep; read ones go as
-        // a feed of the device's own would.
-        for url in touched {
-            let kept: (Option<u32>, Option<u32>) = tx
-                .query_row(
-                    "SELECT keep_articles, keep_days FROM rss_feeds WHERE url = ?1",
-                    params![url],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?
-                .unwrap_or_default();
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    /// Moves an account's feeds of a group into another (none when empty),
+    /// as the account did.
+    pub fn rename_account_group(
+        &self,
+        account: &str,
+        name: &str,
+        new_name: &str,
+    ) -> Result<(), AppError> {
+        let new_name = new_name.trim();
+        self.conn.execute(
+            "UPDATE rss_feeds SET group_name = ?3, updated_at = ?4
+             WHERE account_id = ?1 AND group_name = ?2",
+            params![
+                account,
+                name,
+                (!new_name.is_empty()).then_some(new_name),
+                now_millis()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Each of the account's feeds (its stream) with how many articles it
+    /// keeps (0 for all): a sync takes that many of its newest.
+    pub fn account_feed_limits(&self, account: &str) -> Result<Vec<(String, u32)>, AppError> {
+        let settings = self.rss_settings();
+        let feeds: Vec<(String, Option<u32>)> = self
+            .conn
+            .prepare(
+                "SELECT url, keep_articles FROM rss_feeds WHERE account_id = ?1 ORDER BY sort",
+            )?
+            .query_map(params![account], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        Ok(feeds
+            .into_iter()
+            .filter_map(|(url, keep)| {
+                let (_, stream) = feed_account(&url)?;
+                Some((stream.to_string(), keep.unwrap_or(settings.keep_articles)))
+            })
+            .collect())
+    }
+
+    /// Drops the account's articles beyond what each feed keeps, as a feed
+    /// of the device's own would; only here (the account keeps them). They
+    /// are remembered, so a sync does not take one again that the account
+    /// still counts among a feed's newest.
+    pub fn prune_account(&mut self, account: &str) -> Result<(), AppError> {
+        let now = now_millis();
+        let settings = self.rss_settings();
+        let tx = self.conn.transaction()?;
+        type Kept = (String, Option<u32>, Option<u32>, Option<bool>);
+        let feeds: Vec<Kept> = tx
+            .prepare(
+                "SELECT url, keep_articles, keep_days, keep_unread FROM rss_feeds
+                 WHERE account_id = ?1",
+            )?
+            .query_map(params![account], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        let ids =
+            |tx: &rusqlite::Transaction<'_>, url: &str| -> Result<HashSet<String>, AppError> {
+                Ok(tx
+                    .prepare("SELECT id FROM rss_articles WHERE feed_url = ?1")?
+                    .query_map(params![url], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?)
+            };
+        for (url, keep, days, unread) in feeds {
+            let before = ids(&tx, &url)?;
             super::rss::prune_feed(
                 &tx,
                 &url,
                 now,
-                kept.0.unwrap_or(settings.keep_articles),
-                kept.1.unwrap_or(settings.keep_days),
-                true,
+                keep.unwrap_or(settings.keep_articles),
+                days.unwrap_or(settings.keep_days),
+                unread.unwrap_or(settings.keep_unread_articles),
             )?;
+            let after = ids(&tx, &url)?;
+            for id in before.difference(&after) {
+                tx.execute(
+                    "INSERT OR IGNORE INTO rss_cleared(id, cleared_at) VALUES (?1, ?2)",
+                    params![id, now],
+                )?;
+            }
         }
         tx.commit()?;
-        Ok(stored)
+        Ok(())
     }
 
     /// Takes the account's marks: an article is read unless it is among

@@ -6,9 +6,8 @@ import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { useT, type MessageKey } from "../../i18n";
-import { describeError } from "../Cloud/format";
 
 /** Parts chosen when the page opens: every cache except the shelf's chapters. */
 const UNCHOSEN = new Set(["shelved"]);
@@ -43,22 +42,19 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let active = true;
-    void service.dataUsage().then(
-      (value) => {
-        if (!active) return;
-        setUsage(value);
-        setChosen(
-          (current) =>
-            current ??
-            new Set(
-              value.parts
-                .filter((part) => part.clearable && !UNCHOSEN.has(part.key))
-                .map((part) => part.key),
-            ),
-        );
-      },
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void service.dataUsage().then((value) => {
+      if (!active) return;
+      setUsage(value);
+      setChosen(
+        (current) =>
+          current ??
+          new Set(
+            value.parts
+              .filter((part) => part.clearable && !UNCHOSEN.has(part.key))
+              .map((part) => part.key),
+          ),
+      );
+    }, reportError);
     return () => {
       active = false;
     };
@@ -75,14 +71,11 @@ export function DataManagerPage({ onClose }: { onClose: () => void }) {
   const run = (work: () => Promise<unknown>, done: string) => {
     setBusy(true);
     void work()
-      .then(
-        () => {
-          toast(done);
-          setRevision((value) => value + 1);
-          return runtime.library.refresh();
-        },
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      )
+      .then(() => {
+        toast(done);
+        setRevision((value) => value + 1);
+        return runtime.library.refresh();
+      }, reportError)
       .finally(() => setBusy(false));
   };
 

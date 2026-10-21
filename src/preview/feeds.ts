@@ -98,6 +98,7 @@ export function memoryFeeds(seed = true): FeedService {
       viaServer: false,
       keepUnread: null,
     },
+    newest: null,
     account: null,
     address: null,
   });
@@ -128,6 +129,10 @@ export function memoryFeeds(seed = true): FeedService {
         ...item,
         total: own.length,
         unread: own.filter((article) => !article.summary.read).length,
+        newest: own.reduce<number | null>(
+          (newest, article) => Math.max(newest ?? 0, article.summary.publishedAt),
+          null,
+        ),
       };
     });
   /** The groups in order: those arranged, then those only feeds name. */
@@ -332,7 +337,13 @@ export function memoryFeeds(seed = true): FeedService {
         sort,
       }));
     },
-    renameGroup: async (name, newName) => {
+    renameGroup: async (name, newName, account = null) => {
+      if (account !== null) {
+        feeds = feeds.map((item) =>
+          item.account === account && item.group === name ? { ...item, group: newName } : item,
+        );
+        return;
+      }
       const merging = allGroups().some((group) => group.name === newName);
       groups = allGroups()
         .filter((group) => !(merging && group.name === name))
@@ -341,10 +352,10 @@ export function memoryFeeds(seed = true): FeedService {
         item.account === null && item.group === name ? { ...item, group: newName } : item,
       );
     },
-    removeGroup: async (name, unsubscribe) => {
-      groups = allGroups().filter((group) => group.name !== name);
+    removeGroup: async (name, unsubscribe, account = null) => {
+      if (account === null) groups = allGroups().filter((group) => group.name !== name);
       const urls = feeds
-        .filter((item) => item.account === null && item.group === name)
+        .filter((item) => item.account === account && item.group === name)
         .map((item) => item.url);
       if (unsubscribe) {
         feeds = feeds.filter((item) => !urls.includes(item.url));
@@ -352,9 +363,7 @@ export function memoryFeeds(seed = true): FeedService {
           (article) => !urls.includes(article.summary.feedUrl) || article.summary.starred,
         );
       } else
-        feeds = feeds.map((item) =>
-          item.account === null && item.group === name ? { ...item, group: null } : item,
-        );
+        feeds = feeds.map((item) => (urls.includes(item.url) ? { ...item, group: null } : item));
     },
     removeFeeds: async (urls) => {
       feeds = feeds.filter((item) => !urls.includes(item.url));
@@ -382,7 +391,22 @@ export function memoryFeeds(seed = true): FeedService {
       accounts = accounts.map((account) =>
         synced.includes(`account:${account.id}`) ? { ...account, lastSync: Date.now() } : account,
       );
-      targets.forEach((url, index) =>
+      targets.forEach((url, index) => {
+        // An account fetches its articles along the way.
+        if (url.startsWith("account:"))
+          for (const done of [0, 100, 200])
+            listeners.forEach((listener) =>
+              listener({
+                operationId,
+                url,
+                refreshed: index,
+                total: targets.length,
+                newArticles: 0,
+                error: null,
+                step: { done, total: 200 },
+                done: false,
+              }),
+            );
         listeners.forEach((listener) =>
           listener({
             operationId,
@@ -393,8 +417,8 @@ export function memoryFeeds(seed = true): FeedService {
             error: null,
             done: false,
           }),
-        ),
-      );
+        );
+      });
       listeners.forEach((listener) =>
         listener({
           operationId,

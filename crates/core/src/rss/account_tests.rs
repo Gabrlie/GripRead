@@ -129,6 +129,11 @@ fn serve(service: &Mutex<Service>, request: &Request) -> Response {
                 .rev()
                 .filter(|(_, item)| !(exclude_read && item.read))
                 .filter(|(_, item)| !stream.ends_with("/starred") || item.starred)
+                .filter(|(_, item)| {
+                    stream
+                        .strip_prefix("feed/")
+                        .is_none_or(|feed| feed == item.feed.to_string())
+                })
                 .filter(|(id, _)| since.is_none_or(|since| **id >= since))
                 .map(|(id, _)| *id)
                 .collect();
@@ -206,6 +211,20 @@ fn serve(service: &Mutex<Service>, request: &Request) -> Response {
                     item.starred = add;
                 }
             }
+            Response::html("OK")
+        }
+        "/reader/api/0/rename-tag" | "/reader/api/0/disable-tag" => {
+            assert_eq!(one("T").as_deref(), Some("write-token"));
+            let from = one("s").unwrap()["user/-/label/".len()..].to_string();
+            let to = one("dest").map(|dest| dest["user/-/label/".len()..].to_string());
+            for (_, group) in state.feeds.values_mut() {
+                if group.as_deref() == Some(from.as_str()) {
+                    *group = to.clone();
+                }
+            }
+            state
+                .edits
+                .push(request.path.rsplit('/').next().unwrap().to_string());
             Response::html("OK")
         }
         "/reader/api/0/subscription/quickadd" => {
@@ -352,7 +371,7 @@ fn accounts_sync_both_ways_and_keep_to_themselves() {
         .add_feed("https://own.example/feed", "自己的", Some("科技"), None)
         .unwrap();
 
-    assert_eq!(sync(&storage, &id).unwrap(), 30);
+    assert_eq!(sync(&storage, &id, &|_, _| {}).unwrap(), 30);
     {
         let guard = lock(&storage).unwrap();
         let feeds = guard.list_feeds().unwrap();
@@ -441,7 +460,7 @@ fn accounts_sync_both_ways_and_keep_to_themselves() {
     }
     // Offline (or refused), they keep waiting.
     service.lock().unwrap().failing_edits = true;
-    let failed = sync(&storage, &id).unwrap_err();
+    let failed = sync(&storage, &id, &|_, _| {}).unwrap_err();
     assert_eq!(failed.key.as_deref(), Some("rssAccountHttp"));
     let account = lock(&storage).unwrap().feed_account(&id).unwrap();
     assert_eq!(account.pending, 2);
@@ -501,7 +520,7 @@ fn accounts_sync_both_ways_and_keep_to_themselves() {
     }
     // The sign-in token has run out: it is renewed with the password.
     service.lock().unwrap().token += 1;
-    assert_eq!(sync(&storage, &id).unwrap(), 1);
+    assert_eq!(sync(&storage, &id, &|_, _| {}).unwrap(), 1);
     {
         let state = service.lock().unwrap();
         let fifteen_on_account = state
@@ -544,7 +563,7 @@ fn accounts_sync_both_ways_and_keep_to_themselves() {
     }
     // A rule's article is not fetched again.
     service.lock().unwrap().fetched.clear();
-    assert_eq!(sync(&storage, &id).unwrap(), 0);
+    assert_eq!(sync(&storage, &id, &|_, _| {}).unwrap(), 0);
     assert!(service.lock().unwrap().fetched.is_empty());
 
     // 全部标为已读 on the account's group goes to the account too.
@@ -552,7 +571,7 @@ fn accounts_sync_both_ways_and_keep_to_themselves() {
         .unwrap()
         .mark_all_read(None, Some("科技"), Some(&id))
         .unwrap();
-    sync(&storage, &id).unwrap();
+    sync(&storage, &id, &|_, _| {}).unwrap();
     assert!(service
         .lock()
         .unwrap()
@@ -595,7 +614,7 @@ fn account_feeds_are_subscribed_changed_and_removed_on_the_account() {
         .unwrap()
         .save_feed_account(&account_request(&base, None), &login)
         .unwrap();
-    sync(&storage, &id).unwrap();
+    sync(&storage, &id, &|_, _| {}).unwrap();
 
     let url = account::subscribe(
         &storage,
@@ -612,6 +631,29 @@ fn account_feeds_are_subscribed_changed_and_removed_on_the_account() {
         ("新的", Some("阅读"))
     );
 
+    // Groups are renamed and removed on the account.
+    account::rename_label(&storage, &id, "阅读", "书").unwrap();
+    assert_eq!(service.lock().unwrap().feeds[&2].1.as_deref(), Some("书"));
+    assert_eq!(
+        lock(&storage).unwrap().feed(&url).unwrap().group.as_deref(),
+        Some("书")
+    );
+    account::remove_label(&storage, &id, "书").unwrap();
+    assert_eq!(service.lock().unwrap().feeds[&2].1, None);
+    assert_eq!(lock(&storage).unwrap().feed(&url).unwrap().group, None);
+    account::edit_feed(&storage, &url, "改名", Some("书")).unwrap();
+    assert_eq!(service.lock().unwrap().feeds[&2].1.as_deref(), Some("书"));
+    lock(&storage)
+        .unwrap()
+        .update_feed(&crate::models::UpdateFeedRequest {
+            url: url.clone(),
+            title: "改名".into(),
+            group: Some("书".into()),
+            new_url: None,
+            enabled: None,
+            options: Default::default(),
+        })
+        .unwrap();
     account::edit_feed(&storage, &url, "改名", None).unwrap();
     assert_eq!(
         service.lock().unwrap().feeds[&2],
@@ -623,7 +665,7 @@ fn account_feeds_are_subscribed_changed_and_removed_on_the_account() {
     // Unsubscribed elsewhere, a feed goes; its starred article stays while
     // the account keeps it starred.
     service.lock().unwrap().feeds.remove(&1);
-    sync(&storage, &id).unwrap();
+    sync(&storage, &id, &|_, _| {}).unwrap();
     {
         let guard = lock(&storage).unwrap();
         assert!(guard.list_feeds().unwrap().is_empty());
@@ -642,4 +684,97 @@ fn account_feeds_are_subscribed_changed_and_removed_on_the_account() {
         .unwrap()
         .articles
         .is_empty());
+}
+
+#[test]
+fn a_sync_takes_each_feeds_newest_and_the_starred_and_leaves_the_rest() {
+    // Two months old, beyond the days kept.
+    let old = |n: u64| crawled(90_000 - n as i64);
+    let service = Arc::new(Mutex::new(Service::default()));
+    {
+        let mut state = service.lock().unwrap();
+        state.feeds.insert(1, ("甲".into(), None));
+        state.feeds.insert(2, ("乙".into(), None));
+        for n in 1..=100u64 {
+            state.items.insert(
+                old(n),
+                Item {
+                    feed: if n <= 80 { 1 } else { 2 },
+                    title: format!("第 {n} 篇"),
+                    read: false,
+                    starred: n == 2,
+                },
+            );
+        }
+    }
+    let served = service.clone();
+    let base = start(move |request: &Request| serve(&served, request));
+    let (_dir, storage) = library();
+    let login = verify(&account_request(&base, Some("secret")), None).unwrap();
+    let id = {
+        let guard = lock(&storage).unwrap();
+        let mut settings = guard.rss_settings();
+        settings.keep_articles = 50;
+        settings.keep_days = 30;
+        guard.save_rss_settings(&settings).unwrap();
+        guard
+            .save_feed_account(&account_request(&base, None), &login)
+            .unwrap()
+    };
+
+    let steps = Mutex::new(Vec::new());
+    let added = sync(&storage, &id, &|done, total| {
+        steps.lock().unwrap().push((done, total))
+    })
+    .unwrap();
+    // The first feed's newest 50, all 20 of the second, and the starred one.
+    assert_eq!(added, 71);
+    assert_eq!(steps.into_inner().unwrap(), [(0, 71), (71, 71)]);
+    let titles = |storage: &Mutex<Storage>| -> BTreeSet<String> {
+        lock(storage)
+            .unwrap()
+            .list_articles(&ArticleQuery {
+                limit: Some(500),
+                ..query(Some(&id), None, ArticleFilter::All)
+            })
+            .unwrap()
+            .articles
+            .into_iter()
+            .map(|article| article.title)
+            .collect()
+    };
+    let first = titles(&storage);
+    assert!(first.contains("第 2 篇") && first.contains("第 31 篇"));
+    assert!(!first.contains("第 30 篇"));
+    // Older ones stay unread on the account: nothing is written back.
+    assert!(service.lock().unwrap().edits.is_empty());
+
+    // New articles push older ones out here only; those are not fetched
+    // again, nor marked on the account.
+    {
+        let mut state = service.lock().unwrap();
+        for n in 101..=103u64 {
+            state.items.insert(
+                old(n),
+                Item {
+                    feed: 1,
+                    title: format!("第 {n} 篇"),
+                    read: false,
+                    starred: false,
+                },
+            );
+        }
+        state.fetched.clear();
+    }
+    assert_eq!(sync(&storage, &id, &|_, _| {}).unwrap(), 3);
+    let second = titles(&storage);
+    assert!(second.contains("第 103 篇") && second.contains("第 2 篇"));
+    assert!(!second.contains("第 33 篇") && second.contains("第 34 篇"));
+    assert_eq!(second.len(), 71);
+    service.lock().unwrap().fetched.clear();
+    assert_eq!(sync(&storage, &id, &|_, _| {}).unwrap(), 0);
+    let state = service.lock().unwrap();
+    assert!(state.fetched.is_empty());
+    assert!(state.edits.is_empty());
+    assert!(state.items.values().all(|item| !item.read));
 }

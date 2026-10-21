@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { ReaderService } from "../../services/contracts";
-import { describeError } from "../Cloud/format";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { t } from "../../i18n";
+import { reportError } from "../ui/toast";
 
 export type RuleTextService = Pick<ReaderService, "fetchRuleText" | "pickRuleFile">;
 
@@ -44,17 +44,12 @@ export function RuleTextLoader({
   const [network, setNetwork] = useState(false);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const history = network ? readHistory(historyKey) : [];
 
   const load = (work: () => Promise<string | null>) => {
     setBusy(true);
-    setError(null);
     void work()
-      .then(
-        (text) => text !== null && onText(text),
-        (failure: unknown) => setError(describeError(failure)),
-      )
+      .then((text) => text !== null && onText(text), reportError)
       .finally(() => setBusy(false));
   };
   const fetchUrl = (address: string) =>
@@ -133,11 +128,6 @@ export function RuleTextLoader({
             </ul>
           )}
         </form>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-error break-words">
-          {error}
-        </p>
       )}
     </div>
   );

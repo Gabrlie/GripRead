@@ -2,13 +2,12 @@ import { useState } from "react";
 import { useFeeds } from "../../application/runtime";
 import { useT, type MessageKey } from "../../i18n";
 import type { FeedAccount, FeedAccountKind } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Choice } from "./controls";
 import { articleTime } from "./format";
 
@@ -65,7 +64,15 @@ function Field({
  * what 过滤规则 do with the articles they keep out. A saved account keeps
  * its address and user name; it can be synced now or removed here.
  */
-function AccountPage({ account, onClose }: { account: FeedAccount | null; onClose: () => void }) {
+export function AccountPage({
+  account,
+  onClose,
+  layer = "z-[55]",
+}: {
+  account: FeedAccount | null;
+  onClose: () => void;
+  layer?: string;
+}) {
   const t = useT();
   const { state, store } = useFeeds();
   const [kind, setKind] = useState<FeedAccountKind>(account?.kind ?? "freshRss");
@@ -75,14 +82,12 @@ function AccountPage({ account, onClose }: { account: FeedAccount | null; onClos
   const [password, setPassword] = useState("");
   const [filterRead, setFilterRead] = useState(account?.filterRead ?? false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   // The account as it is now, its last sync included.
   const current = account && (state.accounts.find((item) => item.id === account.id) ?? account);
   const ready = server.trim() !== "" && username.trim() !== "" && (account || password !== "");
   const save = () => {
     setBusy(true);
-    setError(null);
     void store
       .saveAccount({
         id: account?.id ?? null,
@@ -93,31 +98,23 @@ function AccountPage({ account, onClose }: { account: FeedAccount | null; onClos
         password: password || null,
         filterRead,
       })
-      .then(
-        (saved) => {
-          toast(account ? t("rss.saved") : t("rss.account.added", { name: saved.name }));
-          onClose();
-        },
-        (failure: unknown) => setError(describeError(failure)),
-      )
+      .then((saved) => {
+        toast(account ? t("rss.saved") : t("rss.account.added", { name: saved.name }));
+        onClose();
+      }, reportError)
       .finally(() => setBusy(false));
   };
   return (
     <FullPage
       label={account ? account.name : t("rss.account.add")}
       onClose={onClose}
-      layer="z-[55]"
+      layer={layer}
       actions={
         <Button size="sm" disabled={busy || !ready} onClick={save}>
           {busy ? t("rss.account.signingIn") : t("common.save")}
         </Button>
       }
     >
-      {error && (
-        <p role="alert" className="px-1 text-xs text-error break-all">
-          {error}
-        </p>
-      )}
       <PageSection title={t("rss.account.service")}>
         <Choice<FeedAccountKind>
           label={t("rss.account.kind")}
@@ -227,13 +224,10 @@ function AccountPage({ account, onClose }: { account: FeedAccount | null; onClos
                 size="sm"
                 className="bg-error text-on-error"
                 onClick={() =>
-                  void store.removeAccount(current.id).then(
-                    () => {
-                      toast(t("rss.account.removed"));
-                      onClose();
-                    },
-                    (failure: unknown) => toast({ text: describeError(failure), error: true }),
-                  )
+                  void store.removeAccount(current.id).then(() => {
+                    toast(t("rss.account.removed"));
+                    onClose();
+                  }, reportError)
                 }
               >
                 {t("common.confirm")}

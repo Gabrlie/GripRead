@@ -253,6 +253,7 @@ export type { MarkReadRangeRequest } from "./generated/MarkReadRangeRequest";
 export type { FeedUrlsRequest } from "./generated/FeedUrlsRequest";
 export type { RefreshFeedsRequest } from "./generated/RefreshFeedsRequest";
 export type { RssRefreshEvent } from "./generated/RssRefreshEvent";
+export type { RssRefreshStep } from "./generated/RssRefreshStep";
 export type { ArticleFilter } from "./generated/ArticleFilter";
 export type { ArticleCursor } from "./generated/ArticleCursor";
 export type { ArticleQuery } from "./generated/ArticleQuery";

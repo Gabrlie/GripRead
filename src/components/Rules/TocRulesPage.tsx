@@ -19,10 +19,9 @@ import {
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 
 /**
  * 目录规则 management outside a book: the default titles of books no rule
@@ -55,7 +54,7 @@ export function TocRulesPage({
     try {
       await settingsStore.flush();
     } catch (error) {
-      toast({ text: describeError(error), error: true });
+      reportError(error);
       return;
     }
     const books = runtime.library.getSnapshot().books;
@@ -64,7 +63,7 @@ export function TocRulesPage({
   };
   const load = useCallback(() => service.listTxtTocRules().then(setRules), [service]);
   useEffect(() => {
-    void load().catch((error: unknown) => toast({ text: describeError(error), error: true }));
+    void load().catch(reportError);
   }, [load]);
   /** Runs a change and reloads; `work` may return the message to show. */
   const change = async (work: () => Promise<unknown>, done?: string) => {
@@ -76,7 +75,7 @@ export function TocRulesPage({
       if (text) toast(text);
       return true;
     } catch (error) {
-      toast({ text: describeError(error), error: true });
+      reportError(error);
       return false;
     } finally {
       setBusy(false);

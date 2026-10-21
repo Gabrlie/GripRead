@@ -2,8 +2,7 @@ import { useState } from "react";
 import { useLibrary, useShelf } from "../../application/runtime";
 import type { GroupLock, LibraryGroup } from "../../types/generated";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
-import { describeError } from "../Cloud/format";
+import { reportError, toast } from "../ui/toast";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +30,7 @@ export function GroupManager({
   const selected = state.groups.find((group) => group.id === selectedId);
   const run = (action: () => Promise<void>) =>
     void action().catch(() => {
-      /* Store exposes the failure and keeps the dialog open. */
+      /* The store exposes the failure (told by the shelf) and the dialog stays open. */
     });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,11 +43,6 @@ export function GroupManager({
             {t("groups.note")}
           </DialogDescription>
         </DialogHeader>
-        {state.error && (
-          <p role="alert" className="text-xs text-error">
-            {state.error}
-          </p>
-        )}
         {selected ? (
           <div className="space-y-3 text-xs">
             <Button
@@ -176,12 +170,10 @@ function PrivacySettings({ group, onDeleted }: { group: LibraryGroup; onDeleted:
   const [noSync, setNoSync] = useState(group.privacy ? !group.privacy.sync : true);
   const [password, setPassword] = useState("");
   const [current, setCurrent] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const hasPassword = group.privacy?.lock === "password";
   const attempt = (action: () => Promise<void>, done?: string) => {
     setBusy(true);
-    setError(null);
     action().then(
       () => {
         setBusy(false);
@@ -189,7 +181,7 @@ function PrivacySettings({ group, onDeleted }: { group: LibraryGroup; onDeleted:
       },
       (failure: unknown) => {
         setBusy(false);
-        setError(describeError(failure));
+        reportError(failure);
       },
     );
   };
@@ -260,11 +252,6 @@ function PrivacySettings({ group, onDeleted }: { group: LibraryGroup; onDeleted:
           onChange={(event) => setCurrent(event.target.value)}
           className={field}
         />
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-error">
-          {error}
-        </p>
       )}
       <div className="flex flex-wrap gap-2">
         <Button

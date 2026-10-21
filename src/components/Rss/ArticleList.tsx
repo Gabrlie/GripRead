@@ -7,6 +7,7 @@ import { Input } from "../ui/input";
 import { useWindowedList } from "../ui/use-windowed-list";
 import { useLongPress, type PressPoint } from "../ui/use-long-press";
 import { articleTime, imageBlob } from "./format";
+import { LoadFailed } from "../ui/LoadFailed";
 
 const FILTERS: [ArticleFilter, MessageKey][] = [
   ["all", "rss.filter.all"],
@@ -309,15 +310,12 @@ export function ArticleList({
           className="h-8 flex-1 min-w-0 text-xs"
         />
       </div>
-      {state.error && (
-        <p role="alert" className="text-xs text-error px-1">
-          {state.error}
-        </p>
-      )}
       {state.loading && !state.articles.length ? (
         <p role="status" className="py-10 text-center text-xs text-secondary">
           {t("rss.loadingArticles")}
         </p>
+      ) : state.articles.length === 0 && state.error ? (
+        <LoadFailed onRetry={() => void store.loadArticles()} />
       ) : state.articles.length === 0 ? (
         <p className="py-10 text-center text-sm text-secondary">
           {state.filter === "unread"

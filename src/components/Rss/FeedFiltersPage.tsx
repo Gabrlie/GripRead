@@ -2,12 +2,11 @@ import { useEffect, useState } from "react";
 import { useFeeds } from "../../application/runtime";
 import { useT } from "../../i18n";
 import type { Feed, FeedFilter } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError } from "../ui/toast";
 import { FILTER_FIELDS, FilterDialog, newFilter } from "./FilterDialog";
 
 /**
@@ -72,9 +71,7 @@ export function FilterList({
             aria-label={t("rss.filter.toggle", { pattern: filter.pattern })}
             checked={filter.enabled}
             onCheckedChange={(enabled) =>
-              void store
-                .saveFilter({ ...filter, enabled }, false)
-                .catch((error: unknown) => toast({ text: describeError(error), error: true }))
+              void store.saveFilter({ ...filter, enabled }, false).catch(reportError)
             }
           />
         </div>
@@ -98,9 +95,7 @@ export function FeedFiltersPage({ onClose }: { onClose: () => void }) {
   const { state, store } = useFeeds();
   const [adding, setAdding] = useState(false);
   useEffect(() => {
-    void store
-      .loadFilters()
-      .catch((error: unknown) => toast({ text: describeError(error), error: true }));
+    void store.loadFilters().catch(reportError);
   }, [store]);
   return (
     <FullPage

@@ -24,6 +24,7 @@ import { feedServiceMocks } from "../../test/rss";
 import { updateServiceMocks } from "../../test/updates";
 import { syncServiceMocks, unconfiguredWebDav } from "../../test/sync";
 import { sourceServiceMocks } from "../../test/sources";
+import { Toaster } from "../ui/toast";
 
 const navigation = vi.hoisted(() => ({
   activeBook: null as LibraryBook | null,
@@ -313,6 +314,7 @@ async function view(app: AppRuntime) {
   await app.library.refresh();
   render(
     <RuntimeContext.Provider value={app}>
+      <Toaster />
       <ReaderView />
     </RuntimeContext.Provider>,
   );
@@ -577,6 +579,7 @@ describe("reader directory and search operation ownership", () => {
     await app.library.refresh();
     render(
       <RuntimeContext.Provider value={app}>
+        <Toaster />
         <ReaderView />
       </RuntimeContext.Provider>,
     );

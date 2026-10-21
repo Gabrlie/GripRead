@@ -12,10 +12,9 @@ import {
 } from "../ui/dropdown-menu";
 import { Icon } from "../ui/Icon";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { SOURCE_TABS, fieldValue, withField, type SourceJson } from "./source-fields";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 
 const JSON_TAB = "json";
 
@@ -52,20 +51,16 @@ export function SourceEditPage({
   const [savedUrl, setSavedUrl] = useState<string | null>(url);
   const [tab, setTab] = useState(SOURCE_TABS[0].id);
   const [jsonText, setJsonText] = useState("");
-  const [jsonError, setJsonError] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [variable, setVariable] = useState<string | null>(null);
 
   useEffect(() => {
     if (!url) return;
-    void service.getSource(url).then(
-      (detail) => {
-        const parsed = parseSource(detail.json);
-        setSource(parsed);
-        setSavedText(JSON.stringify(parsed));
-      },
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void service.getSource(url).then((detail) => {
+      const parsed = parseSource(detail.json);
+      setSource(parsed);
+      setSavedText(JSON.stringify(parsed));
+    }, reportError);
   }, [service, url]);
 
   if (!source) return null;
@@ -75,9 +70,8 @@ export function SourceEditPage({
     if (tab === JSON_TAB && next !== JSON_TAB) {
       try {
         setSource(parseSource(jsonText));
-        setJsonError(null);
       } catch (failure) {
-        setJsonError(describeError(failure));
+        reportError(failure);
         return;
       }
     }
@@ -90,10 +84,9 @@ export function SourceEditPage({
     try {
       const parsed = parseSource(jsonText);
       setSource(parsed);
-      setJsonError(null);
       return parsed;
     } catch (failure) {
-      setJsonError(describeError(failure));
+      reportError(failure);
       return null;
     }
   };
@@ -109,7 +102,7 @@ export function SourceEditPage({
       toast(t("srcEdit.saved"));
       return summary.url;
     } catch (failure) {
-      toast({ text: describeError(failure), error: true });
+      reportError(failure);
       return null;
     }
   };
@@ -292,11 +285,6 @@ export function SourceEditPage({
             rows={24}
             className="w-full rounded-lg border border-input bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none resize-y"
           />
-          {jsonError && (
-            <p role="alert" className="text-xs text-error break-words">
-              {jsonError}
-            </p>
-          )}
         </div>
       )}
 

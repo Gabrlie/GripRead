@@ -4,26 +4,46 @@ import type { Feed, FeedAccount, FeedGroup } from "../../types/generated";
 import { Icon } from "../ui/Icon";
 import { useLongPress } from "../ui/use-long-press";
 import { useT } from "../../i18n";
-
-/** Unread counts above this show as "999+". */
-const MAX_COUNT = 999;
+import { articleTime } from "./format";
 
 export function Count({ value }: { value: number }) {
   return value > 0 ? (
-    <span className="text-[11px] tabular-nums text-secondary shrink-0">
-      {value > MAX_COUNT ? `${MAX_COUNT}+` : value}
-    </span>
+    <span className="text-[11px] tabular-nums text-secondary shrink-0">{value}</span>
   ) : null;
+}
+
+/**
+ * A feed's last update, as 订阅's lists show it: why it failed, or when it
+ * was refreshed (an account's feed, when its account synced) and when its
+ * newest article came out.
+ */
+export function feedStatus(
+  feed: Feed,
+  accounts: FeedAccount[],
+  t: ReturnType<typeof useT>,
+): { text: string; failed: boolean } {
+  const account = feed.account ? accounts.find((item) => item.id === feed.account) : undefined;
+  const error = account ? account.lastError : feed.lastError;
+  if (!feed.enabled) return { text: t("rss.feed.stopped"), failed: false };
+  if (error) return { text: t("rss.failedWith", { error }), failed: true };
+  const updated = account ? account.lastSync : feed.lastFetch;
+  const parts = [
+    updated ? t("rss.updatedAt", { time: articleTime(updated) }) : t("rss.neverRefreshed"),
+  ];
+  if (feed.newest) parts.push(t("rss.newestAt", { time: articleTime(feed.newest) }));
+  return { text: parts.join(" · "), failed: false };
 }
 
 function FeedRow({
   feed,
+  accounts,
   active,
   nested,
   onSelect,
   onDetail,
 }: {
   feed: Feed;
+  accounts: FeedAccount[];
   active: boolean;
   nested: boolean;
   onSelect: () => void;
@@ -31,6 +51,7 @@ function FeedRow({
 }) {
   const t = useT();
   const press = useLongPress(() => onDetail?.(), onSelect);
+  const status = feedStatus(feed, accounts, t);
   return (
     <li>
       <button
@@ -41,19 +62,40 @@ function FeedRow({
         } ${nested ? "pl-8" : ""} ${feed.enabled ? "" : "opacity-55"}`}
         {...press}
       >
-        <Icon name="rss_feed" size={15} className="text-secondary shrink-0" />
-        <span className="flex-1 min-w-0 truncate">{feed.title}</span>
-        {feed.lastError && feed.enabled && (
-          <Icon
-            name="error"
-            size={14}
-            className="text-error shrink-0"
-            aria-label={t("rss.feedFailed")}
-          />
-        )}
+        <Icon name="rss_feed" size={15} className="text-secondary shrink-0 self-start mt-0.5" />
+        <span className="flex-1 min-w-0">
+          <span className="block truncate">{feed.title}</span>
+          <span
+            className={`block truncate text-[11px] font-normal ${status.failed ? "text-error" : "text-secondary"}`}
+          >
+            {status.text}
+          </span>
+        </span>
         <Count value={feed.unread} />
       </button>
     </li>
+  );
+}
+
+/** A row that selects on a click and opens its management on a long press. */
+function PressRow({
+  active,
+  className,
+  onSelect,
+  onManage,
+  children,
+}: {
+  active: boolean;
+  className: string;
+  onSelect: () => void;
+  onManage?: () => void;
+  children: React.ReactNode;
+}) {
+  const press = useLongPress(() => onManage?.(), onSelect);
+  return (
+    <button type="button" aria-current={active || undefined} className={className} {...press}>
+      {children}
+    </button>
   );
 }
 
@@ -69,7 +111,8 @@ function same(left: FeedSelection, right: FeedSelection): boolean {
 /**
  * 全部文章, then the device's own groups in their order (folding) with
  * their feeds, then each 订阅账号 with its groups and feeds; unread counts
- * beside. A long press on a feed opens its 订阅详情.
+ * beside, and each feed's last update below it. A long press opens a
+ * feed's 订阅详情, a group's page, or an account's.
  */
 export function FeedList({
   feeds,
@@ -78,6 +121,8 @@ export function FeedList({
   selection,
   onSelect,
   onDetail,
+  onGroup,
+  onAccount,
 }: {
   feeds: Feed[];
   groups?: FeedGroup[];
@@ -85,6 +130,8 @@ export function FeedList({
   selection: FeedSelection;
   onSelect: (selection: FeedSelection) => void;
   onDetail?: (url: string) => void;
+  onGroup?: (group: string, account: string | null) => void;
+  onAccount?: (account: string) => void;
 }) {
   const t = useT();
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -106,6 +153,7 @@ export function FeedList({
       <FeedRow
         key={feed.url}
         feed={feed}
+        accounts={accounts}
         nested={nested}
         active={same(selection, target)}
         onSelect={() => onSelect(target)}
@@ -131,16 +179,16 @@ export function FeedList({
             >
               <Icon name="expand_more" size={16} className={folded.has(key) ? "-rotate-90" : ""} />
             </button>
-            <button
-              type="button"
-              aria-current={same(selection, target) || undefined}
+            <PressRow
+              active={same(selection, target)}
               className={`${row(same(selection, target))} pl-1`}
-              onClick={() => onSelect(target)}
+              onSelect={() => onSelect(target)}
+              onManage={onGroup && (() => onGroup(name, account))}
             >
               <Icon name="folder" size={15} className="text-secondary shrink-0" />
               <span className="flex-1 min-w-0 truncate">{name}</span>
               <Count value={group.unread} />
-            </button>
+            </PressRow>
           </div>
           {!folded.has(key) && (
             <ul className="space-y-0.5">{group.feeds.map((feed) => feedRow(feed, true))}</ul>
@@ -188,11 +236,11 @@ export function FeedList({
                   className={folded.has(key) ? "-rotate-90" : ""}
                 />
               </button>
-              <button
-                type="button"
-                aria-current={same(selection, target) || undefined}
+              <PressRow
+                active={same(selection, target)}
                 className={`${row(same(selection, target))} pl-1`}
-                onClick={() => onSelect(target)}
+                onSelect={() => onSelect(target)}
+                onManage={onAccount && (() => onAccount(account.id))}
               >
                 <Icon name="cloud" size={15} className="text-secondary shrink-0" />
                 <span className="flex-1 min-w-0 truncate">{account.name}</span>
@@ -205,7 +253,7 @@ export function FeedList({
                   />
                 )}
                 <Count value={own.reduce((sum, feed) => sum + feed.unread, 0)} />
-              </button>
+              </PressRow>
             </div>
             {!folded.has(key) && (
               <ul className="space-y-0.5 pl-3">{sections(own, [], account.id)}</ul>

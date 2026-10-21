@@ -1,10 +1,10 @@
 //! 订阅账号 over the Google Reader API (FreshRSS, Miniflux, and others
 //! that speak it). A sync writes the marks made here first, then takes the
-//! account's feeds, the items crawled since the last sync, and the ids of
-//! its unread and starred items: those this device lacks are fetched (the
-//! newest first, a limited number each time), and the account's marks
-//! replace the device's. Feeds are subscribed, renamed, moved, and
-//! unsubscribed on the account at once.
+//! account's feeds and each feed's newest items, as many as the feed keeps
+//! (older ones are not fetched and stay on the account), with every
+//! starred one: those this device lacks are fetched, newest first, and the
+//! account's marks replace the device's. Feeds and their groups are
+//! subscribed, renamed, moved, and unsubscribed on the account at once.
 
 use std::cmp::Reverse;
 use std::collections::HashSet;
@@ -26,13 +26,9 @@ const READ: &str = "user/-/state/com.google/read";
 const STARRED: &str = "user/-/state/com.google/starred";
 const LABEL: &str = "user/-/label/";
 const ITEM_PREFIX: &str = "tag:google.com,2005:reader/item/";
-/// Items a first sync takes beyond the unread and starred ones.
-const FIRST_ITEMS: usize = 200;
-/// Items crawled since the last sync looked at, at most.
-const NEW_ITEMS: usize = 2000;
-/// Items fetched in one sync, at most; the rest come with the next.
-const MISSING_ITEMS: usize = 1000;
-/// Unread or starred ids listed, at most.
+/// A feed's items taken when it keeps them all.
+const UNLIMITED_ITEMS: usize = 10_000;
+/// Unread or starred ids listed (for their marks), at most.
 const LISTED_IDS: usize = 50_000;
 const ID_PAGE: usize = 10_000;
 const CONTENT_PAGE: usize = 200;
@@ -422,7 +418,6 @@ impl Client {
         &mut self,
         stream: &str,
         exclude: Option<&str>,
-        since: Option<i64>,
         most: usize,
     ) -> Result<(Vec<String>, bool), AppError> {
         let mut ids = Vec::new();
@@ -434,9 +429,6 @@ impl Client {
             ];
             if let Some(exclude) = exclude {
                 query.push(("xt", exclude.to_string()));
-            }
-            if let Some(since) = since {
-                query.push(("ot", since.to_string()));
             }
             if let Some(continuation) = &continuation {
                 query.push(("c", continuation.clone()));
@@ -568,9 +560,13 @@ pub fn verify(
 }
 
 /// Syncs an account; answers how many articles are new.
-pub fn sync(storage: &Mutex<Storage>, account: &str) -> Result<u32, AppError> {
+pub fn sync(
+    storage: &Mutex<Storage>,
+    account: &str,
+    progress: &dyn Fn(u32, u32),
+) -> Result<u32, AppError> {
     let result = with_client(storage, account, |client, login| {
-        run_sync(storage, client, login)
+        run_sync(storage, client, login, progress)
     });
     let name = lock(storage)?
         .feed_account(account)
@@ -597,31 +593,53 @@ fn run_sync(
     storage: &Mutex<Storage>,
     client: &mut Client,
     login: &AccountLogin,
+    progress: &dyn Fn(u32, u32),
 ) -> Result<u32, AppError> {
     let started = now_secs();
     client.flush(storage, &login.id)?;
     let feeds = client.subscriptions()?;
     lock(storage)?.store_account_feeds(&login.id, &feeds)?;
-    let (fresh, _) = match login.since {
-        None => client.ids(READING_LIST, None, None, FIRST_ITEMS)?,
-        Some(since) => client.ids(READING_LIST, None, Some(since), NEW_ITEMS)?,
-    };
-    let (unread, unread_complete) = client.ids(READING_LIST, Some(READ), None, LISTED_IDS)?;
-    let (starred, starred_complete) = client.ids(STARRED, None, None, LISTED_IDS)?;
+    // Each feed's newest articles, as many as it keeps, and every starred
+    // one; older ones stay on the account.
+    let limits = lock(storage)?.account_feed_limits(&login.id)?;
     let mut wanted: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
-    for id in fresh.iter().chain(&unread).chain(&starred) {
-        if seen.insert(id.as_str()) {
+    for (stream, keep) in limits {
+        let most = if keep == 0 {
+            UNLIMITED_ITEMS
+        } else {
+            keep as usize
+        };
+        let (ids, _) = client.ids(&stream, None, most)?;
+        for id in ids {
+            if seen.insert(id.clone()) {
+                wanted.push(id);
+            }
+        }
+    }
+    let (unread, unread_complete) = client.ids(READING_LIST, Some(READ), LISTED_IDS)?;
+    let (starred, starred_complete) = client.ids(STARRED, None, LISTED_IDS)?;
+    for id in &starred {
+        if seen.insert(id.clone()) {
             wanted.push(id.clone());
         }
     }
     let mut missing = lock(storage)?.unknown_account_items(&login.id, &wanted)?;
     missing.sort_by_key(|id| Reverse(item_number(id)));
-    missing.truncate(MISSING_ITEMS);
-    let items = client.contents(&missing)?;
-    let stored = {
+    let total = missing.len() as u32;
+    progress(0, total);
+    let mut added = 0;
+    let mut done = 0;
+    for page in missing.chunks(CONTENT_PAGE) {
+        let items = client.contents(page)?;
+        added += lock(storage)?
+            .store_account_items(&login.id, &items, login.filter_read)?
+            .added;
+        done += page.len() as u32;
+        progress(done, total);
+    }
+    {
         let mut guard = lock(storage)?;
-        let stored = guard.store_account_items(&login.id, &items, login.filter_read)?;
         guard.reconcile_account(
             &login.id,
             &unread.into_iter().collect(),
@@ -629,12 +647,12 @@ fn run_sync(
             &starred.into_iter().collect(),
             starred_complete,
         )?;
-        stored
-    };
+        guard.prune_account(&login.id)?;
+    }
     // Articles kept out, marked read on the account.
     client.flush(storage, &login.id)?;
     lock(storage)?.record_account_sync(&login.id, Some(started - OVERLAP), None)?;
-    Ok(stored.added)
+    Ok(added)
 }
 
 /// Subscribes to a feed on an account, filed under `group`, and syncs;
@@ -673,7 +691,7 @@ pub fn subscribe(
         }
         Ok(stream)
     })?;
-    sync(storage, account)?;
+    sync(storage, account, &|_, _| {})?;
     Ok(account_feed_url(account, &stream))
 }
 
@@ -710,6 +728,40 @@ pub fn edit_feed(
         client.post("reader/api/0/subscription/edit", &form)?;
         Ok(())
     })
+}
+
+/// Renames a group (a label) on an account, and here.
+pub fn rename_label(
+    storage: &Mutex<Storage>,
+    account: &str,
+    name: &str,
+    new_name: &str,
+) -> Result<(), AppError> {
+    let new_name = new_name.trim();
+    with_client(storage, account, |client, _| {
+        client.post(
+            "reader/api/0/rename-tag",
+            &[
+                ("s", format!("{LABEL}{name}")),
+                ("dest", format!("{LABEL}{new_name}")),
+            ],
+        )?;
+        Ok(())
+    })?;
+    lock(storage)?.rename_account_group(account, name, new_name)
+}
+
+/// Removes a group (a label) on an account, and here: its feeds become
+/// ungrouped.
+pub fn remove_label(storage: &Mutex<Storage>, account: &str, name: &str) -> Result<(), AppError> {
+    with_client(storage, account, |client, _| {
+        client.post(
+            "reader/api/0/disable-tag",
+            &[("s", format!("{LABEL}{name}"))],
+        )?;
+        Ok(())
+    })?;
+    lock(storage)?.rename_account_group(account, name, "")
 }
 
 /// Unsubscribes from a feed on its account.

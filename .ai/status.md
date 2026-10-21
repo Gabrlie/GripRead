@@ -14,4 +14,4 @@ The Linux host has no hardware-accelerated emulator; Android acceptance uses dev
 
 ## Next entry point
 
-Batch 4 of the [second round](plans/2026-10-19-rss-round2.md) (AI 模型 and 语音 in 设置), after the user's device test of the batch 3 beta.
+Batch 4 of the [second round](plans/2026-10-19-rss-round2.md) (AI 模型 and 语音 in 设置), after the user's device test of the fixes after batch 3 (beta.5).

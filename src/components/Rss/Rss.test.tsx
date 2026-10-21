@@ -9,6 +9,7 @@ import { FeedManagePage } from "./FeedManagePage";
 import { RssSettingsPage } from "./RssSettingsPage";
 import { ROW_ESTIMATE } from "./ArticleList";
 import { RssView } from "./RssView";
+import { Toaster } from "../ui/toast";
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -43,9 +44,16 @@ function page(seed = true, screen: "feeds" | "settings" | "manage" = "feeds") {
       ) : (
         <RssSettingsPage onClose={() => undefined} />
       )}
+      <Toaster />
     </RuntimeContext.Provider>,
   );
   return { feeds, runtime };
+}
+
+/** 添加订阅 › 搜索订阅, from 订阅's bar. */
+async function openSearch() {
+  await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
+  await userEvent.click(await screen.findByRole("menuitem", { name: "搜索订阅" }));
 }
 
 describe("订阅", () => {
@@ -71,7 +79,7 @@ describe("订阅", () => {
 
   it("finds feeds by words or an address, previews one, and subscribes", async () => {
     const { feeds } = page(false);
-    await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
+    await openSearch();
     const search = await screen.findByRole("dialog", { name: "添加订阅" });
     const box = within(search).getByLabelText("关键字或网址");
     // Words look in the directory.
@@ -109,6 +117,19 @@ describe("订阅", () => {
     // Back on the results, it shows as subscribed.
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "new.example" })).toBeNull());
     expect(await within(search).findByText(/已订阅/)).toBeTruthy();
+  });
+
+  it("adds a feed account from 添加订阅, and from the search", async () => {
+    page(false);
+    await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
+    await userEvent.click(await screen.findByRole("menuitem", { name: "添加订阅账号" }));
+    expect(await screen.findByRole("dialog", { name: "添加账号" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "添加账号" })).toBeNull());
+    await openSearch();
+    const search = await screen.findByRole("dialog", { name: "添加订阅" });
+    await userEvent.click(within(search).getByRole("button", { name: /添加订阅账号/ }));
+    expect(await screen.findByRole("dialog", { name: "添加账号" })).toBeTruthy();
   });
 
   it("makes, tests, and switches off filters", async () => {
@@ -150,11 +171,11 @@ describe("订阅", () => {
     const bad = await screen.findByRole("dialog", { name: "新建规则" });
     await userEvent.type(within(bad).getByLabelText("正则表达式"), "(");
     await userEvent.click(within(bad).getByRole("button", { name: "测试" }));
-    expect(await within(bad).findByRole("alert")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toContain("正则表达式有误");
     stop();
   });
 
-  it("shows unread counts over 999 as 999+", async () => {
+  it("shows unread counts in full, and each feed's last update", async () => {
     const { feeds, runtime } = page();
     const list = await screen.findByRole("navigation", { name: "订阅列表" });
     const listed = await feeds.listFeeds();
@@ -162,7 +183,8 @@ describe("订阅", () => {
       listed.map((feed, index) => (index === 0 ? { ...feed, unread: 12_345 } : feed)),
     );
     void runtime.feeds.loadFeeds();
-    expect(await within(list).findAllByText("999+")).not.toHaveLength(0);
+    expect(await within(list).findAllByText("12345")).not.toHaveLength(0);
+    expect(within(list).getAllByText(/更新 · 最新/).length).toBeGreaterThan(0);
   });
 
   it("filters to starred articles", async () => {
@@ -279,7 +301,8 @@ describe("订阅", () => {
     await userEvent.click(within(interval).getByRole("radio", { name: "自定义" }));
     const ask = await screen.findByRole("dialog", { name: "自定义刷新间隔" });
     await userEvent.type(within(ask).getByLabelText("自定义刷新间隔"), "3");
-    expect(within(ask).getByRole("alert").textContent).toContain("5–1440");
+    await userEvent.click(within(ask).getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert").textContent).toContain("5–1440");
     await userEvent.type(within(ask).getByLabelText("自定义刷新间隔"), "5");
     await userEvent.click(within(ask).getByRole("button", { name: "保存" }));
     expect(
@@ -309,12 +332,33 @@ describe("订阅", () => {
     await userEvent.type(within(groups).getByLabelText("分组名称"), "生活");
     await userEvent.click(within(groups).getByRole("button", { name: "新建分组" }));
     await waitFor(() => expect(feeds.saveGroups).toHaveBeenLastCalledWith(["新闻", "生活"]));
+    // A new group opens to choose its feeds.
+    expect(await screen.findByRole("dialog", { name: "生活" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "生活" })).toBeNull());
     await userEvent.click(await within(groups).findByRole("button", { name: "上移 生活" }));
     await waitFor(() => expect(feeds.saveGroups).toHaveBeenLastCalledWith(["生活", "新闻"]));
     await userEvent.click(within(groups).getByRole("button", { name: /^新闻/ }));
-    await userEvent.click(within(groups).getByRole("radio", { name: "订阅移到未分组" }));
-    await userEvent.click(within(groups).getByRole("button", { name: "删除分组「新闻」？" }));
-    await waitFor(() => expect(feeds.removeGroup).toHaveBeenCalledWith("新闻", false));
+    const news = await screen.findByRole("dialog", { name: "新闻" });
+    // Switching a feed on files it in the group.
+    await userEvent.click(within(news).getByRole("switch", { name: /技术周刊/ }));
+    await waitFor(() =>
+      expect(feeds.updateFeed).toHaveBeenLastCalledWith({
+        url: "https://tech.example.com/rss",
+        title: "技术周刊",
+        group: "新闻",
+        newUrl: null,
+        enabled: null,
+        options: null,
+      }),
+    );
+    await userEvent.click(within(news).getByRole("button", { name: "删除分组" }));
+    const removing = await screen.findByRole("dialog", { name: "删除分组「新闻」？" });
+    expect(
+      within(removing).getByRole("radio", { name: "订阅移到未分组" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    await userEvent.click(within(removing).getByRole("button", { name: "确定" }));
+    await waitFor(() => expect(feeds.removeGroup).toHaveBeenCalledWith("新闻", false, null));
     stop();
   });
 
@@ -333,7 +377,7 @@ describe("订阅", () => {
     await userEvent.type(within(adding).getByLabelText("用户名"), "me");
     await userEvent.type(within(adding).getByLabelText(/^密码/), "wrong");
     await userEvent.click(save);
-    expect((await within(adding).findByRole("alert")).textContent).toContain("API 密码");
+    expect((await screen.findByRole("alert")).textContent).toContain("API 密码");
     await userEvent.clear(within(adding).getByLabelText(/^密码/));
     await userEvent.type(within(adding).getByLabelText(/^密码/), "secret");
     await userEvent.click(
@@ -377,7 +421,7 @@ describe("订阅", () => {
 
   it("lists each account's feeds in a section of its own", async () => {
     const { feeds, runtime } = page();
-    await feeds.saveAccount({
+    const { id: accountId } = await feeds.saveAccount({
       id: null,
       kind: "miniflux",
       name: "远方",
@@ -400,8 +444,24 @@ describe("订阅", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "远方" })).toBeNull());
 
+    // A long press opens the account's page, or its group's.
+    fireEvent.contextMenu(within(account).getByRole("button", { name: /^远方\s*\d+$/ }));
+    const settings = await screen.findByRole("dialog", { name: "远方" });
+    expect(within(settings).getByRole("button", { name: "立即同步" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "远方" })).toBeNull());
+    fireEvent.contextMenu(within(account).getByRole("button", { name: /^资讯/ }));
+    const group = await screen.findByRole("dialog", { name: "资讯" });
+    expect(within(group).getByText("远方 的分组，改动会直接改到账号上")).toBeTruthy();
+    await userEvent.clear(within(group).getByLabelText("分组名称"));
+    await userEvent.type(within(group).getByLabelText("分组名称"), "新知");
+    await userEvent.click(within(group).getByRole("button", { name: "重命名" }));
+    await waitFor(() => expect(feeds.renameGroup).toHaveBeenCalledWith("资讯", "新知", accountId));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(await within(account).findByRole("button", { name: /^新知/ })).toBeTruthy();
+
     // A feed found can be subscribed on the account, under its groups.
-    await userEvent.click((await screen.findAllByRole("button", { name: "添加订阅" }))[0]);
+    await openSearch();
     const search = await screen.findByRole("dialog", { name: "添加订阅" });
     await userEvent.type(within(search).getByLabelText("关键字或网址"), "other.example/rss{Enter}");
     await userEvent.click(
@@ -414,14 +474,14 @@ describe("订阅", () => {
     expect(within(subscribe).getByRole("button", { name: "新闻" })).toBeTruthy();
     await userEvent.click(within(target).getByRole("radio", { name: "远方" }));
     expect(within(subscribe).queryByRole("button", { name: "新闻" })).toBeNull();
-    await userEvent.click(within(subscribe).getByRole("button", { name: "资讯" }));
+    await userEvent.click(within(subscribe).getByRole("button", { name: "新知" }));
     await userEvent.click(within(subscribe).getByRole("button", { name: "订阅" }));
     await waitFor(() =>
       expect(feeds.addFeed).toHaveBeenCalledWith(
         "https://other.example/rss",
         "other.example",
-        "资讯",
-        "me-1",
+        "新知",
+        accountId,
       ),
     );
     stop();

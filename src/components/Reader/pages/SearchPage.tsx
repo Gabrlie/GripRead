@@ -4,6 +4,7 @@ import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
 import { Input } from "../../ui/input";
 import { t } from "../../../i18n";
+import { useErrorToast } from "../../ui/toast";
 
 interface SearchPageProps {
   search: ReaderSearch;
@@ -71,6 +72,7 @@ export function SearchPage({
   onClose,
   byResource = false,
 }: SearchPageProps) {
+  useErrorToast(search.error, "reader-search");
   const percent = (match: SearchMatch) =>
     totalLength > 0 ? `${((match.matchStart / totalLength) * 100).toFixed(1)}%` : "";
   return (
@@ -137,11 +139,6 @@ export function SearchPage({
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto w-full p-3 space-y-2">
-          {search.error && (
-            <p role="alert" className="text-sm text-error">
-              {search.error}
-            </p>
-          )}
           {search.searching && search.matches.length === 0 && (
             <p role="status" className="text-sm text-secondary px-1">
               {t("search.searching")}

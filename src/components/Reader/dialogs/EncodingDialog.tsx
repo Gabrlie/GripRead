@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "../../ui/dialog";
 import { t } from "../../../i18n";
+import { useErrorToast } from "../../ui/toast";
 
 interface EncodingDialogProps {
   encodingInfo: TxtEncodingInfo | null;
@@ -64,6 +65,7 @@ export function EncodingDialog({
   onClose,
 }: EncodingDialogProps) {
   const selected = encodingInfo?.selected ?? "auto";
+  useErrorToast(decodeError, "reader-decode");
   const locked = !encodingInfo?.canChange || decoding || disabled;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -111,11 +113,6 @@ export function EncodingDialog({
               {t("common.cancel")}
             </Button>
           </div>
-        )}
-        {decodeError && (
-          <p role="alert" className="text-xs text-error">
-            {decodeError}
-          </p>
         )}
       </DialogContent>
     </Dialog>

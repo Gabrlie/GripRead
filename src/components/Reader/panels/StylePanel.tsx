@@ -13,7 +13,7 @@ import type { SettingsService } from "../../../services/contracts";
 import { useRuntime } from "../../../application/runtime";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
-import { toast } from "../../ui/toast";
+import { reportError, toast } from "../../ui/toast";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import {
@@ -25,7 +25,6 @@ import {
   SheetContent,
 } from "../../ui/dialog";
 import { t } from "../../../i18n";
-import { describeError } from "../../Cloud/format";
 import { DEFAULT_TAP_ZONES } from "../../../reader/gestures";
 
 interface StylePanelProps {
@@ -616,7 +615,7 @@ function TextView({
     let cancelled = false;
     fonts.listFonts().then(
       (list) => !cancelled && setAssets(list),
-      (error: unknown) => !cancelled && toast({ text: describeError(error), error: true }),
+      (error: unknown) => !cancelled && reportError(error),
     );
     return () => {
       cancelled = true;
@@ -664,13 +663,10 @@ function TextView({
                 size="icon"
                 className="h-8 w-8 text-secondary"
                 onClick={() =>
-                  fonts.deleteFont(asset.id).then(
-                    () => {
-                      setAssets((list) => list?.filter((item) => item.id !== asset.id) ?? null);
-                      if (style.fontAssetId === asset.id) setStyle({ fontAssetId: null });
-                    },
-                    (error: unknown) => toast({ text: describeError(error), error: true }),
-                  )
+                  fonts.deleteFont(asset.id).then(() => {
+                    setAssets((list) => list?.filter((item) => item.id !== asset.id) ?? null);
+                    if (style.fontAssetId === asset.id) setStyle({ fontAssetId: null });
+                  }, reportError)
                 }
               >
                 <Icon name="delete" size={14} />
@@ -683,15 +679,12 @@ function TextView({
           size="sm"
           className="h-8 text-xs"
           onClick={() =>
-            fonts.pickAndImportFont().then(
-              (asset) => {
-                if (!asset) return;
-                setAssets((list) => [...(list ?? []), asset]);
-                setStyle({ fontAssetId: asset.id });
-                toast(t("style.font.imported", { name: asset.name }));
-              },
-              (error: unknown) => toast({ text: describeError(error), error: true }),
-            )
+            fonts.pickAndImportFont().then((asset) => {
+              if (!asset) return;
+              setAssets((list) => [...(list ?? []), asset]);
+              setStyle({ fontAssetId: asset.id });
+              toast(t("style.font.imported", { name: asset.name }));
+            }, reportError)
           }
         >
           <Icon name="add" size={14} />
@@ -969,7 +962,6 @@ function PresetEditor({
   onDone: () => void;
 }) {
   const runtime = useRuntime();
-  const [imageError, setImageError] = useState<string | null>(null);
   const preset = style.presets[index];
   if (!preset) return null;
   /** Legado's 背景图片: an image replaces the colour behind the text. */
@@ -982,13 +974,9 @@ function PresetEditor({
           size="sm"
           className="h-7 text-[11px]"
           onClick={() =>
-            void runtime.services.settings.pickBackgroundImage().then(
-              (asset) => {
-                setImageError(null);
-                if (asset) update({ [key]: asset.id });
-              },
-              (failure: unknown) => setImageError(describeError(failure)),
-            )
+            void runtime.services.settings.pickBackgroundImage().then((asset) => {
+              if (asset) update({ [key]: asset.id });
+            }, reportError)
           }
         >
           {preset[key] ? t("style.image.change") : t("style.image.choose")}
@@ -1054,11 +1042,6 @@ function PresetEditor({
       {color(t("style.nightBackground"), "nightBackground")}
       {image(t("style.nightImage"), "nightBackgroundImage")}
       {color(t("style.nightText"), "nightText")}
-      {imageError && (
-        <p role="alert" className="text-xs text-error break-words">
-          {imageError}
-        </p>
-      )}
       <div className="flex justify-between gap-2 pt-1">
         <Button
           variant="outline"

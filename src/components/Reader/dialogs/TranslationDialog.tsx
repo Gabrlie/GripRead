@@ -7,7 +7,6 @@ import type {
   BookTranslationEvent,
   TranslationSettings,
 } from "../../../types/generated";
-import { describeError } from "../../Cloud/format";
 import { Button } from "../../ui/button";
 import {
   Dialog,
@@ -17,7 +16,7 @@ import {
   DialogTitle,
 } from "../../ui/dialog";
 import { Switch } from "../../ui/switch";
-import { toast } from "../../ui/toast";
+import { reportError } from "../../ui/toast";
 
 const selectClass =
   "shrink-0 max-w-[50%] truncate rounded-lg border border-surface-variant bg-surface-container px-2 py-1.5 text-sm";
@@ -68,10 +67,7 @@ export function TranslationDialog({
       (value) => active && setSettings(value),
       () => undefined,
     );
-    void service.getBook(bookId).then(
-      (value) => active && setBook(value),
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void service.getBook(bookId).then((value) => active && setBook(value), reportError);
     return () => {
       active = false;
     };
@@ -80,16 +76,13 @@ export function TranslationDialog({
   const change = (work: () => Promise<BookTranslation>) => {
     setBusy(true);
     void work()
-      .then(
-        (value) => {
-          setBook(value);
-          onChanged();
-          if (online) return;
-          if (value.translateTo) void service.translateBook(bookId, false);
-          else void service.stopBook(bookId);
-        },
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      )
+      .then((value) => {
+        setBook(value);
+        onChanged();
+        if (online) return;
+        if (value.translateTo) void service.translateBook(bookId, false);
+        else void service.stopBook(bookId);
+      }, reportError)
       .finally(() => setBusy(false));
   };
   const saveDisplay = (display: TranslationSettings["display"]) => {
@@ -242,7 +235,7 @@ function LocalProgress({
         </p>
       )}
       {progress?.error && (
-        <p role="alert" className="text-error break-words">
+        <p className="text-error break-words">
           {t("translation.book.failed", { error: errorText(progress.error) })}
         </p>
       )}

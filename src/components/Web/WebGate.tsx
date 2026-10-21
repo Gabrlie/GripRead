@@ -3,6 +3,7 @@ import { serverAccount } from "../../services/server";
 import { onSignedOut, type TransportError } from "../../services/transport";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Toaster, toast } from "../ui/toast";
 import { t, useT } from "../../i18n";
 import { describeError } from "../Cloud/format";
 
@@ -25,7 +26,6 @@ export function WebGate({ children }: { children: ReactNode }) {
   const [gate, setGate] = useState<Gate>("loading");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const check = () => {
@@ -44,10 +44,10 @@ export function WebGate({ children }: { children: ReactNode }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setError(null);
     if (gate === "setup") {
-      if (password.length < MIN_PASSWORD) return setError(t("gate.short", { count: MIN_PASSWORD }));
-      if (password !== confirm) return setError(t("gate.mismatch"));
+      if (password.length < MIN_PASSWORD)
+        return toast({ text: t("gate.short", { count: MIN_PASSWORD }), error: true });
+      if (password !== confirm) return toast({ text: t("gate.mismatch"), error: true });
     }
     setBusy(true);
     void (gate === "setup" ? serverAccount.setup(password) : serverAccount.login(password))
@@ -57,7 +57,7 @@ export function WebGate({ children }: { children: ReactNode }) {
           setConfirm("");
           setGate("ready");
         },
-        (failure: unknown) => setError(messageOf(failure)),
+        (failure: unknown) => toast({ text: messageOf(failure), error: true }),
       )
       .finally(() => setBusy(false));
   };
@@ -104,17 +104,14 @@ export function WebGate({ children }: { children: ReactNode }) {
                 className="h-10"
               />
             )}
-            {error && (
-              <p role="alert" className="text-xs text-error">
-                {error}
-              </p>
-            )}
             <Button type="submit" className="w-full h-10" disabled={busy || !password}>
               {gate === "setup" ? t("gate.setPassword") : t("src.login")}
             </Button>
           </form>
         )}
       </div>
+      {/* The app, once open, shows its own. */}
+      <Toaster />
     </main>
   );
 }

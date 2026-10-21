@@ -92,7 +92,7 @@ const SUMMARY_COLUMNS: &str = "a.id, a.feed_url, COALESCE(f.title, a.feed_title)
 const FEED_COLUMNS: &str = "f.url, f.title, f.site_url, f.icon_url, f.group_name, f.sort,
     f.added_at, f.last_fetch, f.last_error, COALESCE(c.unread, 0), COALESCE(c.total, 0),
     f.enabled, f.refresh_minutes, f.keep_articles, f.keep_days, f.full_text, f.via_server,
-    f.keep_unread, f.account_id, f.address";
+    f.keep_unread, f.account_id, f.address, c.newest";
 
 fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
     Ok(Feed {
@@ -118,6 +118,7 @@ fn feed_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feed> {
         },
         account: row.get(18)?,
         address: row.get(19)?,
+        newest: row.get(20)?,
     })
 }
 
@@ -412,7 +413,8 @@ impl Storage {
     pub fn list_feeds(&self) -> Result<Vec<Feed>, AppError> {
         let mut statement = self.conn.prepare(&format!(
             "SELECT {FEED_COLUMNS} FROM rss_feeds f
-             LEFT JOIN (SELECT feed_url, SUM(read = 0) AS unread, COUNT(*) AS total
+             LEFT JOIN (SELECT feed_url, SUM(read = 0) AS unread, COUNT(*) AS total,
+                               MAX(published_at) AS newest
                         FROM rss_articles GROUP BY feed_url) c ON c.feed_url = f.url
              ORDER BY f.sort, f.added_at, f.url"
         ))?;

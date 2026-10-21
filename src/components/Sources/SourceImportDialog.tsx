@@ -7,7 +7,7 @@ import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
+import { reportError } from "../ui/toast";
 
 export type ImportMethod = "network" | "file" | "paste";
 
@@ -79,7 +79,6 @@ export function SourceImportDialog({
   const [keepGroup, setKeepGroup] = useState(true);
   const [keepEnabled, setKeepEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const history = method === "network" ? readHistory() : [];
 
   const showPreview = (text: string) =>
@@ -93,7 +92,7 @@ export function SourceImportDialog({
 
   const fail = (failure: unknown) => {
     setBusy(false);
-    setError(describeError(failure));
+    reportError(failure);
   };
 
   // A subscription's update fetches its address at once.
@@ -118,7 +117,6 @@ export function SourceImportDialog({
 
   const load = () => {
     setBusy(true);
-    setError(null);
     if (method === "network" || LINK.test(input.trim())) {
       const url = input.trim();
       void service
@@ -301,11 +299,6 @@ export function SourceImportDialog({
               ))}
             </div>
           </div>
-        )}
-        {error && (
-          <p role="alert" className="text-xs text-error break-words">
-            {error}
-          </p>
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>

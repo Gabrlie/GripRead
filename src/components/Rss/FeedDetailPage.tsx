@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 import { useFeeds } from "../../application/runtime";
 import { useT } from "../../i18n";
 import type { Feed, FeedOptions } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { feedGroupNames } from "../../application/rss";
 import { Choice, GroupField, IntervalChoice, Toggle } from "./controls";
 import { appliesTo, FilterList } from "./FeedFiltersPage";
-import { articleTime } from "./format";
+import { feedStatus } from "./FeedList";
+import { Icon } from "../ui/Icon";
 import { KEEP_ARTICLES, KEEP_DAYS, keepArticleLabel, keepDayLabel } from "./RssSettingsPage";
 
 function Field({
@@ -49,9 +49,9 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
   const [enabled, setEnabled] = useState(feed.enabled);
   const [options, setOptions] = useState<FeedOptions>(feed.options);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const groups = feedGroupNames(state, feed.account);
+  const status = feedStatus(feed, state.accounts, t);
   const account = feed.account
     ? state.accounts.find((item) => item.id === feed.account)
     : undefined;
@@ -62,7 +62,6 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
     setOptions((current) => ({ ...current, ...patch }));
   const save = () => {
     setSaving(true);
-    setError(null);
     void store
       .updateFeed({
         url: feed.url,
@@ -72,13 +71,10 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
         enabled: account ? null : enabled,
         options,
       })
-      .then(
-        () => {
-          toast(t("rss.saved"));
-          onClose();
-        },
-        (failure: unknown) => setError(describeError(failure)),
-      )
+      .then(() => {
+        toast(t("rss.saved"));
+        onClose();
+      }, reportError)
       .finally(() => setSaving(false));
   };
   const follow = t("rss.settings.follow");
@@ -93,11 +89,6 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
         </Button>
       }
     >
-      {error && (
-        <p role="alert" className="px-1 text-xs text-error break-all">
-          {error}
-        </p>
-      )}
       <PageSection title={t("rss.feed.basic")}>
         <Field label={t("rss.name")}>
           <Input value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -201,14 +192,19 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
           <span className="block">
             {t("rss.feed.counts", { total: feed.total, unread: feed.unread })}
           </span>
-          <span className={`block break-all ${feed.lastError ? "text-error" : ""}`}>
-            {feed.lastError
-              ? t("rss.failedWith", { error: feed.lastError })
-              : feed.lastFetch
-                ? t("rss.refreshedAt", { time: articleTime(feed.lastFetch), count: feed.total })
-                : t("rss.neverRefreshed")}
+          <span className={`block break-all ${status.failed ? "text-error" : ""}`}>
+            {status.text}
           </span>
         </p>
+        <button
+          type="button"
+          className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm text-primary disabled:opacity-50"
+          disabled={state.refreshing !== null || !feed.enabled}
+          onClick={() => void store.refresh([feed.url])}
+        >
+          <Icon name="refresh" size={16} className={state.refreshing ? "animate-spin" : ""} />
+          {account ? t("rss.account.syncNow") : t("rss.refresh")}
+        </button>
       </PageSection>
       <PageSection>
         <button
@@ -240,13 +236,10 @@ function FeedDetail({ feed, onClose, layer }: { feed: Feed; onClose: () => void;
                 size="sm"
                 className="bg-error text-on-error"
                 onClick={() =>
-                  void store.removeFeeds([feed.url]).then(
-                    () => {
-                      toast(t("rss.unsubscribed"));
-                      onClose();
-                    },
-                    (failure: unknown) => toast({ text: describeError(failure), error: true }),
-                  )
+                  void store.removeFeeds([feed.url]).then(() => {
+                    toast(t("rss.unsubscribed"));
+                    onClose();
+                  }, reportError)
                 }
               >
                 {t("common.confirm")}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "../../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { t } from "../../../i18n";
-import { describeError } from "../../Cloud/format";
+import { reportError } from "../../ui/toast";
 
 /** Legado's bookmark dialog: the marked text and the reader's note. */
 export function BookmarkNoteDialog({
@@ -20,7 +20,6 @@ export function BookmarkNoteDialog({
   onClose: () => void;
 }) {
   const [note, setNote] = useState(initialNote);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -39,7 +38,7 @@ export function BookmarkNoteDialog({
             event.preventDefault();
             setSaving(true);
             void onSave(note.trim())
-              .then(onClose, (failure: unknown) => setError(describeError(failure)))
+              .then(onClose, reportError)
               .finally(() => setSaving(false));
           }}
         >
@@ -53,11 +52,6 @@ export function BookmarkNoteDialog({
             onChange={(event) => setNote(event.target.value)}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 resize-y"
           />
-          {error && (
-            <p role="alert" className="text-xs text-error break-words">
-              {error}
-            </p>
-          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
               {t("common.cancel")}

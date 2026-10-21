@@ -4,6 +4,7 @@ import { useApp } from "../../context/AppContext";
 import type { ShelfSort } from "../../types/generated";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
 import { Button } from "../ui/button";
+import { LoadFailed } from "../ui/LoadFailed";
 import { t } from "../../i18n";
 
 export function LibraryManager({
@@ -40,29 +41,6 @@ export function LibraryManager({
             {mode === "sort" ? t("shelf.sort.note") : t("shelf.bin.note")}
           </DialogDescription>
         </DialogHeader>
-        {(state.managementError || preferences.state.error) && (
-          <div role="alert" className="text-xs text-error">
-            {state.managementError || preferences.state.error}
-            {preferences.state.error && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  preferences.state.value
-                    ? preferences.store.retry()
-                    : void preferences.store.load()
-                }
-              >
-                {t("shelf.retrySave")}
-              </Button>
-            )}
-            {mode === "removed" && (
-              <Button variant="outline" size="sm" onClick={() => void store.loadRemoved()}>
-                {t("shelf.reload")}
-              </Button>
-            )}
-          </div>
-        )}
         {mode === "sort" && (
           <div className="space-y-2">
             {(
@@ -92,6 +70,9 @@ export function LibraryManager({
               <p role="status" className="text-xs text-secondary">
                 {t("shelf.bin.loading")}
               </p>
+            )}
+            {state.managementError && !state.removedLoading && !state.removedBooks.length && (
+              <LoadFailed className="py-4" onRetry={() => void store.loadRemoved()} />
             )}
             {state.removedLoaded &&
               !state.removedLoading &&

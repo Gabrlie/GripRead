@@ -20,4 +20,8 @@ account: string | null,
 /**
  * An account feed's own address (its `url` names it in the account).
  */
-address: string | null, };
+address: string | null, 
+/**
+ * When its newest article kept here was published.
+ */
+newest: number | null, };

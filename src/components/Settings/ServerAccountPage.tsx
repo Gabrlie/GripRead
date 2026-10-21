@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { JobsSection } from "./ServerJobsSection";
 import { serverAccount, type ServerSession } from "../../services/server";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { formatDate, t } from "../../i18n";
+import { LoadFailed } from "../ui/LoadFailed";
 
 function seen(at: number): string {
   const minutes = Math.round((Date.now() - at) / 60_000);
@@ -23,7 +23,7 @@ function seen(at: number): string {
  */
 export function ServerAccountSections() {
   const [sessions, setSessions] = useState<ServerSession[] | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,34 +32,31 @@ export function ServerAccountSections() {
     void serverAccount.sessions().then(
       (value) => {
         setSessions(value);
-        setFailure(null);
+        setFailed(false);
       },
-      (error: unknown) => setFailure(describeError(error)),
+      (error: unknown) => {
+        setFailed(true);
+        reportError(error);
+      },
     );
   useEffect(load, []);
 
   const revoke = (session: ServerSession) =>
-    void serverAccount.revoke(session.id).then(
-      () => {
-        toast(t("account.revoked", { device: session.device }));
-        load();
-      },
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    void serverAccount.revoke(session.id).then(() => {
+      toast(t("account.revoked", { device: session.device }));
+      load();
+    }, reportError);
 
   const changePassword = () => {
     setBusy(true);
     void serverAccount
       .changePassword(current, next)
-      .then(
-        () => {
-          setCurrent("");
-          setNext("");
-          toast(t("account.passwordChanged"));
-          load();
-        },
-        (error: unknown) => toast({ text: describeError(error), error: true }),
-      )
+      .then(() => {
+        setCurrent("");
+        setNext("");
+        toast(t("account.passwordChanged"));
+        load();
+      }, reportError)
       .finally(() => setBusy(false));
   };
 
@@ -67,12 +64,8 @@ export function ServerAccountSections() {
     <>
       <JobsSection />
       <PageSection title={t("account.sessions")}>
-        {failure && (
-          <p role="alert" className="p-4 text-xs text-error">
-            {failure}
-          </p>
-        )}
-        {sessions === null && !failure && (
+        {failed && sessions === null && <LoadFailed className="py-4" onRetry={load} />}
+        {sessions === null && !failed && (
           <p className="p-4 text-sm text-secondary">{t("common.loading")}</p>
         )}
         {sessions?.map((session) => (
@@ -129,11 +122,7 @@ export function ServerAccountSections() {
 
 /** 服务器账号 in the web version: the server's settings and 退出登录. */
 export function ServerAccountPage({ onClose }: { onClose: () => void }) {
-  const logout = () =>
-    void serverAccount.logout().then(
-      () => location.reload(),
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+  const logout = () => void serverAccount.logout().then(() => location.reload(), reportError);
 
   return (
     <FullPage label={t("settings.account")} onClose={onClose}>

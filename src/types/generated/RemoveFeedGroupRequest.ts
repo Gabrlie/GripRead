@@ -3,4 +3,8 @@
 /**
  * Removes a group: its feeds become ungrouped, or are unsubscribed.
  */
-export type RemoveFeedGroupRequest = { name: string, unsubscribe: boolean, };
+export type RemoveFeedGroupRequest = { name: string, unsubscribe: boolean, 
+/**
+ * A group of this 订阅账号, removed on the account.
+ */
+account: string | null, };

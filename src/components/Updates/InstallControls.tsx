@@ -78,9 +78,7 @@ export function InstallControls({
         <p className="text-[11px] text-secondary">{t("update.permission")}</p>
       )}
       {state.phase === "failed" && (
-        <p role="alert" className="text-[11px] text-error">
-          {t("update.failed", { error: state.error })}
-        </p>
+        <p className="text-[11px] text-error">{t("update.failed", { error: state.error })}</p>
       )}
       {state.phase !== "started" && (
         <Button size="sm" onClick={onInstall}>

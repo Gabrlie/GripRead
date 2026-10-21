@@ -994,13 +994,13 @@ export const tauriServices: AppServices = {
       invokeCommand<void>("save_feed_groups", {
         request: { names } satisfies SaveFeedGroupsRequest,
       }),
-    renameGroup: (name, newName) =>
+    renameGroup: (name, newName, account = null) =>
       invokeCommand<void>("rename_feed_group", {
-        request: { name, newName } satisfies RenameFeedGroupRequest,
+        request: { name, newName, account } satisfies RenameFeedGroupRequest,
       }),
-    removeGroup: (name, unsubscribe) =>
+    removeGroup: (name, unsubscribe, account = null) =>
       invokeCommand<void>("remove_feed_group", {
-        request: { name, unsubscribe } satisfies RemoveFeedGroupRequest,
+        request: { name, unsubscribe, account } satisfies RemoveFeedGroupRequest,
       }),
     removeFeeds: (urls) =>
       invokeCommand<void>("remove_feeds", { request: { urls } satisfies FeedUrlsRequest }),

@@ -11,7 +11,15 @@ import { MotionConfig } from "motion/react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { tauriServices } from "./services/ipc";
 import type { AppServices } from "./services/contracts";
-import { Toaster, setLogViewer, toast } from "./components/ui/toast";
+import { Toaster, setLogViewer, toast, useErrorToast } from "./components/ui/toast";
+import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
 import { LogPage } from "./components/Settings/LogPage";
 import {
   dismissWithEscape,
@@ -299,6 +307,14 @@ function MainContent() {
       closeRetry.current = null;
     };
   }, [runtime, shelfPreferenceStore]);
+  // Progress not saved outside the reader: a failure that lasts until
+  // written (the reader shows its own).
+  const backgroundError = activeBook ? null : positionError || readerWriteError;
+  useErrorToast(
+    backgroundError && t("app.progressUnsaved", { error: backgroundError }),
+    "reader-background-error",
+    runtime.retryReaderWrites,
+  );
   return (
     <div
       data-testid={
@@ -311,44 +327,47 @@ function MainContent() {
       className="min-h-screen flex flex-col bg-surface text-on-surface min-w-0"
     >
       <Navbar />
-      {!activeBook && (positionError || readerWriteError) && (
-        <div
-          role="alert"
-          data-testid="reader-background-error"
-          className="fixed bottom-[calc(6rem+var(--safe-bottom))] left-4 right-4 z-[60] rounded-xl bg-error-container text-error px-4 py-2 text-sm"
-        >
-          {t("app.progressUnsaved", { error: positionError || readerWriteError || "" })}
-          <button className="ml-3 underline" onClick={runtime.retryReaderWrites}>
-            {t("common.retry")}
-          </button>
-        </div>
-      )}
       {closeError && (
-        <div role="alert" className="fixed top-0 z-[100] bg-error-container text-error p-3 w-full">
-          {t("app.closeFailed", { error: closeError })}
-          <button
-            className="ml-3 underline"
-            onClick={() => {
-              if (closeRetry.current) void closeRetry.current();
-              else setCloseError(null);
-            }}
+        <Dialog open>
+          <DialogContent
+            showCloseButton={false}
+            className="grid-cols-1 bg-surface rounded-2xl sm:max-w-sm p-5 gap-3"
           >
-            {closeRetry.current ? t("app.retryClose") : t("common.back")}
-          </button>
-          {(runtime.library.hasUnresolvedWrites() || runtime.shelf.hasUnresolvedWrites()) && (
-            <button
-              className="ml-3 underline"
-              onClick={() => {
-                runtime.library.discardFailedWrites();
-                runtime.shelf.discardFailedWrites();
-                closeRetry.current = null;
-                setCloseError(null);
-              }}
-            >
-              {t("app.discardWrites")}
-            </button>
-          )}
-        </div>
+            <DialogHeader>
+              <DialogTitle className="font-title-editorial text-base">
+                {t("app.closeFailed.title")}
+              </DialogTitle>
+              <DialogDescription className="break-words">
+                {t("app.closeFailed", { error: closeError })}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (closeRetry.current) void closeRetry.current();
+                  else setCloseError(null);
+                }}
+              >
+                {closeRetry.current ? t("app.retryClose") : t("common.back")}
+              </Button>
+              {(runtime.library.hasUnresolvedWrites() || runtime.shelf.hasUnresolvedWrites()) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    runtime.library.discardFailedWrites();
+                    runtime.shelf.discardFailedWrites();
+                    closeRetry.current = null;
+                    setCloseError(null);
+                  }}
+                >
+                  {t("app.discardWrites")}
+                </Button>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
       <div className={`flex-1 flex flex-col ${activeBook ? "" : "md:pl-64"} min-w-0`}>
         {activeBook ? (

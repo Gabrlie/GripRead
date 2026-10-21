@@ -18,7 +18,7 @@ import {
 import { PrivateGroupLock } from "./PrivateGroup";
 import { Header } from "../Layout/Header";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast, useErrorToast } from "../ui/toast";
 import { Card, CardContent } from "../ui/card";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
@@ -39,7 +39,7 @@ import { updateOnlineToc } from "../../application/online";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 import { SLIDE_MS, useSwipePages } from "../ui/use-swipe-pages";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
+import { LoadFailed } from "../ui/LoadFailed";
 
 /** 自动更新 runs again on returning to the app after this long. */
 const AUTO_UPDATE_GAP = 30 * 60_000;
@@ -198,7 +198,7 @@ export function BookshelfView() {
           );
         return store.refresh();
       })
-      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
+      .catch(reportError)
       .finally(() => {
         updatingRef.current = false;
         setUpdating(null);
@@ -249,6 +249,19 @@ export function BookshelfView() {
   useEffect(() => {
     if (!state.loading && !state.error) void groupStore.load(state.books);
   }, [state.books, state.loading, state.error, groupStore]);
+  // Failures last while they hold, each with its retry.
+  const tocFailed = Object.keys(groupState.chapterErrors).length > 0;
+  useErrorToast(
+    state.error || groupState.error || (tocFailed ? t("shelf.tocFailed") : null),
+    "shelf-load",
+    () => (state.error ? void store.refresh() : void groupStore.load(state.books)),
+  );
+  useErrorToast(
+    preferences.state.error && t("shelf.prefsFailed", { error: preferences.state.error }),
+    "shelf-preferences",
+    () => (preferences.state.value ? preferences.store.retry() : void preferences.store.load()),
+  );
+  useErrorToast(state.managementError, "shelf-manage");
   useEffect(() => {
     window.scrollTo(0, shelf.scroll);
   }, []);
@@ -553,42 +566,9 @@ export function BookshelfView() {
           </div>
         )}
 
-        {(state.error || groupState.error || Object.keys(groupState.chapterErrors).length > 0) && (
-          <div role="alert" className="text-xs text-error rounded-xl bg-error-container p-3 mb-3">
-            {state.error || groupState.error || t("shelf.tocFailed")}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                state.error ? void store.refresh() : void groupStore.load(state.books)
-              }
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
-        )}
         {state.loading && (
           <p role="status" className="text-xs text-secondary">
             {t("shelf.loading")}
-          </p>
-        )}
-        {preferences.state.error && (
-          <div role="alert" className="text-xs text-error rounded-xl bg-error-container p-3 mb-3">
-            {t("shelf.prefsFailed", { error: preferences.state.error })}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                preferences.state.value ? preferences.store.retry() : void preferences.store.load()
-              }
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
-        )}
-        {state.managementError && !manager && (
-          <p role="alert" className="text-xs text-error">
-            {state.managementError}
           </p>
         )}
         {/* Book List / Grid */}
@@ -597,7 +577,9 @@ export function BookshelfView() {
             <p role="status" className="text-xs text-secondary py-10 text-center">
               {t("shelf.loading")}
             </p>
-          ) : state.error ? null : lockedGroup ? (
+          ) : state.error ? (
+            <LoadFailed onRetry={() => void store.refresh()} />
+          ) : lockedGroup ? (
             <PrivateGroupLock group={lockedGroup} count={filteredBooks.length}>
               <BookList
                 books={filteredBooks}

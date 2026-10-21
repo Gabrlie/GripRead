@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { useFeeds, useRuntime } from "../../application/runtime";
 import { useT, type MessageKey } from "../../i18n";
 import type { FeedPreview, FeedSearchResult, FeedSearchSource } from "../../types/generated";
-import { describeError } from "../Cloud/format";
-import { FullPage, PageSection } from "../Layout/FullPage";
+import { LoadFailed } from "../ui/LoadFailed";
+import { FullPage, PageLink, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { ArticleContent } from "./ArticleContent";
+import { AccountPage } from "./FeedAccountsPage";
 import { feedGroupNames } from "../../application/rss";
 import { Choice, GroupField } from "./controls";
 import { articleTime, hostOf } from "./format";
@@ -46,13 +47,10 @@ function SubscribeDialog({
     setBusy(true);
     void store
       .addFeed(url, title.trim() || null, group.trim() || null, account)
-      .then(
-        (feed) => {
-          toast(t("rss.subscribed", { title: feed.title }));
-          onDone();
-        },
-        (error: unknown) => toast({ text: describeError(error), error: true }),
-      )
+      .then((feed) => {
+        toast(t("rss.subscribed", { title: feed.title }));
+        onDone();
+      }, reportError)
       .finally(() => setBusy(false));
   };
   return (
@@ -130,7 +128,8 @@ export function FeedPreviewPage({
   const service = useRuntime().services.feeds;
   const { state } = useFeeds();
   const [preview, setPreview] = useState<FeedPreview | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [subscribing, setSubscribing] = useState(false);
   const subscribed = state.feeds.some(
@@ -138,14 +137,19 @@ export function FeedPreviewPage({
   );
   useEffect(() => {
     let active = true;
+    setFailed(false);
     void service.preview(result.url).then(
       (loaded) => active && setPreview(loaded),
-      (failure: unknown) => active && setError(describeError(failure)),
+      (failure: unknown) => {
+        if (!active) return;
+        setFailed(true);
+        reportError(failure);
+      },
     );
     return () => {
       active = false;
     };
-  }, [service, result.url]);
+  }, [service, result.url, attempt]);
   const article = preview?.articles.find((item) => item.id === open) ?? null;
   return (
     <FullPage
@@ -165,12 +169,8 @@ export function FeedPreviewPage({
     >
       <p className="px-1 text-xs text-secondary break-all">{result.url}</p>
       <p className="px-1 text-[11px] text-secondary">{t("rss.preview.note")}</p>
-      {error && (
-        <p role="alert" className="px-1 text-sm text-error break-all">
-          {error}
-        </p>
-      )}
-      {!preview && !error && (
+      {failed && <LoadFailed onRetry={() => setAttempt((value) => value + 1)} />}
+      {!preview && !failed && (
         <p role="status" className="px-1 text-sm text-secondary">
           {t("rss.preview.loading")}
         </p>
@@ -255,19 +255,18 @@ export function FeedSearchPage({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FeedSearchResult[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<FeedSearchResult | null>(null);
+  const [account, setAccount] = useState(false);
   const subscribed = new Set(state.feeds.map((feed) => feed.address ?? feed.url));
   const search = () => {
     const text = query.trim();
     if (!text) return;
     setBusy(true);
-    setError(null);
     void service
       .search(text)
       .then(setResults, (failure: unknown) => {
         setResults(null);
-        setError(describeError(failure));
+        reportError(failure);
       })
       .finally(() => setBusy(false));
   };
@@ -294,13 +293,18 @@ export function FeedSearchPage({
           {busy ? t("rss.find.searching") : t("rss.find.go")}
         </Button>
       </form>
-      {!results && !error && (
-        <p className="px-1 text-[11px] text-secondary">{t("rss.find.note")}</p>
-      )}
-      {error && (
-        <p role="alert" className="px-1 text-sm text-error break-all">
-          {error}
-        </p>
+      {!results && (
+        <>
+          <p className="px-1 text-[11px] text-secondary">{t("rss.find.note")}</p>
+          <PageSection>
+            <PageLink
+              icon="cloud"
+              label={t("rss.add.account")}
+              detail={t("rss.accounts.short")}
+              onClick={() => setAccount(true)}
+            />
+          </PageSection>
+        </>
       )}
       {results && (
         <PageSection>
@@ -345,6 +349,7 @@ export function FeedSearchPage({
           ))}
         </PageSection>
       )}
+      {account && <AccountPage account={null} onClose={() => setAccount(false)} layer="z-[60]" />}
       {chosen && (
         <FeedPreviewPage
           result={chosen}

@@ -7,20 +7,50 @@ mod webview;
 
 use gripread_core::api::{self, Reply};
 use gripread_core::commands::AppState;
-use gripread_core::error::AppError;
+use gripread_core::error::{AppError, ErrorCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::ipc::{InvokeResponseBody, Response};
 use tauri::{Emitter, Manager};
+
+/// The core's state, opened after the window: the WebView can call `rpc`
+/// before opening (and upgrading the database) has finished.
+struct Core(tokio::sync::watch::Sender<Option<Result<Arc<AppState>, AppError>>>);
+
+impl Default for Core {
+    fn default() -> Self {
+        Self(tokio::sync::watch::channel(None).0)
+    }
+}
+
+impl Core {
+    /// The state once it is open.
+    fn get(&self) -> Option<Arc<AppState>> {
+        self.0
+            .borrow()
+            .as_ref()
+            .and_then(|state| state.as_ref().ok().cloned())
+    }
+
+    /// Waits until the state is open, or has failed to open.
+    async fn ready(&self) -> Result<Arc<AppState>, AppError> {
+        let mut opened = self.0.subscribe();
+        let state = opened
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| AppError::new(ErrorCode::Io, "应用数据没有打开"))?;
+        state.clone().expect("waited for the state")
+    }
+}
 
 /// Runs a core command by name (see `gripread_core::api`).
 #[tauri::command]
 async fn rpc(
     name: String,
     args: Option<serde_json::Value>,
-    state: tauri::State<'_, Arc<AppState>>,
+    core: tauri::State<'_, Core>,
 ) -> Result<Response, AppError> {
-    let state = state.inner().clone();
+    let state = core.ready().await?;
     let reply = api::dispatch(&state, &name, args.unwrap_or(serde_json::Value::Null)).await?;
     Ok(Response::new(match reply {
         Reply::Json(value) => InvokeResponseBody::Json(value.to_string()),
@@ -62,6 +92,7 @@ pub fn run() {
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
     builder
+        .manage(Core::default())
         .setup(|app| {
             #[cfg(not(feature = "native-test"))]
             let data_dir = app.path().app_data_dir()?;
@@ -70,12 +101,19 @@ pub fn run() {
                 .map(std::path::PathBuf::from)
                 .ok_or("native-test builds require an isolated GRIPREAD_TEST_DATA_DIR")?;
             let handle = app.handle().clone();
-            let state = AppState::open(
-                data_dir,
-                Arc::new(plugins::TauriEvents(handle.clone())),
-                Arc::new(plugins::AppPlatform(handle)),
-            )?;
-            app.manage(state);
+            // Opening may upgrade the database, which can take a while;
+            // commands wait for it (see `Core`).
+            std::thread::spawn(move || {
+                let state = AppState::open(
+                    data_dir,
+                    Arc::new(plugins::TauriEvents(handle.clone())),
+                    Arc::new(plugins::AppPlatform(handle.clone())),
+                );
+                if let Err(error) = &state {
+                    eprintln!("Unable to open GripRead's data: {error}");
+                }
+                handle.state::<Core>().0.send_replace(Some(state));
+            });
             app.manage(ExitPermission::default());
             #[cfg(target_os = "macos")]
             {
@@ -121,16 +159,22 @@ pub fn run() {
             if let tauri::RunEvent::WindowEvent { event, .. } = &event {
                 match event {
                     tauri::WindowEvent::Suspended => {
-                        app.state::<Arc<AppState>>().sync.set_background(true);
+                        if let Some(state) = app.state::<Core>().get() {
+                            state.sync.set_background(true);
+                        }
                     }
                     tauri::WindowEvent::Resumed => {
-                        app.state::<Arc<AppState>>().sync.set_background(false);
+                        if let Some(state) = app.state::<Core>().get() {
+                            state.sync.set_background(false);
+                        }
                     }
                     _ => {}
                 }
             }
             if let tauri::RunEvent::Resumed = event {
-                let state = app.state::<Arc<AppState>>();
+                let Some(state) = app.state::<Core>().get() else {
+                    return;
+                };
                 let root = state.data_root.clone();
                 std::thread::spawn(move || gripread_core::network::refresh(&root));
                 // Back in the foreground: catch up with the server (mobile

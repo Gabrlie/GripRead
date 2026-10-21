@@ -8,11 +8,10 @@ import type {
   FeedFilterScope,
   FeedFilterTest,
 } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Choice, Toggle } from "./controls";
 
 export const FILTER_FIELDS: [FeedFilterField, MessageKey][] = [
@@ -62,17 +61,14 @@ export function FilterDialog({ filter, onClose }: { filter: FeedFilter; onClose:
   const [purge, setPurge] = useState(false);
   const [test, setTest] = useState<FeedFilterTest | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const groups = state.groups.map((group) => group.name);
   const change = (patch: Partial<FeedFilter>) => {
     setRule((current) => ({ ...current, ...patch }));
     setTest(null);
-    setError(null);
   };
   const ready = rule.pattern.trim() !== "" && (rule.scope === "all" || Boolean(rule.target));
   const run = (kind: "test" | "save") => {
     setBusy(kind);
-    setError(null);
     const work =
       kind === "test"
         ? service.testFilter(rule).then(setTest)
@@ -80,18 +76,13 @@ export function FilterDialog({ filter, onClose }: { filter: FeedFilter; onClose:
             toast(t("rss.filter.saved"));
             onClose();
           });
-    void work
-      .catch((failure: unknown) => setError(describeError(failure)))
-      .finally(() => setBusy(null));
+    void work.catch(reportError).finally(() => setBusy(null));
   };
   const remove = () =>
-    void store.removeFilter(rule.id).then(
-      () => {
-        toast(t("rss.filter.removed"));
-        onClose();
-      },
-      (failure: unknown) => setError(describeError(failure)),
-    );
+    void store.removeFilter(rule.id).then(() => {
+      toast(t("rss.filter.removed"));
+      onClose();
+    }, reportError);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md p-5 gap-3 max-h-[90dvh] overflow-y-auto">
@@ -216,11 +207,6 @@ export function FilterDialog({ filter, onClose }: { filter: FeedFilter; onClose:
               </div>
             )}
           </div>
-          {error && (
-            <p role="alert" className="px-4 text-xs text-error break-all">
-              {error}
-            </p>
-          )}
           <div className="flex items-center gap-2 pt-2">
             {rule.id && (
               <Button

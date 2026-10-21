@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import {
   PINNED_MAX,
   TONES,
@@ -20,7 +20,6 @@ import {
   styleChoices,
   type StyleChoice,
 } from "./interface-styles";
-import { describeError } from "../Cloud/format";
 
 const HOME_TABS: ["bookshelf" | "discover" | "settings", MessageKey][] = [
   ["bookshelf", "nav.shelf"],
@@ -496,10 +495,9 @@ function CoverImages({
   const day = useOptionalImage(value.defaultCover);
   const night = useOptionalImage(value.nightDefaultCover);
   const pick = (key: "defaultCover" | "nightDefaultCover") =>
-    void runtime.services.settings.pickBackgroundImage().then(
-      (asset) => asset && onChange({ [key]: asset.id }),
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void runtime.services.settings
+      .pickBackgroundImage()
+      .then((asset) => asset && onChange({ [key]: asset.id }), reportError);
   const slot = (
     label: string,
     key: "defaultCover" | "nightDefaultCover",

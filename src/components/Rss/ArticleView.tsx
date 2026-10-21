@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { useFeeds, useRuntime } from "../../application/runtime";
 import { openExternal } from "../../services/external";
 import type { Article } from "../../types/generated";
-import { describeError } from "../Cloud/format";
+import { LoadFailed } from "../ui/LoadFailed";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError } from "../ui/toast";
 import { ArticleContent } from "./ArticleContent";
 import { articleTime } from "./format";
 import { useT } from "../../i18n";
@@ -27,7 +27,8 @@ export function ArticleView({
   const service = useRuntime().services.feeds;
   const { state, store } = useFeeds();
   const [article, setArticle] = useState<Article | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [full, setFull] = useState(false);
   const [fetching, setFetching] = useState(false);
   const summary = state.articles.find((item) => item.id === id) ?? article?.summary ?? null;
@@ -35,7 +36,7 @@ export function ArticleView({
   useEffect(() => {
     let active = true;
     setArticle(null);
-    setError(null);
+    setFailed(false);
     setFull(false);
     void service.getArticle(id).then(
       (loaded) => {
@@ -68,13 +69,17 @@ export function ArticleView({
             .finally(() => active && setFetching(false));
         }
       },
-      (failure: unknown) => active && setError(describeError(failure)),
+      (failure: unknown) => {
+        if (!active) return;
+        setFailed(true);
+        reportError(failure);
+      },
     );
     return () => {
       active = false;
     };
     // Opening an article reads it once; later state changes do not reload.
-  }, [id, service]);
+  }, [id, service, attempt]);
 
   const fetchFull = () => {
     if (article?.fullText) {
@@ -84,13 +89,10 @@ export function ArticleView({
     setFetching(true);
     void service
       .fetchFullText(id)
-      .then(
-        (fullText) => {
-          setArticle((current) => (current ? { ...current, fullText } : current));
-          setFull(true);
-        },
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      )
+      .then((fullText) => {
+        setArticle((current) => (current ? { ...current, fullText } : current));
+        setFull(true);
+      }, reportError)
       .finally(() => setFetching(false));
   };
 
@@ -99,12 +101,7 @@ export function ArticleView({
   const next = index >= 0 ? state.articles[index + 1] : null;
   if (index >= 0 && index >= state.articles.length - 3) void store.loadMore();
 
-  if (error)
-    return (
-      <p role="alert" className="p-6 text-sm text-error">
-        {error}
-      </p>
-    );
+  if (failed) return <LoadFailed onRetry={() => setAttempt((value) => value + 1)} />;
   if (!article || !summary)
     return (
       <p role="status" className="p-6 text-sm text-secondary">

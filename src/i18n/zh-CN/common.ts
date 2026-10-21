@@ -1,6 +1,7 @@
 /** Words shared by many screens. */
 export const common = {
   "common.retry": "重试",
+  "common.loadFailed": "加载失败",
   "common.cancel": "取消",
   "common.save": "保存",
   "common.delete": "删除",
@@ -47,6 +48,7 @@ export const common = {
   "app.crash.note": "组件渲染异常，请点击重试",
   "app.progressUnsaved": "阅读进度尚未保存：{error}",
   "app.closeFailed": "退出前保存失败：{error}",
+  "app.closeFailed.title": "还没有退出",
   "app.retryClose": "重试退出",
   "app.discardWrites": "放弃未保存的书架操作，返回应用",
   "files.images": "图片",

@@ -3,6 +3,7 @@ import { feedServiceMocks } from "../test/rss";
 import {
   ENTER_REFRESH_GAP_MS,
   FeedStore,
+  REFRESH_SILENCE_MS,
   feedGroupNames,
   feedGroups,
   refreshScheduled,
@@ -172,5 +173,53 @@ describe("订阅 store", () => {
     await store.removeAccount(account.id);
     expect(store.getSnapshot()).toMatchObject({ selection: { kind: "all" }, accounts: [] });
     expect(store.getSnapshot().feeds.every((feed) => feed.account === null)).toBe(true);
+  });
+
+  it("shows how far an account's sync has fetched, and lets a silent refresh go", async () => {
+    const service = feedServiceMocks();
+    const store = new FeedStore(service);
+    let listener: Parameters<typeof service.onRefresh>[0] = () => undefined;
+    vi.mocked(service.onRefresh).mockImplementation(async (heard) => {
+      listener = heard;
+      return () => undefined;
+    });
+    let finish: () => void = () => undefined;
+    vi.mocked(service.refresh).mockImplementation(
+      (operationId) =>
+        new Promise<void>((resolve) => {
+          listener({
+            operationId,
+            url: "account:a",
+            refreshed: 0,
+            total: 2,
+            newArticles: 0,
+            error: null,
+            step: { done: 400, total: 1000 },
+            done: false,
+          });
+          finish = resolve;
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      const run = store.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot().refreshing).toEqual({
+        done: 0,
+        total: 2,
+        step: { account: "a", done: 400, total: 1000 },
+      });
+      // Nothing heard for long: the refresh is let go, and another may start.
+      await vi.advanceTimersByTimeAsync(REFRESH_SILENCE_MS);
+      await run;
+      expect(store.getSnapshot()).toMatchObject({ refreshing: null });
+      expect(store.getSnapshot().error).toContain("刷新很久没有进展");
+      void store.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      finish();
+      vi.useRealTimers();
+    }
   });
 });

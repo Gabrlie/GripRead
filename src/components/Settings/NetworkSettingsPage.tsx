@@ -12,7 +12,7 @@ import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast, useErrorToast } from "../ui/toast";
 import { t, useT } from "../../i18n";
 
 const dohServers = (): [string, string][] => [
@@ -87,6 +87,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
   const [checking, setChecking] = useState<"doh" | "proxy" | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const pending = useRef<NetworkSettings | null>(null);
+  useErrorToast(failure && t("network.unsaved", { error: failure }), "network-unsaved");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -107,12 +108,9 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let active = true;
-    void service.getNetwork().then(
-      (value) => {
-        if (active) setDraft(value);
-      },
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    void service.getNetwork().then((value) => {
+      if (active) setDraft(value);
+    }, reportError);
     void service.networkState().then(
       (value) => {
         if (active) setSystem(value);
@@ -149,10 +147,7 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
     setChecking(kind);
     void service
       .checkNetwork(draft, kind)
-      .then(
-        (found) => toast(`${found.detail} (${found.millis} ms)`),
-        (error: unknown) => toast({ text: describeError(error), error: true }),
-      )
+      .then((found) => toast(`${found.detail} (${found.millis} ms)`), reportError)
       .finally(() => setChecking(null));
   };
 
@@ -164,11 +159,6 @@ export function NetworkSettingsPage({ onClose }: { onClose: () => void }) {
         onClose();
       }}
     >
-      {failure && (
-        <p role="alert" className="px-1 text-xs text-error">
-          {t("network.unsaved", { error: failure })}
-        </p>
-      )}
       <PageSection title="DNS over HTTPS">
         <div className="p-4 space-y-3">
           <label className="flex items-center justify-between gap-3 text-sm">

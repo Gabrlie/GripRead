@@ -33,7 +33,9 @@ const EXCERPT_CHARS: usize = 160;
 /// Full text shorter than this is not believed to be the article.
 const FULL_TEXT_MIN_CHARS: usize = 200;
 
-fn lock(storage: &Mutex<Storage>) -> Result<std::sync::MutexGuard<'_, Storage>, AppError> {
+pub(crate) fn lock(
+    storage: &Mutex<Storage>,
+) -> Result<std::sync::MutexGuard<'_, Storage>, AppError> {
     storage
         .lock()
         .map_err(|_| AppError::new(ErrorCode::Database, "storage lock is poisoned"))

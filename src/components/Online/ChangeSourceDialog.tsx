@@ -38,7 +38,7 @@ import { ALL_SOURCES, mergeOnlineBook } from "../../application/online";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { t } from "../../i18n";
 import { describeError } from "../Cloud/format";
 
@@ -102,7 +102,7 @@ export function ChangeSourceDialog({
           page: 1,
         });
       })
-      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }));
+      .catch(reportError);
     return () => {
       active = false;
       stop?.();

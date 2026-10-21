@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ReaderService } from "../../services/contracts";
 import type { ReplaceRuleImportPreview } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import type { ImportMethod } from "../Sources/SourceImportDialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { t } from "../../i18n";
+import { reportError } from "../ui/toast";
 
 const HISTORY_KEY = "gripread.replaceRuleImportHistory";
 
@@ -55,7 +55,6 @@ export function ReplaceRuleImportDialog({
   const [preview, setPreview] = useState<ReplaceRuleImportPreview | null>(null);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const history = method === "network" ? readHistory() : [];
 
   const showPreview = (text: string) =>
@@ -66,7 +65,7 @@ export function ReplaceRuleImportDialog({
     });
   const fail = (failure: unknown) => {
     setBusy(false);
-    setError(describeError(failure));
+    reportError(failure);
   };
 
   useEffect(() => {
@@ -86,7 +85,6 @@ export function ReplaceRuleImportDialog({
 
   const load = () => {
     setBusy(true);
-    setError(null);
     if (method === "network") {
       const url = input.trim();
       void service
@@ -213,11 +211,6 @@ export function ReplaceRuleImportDialog({
               ))}
             </ul>
           </div>
-        )}
-        {error && (
-          <p role="alert" className="text-xs text-error break-words">
-            {error}
-          </p>
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>

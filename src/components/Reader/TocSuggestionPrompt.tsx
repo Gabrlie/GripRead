@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import type { TocSuggestion } from "../../types/generated";
 import { useRuntime } from "../../application/runtime";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
-import { toast } from "../ui/toast";
+import { reportError } from "../ui/toast";
 
 /** Books asked (or being checked) this session, whichever page got there first. */
 const claimed = new Set<string>();
@@ -61,10 +60,7 @@ export function TocSuggestionPrompt({
             : {}),
         }),
       )
-      .then(
-        () => onAnswered?.(),
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      );
+      .then(() => onAnswered?.(), reportError);
   };
   const inner = suggestion.kind === "inner";
   return (

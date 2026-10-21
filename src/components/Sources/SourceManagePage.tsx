@@ -29,14 +29,13 @@ import { Icon } from "../ui/Icon";
 import { ComicMark } from "../ui/ComicMark";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { SourceImportDialog, type ImportMethod } from "./SourceImportDialog";
 import { SourceEditPage } from "./SourceEditPage";
 import { SourceDebugPage } from "./SourceDebugPage";
 import { SourceLoginDialog } from "./SourceLoginDialog";
 import { SourceSubscriptionsPage } from "./SourceSubscriptionsPage";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 
 interface CheckProgress {
   operationId: string;
@@ -99,13 +98,10 @@ export function SourceManagePage({
   const [checkKeyword, setCheckKeyword] = useState<string[] | null>(null);
 
   const load = () =>
-    service.listSources().then(
-      (list) => {
-        setSources(list);
-        setLoaded(true);
-      },
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    service.listSources().then((list) => {
+      setSources(list);
+      setLoaded(true);
+    }, reportError);
   useEffect(() => {
     void load();
   }, [service]);
@@ -153,10 +149,7 @@ export function SourceManagePage({
   const run = (action: () => Promise<unknown>, done?: string) =>
     void action()
       .then(load)
-      .then(
-        () => done && toast(done),
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      );
+      .then(() => done && toast(done), reportError);
 
   const selectedUrls = selected ? shown.filter((s) => selected.has(s.url)).map((s) => s.url) : [];
   const toggleSelected = (url: string) =>
@@ -177,24 +170,21 @@ export function SourceManagePage({
       current: t("src.check.preparing"),
       done: false,
     });
-    void service
-      .check({ operationId, urls, keyword, disableFailed })
-      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }));
+    void service.check({ operationId, urls, keyword, disableFailed }).catch(reportError);
   };
 
   const exportTo = (urls: string[], target: "file" | "clipboard") =>
     target === "file"
-      ? void service.exportSourcesFile(urls).then(
-          (saved) => saved && toast(t("src.exported", { count: urls.length || sources.length })),
-          (failure: unknown) => toast({ text: describeError(failure), error: true }),
-        )
+      ? void service
+          .exportSourcesFile(urls)
+          .then(
+            (saved) => saved && toast(t("src.exported", { count: urls.length || sources.length })),
+            reportError,
+          )
       : void service
           .exportSources(urls)
           .then(copyText)
-          .then(
-            () => toast(t("src.copied")),
-            (failure: unknown) => toast({ text: describeError(failure), error: true }),
-          );
+          .then(() => toast(t("src.copied")), reportError);
 
   const filterChip = (value: SourceFilter, label: string) => {
     const active = sameFilter(filter, value);

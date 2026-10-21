@@ -57,7 +57,7 @@ pub(crate) async fn refresh_feeds(
         }
         let feeds = Mutex::new(Vec::new());
         for account in accounts {
-            let result = gripread_core::rss::account::sync(&storage, &account);
+            let result = gripread_core::rss::account::sync(&storage, &account, &|_, _| {});
             if let Ok(mut feeds) = feeds.lock() {
                 feeds.push(RssFeedUpdate {
                     url: format!("account:{account}"),

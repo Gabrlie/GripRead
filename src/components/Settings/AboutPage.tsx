@@ -14,7 +14,7 @@ import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { InstallControls } from "../Updates/InstallControls";
 import { ReleaseNotes } from "../Updates/ReleaseNotes";
@@ -86,13 +86,10 @@ export function AboutPage({ onClose }: { onClose: () => void }) {
     if (!settings) return;
     const next = { ...settings, ...change };
     setSettings(next);
-    void service.saveSettings(saveRequest(next)).then(
-      (saved) => {
-        setSettings(saved);
-        if (change.channel || change.source || change.accelerator !== undefined) runCheck();
-      },
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void service.saveSettings(saveRequest(next)).then((saved) => {
+      setSettings(saved);
+      if (change.channel || change.source || change.accelerator !== undefined) runCheck();
+    }, reportError);
   };
 
   const update = check?.update ?? null;

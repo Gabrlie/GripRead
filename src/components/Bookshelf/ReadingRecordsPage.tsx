@@ -12,7 +12,8 @@ import { BookCover } from "./BookCover";
 import { LibraryCover } from "./LibraryCover";
 import { formatDuration, localDay } from "../../application/reading-time";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
+import { LoadFailed } from "../ui/LoadFailed";
+import { reportError } from "../ui/toast";
 
 /** Legado's 阅读记录: total and daily reading time, and time per book. */
 export function ReadingRecordsPage({
@@ -25,16 +26,24 @@ export function ReadingRecordsPage({
   const runtime = useRuntime();
   const { state: library } = useLibrary();
   const [stats, setStats] = useState<ReadingStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [failed, setFailed] = useState(false);
   const page = usePageLayer(onClose);
   useEffect(() => {
     let cancelled = false;
     // Books in the 回收站 keep their records and are listed as such.
     void runtime.library.loadRemoved();
     runtime.services.library.readingStats(localDay()).then(
-      (value) => !cancelled && setStats(value),
-      (failure: unknown) => !cancelled && setError(describeError(failure)),
+      (value) => {
+        if (cancelled) return;
+        setStats(value);
+        setFailed(false);
+      },
+      (failure: unknown) => {
+        if (cancelled) return;
+        setFailed(true);
+        reportError(failure);
+      },
     );
     return () => {
       cancelled = true;
@@ -72,11 +81,7 @@ export function ReadingRecordsPage({
       </header>
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-5 py-2 space-y-5">
-          {error && (
-            <p role="alert" className="text-xs text-error break-words">
-              {error}
-            </p>
-          )}
+          {failed && !stats && <LoadFailed onRetry={() => setRevision((value) => value + 1)} />}
           <dl className="grid grid-cols-2 gap-3">
             {[
               [t("settings.today"), stats ? formatDuration(stats.todaySeconds) : "—"],
@@ -158,10 +163,9 @@ export function ReadingRecordsPage({
                 onClick={() => {
                   const target = removing;
                   setRemoving(null);
-                  void runtime.services.library.deleteReadingRecord(target.bookId).then(
-                    () => setRevision((value) => value + 1),
-                    (failure: unknown) => setError(describeError(failure)),
-                  );
+                  void runtime.services.library
+                    .deleteReadingRecord(target.bookId)
+                    .then(() => setRevision((value) => value + 1), reportError);
                 }}
               >
                 {t("common.delete")}

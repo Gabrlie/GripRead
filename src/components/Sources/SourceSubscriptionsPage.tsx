@@ -2,13 +2,12 @@ import { useEffect, useState } from "react";
 import type { SourceService } from "../../services/contracts";
 import type { SourceSubscription } from "../../types/generated";
 import { formatDateTime, t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { SourceImportDialog } from "./SourceImportDialog";
 
 /**
@@ -28,7 +27,7 @@ export function SourceSubscriptionsPage({
   const [list, setList] = useState<SourceSubscription[] | null>(null);
   const [editing, setEditing] = useState<SourceSubscription | null>(null);
   const [updating, setUpdating] = useState<SourceSubscription | null>(null);
-  const fail = (failure: unknown) => toast({ text: describeError(failure), error: true });
+  const fail = reportError;
 
   useEffect(() => {
     void service.listSubscriptions().then(setList, fail);

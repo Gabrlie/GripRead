@@ -96,7 +96,7 @@ export function ReadAloudDialog({
               </p>
             )}
             {snapshot.failed && (
-              <div role="alert" className="text-xs text-error space-y-1.5">
+              <div className="text-xs text-error space-y-1.5">
                 <p>{t("aloud.failed")}</p>
                 {onOpenSettings && (
                   <Button variant="outline" size="sm" onClick={onOpenSettings}>

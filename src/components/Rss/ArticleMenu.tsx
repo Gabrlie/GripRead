@@ -3,10 +3,9 @@ import { useT } from "../../i18n";
 import { openExternal } from "../../services/external";
 import { copyText } from "../../services/system";
 import type { ArticleSummary } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "../ui/dropdown-menu";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import type { PressPoint } from "../ui/use-long-press";
 
 /**
@@ -26,13 +25,10 @@ export function ArticleMenu({
   const { store } = useFeeds();
   const act = (work: () => Promise<unknown>, done?: (result: unknown) => string | null) => {
     onClose();
-    void work().then(
-      (result) => {
-        const text = done?.(result);
-        if (text) toast(text);
-      },
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    void work().then((result) => {
+      const text = done?.(result);
+      if (text) toast(text);
+    }, reportError);
   };
   const marked = (count: unknown) =>
     count ? t("rss.markedRead", { count: count as number }) : t("rss.noUnread");

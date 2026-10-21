@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { serverAccount, type JobSettings, type JobStatus } from "../../services/server";
-import { describeError } from "../Cloud/format";
 import { PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { formatDateTime, t } from "../../i18n";
 import { refreshIntervals } from "../Rss/format";
+import { LoadFailed } from "../ui/LoadFailed";
 
 const intervals = (): [number, string][] => [
   [0, t("common.off")],
@@ -28,16 +28,19 @@ export function JobsSection() {
   const [settings, setSettings] = useState<JobSettings | null>(null);
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   const load = () =>
     void serverAccount.jobs().then(
       (jobs) => {
         setSettings(jobs.settings);
         setStatus(jobs.status);
-        setFailure(null);
+        setFailed(false);
       },
-      (error: unknown) => setFailure(describeError(error)),
+      (error: unknown) => {
+        setFailed(true);
+        reportError(error);
+      },
     );
   useEffect(load, []);
 
@@ -45,20 +48,14 @@ export function JobsSection() {
     if (!settings) return;
     const next = { ...settings, ...change };
     setSettings(next);
-    void serverAccount.saveJobs(next).then(
-      () => load(),
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    void serverAccount.saveJobs(next).then(() => load(), reportError);
   };
 
   const updateNow = () => {
     setBusy(true);
     void serverAccount
       .updateNow()
-      .then(
-        () => toast(t("jobs.updated")),
-        (error: unknown) => toast({ text: describeError(error), error: true }),
-      )
+      .then(() => toast(t("jobs.updated")), reportError)
       .finally(() => {
         setBusy(false);
         load();
@@ -66,11 +63,9 @@ export function JobsSection() {
   };
 
   if (!settings)
-    return failure ? (
+    return failed ? (
       <PageSection title={t("jobs.title")}>
-        <p role="alert" className="p-4 text-xs text-error">
-          {failure}
-        </p>
+        <LoadFailed className="py-4" onRetry={load} />
       </PageSection>
     ) : null;
   const choice = (

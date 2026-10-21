@@ -12,6 +12,8 @@ import {
 } from "../../ui/dropdown-menu";
 import { currentLocale, t } from "../../../i18n";
 import { chapterTag } from "../../../application/chapter-tag";
+import { LoadFailed } from "../../ui/LoadFailed";
+import { useErrorToast } from "../../ui/toast";
 
 interface ContentsPageProps {
   bookTitle: string;
@@ -100,6 +102,7 @@ export function ContentsPage({
   onOpenReplace,
   onUpdateToc,
 }: ContentsPageProps) {
+  useErrorToast(error, "reader-contents");
   // A converted book's contents are its source's: no rule to pick or tune.
   const txtTools = kind === "txt" && !fixed && !comic;
   const [tab, setTab] = useState<"toc" | "bookmarks">("toc");
@@ -341,14 +344,7 @@ export function ContentsPage({
 
       <div ref={list} className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto w-full">
-          {error && (
-            <div role="alert" className="m-4 text-sm text-error space-y-2">
-              <p>{error}</p>
-              <Button variant="outline" size="sm" onClick={onReload}>
-                {t("shelf.reload")}
-              </Button>
-            </div>
-          )}
+          {error && <LoadFailed onRetry={onReload} />}
           {loading && (
             <p role="status" className="m-4 text-sm text-secondary">
               {t("contents.loading")}

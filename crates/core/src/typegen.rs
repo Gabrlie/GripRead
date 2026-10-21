@@ -255,6 +255,7 @@ const IPC_TYPES: &[&str] = &[
     "FeedUrlsRequest",
     "RefreshFeedsRequest",
     "RssRefreshEvent",
+    "RssRefreshStep",
     "ArticleFilter",
     "ArticleCursor",
     "ArticleQuery",
@@ -536,6 +537,7 @@ pub fn write_generated_types(path: &Path) -> Result<(), AppError> {
     export_all::<FeedUrlsRequest>(&config)?;
     export_all::<RefreshFeedsRequest>(&config)?;
     export_all::<RssRefreshEvent>(&config)?;
+    export_all::<RssRefreshStep>(&config)?;
     export_all::<ArticleFilter>(&config)?;
     export_all::<ArticleCursor>(&config)?;
     export_all::<ArticleQuery>(&config)?;

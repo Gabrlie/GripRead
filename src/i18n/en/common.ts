@@ -3,6 +3,7 @@ import type { common as zh } from "../zh-CN/common";
 
 export const common = {
   "common.retry": "Retry",
+  "common.loadFailed": "Couldn't load",
   "common.cancel": "Cancel",
   "common.save": "Save",
   "common.delete": "Delete",
@@ -49,6 +50,7 @@ export const common = {
   "app.crash.note": "Something failed to render; tap Retry",
   "app.progressUnsaved": "Reading progress is not saved yet: {error}",
   "app.closeFailed": "Saving before closing failed: {error}",
+  "app.closeFailed.title": "Not closed yet",
   "app.retryClose": "Retry closing",
   "app.discardWrites": "Discard unsaved shelf changes and return",
   "files.images": "Images",

@@ -6,8 +6,8 @@ import { FullPage } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
-import { describeError, formatSize, formatTime } from "./format";
+import { reportError, toast } from "../ui/toast";
+import { formatSize, formatTime } from "./format";
 import { t } from "../../i18n";
 
 /**
@@ -58,7 +58,7 @@ export function CloudShelfPage({
   useEffect(() => {
     setBusy("load");
     refresh()
-      .catch((error: unknown) => toast({ text: describeError(error), error: true }))
+      .catch(reportError)
       .finally(() => setBusy(null));
   }, [refresh]);
   // A book downloaded from here appears on the shelf after its import.
@@ -73,7 +73,7 @@ export function CloudShelfPage({
       const text = await work();
       if (text) toast({ text });
     } catch (error) {
-      toast({ text: describeError(error), error: true });
+      reportError(error);
     } finally {
       setBusy(null);
     }

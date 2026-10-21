@@ -30,7 +30,7 @@ import {
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 
 const KINDS: EngineKind[] = ["openAi", "claude", "gemini", "deepl", "deeplx"];
 const AHEAD = [0, 1, 2, 3, 5];
@@ -57,11 +57,7 @@ export function TranslationSettingsPage({
   const [editingStyle, setEditingStyle] = useState(false);
 
   useEffect(() => {
-    void service
-      .getSettings()
-      .then(setSettings, (failure: unknown) =>
-        toast({ text: describeError(failure), error: true }),
-      );
+    void service.getSettings().then(setSettings, (failure: unknown) => reportError(failure));
   }, [service]);
 
   if (!settings)
@@ -73,11 +69,7 @@ export function TranslationSettingsPage({
 
   const save = (next: TranslationSettings) => {
     setSettings(next);
-    void service
-      .saveSettings(next)
-      .then(setSettings, (failure: unknown) =>
-        toast({ text: describeError(failure), error: true }),
-      );
+    void service.saveSettings(next).then(setSettings, (failure: unknown) => reportError(failure));
   };
   const defaultId = settings.defaultEngine ?? settings.engines[0]?.id ?? null;
   const saveEngine = (engine: TranslationEngine) => {
@@ -480,16 +472,19 @@ function StyleEditor({
           className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono outline-none resize-y"
         />
         <TranslationPreview style="custom" css={draft} />
-        {draft.trim() && !kept && (
-          <p role="alert" className="text-xs text-error">
-            {t("translation.style.cssEmpty")}
-          </p>
-        )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button size="sm" onClick={() => onSave(draft)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              // The style keeps nothing: told, and saved as asked.
+              if (draft.trim() && !kept)
+                toast({ text: t("translation.style.cssEmpty"), error: true });
+              onSave(draft);
+            }}
+          >
             {t("common.save")}
           </Button>
         </div>

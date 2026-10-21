@@ -17,14 +17,14 @@ import {
 } from "../ui/dropdown-menu";
 import { Icon } from "../ui/Icon";
 import { copyText } from "../../services/system";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
+import { LoadFailed } from "../ui/LoadFailed";
 import { OnlineCover } from "./OnlineCover";
 import { OnlineTocPage } from "./OnlineTocPage";
 import { keepOnlineCover, mergeOnlineBook } from "../../application/online";
 import { t } from "../../i18n";
 import { introLabel, useIntroTranslation } from "./use-title-translation";
 import { TranslatedMark } from "./TitleTranslationChip";
-import { describeError } from "../Cloud/format";
 
 /** Opens a kept online book in the reader, at a chapter when one is given. */
 export type OpenOnlineBook = (book: LibraryBook, origin: number, chapter: number | null) => void;
@@ -50,8 +50,8 @@ export function OnlineBookPage({
   const [originIndex, setOriginIndex] = useState(initialOrigin);
   const [book, setBook] = useState<OnlineBook | null>(null);
   const [chapters, setChapters] = useState<OnlineChapter[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [showChapters, setShowChapters] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [kept, setKept] = useState<LibraryBook | null>(null);
@@ -74,7 +74,7 @@ export function OnlineBookPage({
     if (!origin) return;
     let active = true;
     setLoading(true);
-    setError(null);
+    setFailed(false);
     setBook(null);
     setChapters(null);
     // Kept copies show at once; 刷新 asks the source again.
@@ -87,7 +87,11 @@ export function OnlineBookPage({
         setBook(merged);
         return service.chapters(merged, fresh).then((list) => active && setChapters(list));
       })
-      .catch((failure: unknown) => active && setError(describeError(failure)))
+      .catch((failure: unknown) => {
+        if (!active) return;
+        setFailed(true);
+        reportError(failure);
+      })
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
@@ -129,7 +133,7 @@ export function OnlineBookPage({
   const act = (work: () => Promise<void>) => {
     setBusy(true);
     return work()
-      .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
+      .catch(reportError)
       .finally(() => setBusy(false));
   };
 
@@ -298,11 +302,7 @@ export function OnlineBookPage({
           {t("onlineBook.loading")}
         </p>
       )}
-      {error && (
-        <p role="alert" className="text-xs text-error break-words px-1">
-          {error}
-        </p>
-      )}
+      {failed && !chapters && <LoadFailed onRetry={() => setRefresh((value) => value + 1)} />}
 
       {chapters && (
         <button

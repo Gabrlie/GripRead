@@ -22,9 +22,10 @@ import { SearchPage } from "../Online/SearchPage";
 import { ExploreListPage } from "../Online/ExploreListPage";
 import { SourceManagePage } from "../Sources/SourceManagePage";
 import { SourceEditPage } from "../Sources/SourceEditPage";
-import { toast } from "../ui/toast";
+import { reportError } from "../ui/toast";
 import { t } from "../../i18n";
 import { describeError } from "../Cloud/format";
+import { LoadFailed } from "../ui/LoadFailed";
 
 /** The gap between kinds, in pixels (`gap-1.5`). */
 const KIND_GAP = 6;
@@ -91,7 +92,7 @@ export function DiscoverView() {
         offset: 0,
       })
       .then((locator) => runtime.services.reader.saveReaderLocator(locator))
-      .then(open, (failure: unknown) => toast({ text: describeError(failure), error: true }));
+      .then(open, reportError);
   };
   const [managing, setManaging] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -99,7 +100,7 @@ export function DiscoverView() {
   const load = () =>
     service.listSources().then(setSources, (failure: unknown) => {
       setSources([]);
-      toast({ text: describeError(failure), error: true });
+      reportError(failure);
     });
   useEffect(() => {
     void load();
@@ -123,8 +124,10 @@ export function DiscoverView() {
     setKinds((current) => ({ ...current, [source.url]: "loading" }));
     void service.exploreKinds(source.url, refresh).then(
       (list) => setKinds((current) => ({ ...current, [source.url]: list })),
-      (failure: unknown) =>
-        setKinds((current) => ({ ...current, [source.url]: describeError(failure) })),
+      (failure: unknown) => {
+        setKinds((current) => ({ ...current, [source.url]: describeError(failure) }));
+        reportError(failure);
+      },
     );
   };
 
@@ -255,9 +258,7 @@ export function DiscoverView() {
                       </p>
                     )}
                     {typeof state === "string" && state !== "loading" && (
-                      <p role="alert" className="text-xs text-error break-words">
-                        {state}
-                      </p>
+                      <LoadFailed className="py-3" onRetry={() => loadKinds(source, true)} />
                     )}
                     {Array.isArray(state) && state.length === 0 && (
                       <p className="text-xs text-secondary">{t("discover.none")}</p>

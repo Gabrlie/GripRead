@@ -2,12 +2,11 @@ import { useState } from "react";
 import { useFeeds } from "../../application/runtime";
 import { useT } from "../../i18n";
 import type { RssSettings } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageLink, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError } from "../ui/toast";
 import { Choice, IntervalChoice, Toggle } from "./controls";
 import { FeedFiltersPage } from "./FeedFiltersPage";
 
@@ -84,10 +83,7 @@ export function RssSettingsPage({ onClose }: { onClose: () => void }) {
   const [filtering, setFiltering] = useState(false);
   const settings = state.settings;
   const save = (change: Partial<RssSettings>) =>
-    settings &&
-    void store
-      .saveSettings({ ...settings, ...change })
-      .catch((error: unknown) => toast({ text: describeError(error), error: true }));
+    settings && void store.saveSettings({ ...settings, ...change }).catch(reportError);
   return (
     <FullPage label={t("rss.settings")} onClose={onClose}>
       {settings ? (

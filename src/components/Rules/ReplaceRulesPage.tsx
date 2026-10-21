@@ -5,7 +5,7 @@ import type { ReplaceRule } from "../../types/generated";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { usePageLayer } from "../Layout/use-page-layer";
@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
 
 export const EMPTY_REPLACE_RULE: ReplaceRule = {
   id: "",
@@ -56,28 +55,20 @@ export function ReplaceRulesPage({
   onClose: () => void;
 }) {
   const [rules, setRules] = useState<ReplaceRule[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ReplaceRule | null>(null);
   const [importing, setImporting] = useState<ImportMethod | null>(null);
   const layer = usePageLayer(backCloses ? onClose : () => undefined);
-  const load = () =>
-    service
-      .listReplaceRules()
-      .then(setRules, (failure: unknown) => setError(describeError(failure)));
+  const load = () => service.listReplaceRules().then(setRules, reportError);
   useEffect(() => {
     void load();
   }, [service]);
   const change = (action: () => Promise<unknown>, done?: string) =>
     void action()
       .then(load)
-      .then(
-        () => {
-          setError(null);
-          if (done) toast(done);
-          onChanged?.();
-        },
-        (failure: unknown) => setError(describeError(failure)),
-      );
+      .then(() => {
+        if (done) toast(done);
+        onChanged?.();
+      }, reportError);
   const move = (index: number, step: number) => {
     const ids = rules.map((rule) => rule.id);
     const target = index + step;
@@ -142,10 +133,7 @@ export function ReplaceRulesPage({
                 void service
                   .exportReplaceRules()
                   .then(copyText)
-                  .then(
-                    () => toast(t("tocRule.exported")),
-                    (failure: unknown) => setError(describeError(failure)),
-                  )
+                  .then(() => toast(t("tocRule.exported")), reportError)
               }
             >
               <Icon name="share" size={15} />
@@ -168,11 +156,6 @@ export function ReplaceRulesPage({
                 onCheckedChange={book.onToggle}
               />
             </label>
-          )}
-          {error && (
-            <p role="alert" className="text-xs text-error break-words px-1">
-              {error}
-            </p>
           )}
           {rules.length === 0 && (
             <p className="text-sm text-secondary px-1 py-6 text-center">{t("rules.none")}</p>
@@ -285,7 +268,6 @@ export function ReplaceRuleEditor({
   const [rule, setRule] = useState(initial);
   const [sample, setSample] = useState("");
   const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const field = (
     label: string,
     key: "name" | "group" | "pattern" | "replacement" | "scope",
@@ -301,7 +283,7 @@ export function ReplaceRuleEditor({
       />
     </label>
   );
-  const fail = (failure: unknown) => setError(describeError(failure));
+  const fail = reportError;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="grid-cols-1 bg-surface rounded-2xl sm:max-w-md max-h-[86dvh] overflow-y-auto p-5 gap-3">
@@ -364,7 +346,6 @@ export function ReplaceRuleEditor({
             disabled={!sample || !rule.pattern}
             onClick={() =>
               void service.testReplaceRule(rule, sample).then((value) => {
-                setError(null);
                 setResult(value);
               }, fail)
             }
@@ -377,11 +358,6 @@ export function ReplaceRuleEditor({
             </p>
           )}
         </div>
-        {error && (
-          <p role="alert" className="text-xs text-error break-words">
-            {error}
-          </p>
-        )}
         <div className="flex justify-between gap-2">
           {onDelete ? (
             <Button

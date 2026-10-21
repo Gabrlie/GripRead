@@ -13,9 +13,9 @@ use crate::models::{
     FeedGroup, FeedPreview, FeedSearchResult, FeedUrlsRequest, MarkAllReadRequest,
     MarkReadRangeRequest, OpmlImportReport, OpmlImportRequest, OptionalPathRequest,
     PreviewFeedRequest, RefreshFeedsRequest, RemoveFeedGroupRequest, RenameFeedGroupRequest,
-    RssImageRequest, RssRefreshEvent, RssSettings, SaveFeedAccountRequest, SaveFeedFilterRequest,
-    SaveFeedGroupsRequest, SaveRssSettingsRequest, SearchFeedsRequest, TestFeedFilterRequest,
-    UpdateFeedRequest,
+    RssImageRequest, RssRefreshEvent, RssRefreshStep, RssSettings, SaveFeedAccountRequest,
+    SaveFeedFilterRequest, SaveFeedGroupsRequest, SaveRssSettingsRequest, SearchFeedsRequest,
+    TestFeedFilterRequest, UpdateFeedRequest,
 };
 use crate::source_commands::SourceOperations;
 
@@ -118,6 +118,22 @@ pub async fn rename_feed_group(
     state: &Arc<AppState>,
     request: RenameFeedGroupRequest,
 ) -> Result<(), AppError> {
+    if let Some(account) = request.account {
+        if request.new_name.trim().is_empty() {
+            return Err(AppError::keyed(
+                ErrorCode::InvalidArgument,
+                "rssGroupNameEmpty",
+                "分组名称不能为空",
+            ));
+        }
+        let storage = state.storage.clone();
+        let root = state.data_root.clone();
+        return blocking(move || {
+            crate::network::refresh(&root);
+            crate::rss::account::rename_label(&storage, &account, &request.name, &request.new_name)
+        })
+        .await;
+    }
     with_storage(state, move |storage| {
         storage.rename_feed_group(&request.name, &request.new_name)
     })
@@ -128,6 +144,33 @@ pub async fn remove_feed_group(
     state: &Arc<AppState>,
     request: RemoveFeedGroupRequest,
 ) -> Result<(), AppError> {
+    if let Some(account) = request.account {
+        let storage = state.storage.clone();
+        let root = state.data_root.clone();
+        return blocking(move || {
+            crate::network::refresh(&root);
+            if !request.unsubscribe {
+                return crate::rss::account::remove_label(&storage, &account, &request.name);
+            }
+            let urls: Vec<String> = crate::rss::lock(&storage)?
+                .list_feeds()?
+                .into_iter()
+                .filter(|feed| {
+                    feed.account.as_deref() == Some(account.as_str())
+                        && feed.group.as_deref() == Some(request.name.as_str())
+                })
+                .map(|feed| feed.url)
+                .collect();
+            for url in &urls {
+                crate::rss::account::unsubscribe(&storage, url)?;
+            }
+            crate::rss::lock(&storage)?.remove_feeds(&urls)?;
+            // With its feeds gone, the label may have gone too.
+            let _ = crate::rss::account::remove_label(&storage, &account, &request.name);
+            Ok(())
+        })
+        .await;
+    }
     with_storage(state, move |storage| {
         storage.remove_feed_group(&request.name, request.unsubscribe)
     })
@@ -257,6 +300,7 @@ pub async fn refresh_feeds(
                 total,
                 new_articles: *result.as_ref().unwrap_or(&0),
                 error: result.err().map(|error| error.message),
+                step: None,
                 done: false,
             };
             events.emit(
@@ -269,10 +313,24 @@ pub async fn refresh_feeds(
             if cancel.load(Ordering::Acquire) {
                 break;
             }
-            report(
-                &format!("account:{account}"),
-                crate::rss::account::sync(&storage, account),
-            );
+            let url = format!("account:{account}");
+            let step = |done, all| {
+                let event = RssRefreshEvent {
+                    operation_id: operation_id.clone(),
+                    url: url.clone(),
+                    refreshed: counted.load(Ordering::Acquire),
+                    total,
+                    new_articles: 0,
+                    error: None,
+                    step: Some(RssRefreshStep { done, total: all }),
+                    done: false,
+                };
+                events.emit(
+                    "rss-refresh",
+                    serde_json::to_value(event).unwrap_or_default(),
+                );
+            };
+            report(&url, crate::rss::account::sync(&storage, account, &step));
         }
         // Nothing due: the server is not asked, which would take an empty
         // list as every feed.
@@ -297,6 +355,7 @@ pub async fn refresh_feeds(
             total,
             new_articles: 0,
             error: None,
+            step: None,
             done: true,
         })
         .unwrap_or_default(),

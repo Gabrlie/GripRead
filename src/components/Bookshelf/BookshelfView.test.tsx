@@ -17,6 +17,7 @@ import { feedServiceMocks } from "../../test/rss";
 import { updateServiceMocks } from "../../test/updates";
 import { syncServiceMocks } from "../../test/sync";
 import { sourceServiceMocks } from "../../test/sources";
+import { Toaster } from "../ui/toast";
 afterEach(() => {
   cleanup();
   vi.clearAllTimers();
@@ -152,6 +153,7 @@ function runtime(books: LibraryBook[] = []) {
 function view(app: AppRuntime) {
   render(
     <RuntimeContext.Provider value={app}>
+      <Toaster />
       <AppProvider>
         <BookshelfView />
         <ImportModal />
@@ -236,7 +238,7 @@ describe("real library presentation", () => {
     await act(() => vi.advanceTimersByTimeAsync(8_000));
     expect(screen.queryByText("导入失败 · 查看详情")).toBeNull();
     await act(async () => fireEvent.click(screen.getByTestId("import-button")));
-    expect(screen.getByRole("alert").textContent).toContain("无法识别文本编码");
+    expect(screen.getByText(/无法识别文本编码/)).toBeTruthy();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "gbk" } });
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "选择文件并按编码重试" })),
@@ -315,7 +317,10 @@ describe("real library presentation", () => {
     await app.library.refresh();
     view(app);
     expect(screen.getByRole("alert").textContent).toContain("database unavailable");
-    await userEvent.click(screen.getByText("重试"));
+    // Told in a toast; the shelf keeps a way to retry.
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "书架书籍列表" })).getByText("重试"),
+    );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
@@ -350,6 +355,7 @@ describe("real library presentation", () => {
     await app.library.refresh();
     const { unmount } = render(
       <RuntimeContext.Provider value={app}>
+        <Toaster />
         <AppProvider>
           <BookshelfView />
         </AppProvider>
@@ -624,7 +630,7 @@ describe("private groups", () => {
     const field = within(dialog).getByLabelText("密码");
     await userEvent.type(field, "0000");
     await userEvent.click(within(dialog).getByRole("button", { name: "打开" }));
-    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.queryByTestId("library-book-secret-book")).toBeNull();
     await userEvent.clear(field);
     await userEvent.type(field, "1234");
@@ -648,6 +654,7 @@ describe("private groups", () => {
     await app.shelf.load([entry]);
     render(
       <RuntimeContext.Provider value={app}>
+        <Toaster />
         <GroupManager open onOpenChange={() => undefined} />
       </RuntimeContext.Provider>,
     );

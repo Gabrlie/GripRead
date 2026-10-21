@@ -463,9 +463,10 @@ export interface FeedService {
   listGroups(): Promise<FeedGroup[]>;
   /** Puts the groups in this order, creating the new ones. */
   saveGroups(names: string[]): Promise<void>;
-  renameGroup(name: string, newName: string): Promise<void>;
-  /** Its feeds become ungrouped, or are unsubscribed. */
-  removeGroup(name: string, unsubscribe: boolean): Promise<void>;
+  /** A group of the device's own, or of `account` (renamed on it). */
+  renameGroup(name: string, newName: string, account?: string | null): Promise<void>;
+  /** Its feeds become ungrouped, or are unsubscribed (on the account too). */
+  removeGroup(name: string, unsubscribe: boolean, account?: string | null): Promise<void>;
   /**
    * Refreshes the enabled feeds and syncs the 订阅账号 (all when neither is
    * named; with `due`, those whose interval has passed); progress comes

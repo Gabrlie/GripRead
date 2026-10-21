@@ -2,14 +2,19 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { selectionTitle, type FeedSelection } from "../../application/rss";
 import { useFeeds } from "../../application/runtime";
 import type { ArticleSummary } from "../../types/generated";
-import { describeError } from "../Cloud/format";
 import { Header } from "../Layout/Header";
 import { FullPage } from "../Layout/FullPage";
 import { usePageLayer } from "../Layout/use-page-layer";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { Icon } from "../ui/Icon";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { PULL_TRIGGER, usePullRefresh } from "../ui/use-pull-refresh";
 import type { PressPoint } from "../ui/use-long-press";
 import { FeedSearchPage } from "./FeedSearchPage";
@@ -19,6 +24,8 @@ import { FeedDetailPage } from "./FeedDetailPage";
 import { ArticleView } from "./ArticleView";
 import { FeedList } from "./FeedList";
 import { FeedManagePage } from "./FeedManagePage";
+import { AccountPage } from "./FeedAccountsPage";
+import { FeedGroupPage, type GroupRef } from "./FeedGroupsPage";
 import { useWide } from "./use-wide";
 import { RssSettingsPage } from "./RssSettingsPage";
 import { useT } from "../../i18n";
@@ -74,6 +81,9 @@ export function RssView() {
   const [menu, setMenu] = useState<{ article: ArticleSummary; point: PressPoint } | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // An account opened (null to add one).
+  const [account, setAccount] = useState<string | null | undefined>(undefined);
+  const [group, setGroup] = useState<GroupRef | null>(null);
   const [managing, setManaging] = useState(false);
   const [setting, setSetting] = useState(false);
   const [confirmRead, setConfirmRead] = useState(false);
@@ -83,6 +93,10 @@ export function RssView() {
   useEffect(() => {
     void store.enter();
   }, [store]);
+  // A failure of the store (a refresh, a load) is told once, as it comes.
+  useEffect(() => {
+    if (state.error) reportError(state.error);
+  }, [state.error]);
 
   const select = (selection: FeedSelection) => {
     store.select(selection);
@@ -90,23 +104,37 @@ export function RssView() {
     if (!wide) setListOpen(true);
   };
   const markAllRead = () =>
-    void store.markAllRead().then(
-      (count) => toast(count ? t("rss.markedRead", { count }) : t("rss.noUnread")),
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    void store
+      .markAllRead()
+      .then(
+        (count) => toast(count ? t("rss.markedRead", { count }) : t("rss.noUnread")),
+        reportError,
+      );
   const title = selectionTitle(state.selection, state.feeds, state.accounts);
-  const refreshing = state.refreshing ? t("rss.refreshing", state.refreshing) : null;
+  const step = state.refreshing?.step;
+  const refreshing = step
+    ? t("rss.syncing", {
+        name: state.accounts.find((item) => item.id === step.account)?.name ?? "",
+        done: step.done,
+        total: step.total,
+      })
+    : state.refreshing
+      ? t("rss.refreshing", { done: state.refreshing.done, total: state.refreshing.total })
+      : null;
+  const refreshButton = (
+    <Button
+      size="icon"
+      variant="ghost"
+      aria-label={t("rss.refresh")}
+      disabled={state.refreshing !== null}
+      onClick={() => void store.refresh()}
+    >
+      <Icon name="refresh" size={18} className={state.refreshing ? "animate-spin" : ""} />
+    </Button>
+  );
   const listActions = (
     <>
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label={t("rss.refresh")}
-        disabled={state.refreshing !== null}
-        onClick={() => void store.refresh()}
-      >
-        <Icon name="refresh" size={18} className={state.refreshing ? "animate-spin" : ""} />
-      </Button>
+      {refreshButton}
       <Button
         size="icon"
         variant="ghost"
@@ -131,16 +159,25 @@ export function RssView() {
         title={t("nav.feeds")}
         subtitle="FEEDS"
         action={
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="flex items-center gap-1 bg-surface-container text-primary h-8 px-2.5 rounded-lg border-transparent mr-1"
-            onClick={() => setAdding(true)}
-          >
-            <Icon name="add" size={16} />
-            <span className="text-xs">{t("rss.add")}</span>
-          </Button>
+          <>
+            {!wide && refreshButton}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex items-center gap-1 bg-surface-container text-primary h-8 px-2.5 rounded-lg mr-1 outline-none cursor-pointer">
+                <Icon name="add" size={16} />
+                <span className="text-xs">{t("rss.add")}</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setAdding(true)}>
+                  <Icon name="search" size={16} className="text-primary" />
+                  {t("rss.add.search")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setAccount(null)}>
+                  <Icon name="cloud" size={16} className="text-primary" />
+                  {t("rss.add.account")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
         }
         menuItems={[
           { icon: "refresh", label: t("rss.refreshAll"), onSelect: () => void store.refresh() },
@@ -185,6 +222,8 @@ export function RssView() {
               selection={state.selection}
               onSelect={select}
               onDetail={setDetail}
+              onGroup={(name, owner) => setGroup({ group: name, account: owner })}
+              onAccount={setAccount}
             />
           </aside>
           <section
@@ -220,9 +259,12 @@ export function RssView() {
             <div className="rounded-2xl bg-surface-container-low p-8 text-center space-y-3 mt-4">
               <Icon name="rss_feed" size={28} className="mx-auto text-secondary" />
               <p className="text-sm">{t("rss.empty")}</p>
-              <div className="flex justify-center gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <Button size="sm" onClick={() => setAdding(true)}>
                   {t("rss.add")}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setAccount(null)}>
+                  {t("rss.add.account")}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setManaging(true)}>
                   {t("rss.importOpml")}
@@ -237,6 +279,8 @@ export function RssView() {
               selection={state.selection}
               onSelect={select}
               onDetail={setDetail}
+              onGroup={(name, owner) => setGroup({ group: name, account: owner })}
+              onAccount={setAccount}
             />
           )}
         </div>
@@ -257,6 +301,23 @@ export function RssView() {
       )}
       {detail && <FeedDetailPage url={detail} onClose={() => setDetail(null)} />}
       {adding && <FeedSearchPage onClose={() => setAdding(false)} />}
+      {account !== undefined && (
+        <AccountPage
+          account={
+            account === null ? null : (state.accounts.find((item) => item.id === account) ?? null)
+          }
+          onClose={() => setAccount(undefined)}
+          layer="z-50"
+        />
+      )}
+      {group && (
+        <FeedGroupPage
+          {...group}
+          onClose={() => setGroup(null)}
+          layer="z-50"
+          onRenamed={(name) => setGroup({ ...group, group: name })}
+        />
+      )}
       {managing && <FeedManagePage onClose={() => setManaging(false)} />}
       {setting && <RssSettingsPage onClose={() => setSetting(false)} />}
       {confirmRead && (

@@ -2,14 +2,13 @@ import { useEffect, useState } from "react";
 import { useRuntime } from "../../application/runtime";
 import type { RestoreCategory, SyncServerStatus, WebDavSettings } from "../../types/generated";
 import { restoreCategories, switchRequest } from "../Cloud/BackupPage";
-import { describeError } from "../Cloud/format";
 import { FullPage, PageSection } from "../Layout/FullPage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ServerAccountSections } from "./ServerAccountPage";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { formatDateTime, t } from "../../i18n";
 
 function when(at: number | null | undefined): string {
@@ -50,7 +49,7 @@ function SyncContentSection() {
     setBusy(true);
     void sync
       .saveWebDav(switchRequest(settings, { restoreIgnore }))
-      .then(setSettings, (error: unknown) => toast({ text: describeError(error), error: true }))
+      .then(setSettings, reportError)
       .finally(() => setBusy(false));
   };
   return (
@@ -145,13 +144,10 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
   const run = (work: () => Promise<SyncServerStatus | void>, done?: string) => {
     setBusy(true);
     void work()
-      .then(
-        (value) => {
-          if (value) setStatus(value);
-          if (done) toast(done);
-        },
-        (error: unknown) => toast({ text: describeError(error), error: true }),
-      )
+      .then((value) => {
+        if (value) setStatus(value);
+        if (done) toast(done);
+      }, reportError)
       .finally(() => setBusy(false));
   };
 
@@ -246,7 +242,7 @@ export function ServerSyncPage({ onClose }: { onClose: () => void }) {
             {status.syncing ? t("server.syncing") : when(status.lastSync)}
           </p>
           {status.lastError && (
-            <p role="alert" className="text-[11px] text-error">
+            <p className="text-[11px] text-error">
               {t("settings.server.failed", { error: status.lastError })}
             </p>
           )}

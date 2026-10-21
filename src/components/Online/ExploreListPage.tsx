@@ -8,13 +8,13 @@ import type {
 } from "../../types/generated";
 import type { OnlineReturn } from "../../application/online";
 import { FullPage } from "../Layout/FullPage";
-import { Button } from "../ui/button";
 import { OnlineBookPage } from "./OnlineBookPage";
 import { SearchResultRow } from "./SearchPage";
 import { TitleTranslationChip } from "./TitleTranslationChip";
 import { useTitleTranslation } from "./use-title-translation";
 import { t } from "../../i18n";
-import { describeError } from "../Cloud/format";
+import { LoadFailed } from "../ui/LoadFailed";
+import { reportError } from "../ui/toast";
 
 function asResult(book: OnlineBook): OnlineSearchResult {
   return {
@@ -52,7 +52,7 @@ export function ExploreListPage({
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [ended, setEnded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const [opened, setOpened] = useState<{ result: OnlineSearchResult; origin: number } | null>(
     restored ?? null,
   );
@@ -65,7 +65,7 @@ export function ExploreListPage({
     if (!kind.url || ended) return;
     let active = true;
     setLoading(true);
-    setError(null);
+    setFailed(false);
     void service.exploreBooks(sourceUrl, kind.url, page).then(
       (found) => {
         if (!active) return;
@@ -81,7 +81,8 @@ export function ExploreListPage({
       (failure: unknown) => {
         if (!active) return;
         setLoading(false);
-        setError(describeError(failure));
+        setFailed(true);
+        reportError(failure);
       },
     );
     return () => {
@@ -99,13 +100,13 @@ export function ExploreListPage({
         books.length > 0 &&
         !loading &&
         !ended &&
-        !error
+        !failed
       )
         setPage((current) => current + 1);
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [loading, ended, error, books.length]);
+  }, [loading, ended, failed, books.length]);
 
   return (
     <FullPage
@@ -130,14 +131,7 @@ export function ExploreListPage({
           {t("explore.loading", { page })}
         </p>
       )}
-      {error && (
-        <div role="alert" className="py-4 text-center space-y-2">
-          <p className="text-xs text-error break-words">{error}</p>
-          <Button size="sm" variant="outline" onClick={() => setAttempt((value) => value + 1)}>
-            {t("common.retry")}
-          </Button>
-        </div>
-      )}
+      {failed && <LoadFailed className="py-4" onRetry={() => setAttempt((value) => value + 1)} />}
       {ended && (
         <p className="py-4 text-center text-xs text-secondary">
           {books.length ? t("explore.end") : t("explore.empty")}

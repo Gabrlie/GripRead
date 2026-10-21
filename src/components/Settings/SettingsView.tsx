@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Header } from "../Layout/Header";
 import { PageLink, PageSection } from "../Layout/FullPage";
 import { Icon } from "../ui/Icon";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { useLibrary, useRuntime, useSettings } from "../../application/runtime";
 import { useApp } from "../../context/AppContext";
@@ -35,6 +34,8 @@ import { RssSettingsPage } from "../Rss/RssSettingsPage";
 import { StyleSwatch, choose, chosenStyle, pinnedChoices } from "./interface-styles";
 import { native } from "../../services/transport";
 import { useT, type MessageKey } from "../../i18n";
+import { LoadFailed } from "../ui/LoadFailed";
+import { useErrorToast } from "../ui/toast";
 
 type ThemeMode = ReaderPreferences["theme"];
 const SERIAL_DAYS = [0, 7, 30, 90, 180];
@@ -102,15 +103,20 @@ export function SettingsView() {
   }, [page, runtime.services]);
 
   const value = state.value;
+  useErrorToast(
+    state.error &&
+      (value
+        ? t("settings.saveFailed", { error: state.error })
+        : t("settings.loadFailed", { error: state.error })),
+    "settings",
+    () => (value ? store.retry() : void store.load()),
+  );
   if (!value)
     return (
       <div className="pt-20 px-4">
         <Header title={t("settings.title")} subtitle="SETTINGS" />
         {state.error ? (
-          <div role="alert">
-            {t("settings.loadFailed", { error: state.error })}
-            <Button onClick={() => void store.load()}>{t("common.retry")}</Button>
-          </div>
+          <LoadFailed onRetry={() => void store.load()} />
         ) : (
           <p role="status">{t("settings.loading")}</p>
         )}
@@ -122,15 +128,6 @@ export function SettingsView() {
     <div className="flex-1 flex flex-col relative w-full pt-[calc(3.5rem+var(--safe-top))] pb-[calc(5rem+var(--safe-bottom))] md:pb-8 bg-surface min-w-0">
       <Header title={t("settings.title")} subtitle="SETTINGS" />
       <main className="flex-1 w-full max-w-3xl mx-auto px-4 md:px-8 space-y-4 pt-3 pb-6">
-        {state.error && (
-          <div role="alert" className="rounded-xl bg-error-container text-error p-3 text-xs">
-            {t("settings.saveFailed", { error: state.error })}
-            <Button size="sm" variant="outline" onClick={() => store.retry()}>
-              {t("common.retry")}
-            </Button>
-          </div>
-        )}
-
         <button
           type="button"
           aria-label={t("settings.records")}

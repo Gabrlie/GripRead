@@ -162,11 +162,7 @@ export function ImportModal() {
             </p>
           )}
 
-          {errorDetails && (
-            <p role="alert" className="break-words text-sm text-error">
-              {errorDetails}
-            </p>
-          )}
+          {errorDetails && <p className="break-words text-sm text-error">{errorDetails}</p>}
 
           {retryWithEncoding && (
             <label className="flex flex-col gap-2 text-sm">

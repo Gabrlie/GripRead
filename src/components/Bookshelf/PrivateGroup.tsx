@@ -12,8 +12,8 @@ import {
 import { Button } from "../ui/button";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { describeError } from "../Cloud/format";
 import { t } from "../../i18n";
+import { reportError } from "../ui/toast";
 
 /**
  * A locked private group in place of its books: a blur mask over them that
@@ -67,7 +67,6 @@ export function PrivateGroupLock({
 function UnlockDialog({ group, onClose }: { group: LibraryGroup; onClose: () => void }) {
   const { store } = useShelf();
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -85,9 +84,8 @@ function UnlockDialog({ group, onClose }: { group: LibraryGroup; onClose: () => 
           onSubmit={(event) => {
             event.preventDefault();
             setBusy(true);
-            setError(null);
             store.unlock(group.id, password).then(onClose, (failure: unknown) => {
-              setError(describeError(failure));
+              reportError(failure);
               setBusy(false);
             });
           }}
@@ -101,11 +99,6 @@ function UnlockDialog({ group, onClose }: { group: LibraryGroup; onClose: () => 
             onChange={(event) => setPassword(event.target.value)}
             className="h-9 bg-surface-container"
           />
-          {error && (
-            <p role="alert" className="text-xs text-error">
-              {error}
-            </p>
-          )}
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" onClick={onClose}>
               {t("common.cancel")}

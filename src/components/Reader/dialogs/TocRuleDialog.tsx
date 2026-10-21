@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { BookTocSettings, TxtTocRule } from "../../../types/generated";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/Icon";
-import { toast } from "../../ui/toast";
+import { reportError, toast } from "../../ui/toast";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import { RuleTextLoader, type RuleTextService } from "../../Rules/RuleTextLoader";
@@ -60,10 +60,7 @@ type View = { kind: "list" } | { kind: "edit"; rule: TxtTocRule } | { kind: "imp
 export function TocRuleDialog(props: TocRuleDialogProps) {
   const [view, setView] = useState<View>({ kind: "list" });
   const report = (work: Promise<unknown>, done?: string) =>
-    work.then(
-      () => done && toast(done),
-      (error: unknown) => toast({ text: describeError(error), error: true }),
-    );
+    work.then(() => done && toast(done), reportError);
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       {/* Every view is as tall as its content, up to 80% of the screen;
@@ -102,13 +99,10 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
             onTest={props.onTest}
             onCancel={() => setView({ kind: "list" })}
             onSave={(rule) =>
-              props.onSave(rule).then(
-                () => {
-                  toast(rule.id ? t("tocRule.saved") : t("tocRule.added"));
-                  setView({ kind: "list" });
-                },
-                (error: unknown) => toast({ text: describeError(error), error: true }),
-              )
+              props.onSave(rule).then(() => {
+                toast(rule.id ? t("tocRule.saved") : t("tocRule.added"));
+                setView({ kind: "list" });
+              }, reportError)
             }
           />
         )}
@@ -118,17 +112,14 @@ export function TocRuleDialog(props: TocRuleDialogProps) {
             loader={props.loader}
             onCancel={() => setView({ kind: "list" })}
             onImport={(json) =>
-              props.onImport(json).then(
-                (added) => {
-                  toast(
-                    added?.length
-                      ? t("tocRule.imported", { count: added.length })
-                      : t("tocRule.noneNew"),
-                  );
-                  setView({ kind: "list" });
-                },
-                (error: unknown) => toast({ text: describeError(error), error: true }),
-              )
+              props.onImport(json).then((added) => {
+                toast(
+                  added?.length
+                    ? t("tocRule.imported", { count: added.length })
+                    : t("tocRule.noneNew"),
+                );
+                setView({ kind: "list" });
+              }, reportError)
             }
           />
         )}

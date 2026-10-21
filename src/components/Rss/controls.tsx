@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { toast } from "../ui/toast";
 import { refreshIntervals } from "./format";
 
 /** Refresh intervals the core accepts: off, or between these minutes. */
@@ -176,7 +177,10 @@ function MinutesDialog({
           className="space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!valid) return;
+            if (!valid) {
+              toast({ text: t("rss.settings.customMinutes.invalid", bounds), error: true });
+              return;
+            }
             onSave(minutes);
             onClose();
           }}
@@ -188,16 +192,11 @@ function MinutesDialog({
             value={text}
             onChange={(event) => setText(event.target.value.replace(/\D/g, ""))}
           />
-          {text && !valid && (
-            <p role="alert" className="text-xs text-error">
-              {t("rss.settings.customMinutes.invalid", bounds)}
-            </p>
-          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" size="sm" disabled={!valid}>
+            <Button type="submit" size="sm" disabled={!text}>
               {t("common.save")}
             </Button>
           </div>

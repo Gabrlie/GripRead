@@ -17,7 +17,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Icon } from "../ui/Icon";
 import { Input } from "../ui/input";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { describeError, formatSize, formatTime } from "./format";
 import { t } from "../../i18n";
@@ -110,7 +110,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
     setPoints(await sync.listRecoveryPoints().catch(() => []));
   }, [sync]);
   useEffect(() => {
-    void load().catch((error: unknown) => toast({ text: describeError(error), error: true }));
+    void load().catch(reportError);
   }, [load]);
 
   const run = async (label: string, work: () => Promise<string | void>) => {
@@ -119,7 +119,7 @@ export function BackupPage({ onClose }: { onClose: () => void }) {
       const text = await work();
       if (text) toast(text);
     } catch (error) {
-      toast({ text: describeError(error), error: true });
+      reportError(error);
     } finally {
       setBusy(null);
     }

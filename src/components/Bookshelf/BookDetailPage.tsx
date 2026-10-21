@@ -18,8 +18,7 @@ import { CacheRangeDialog } from "../Online/CacheRangeDialog";
 import { SourceDetailsDialog } from "../Online/SourceDetailsDialog";
 import { formatDuration } from "../../application/reading-time";
 import { usePageLayer } from "../Layout/use-page-layer";
-import { describeError } from "../Cloud/format";
-import { toast } from "../ui/toast";
+import { reportError, toast } from "../ui/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,7 +87,6 @@ export function BookDetailPage({
   const { store } = useLibrary();
   const { state: shelf, store: shelfStore } = useShelf();
   const [info, setInfo] = useState<BookInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [confirm, setConfirm] = useState<"delete" | "delete-cloud" | null>(null);
   const removed = book.removedAt !== null;
@@ -101,25 +99,18 @@ export function BookDetailPage({
     let cancelled = false;
     runtime.services.library.getBookInfo(id).then(
       (value) => !cancelled && setInfo(value),
-      (failure: unknown) => !cancelled && setError(describeError(failure)),
+      (failure: unknown) => !cancelled && reportError(failure),
     );
     return () => {
       cancelled = true;
     };
   }, [id, runtime.services.library, revision]);
   const page = usePageLayer(onClose);
-  const run = (action: () => Promise<unknown>) =>
-    void action().then(
-      () => setError(null),
-      (failure: unknown) => setError(describeError(failure)),
-    );
+  const run = (action: () => Promise<unknown>) => void action().catch(reportError);
   const cloudAction = (work: () => Promise<string>) => {
     setCloudBusy(true);
     work()
-      .then(
-        (text) => toast(text),
-        (failure: unknown) => toast({ text: describeError(failure), error: true }),
-      )
+      .then((text) => toast(text), reportError)
       .finally(() => {
         setCloudBusy(false);
         void runtime.library.refresh();
@@ -127,10 +118,9 @@ export function BookDetailPage({
   };
   const [askCloudSync, setAskCloudSync] = useState(false);
   const syncDetails = (announce: boolean) =>
-    void runtime.services.sync.uploadBooks([id]).then(
-      () => announce && toast(t("detail.cloudSynced")),
-      (failure: unknown) => toast({ text: describeError(failure), error: true }),
-    );
+    void runtime.services.sync
+      .uploadBooks([id])
+      .then(() => announce && toast(t("detail.cloudSynced")), reportError);
   const uploadToCloud = () =>
     cloudAction(async () => {
       const report = await runtime.services.sync.uploadBooks([id]);
@@ -366,11 +356,6 @@ export function BookDetailPage({
             )}
           </div>
           {removed && <p className="text-xs text-secondary">{t("detail.inBin")}</p>}
-          {error && (
-            <p role="alert" className="text-xs text-error break-words">
-              {error}
-            </p>
-          )}
           <section aria-labelledby="book-intro" className="space-y-1.5 min-w-0">
             <div className="flex items-center justify-between">
               <h2
@@ -579,7 +564,6 @@ function EditBookDialog({
   const [title, setTitle] = useState(book.book.title);
   const [author, setAuthor] = useState(book.book.author ?? "");
   const [intro, setIntro] = useState(initialIntro);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const id = book.book.id;
@@ -587,10 +571,7 @@ function EditBookDialog({
     setBusy(true);
     void action()
       .then(() => store.refresh())
-      .then(
-        () => setError(null),
-        (failure: unknown) => setError(describeError(failure)),
-      )
+      .catch(reportError)
       .finally(() => setBusy(false));
   };
   return (
@@ -606,7 +587,7 @@ function EditBookDialog({
             setBusy(true);
             void store
               .edit({ bookId: id, title: title.trim(), author: author.trim() || null, intro })
-              .then(onSaved, (failure: unknown) => setError(describeError(failure)))
+              .then(onSaved, reportError)
               .finally(() => setBusy(false));
           }}
         >
@@ -676,11 +657,6 @@ function EditBookDialog({
               className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-sm text-on-surface outline-none focus-visible:ring-2 focus-visible:ring-ring/50 resize-y"
             />
           </label>
-          {error && (
-            <p role="alert" className="text-xs text-error break-words">
-              {error}
-            </p>
-          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
               {t("common.cancel")}
@@ -787,7 +763,7 @@ function OnlineActions({
                     : t("detail.updated"),
               ),
             )
-            .catch((failure: unknown) => toast({ text: describeError(failure), error: true }))
+            .catch(reportError)
             .finally(() => {
               setUpdating(false);
               onChanged();
@@ -868,7 +844,7 @@ function OnlineActions({
                     },
                     (failure: unknown) => {
                       setConverting(null);
-                      toast({ text: describeError(failure), error: true });
+                      reportError(failure);
                     },
                   );
                 }}
